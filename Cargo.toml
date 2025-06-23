@@ -1,0 +1,9 @@
+[workspace]
+members = ["cli", "uzu"]
+resolver = "3"
+
+[profile.release]
+lto = true
+
+[profile.test]
+inherits = "release"
