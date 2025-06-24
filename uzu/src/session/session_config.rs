@@ -1,3 +1,5 @@
+use tokenizers::Tokenizer;
+
 use super::sampling_config::SamplingConfig;
 use crate::generator::config::{
     ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
@@ -59,7 +61,10 @@ impl Default for SessionConfig {
 }
 
 impl GeneratorConfigProvider for SessionConfig {
-    fn generator_config(&self) -> GeneratorConfig {
+    fn generator_config(
+        &self,
+        _tokenizer: &Tokenizer,
+    ) -> GeneratorConfig {
         self.to_generator_config()
     }
 }

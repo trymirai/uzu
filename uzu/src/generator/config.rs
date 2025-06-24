@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokenizers::Tokenizer;
+
 use crate::speculators::{
     empty_speculator::EmptySpeculator, speculator::Speculator,
 };
@@ -66,7 +68,10 @@ impl SamplingSeed {
 }
 
 pub trait GeneratorConfigProvider {
-    fn generator_config(&self) -> GeneratorConfig;
+    fn generator_config(
+        &self,
+        tokenizer: &Tokenizer,
+    ) -> GeneratorConfig;
 }
 
 pub struct GeneratorConfig {

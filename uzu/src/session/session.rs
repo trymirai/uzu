@@ -58,7 +58,8 @@ impl Session {
         &mut self,
         generator_config_provider: Box<dyn GeneratorConfigProvider>,
     ) -> Result<(), SessionError> {
-        let generator_config = generator_config_provider.generator_config();
+        let generator_config =
+            generator_config_provider.generator_config(&self.tokenizer);
         let generator = Generator::new(&self.model_path, generator_config)
             .map_err(SessionError::from)?;
 
