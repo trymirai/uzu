@@ -1,6 +1,6 @@
 use super::speculator::Speculator;
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct EmptySpeculator;
 
 impl Speculator for EmptySpeculator {

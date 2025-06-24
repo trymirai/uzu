@@ -2,13 +2,7 @@ use std::{path::PathBuf, sync::Mutex};
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::{
-    generator::config::{ContextLength, SamplingSeed},
-    session::{
-        session::Session,
-        session_config::{SessionConfig, SessionPreset},
-    },
-};
+use uzu::session::{session::Session, session_config::SessionConfig};
 
 pub struct SessionWrapper(Mutex<Session>);
 unsafe impl Send for SessionWrapper {}
@@ -47,14 +41,11 @@ pub fn load_session(model_path: String) -> Session {
     );
     progress_bar.set_message(model_name.clone());
 
-    let config = SessionConfig::new(
-        SessionPreset::General,
-        SamplingSeed::Default,
-        ContextLength::Default,
-    );
     let mut session =
         Session::new(model_path_buf).expect("Failed to create session");
-    session.load(config).expect("Failed to load session");
+    session
+        .load_with_session_config(SessionConfig::default())
+        .expect("Failed to load session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),

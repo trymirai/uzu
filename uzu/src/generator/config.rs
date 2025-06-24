@@ -1,8 +1,22 @@
-use crate::speculators::speculator::Speculator;
+use std::sync::Arc;
 
+use crate::speculators::{
+    empty_speculator::EmptySpeculator, speculator::Speculator,
+};
+
+#[derive(Clone)]
 pub struct SpeculatorConfig {
     pub number_of_speculated_tokens: usize,
-    pub speculator: Box<dyn Speculator>,
+    pub speculator: Arc<dyn Speculator>,
+}
+
+impl Default for SpeculatorConfig {
+    fn default() -> Self {
+        Self {
+            number_of_speculated_tokens: 0,
+            speculator: Arc::new(EmptySpeculator {}),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +63,10 @@ impl SamplingSeed {
             SamplingSeed::Custom(seed) => *seed,
         }
     }
+}
+
+pub trait GeneratorConfigProvider {
+    fn generator_config(&self) -> GeneratorConfig;
 }
 
 pub struct GeneratorConfig {

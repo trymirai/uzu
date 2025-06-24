@@ -3,6 +3,7 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use half::{bf16, f16};
@@ -145,7 +146,7 @@ impl Tracer {
             None,
             SpeculatorConfig {
                 number_of_speculated_tokens: 0,
-                speculator: Box::new(EmptySpeculator {}),
+                speculator: Arc::new(EmptySpeculator {}),
             },
             false,
             SamplingSeed::Default,
@@ -170,7 +171,7 @@ impl Tracer {
             None,
             SpeculatorConfig {
                 number_of_speculated_tokens: 0,
-                speculator: Box::new(EmptySpeculator {}),
+                speculator: Arc::new(EmptySpeculator {}),
             },
             false,
             sampling_seed,

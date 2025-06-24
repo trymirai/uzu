@@ -1,110 +1,66 @@
-use tokenizers::Tokenizer;
-
-use super::{
-    sampling_config::SamplingConfig,
-    session_classification_feature::SessionClassificationFeature,
-};
-use crate::{
-    generator::config::{
-        ContextLength, GeneratorConfig, SamplingSeed, SpeculatorConfig,
-    },
-    linearizer::trie::TokenTrie,
-    speculators::{
-        empty_speculator::EmptySpeculator,
-        fixed_token_speculator::FixedTokensSpeculator,
-        prompt_lookup_speculator::PromptLookupSpeculator,
-    },
+use super::sampling_config::SamplingConfig;
+use crate::generator::config::{
+    ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
+    SpeculatorConfig,
 };
 
-#[derive(Debug)]
-pub enum SessionPreset {
-    General,
-    Classification(SessionClassificationFeature),
-    Summarization,
-}
-
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct SessionConfig {
-    pub preset: SessionPreset,
+    pub prefill_step_size: usize,
+    pub prefix_length_step: Option<usize>,
+    pub speculator_config: SpeculatorConfig,
+    pub allow_pre_encode: bool,
     pub sampling_seed: SamplingSeed,
     pub context_length: ContextLength,
 }
 
 impl SessionConfig {
     pub fn new(
-        preset: SessionPreset,
+        prefill_step_size: usize,
+        prefix_length_step: Option<usize>,
+        speculator_config: SpeculatorConfig,
+        allow_pre_encode: bool,
         sampling_seed: SamplingSeed,
         context_length: ContextLength,
     ) -> Self {
         Self {
-            preset,
+            prefill_step_size,
+            prefix_length_step,
+            speculator_config,
+            allow_pre_encode,
             sampling_seed,
             context_length,
         }
     }
 
-    pub fn generator_config(
-        &self,
-        tokenizer: &Tokenizer,
-    ) -> GeneratorConfig {
-        let prefill_step_size: usize;
-        let prefix_length_step: Option<usize> = None;
-        let speculator_config: SpeculatorConfig;
-        let allow_pre_encode = true;
-        match &self.preset {
-            SessionPreset::General => {
-                prefill_step_size = 8;
-                speculator_config = SpeculatorConfig {
-                    number_of_speculated_tokens: 0,
-                    speculator: Box::new(EmptySpeculator {}),
-                }
-            },
-            SessionPreset::Classification(feature) => {
-                let proposals: Vec<Vec<u64>> = feature
-                    .values
-                    .iter()
-                    .map(|value| {
-                        tokenizer
-                            .encode(value.clone().as_str(), false)
-                            .unwrap()
-                            .get_ids()
-                            .iter()
-                            .map(|&id| id as u64)
-                            .collect()
-                    })
-                    .collect();
-                let speculated_suffix = TokenTrie::from_sequences(&proposals)
-                    .linearize(0, usize::MAX);
-
-                prefill_step_size = 96;
-                speculator_config = SpeculatorConfig {
-                    number_of_speculated_tokens: speculated_suffix.tokens.len(),
-                    speculator: Box::new(FixedTokensSpeculator::new(proposals)),
-                }
-            },
-            SessionPreset::Summarization => {
-                let number_of_speculated_tokens = 16 - 1;
-                let speculator = PromptLookupSpeculator::new_with_params(
-                    3,
-                    number_of_speculated_tokens,
-                );
-
-                prefill_step_size = 96;
-                speculator_config = SpeculatorConfig {
-                    number_of_speculated_tokens: number_of_speculated_tokens,
-                    speculator: Box::new(speculator),
-                }
-            },
-        }
-        let generator_config = GeneratorConfig::new(
-            prefill_step_size,
-            prefix_length_step,
-            speculator_config,
-            allow_pre_encode,
+    pub fn to_generator_config(&self) -> GeneratorConfig {
+        GeneratorConfig::new(
+            self.prefill_step_size,
+            self.prefix_length_step,
+            self.speculator_config.clone(),
+            self.allow_pre_encode,
             self.sampling_seed,
             self.context_length,
-        );
-        generator_config
+        )
+    }
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::new(
+            8,
+            None,
+            SpeculatorConfig::default(),
+            true,
+            SamplingSeed::default(),
+            ContextLength::default(),
+        )
+    }
+}
+
+impl GeneratorConfigProvider for SessionConfig {
+    fn generator_config(&self) -> GeneratorConfig {
+        self.to_generator_config()
     }
 }
 

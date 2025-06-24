@@ -14,9 +14,13 @@ use super::{
     },
     tokenizer_config::TokenizerConfig,
 };
-use crate::generator::{
-    generator::Generator,
-    result::{GenerateResult, PrefillResult},
+use crate::{
+    generator::{
+        config::GeneratorConfigProvider,
+        generator::Generator,
+        result::{GenerateResult, PrefillResult},
+    },
+    session::session_error::SessionError,
 };
 
 pub struct Session {
@@ -24,19 +28,15 @@ pub struct Session {
     tokenizer: Tokenizer,
     tokenizer_config: TokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
-
-    config: Option<SessionConfig>,
     generator: Option<Generator>,
 }
 
 impl Session {
-    pub fn new(
-        model_path: PathBuf
-    ) -> Result<Self, crate::session::session_error::SessionError> {
+    pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
         // Load tokenizer JSON
         let tokenizer_path = model_path.join("tokenizer.json");
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|_| crate::session::session_error::SessionError::UnableToLoadTokenizerConfig)?;
+            .map_err(|_| SessionError::UnableToLoadTokenizerConfig)?;
 
         // Load tokenizer configuration
         let tokenizer_config =
@@ -50,22 +50,27 @@ impl Session {
             tokenizer,
             tokenizer_config,
             input_processor: Box::new(input_processor),
-            config: None,
             generator: None,
         })
     }
 
     pub fn load(
         &mut self,
-        config: SessionConfig,
-    ) -> Result<(), crate::session::session_error::SessionError> {
-        let generator_config = config.generator_config(&self.tokenizer);
+        generator_config_provider: Box<dyn GeneratorConfigProvider>,
+    ) -> Result<(), SessionError> {
+        let generator_config = generator_config_provider.generator_config();
         let generator = Generator::new(&self.model_path, generator_config)
-            .map_err(crate::session::session_error::SessionError::from)?;
+            .map_err(SessionError::from)?;
 
-        self.config = Some(config);
         self.generator = Some(generator);
         Ok(())
+    }
+
+    pub fn load_with_session_config(
+        &mut self,
+        config: SessionConfig,
+    ) -> Result<(), SessionError> {
+        self.load(Box::new(config))
     }
 
     pub fn run<F>(
@@ -303,7 +308,6 @@ impl Drop for Session {
     fn drop(&mut self) {
         autoreleasepool(|_| {
             self.generator = None;
-            self.config = None;
         });
     }
 }
