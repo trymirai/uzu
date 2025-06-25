@@ -30,18 +30,32 @@ FILES=(
   "model.safetensors https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/model.safetensors"
   "tokenizer.json https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/tokenizer.json"
   "tokenizer_config.json https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/tokenizer_config.json"
+  "traces.safetensors https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/traces.safetensors"
 )
 
 for ITEM in "${FILES[@]}"; do
   NAME="${ITEM%% *}"
   URL="${ITEM#* }"
   DEST="$MODEL_DIR/$NAME"
+  PART="$DEST.part"
+
   if [[ -f "$DEST" ]]; then
     echo "✓ $NAME already present — skipping download"
+    continue
+  fi
+
+  # If a partial download exists, resume it
+  if [[ -f "$PART" ]]; then
+    echo "↻ Resuming ${NAME} download…"
   else
     echo "↓ Downloading ${NAME}…"
-    curl -L --fail --progress-bar "$URL" -o "$DEST"
   fi
+
+  # Use --continue-at - (alias -C -) to resume; always write to .part file first
+  curl -L --fail --progress-bar -C - "$URL" -o "$PART"
+
+  # On successful download, rename to final file name
+  mv -f "$PART" "$DEST"
 done
 
 echo "✔ All required artifacts are available in $MODEL_DIR" 
