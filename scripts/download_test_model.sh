@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 # download_test_model.sh
-# This script ensures the test model (Meta-Llama-3.2-1B-Instruct-float16)
-# required by the test-suite is present in the SDK cache directory.
-# Usage: bash download_test_model.sh
-#
-# The cache root mirrors the logic in `uzu/tests/common/mod.rs`:
-#   • On macOS/iOS  →  "$HOME/Library/Caches/com.mirai.sdk.storage"
 #
 set -euo pipefail
 
@@ -15,22 +9,20 @@ if [[ "$(uname)" != "Darwin" ]]; then
   exit 0
 fi
 
-# macOS cache directory root
 ROOT_DIR="$HOME/Library/Caches/com.mirai.sdk.storage"
-
-# Create model directory
 MODEL_DIR="$ROOT_DIR/Meta-Llama-3.2-1B-Instruct-float16"
+
 mkdir -p "$MODEL_DIR"
 
 echo "Model directory: $MODEL_DIR"
 
-# List of "<filename> <url>" pairs (compatible with macOS Bash 3.2 – no associative arrays)
+HF_BASE="https://huggingface.co/trymirai/Llama-3.2-1B-Instruct-float16/resolve/main"
 FILES=(
-  "config.json https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/config.json"
-  "model.safetensors https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/model.safetensors"
-  "tokenizer.json https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/tokenizer.json"
-  "tokenizer_config.json https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/tokenizer_config.json"
-  "traces.safetensors https://artifacts.trymirai.com/models/0.1.0/float16/Meta-Llama-3.2-1B-Instruct/traces.safetensors"
+  "config.json ${HF_BASE}/config.json"
+  "model.safetensors ${HF_BASE}/model.safetensors"
+  "tokenizer.json ${HF_BASE}/tokenizer.json"
+  "tokenizer_config.json ${HF_BASE}/tokenizer_config.json"
+  "traces.safetensors ${HF_BASE}/traces.safetensors"
 )
 
 for ITEM in "${FILES[@]}"; do
