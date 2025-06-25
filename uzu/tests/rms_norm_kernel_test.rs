@@ -1,4 +1,5 @@
-#![cfg(any(target_os = "macos", target_os = "ios"))]
+#![cfg(any(target_os = "macos"))]
+#![allow(dead_code)]
 
 use half::{bf16, f16};
 use metal::{Device, MTLResourceOptions};
@@ -935,13 +936,11 @@ fn perf_rms_norm_with_size(
 }
 
 #[test]
-#[ignore]
 fn perf_rms_norm_8k() {
     perf_rms_norm_with_size(8, 8192); // Large model like LLaMA-70B
 }
 
 #[test]
-#[ignore]
 fn perf_rms_norm_16k() {
     perf_rms_norm_with_size(16, 16384); // Huge model dimension
 }

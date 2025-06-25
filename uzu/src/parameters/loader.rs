@@ -12,26 +12,6 @@ use super::safetensors_metadata::{
 };
 use crate::{Array, DataType, DeviceContext};
 
-#[derive(Debug, Error)]
-pub enum ParameterLoaderError {
-    #[error("Array with key \"{0}\" not found.")]
-    KeyNotFound(String),
-    #[error("Couldn't find any arrays with prefix \"{0}\".")]
-    SubtreeNotFound(String),
-    #[error(
-        "Size mismatch: array of shape {shape:?} and data type \
-        {data_type:?} expected to be {expected_size} bytes, got {actual_size} bytes."
-    )]
-    SizeMismatch {
-        data_type: DataType,
-        shape: Box<[usize]>,
-        expected_size: usize,
-        actual_size: usize,
-    },
-    #[error("Failed to read data")]
-    ArrayLoadingError(#[from] std::io::Error),
-}
-
 pub struct ParameterMetadata {
     shape: Box<[usize]>,
     data_type: DataType,
@@ -59,6 +39,26 @@ fn st_metadata_into_index(
             (key, weight_metadata)
         })
         .collect()
+}
+
+#[derive(Debug, Error)]
+pub enum ParameterLoaderError {
+    #[error("Array with key \"{0}\" not found.")]
+    KeyNotFound(String),
+    #[error("Couldn't find any arrays with prefix \"{0}\".")]
+    SubtreeNotFound(String),
+    #[error(
+        "Size mismatch: array of shape {shape:?} and data type \
+        {data_type:?} expected to be {expected_size} bytes, got {actual_size} bytes."
+    )]
+    SizeMismatch {
+        data_type: DataType,
+        shape: Box<[usize]>,
+        expected_size: usize,
+        actual_size: usize,
+    },
+    #[error("Failed to read data")]
+    ArrayLoadingError(#[from] std::io::Error),
 }
 
 pub struct ParameterLoader<'context, 'file, C: DeviceContext>
@@ -206,44 +206,5 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
             shape,
             data_type,
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use half::f16;
-
-    use super::*;
-    use crate::backends::cpu::CPUContext;
-
-    #[test]
-    #[ignore]
-    fn test_loader() {
-        let parameter_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-            "resources/test/Llama-3.2-1B-Instruct-FP16/model.safetensors",
-        );
-        if !parameter_path.exists() {
-            panic!("Test weights file not found at {:?}", parameter_path);
-        }
-
-        let context = CPUContext::new();
-        let file = File::open(&parameter_path).unwrap();
-        let loader = ParameterLoader::new(&file, &context).unwrap();
-        let embeddings = loader.get("embedding.token_embeddings").unwrap();
-        let embeddings_view = embeddings.as_view::<f16>().unwrap();
-
-        assert!(is_close!(
-            embeddings_view[[5 as usize, 3 as usize]],
-            f16::from_f32(-0.01819)
-        ));
-
-        let loader_tree = loader.tree();
-        let subtree = loader_tree.subtree("embedding").unwrap();
-        let different_embeddings = subtree.leaf("token_embeddings").unwrap();
-        let different_embeddings_view =
-            different_embeddings.as_view::<f16>().unwrap();
-        assert!(embeddings_view == different_embeddings_view);
     }
 }

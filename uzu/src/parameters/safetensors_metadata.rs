@@ -140,25 +140,3 @@ pub fn read_metadata(
         .map_err(|_| HeaderLoadingError::InvalidHeaderDeserialization)?;
     Ok((stop, metadata))
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::*;
-
-    #[test]
-    #[ignore]
-    fn test_metadata_loading() {
-        let weights_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-            "resources/test/Llama-3.2-1B-Instruct-FP16/model.safetensors",
-        );
-        if !weights_path.exists() {
-            panic!("Test weights file not found at {:?}", weights_path);
-        }
-
-        let file = File::open(&weights_path).unwrap();
-        let metadata = read_metadata(&file).unwrap();
-        println!("{:?}", metadata);
-    }
-}

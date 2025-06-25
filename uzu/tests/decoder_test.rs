@@ -2,7 +2,6 @@ mod common;
 use uzu::decoder_runner::run_decoder_with_results;
 
 #[test]
-#[ignore]
 fn decoder_runs_successfully() {
     // Skip the test completely if we're not on a Metal-capable platform.
     if !cfg!(any(target_os = "macos", target_os = "ios")) {

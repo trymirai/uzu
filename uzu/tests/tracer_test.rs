@@ -8,9 +8,15 @@ fn build_model_path() -> PathBuf {
 }
 
 #[test]
-#[ignore]
 fn test_tracer() {
     let model_path = build_model_path();
+    // Ensure traces file present, otherwise skip
+    let traces_path = crate::common::get_traces_path();
+    if !traces_path.exists() {
+        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
+        return;
+    }
+
     let tracer = Tracer::new(&model_path);
 
     let colored_text = |text: &str, valid: bool| {

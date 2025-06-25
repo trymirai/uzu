@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+mod common;
+
 use std::mem::size_of;
 
 use metal::{Device, MTLResourceOptions};
@@ -903,7 +905,6 @@ fn test_two_pass_attention_gqa() {
 }
 
 #[test]
-#[ignore]
 fn perf_two_pass_attention() {
     use std::time::Instant;
 

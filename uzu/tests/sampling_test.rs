@@ -1,4 +1,4 @@
-#[cfg(test)]
+mod common;
 use metal::{Device, MTLResourceOptions};
 use rand::seq::SliceRandom; // for Vec::shuffle
 use uzu::{
@@ -408,7 +408,6 @@ fn test_topp_sampling_statistical_large() {
 }
 
 #[test]
-#[ignore]
 fn perf_topp_128k_vocab() {
     use std::time::Instant;
 
@@ -503,6 +502,7 @@ fn perf_topp_128k_vocab() {
     }
 }
 
+#[allow(dead_code)]
 fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use std::time::Instant;
 
@@ -856,6 +856,7 @@ fn test_categorical_sampling_statistical() {
     );
 }
 
+#[test]
 fn perf_categorical_128k_vocab() {
     use std::time::Instant;
 
@@ -944,129 +945,6 @@ fn perf_categorical_128k_vocab() {
     }
 
     println!("✓ Categorical correctness verified");
-}
-
-#[test]
-#[ignore]
-fn perf_categorical_128k_vocab_test() {
-    perf_categorical_128k_vocab();
-}
-
-#[test]
-#[ignore]
-fn perf_argmax_128k_vocab_single_pass() {
-    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-#[test]
-#[ignore]
-fn perf_argmax_128k_vocab_two_pass() {
-    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::TwoPass);
-}
-
-fn test_categorical_sampling_with_strategy(strategy: CategoricalStrategy) {
-    let context = match create_test_context() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping categorical test with {:?}: {}", strategy, e);
-            return;
-        },
-    };
-
-    let batch_size = 2;
-    let vocab_size = 4;
-
-    let kernel = SamplingKernel::new_with_strategies(
-        &context,
-        KernelDataType::Float32,
-        batch_size,
-        vocab_size,
-        ArgmaxStrategy::TwoPass,
-        strategy,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create categorical kernel");
-
-    // Create test data with different probability distributions
-    let test_logits: Vec<f32> = vec![
-        1.0, 2.0, 1.5, 0.5, // batch 0
-        0.0, 1.0, 0.0, 0.0, // batch 1
-    ];
-
-    let logits_buffer = context.device.new_buffer_with_data(
-        test_logits.as_ptr() as *const _,
-        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let output_buffer = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    // Run sampling multiple times to check distribution
-    let num_samples = 1000;
-    let mut counts = vec![0; batch_size * vocab_size];
-
-    for _ in 0..num_samples {
-        let command_buffer_ref = context.command_queue.new_command_buffer();
-        let command_buffer = command_buffer_ref.to_owned();
-
-        kernel
-            .encode(
-                &SamplingConfig::categorical(1.0),
-                &logits_buffer,
-                &output_buffer,
-                batch_size,
-                vocab_size,
-                &command_buffer,
-            )
-            .expect("Categorical sampling should succeed");
-
-        command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
-
-        let result_ptr = output_buffer.contents() as *const u32;
-        let results =
-            unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
-
-        for (batch_idx, &token) in results.iter().enumerate() {
-            assert!(
-                (token as usize) < vocab_size,
-                "Sampled token {} out of range for vocab size {}",
-                token,
-                vocab_size
-            );
-            counts[batch_idx * vocab_size + token as usize] += 1;
-        }
-    }
-
-    // Check that all batches produced valid outputs
-    for batch_idx in 0..batch_size {
-        let batch_counts =
-            &counts[batch_idx * vocab_size..(batch_idx + 1) * vocab_size];
-        let total_samples: usize = batch_counts.iter().sum();
-        assert_eq!(
-            total_samples, num_samples,
-            "Batch {} should have {} samples, got {}",
-            batch_idx, num_samples, total_samples
-        );
-
-        // For the second batch, token 1 should be sampled most frequently
-        if batch_idx == 1 {
-            let max_count = *batch_counts.iter().max().unwrap();
-            assert_eq!(
-                batch_counts[1], max_count,
-                "Token 1 should be most frequent in batch 1 with strategy {:?}, got counts: {:?}",
-                strategy, batch_counts
-            );
-        }
-    }
-
-    println!(
-        "✓ Categorical sampling test passed with {:?} strategy - sampled {} times per batch",
-        strategy, num_samples
-    );
 }
 
 #[test]
@@ -1299,6 +1177,111 @@ fn test_categorical_1pass_vs_2pass_equivalence() {
     );
 }
 
+fn test_categorical_sampling_with_strategy(strategy: CategoricalStrategy) {
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Skipping categorical test with {:?}: {}", strategy, e);
+            return;
+        },
+    };
+
+    let batch_size = 2;
+    let vocab_size = 4;
+
+    let kernel = SamplingKernel::new_with_strategies(
+        &context,
+        KernelDataType::Float32,
+        batch_size,
+        vocab_size,
+        ArgmaxStrategy::TwoPass,
+        strategy,
+        TEST_SAMPLING_SEED,
+    )
+    .expect("Failed to create categorical kernel");
+
+    // Create test data with different probability distributions
+    let test_logits: Vec<f32> = vec![
+        1.0, 2.0, 1.5, 0.5, // batch 0
+        0.0, 1.0, 0.0, 0.0, // batch 1
+    ];
+
+    let logits_buffer = context.device.new_buffer_with_data(
+        test_logits.as_ptr() as *const _,
+        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let output_buffer = context.device.new_buffer(
+        (batch_size * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    // Run sampling multiple times to check distribution
+    let num_samples = 1000;
+    let mut counts = vec![0; batch_size * vocab_size];
+
+    for _ in 0..num_samples {
+        let command_buffer_ref = context.command_queue.new_command_buffer();
+        let command_buffer = command_buffer_ref.to_owned();
+
+        kernel
+            .encode(
+                &SamplingConfig::categorical(1.0),
+                &logits_buffer,
+                &output_buffer,
+                batch_size,
+                vocab_size,
+                &command_buffer,
+            )
+            .expect("Categorical sampling should succeed");
+
+        command_buffer_ref.commit();
+        command_buffer_ref.wait_until_completed();
+
+        let result_ptr = output_buffer.contents() as *const u32;
+        let results =
+            unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
+
+        for (batch_idx, &token) in results.iter().enumerate() {
+            assert!(
+                (token as usize) < vocab_size,
+                "Sampled token {} out of range for vocab size {}",
+                token,
+                vocab_size
+            );
+            counts[batch_idx * vocab_size + token as usize] += 1;
+        }
+    }
+
+    // Check that all batches produced valid outputs
+    for batch_idx in 0..batch_size {
+        let batch_counts =
+            &counts[batch_idx * vocab_size..(batch_idx + 1) * vocab_size];
+        let total_samples: usize = batch_counts.iter().sum();
+        assert_eq!(
+            total_samples, num_samples,
+            "Batch {} should have {} samples, got {}",
+            batch_idx, num_samples, total_samples
+        );
+
+        // For the second batch, token 1 should be sampled most frequently
+        if batch_idx == 1 {
+            let max_count = *batch_counts.iter().max().unwrap();
+            assert_eq!(
+                batch_counts[1], max_count,
+                "Token 1 should be most frequent in batch 1 with strategy {:?}, got counts: {:?}",
+                strategy, batch_counts
+            );
+        }
+    }
+
+    println!(
+        "✓ Categorical sampling test passed with {:?} strategy - sampled {} times per batch",
+        strategy, num_samples
+    );
+}
+
 fn perf_categorical_128k_vocab_with_strategy(strategy: CategoricalStrategy) {
     use std::time::Instant;
 
@@ -1395,13 +1378,11 @@ fn perf_categorical_128k_vocab_with_strategy(strategy: CategoricalStrategy) {
 }
 
 #[test]
-#[ignore]
 fn perf_categorical_128k_vocab_single_pass() {
     perf_categorical_128k_vocab_with_strategy(CategoricalStrategy::SinglePass);
 }
 
 #[test]
-#[ignore]
 fn perf_categorical_128k_vocab_two_pass() {
     perf_categorical_128k_vocab_with_strategy(CategoricalStrategy::TwoPass);
 }

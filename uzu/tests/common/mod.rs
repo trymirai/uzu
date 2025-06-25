@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -50,4 +52,16 @@ pub fn get_test_model_path() -> PathBuf {
         );
     }
     model_path
+}
+
+pub fn sdk_cache_root() -> PathBuf {
+    default_root_dir()
+}
+
+pub fn get_test_weights_path() -> PathBuf {
+    get_test_model_path().join("model.safetensors")
+}
+
+pub fn get_traces_path() -> PathBuf {
+    get_test_model_path().join("traces.safetensors")
 }
