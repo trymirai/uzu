@@ -48,12 +48,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## CLI quick-start
+## Quick-start
 
-For demo purposes you can fetch a test model:
+For demo purposes you can fetch the test model:
 
 ```bash
 ./scripts/download_test_model.sh
+# Optionally specify a custom directory
+./scripts/download_test_model.sh /path/to/model/storage
 ```
 
 ### Interactive *run* mode
