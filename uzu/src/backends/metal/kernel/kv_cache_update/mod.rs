@@ -13,13 +13,7 @@ use super::{
     super::MTLError, KernelDataType, MTLContext,
     metal_extensions::ComputeEncoderDispatch,
 };
-use crate::{
-    Array,
-    backends::metal::forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
-    },
-};
+use crate::{Array, backends::metal::forward_pass::ForwardPassState};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -272,46 +266,6 @@ pub fn create_swaps(
     }
 
     swaps
-}
-
-impl EncodableWithState for KVCacheUpdate {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        parameters: &EncodingParameters,
-    ) {
-        let num_layers = state.kv_cache.borrow().data.len();
-        let mut kv_layers = Vec::with_capacity(num_layers);
-        for (_i, layer) in state.kv_cache.borrow().data.iter().enumerate() {
-            let key_shape = layer.keys.borrow().shape().to_vec();
-            let value_shape = layer.values.borrow().shape().to_vec();
-            let mut keys = layer.keys.borrow_mut();
-            let mut values = layer.values.borrow_mut();
-            let key_buffer = unsafe { keys.mtl_buffer() };
-            let value_buffer = unsafe { values.mtl_buffer() };
-            kv_layers.push(KVLayerData {
-                key_buffer: key_buffer.clone(),
-                key_shape: [key_shape[0], key_shape[1], key_shape[2]],
-                value_buffer: value_buffer.clone(),
-                value_shape: [value_shape[0], value_shape[1], value_shape[2]],
-            });
-        }
-        let source_indices = &state.kv_cache_update_source_indices;
-        let destination_indices = &state.kv_cache_update_destination_indices;
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let _ = self.encode(
-            kv_layers.as_slice(),
-            source_indices,
-            destination_indices,
-            &root_command_buffer,
-        );
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root_command_buffer.wait_until_completed();
-        }
-    }
 }
 
 #[cfg(test)]

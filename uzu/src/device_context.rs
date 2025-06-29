@@ -183,20 +183,20 @@ pub trait DeviceContext {
         }
     }
 
-    /// Fill an already allocated device array with attention bias values.
+    /// TODO: Create an DeviceBuffer entity that has slice access to data, but doesn't have shape or type
     fn fill_attention_bias<F>(
         &self,
         dst: &mut Self::DeviceArray,
         suffix_length: usize,
         prefix_length: usize,
-        data_type: DataType,
         mut should_be_neg_inf: F,
     ) where
         F: FnMut(usize, usize) -> bool,
     {
         let total_elems = suffix_length * (suffix_length + prefix_length);
-        match data_type {
+        match dst.data_type() {
             DataType::F16 => {
+                // TODO: Use lambda to avoid crimes
                 let mut buf = Vec::<f16>::with_capacity(total_elems);
                 for row in 0..suffix_length {
                     for col in 0..suffix_length + prefix_length {

@@ -13,10 +13,7 @@ use crate::{
         AttentionExecutableProviderConfig, DecoderExecutables, KVCache,
         KVCacheUpdate, KernelDataType, KernelsConfig, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
-        forward_pass::{
-            ForwardPassBuffers, SharedBuffers,
-            encodable_with_state::EncodableWithState,
-        },
+        forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
     },
     config::ModelConfig,
@@ -34,7 +31,7 @@ pub struct GeneratorContext {
 
     pub model_shape: ModelShape,
     pub executables: DecoderExecutables,
-    pub kv_cache_update: Box<dyn EncodableWithState>,
+    pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: SamplingKernelEncodable,
 }
 
@@ -125,7 +122,7 @@ impl GeneratorContext {
         let intermediate_data_type: DataType =
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
-        let kv_cache_update: Box<dyn EncodableWithState> = Box::new(
+        let kv_cache_update: Box<KVCacheUpdate> = Box::new(
             KVCacheUpdate::new(
                 &mtl_context,
                 kernel_data_type,

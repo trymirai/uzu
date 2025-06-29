@@ -28,9 +28,6 @@ void attention_single_pass_impl(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const constant int& window_size,
-    const constant int& ring_offset,
-    const constant int& prefix_length,
     uint3 tid, // thread index in threadgroup
     uint3 tpg, // threads per group
     uint simd_gid, // simdgroup index in threadgroup
@@ -59,10 +56,8 @@ void attention_single_pass_impl(
     const int q_offset = query_transposed ? tpg.x * q_seq_idx + head_idx : head_idx * tpg.y + q_seq_idx;
     
     queries += q_offset * head_dim + simd_lid * qk_elements_per_thread;
-    
-    // Store base pointers for ring buffer addressing
-    const device T* keys_base = keys + kv_head_idx * k_head_stride + simd_lid * qk_elements_per_thread;
-    const device T* values_base = values + kv_head_idx * v_head_stride + simd_lid * value_elements_per_thread;
+    keys += kv_head_idx * k_head_stride + simd_gid * k_seq_stride + simd_lid * qk_elements_per_thread;
+    values += kv_head_idx * v_head_stride + simd_gid * v_seq_stride + simd_lid * value_elements_per_thread;
     
     if (bool_mask) {
         bmask += head_idx * mask_head_stride + simd_gid * mask_kv_seq_stride + q_seq_idx * mask_q_seq_stride;
@@ -94,24 +89,9 @@ void attention_single_pass_impl(
         }
         
         if (use_key) {
-            // Calculate physical position in ring buffer
-            uint logical_t = i;
-            uint phys_t;
-            if (prefix_length < window_size) {
-                // Still filling window - use linear addressing
-                phys_t = logical_t;
-            } else {
-                // Window is full - use ring buffer addressing
-                phys_t = (ring_offset + logical_t) % window_size;
-            }
-            
-            // Get key and value pointers for this physical position
-            const device T* key_ptr = keys_base + phys_t * k_seq_stride;
-            const device T* value_ptr = values_base + phys_t * v_seq_stride;
-            
             // Read the key
             for (int j = 0; j < qk_elements_per_thread; j++) {
-                k[j] = key_ptr[j];
+                k[j] = keys[j];
             }
 
             // Compute the i-th score
@@ -134,11 +114,13 @@ void attention_single_pass_impl(
 
             // Update the output accumulator
             for (int j = 0; j < value_elements_per_thread; j++) {
-                o[j] = o[j] * factor + exp_score * value_ptr[j];
+                o[j] = o[j] * factor + exp_score * values[j];
             }
         }
 
-        // Move mask pointers
+        // Move the pointers to the next kv
+        keys += inner_k_stride;
+        values += inner_v_stride;
         if (bool_mask) {
             bmask += sequence_block_size * mask_kv_seq_stride;
         }
@@ -194,9 +176,6 @@ void attention_2pass_1_impl(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const constant int& window_size,
-    const constant int& ring_offset,
-    const constant int& prefix_length,
     uint3 tid, // thread index in threadgroup
     uint3 tpg, // threads per group
     uint simd_gid, // simdgroup index in threadgroup
@@ -227,11 +206,8 @@ void attention_2pass_1_impl(
     const int kv_head_idx = head_idx / gqa_factor;
 
     queries += q_offset * head_dim + simd_lid * qk_elements_per_thread;
-    
-    // Store base pointers for ring buffer addressing
-    const device T* keys_base = keys + kv_head_idx * k_head_stride + simd_lid * qk_elements_per_thread;
-    const device T* values_base = values + kv_head_idx * v_head_stride + simd_lid * value_elements_per_thread;
-    
+    keys += kv_head_idx * k_head_stride + (block_idx * sequence_block_size + simd_gid) * k_seq_stride + simd_lid * qk_elements_per_thread;
+    values += kv_head_idx * v_head_stride + (block_idx * sequence_block_size + simd_gid) * v_seq_stride + simd_lid * value_elements_per_thread;
     out += o_offset * total_blocks_count * value_dim + block_idx * value_dim + simd_gid * value_elements_per_thread;
     
     if (bool_mask) {
@@ -264,24 +240,9 @@ void attention_2pass_1_impl(
         }
         
         if (use_key) {
-            // Calculate physical position in ring buffer
-            uint logical_t = i;
-            uint phys_t;
-            if (prefix_length < window_size) {
-                // Still filling window - use linear addressing
-                phys_t = logical_t;
-            } else {
-                // Window is full - use ring buffer addressing
-                phys_t = (ring_offset + logical_t) % window_size;
-            }
-            
-            // Get key and value pointers for this physical position
-            const device T* key_ptr = keys_base + phys_t * k_seq_stride;
-            const device T* value_ptr = values_base + phys_t * v_seq_stride;
-            
             // Read the key
             for (int j = 0; j < qk_elements_per_thread; j++) {
-                k[j] = key_ptr[j];
+                k[j] = keys[j];
             }
 
             // Compute the i-th score
@@ -304,11 +265,13 @@ void attention_2pass_1_impl(
 
             // Update the output accumulator
             for (int j = 0; j < value_elements_per_thread; j++) {
-                o[j] = o[j] * factor + exp_score * value_ptr[j];
+                o[j] = o[j] * factor + exp_score * values[j];
             }
         }
 
-        // Move mask pointers
+        // Move the pointers to the next kv
+        keys += total_blocks_count * inner_k_stride;
+        values += total_blocks_count * inner_v_stride;
         if (bool_mask) {
             bmask += sequence_block_size * total_blocks_count * mask_kv_seq_stride;
         }
@@ -426,9 +389,6 @@ void attention_single_pass(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const constant int& window_size,
-    const constant int& ring_offset,
-    const constant int& prefix_length,
     uint3 tid,
     uint3 tpg,
     uint simd_gid,
@@ -441,7 +401,6 @@ void attention_single_pass(
         queries, keys, values, out, gqa_factor, sequence_length,
         k_head_stride, k_seq_stride, v_head_stride, v_seq_stride,
         scale, bmask, fmask, mask_kv_seq_stride, mask_q_seq_stride, mask_head_stride,
-        window_size, ring_offset, prefix_length,
         tid, tpg, simd_gid, simd_lid,
         shared_max_scores, shared_sum_exp_scores, shared_outputs
     );
@@ -467,9 +426,6 @@ void attention_2pass_1(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const constant int& window_size,
-    const constant int& ring_offset,
-    const constant int& prefix_length,
     uint3 tid,
     uint3 tpg,
     uint simd_gid,
@@ -482,7 +438,6 @@ void attention_2pass_1(
         queries, keys, values, out, sums, maxs, gqa_factor, sequence_length,
         k_head_stride, k_seq_stride, v_head_stride, v_seq_stride,
         scale, bmask, fmask, mask_kv_seq_stride, mask_q_seq_stride, mask_head_stride,
-        window_size, ring_offset, prefix_length,
         tid, tpg, simd_gid, simd_lid,
         shared_max_scores, shared_sum_exp_scores, shared_outputs
     );
@@ -522,9 +477,6 @@ void attention_2pass_2(
  const constant int& mask_kv_seq_stride [[ buffer(13), function_constant(has_mask) ]], \
  const constant int& mask_q_seq_stride [[ buffer(14), function_constant(has_mask) ]], \
  const constant int& mask_head_stride [[ buffer(15), function_constant(has_mask) ]], \
- const constant int& window_size [[ buffer(16) ]],                \
- const constant int& ring_offset [[ buffer(17) ]],               \
- const constant int& prefix_length [[ buffer(18) ]],              \
  uint3 tid                     [[ threadgroup_position_in_grid ]], \
  uint3 tpg                     [[ threadgroups_per_grid ]],       \
  uint simd_gid                 [[ simdgroup_index_in_threadgroup ]], \
@@ -533,8 +485,8 @@ void attention_2pass_2(
 #define innerArguments                                              \
 (queries, keys, values, out, gqa_factor, sequence_length, k_head_stride, k_seq_stride, \
  v_head_stride, v_seq_stride, scale, bmask, fmask, mask_kv_seq_stride, \
- mask_q_seq_stride, mask_head_stride, window_size, ring_offset, prefix_length, \
- tid, tpg, simd_gid, simd_lid, shared_max_scores, shared_sum_exp_scores, shared_outputs) \
+ mask_q_seq_stride, mask_head_stride, tid, tpg, simd_gid, simd_lid, \
+ shared_max_scores, shared_sum_exp_scores, shared_outputs) \
 
 // Generate single-pass kernels for different head dimensions
 #define GENERATE_SINGLE_PASS_KERNELS(head_dim_value) \
@@ -589,9 +541,6 @@ GENERATE_SINGLE_PASS_KERNELS(256)
  const constant int& mask_kv_seq_stride [[ buffer(15), function_constant(has_mask) ]], \
  const constant int& mask_q_seq_stride [[ buffer(16), function_constant(has_mask) ]], \
  const constant int& mask_head_stride [[ buffer(17), function_constant(has_mask) ]], \
- const constant int& window_size [[ buffer(18) ]],                \
- const constant int& ring_offset [[ buffer(19) ]],               \
- const constant int& prefix_length [[ buffer(20) ]],              \
  uint3 tid                     [[ threadgroup_position_in_grid ]], \
  uint3 tpg                     [[ threadgroups_per_grid ]],       \
  uint simd_gid                 [[ simdgroup_index_in_threadgroup ]], \
@@ -600,8 +549,8 @@ GENERATE_SINGLE_PASS_KERNELS(256)
 #define innerArguments                                              \
 (queries, keys, values, out, sums, maxs, gqa_factor, sequence_length, k_head_stride, k_seq_stride, \
  v_head_stride, v_seq_stride, scale, bmask, fmask, mask_kv_seq_stride, \
- mask_q_seq_stride, mask_head_stride, window_size, ring_offset, prefix_length, \
- tid, tpg, simd_gid, simd_lid, shared_max_scores, shared_sum_exp_scores, shared_outputs) \
+ mask_q_seq_stride, mask_head_stride, tid, tpg, simd_gid, simd_lid, \
+ shared_max_scores, shared_sum_exp_scores, shared_outputs) \
 
 // Generate 2-pass Pass 1 kernels for different head dimensions
 #define GENERATE_2PASS_1_KERNELS(head_dim_value) \
@@ -684,7 +633,6 @@ void update_kv_cache(
     const constant int& suffix_length,
     const constant int& prefix_length,
     const constant int& max_sequence_length,
-    const constant int& ring_offset,
     uint3 position                       // x: group_idx, y: token_idx, z: dim_idx
 ) {
     const uint groupIndex = position.x;
@@ -699,18 +647,8 @@ void update_kv_cache(
     TensorView3D<T> keyCacheTensorView = TensorView3D<T>(key_cache, num_groups, max_sequence_length, head_dim);
     TensorView3D<T> valueCacheTensorView = TensorView3D<T>(value_cache, num_groups, max_sequence_length, head_dim);
     
-    // Calculate write position
-    uint writePosition;
-    if (prefix_length < max_sequence_length) {
-        // Still filling the window - use linear addressing
-        writePosition = prefix_length + tokenIndex;
-    } else {
-        // Window is full - use ring buffer addressing
-        writePosition = (ring_offset + tokenIndex) % max_sequence_length;
-    }
-    
     // Copy rotated key to cache
-    keyCacheTensorView(groupIndex, writePosition, dimIndex) = rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
+    keyCacheTensorView(groupIndex, prefix_length + tokenIndex, dimIndex) = rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
     
     // Update value cache (only first thread in each token processes values to avoid redundant work)
     if (dimIndex == 0) {
@@ -724,7 +662,7 @@ void update_kv_cache(
         // Values start at offset: total_query_dim + total_key_value_dim
         for (uint d = 0; d < head_dim; d++) {
             const uint valueOffset = totalQueryDim + totalKeyValueDim + groupIndex * head_dim + d;
-            valueCacheTensorView(groupIndex, writePosition, d) = qkvTensorView(tokenIndex, valueOffset);
+            valueCacheTensorView(groupIndex, prefix_length + tokenIndex, d) = qkvTensorView(tokenIndex, valueOffset);
         }
     }
 }
@@ -740,12 +678,11 @@ void update_kv_cache(
  const constant int& suffix_length [[ buffer(7) ]],               \
  const constant int& prefix_length [[ buffer(8) ]],               \
  const constant int& max_sequence_length [[ buffer(9) ]],         \
- const constant int& ring_offset [[ buffer(10) ]],               \
  uint3 position                  [[ thread_position_in_grid ]])   \
 
 #define innerArguments                                             \
 (rotated_keys, qkv, key_cache, value_cache, num_groups, num_heads, \
- head_dim, suffix_length, prefix_length, max_sequence_length, ring_offset, position) \
+ head_dim, suffix_length, prefix_length, max_sequence_length, position) \
 
 generateKernels(update_kv_cache)
 

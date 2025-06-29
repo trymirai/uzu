@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use metal::Buffer as MTLBuffer;
 
 use super::{super::MTLContext, model_shape::ModelShape};
@@ -15,7 +17,7 @@ pub struct ForwardPassBuffers {
     pub sampling_output: MTLBuffer,
 
     // 2-D
-    pub attention_bias: MTLBuffer,
+    pub attention_window_size_to_bias: HashMap<Option<usize>, MTLBuffer>,
     pub logits: MTLBuffer,
     pub main: MTLBuffer,
     pub shortcut: MTLBuffer,
@@ -33,6 +35,7 @@ pub struct ForwardPassBuffers {
 }
 
 impl ForwardPassBuffers {
+    // TODO: use device arrays instead of MTLBuffers
     /// Allocate the buffers with `StorageModeShared` so that they are CPU-accessible as well.
     pub fn new(
         context: &MTLContext,
@@ -69,10 +72,18 @@ impl ForwardPassBuffers {
             sampling_output: alloc(&[max_suffix_len], DataType::U32),
 
             // 2-D
-            attention_bias: alloc(
-                &[max_suffix_len, max_suffix_len + max_prefix_len],
-                act_ty,
-            ),
+            attention_window_size_to_bias: (0..model_shape.num_layers)
+                .map(|layer| {
+                    (
+                        model_shape.sliding_window_length_per_layer
+                            [layer as usize],
+                        alloc(
+                            &[max_suffix_len, max_suffix_len + max_prefix_len],
+                            act_ty,
+                        ),
+                    )
+                })
+                .collect::<HashMap<Option<usize>, MTLBuffer>>(),
             logits: alloc(&model_shape.logits_shape(max_suffix_len), act_ty),
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty),
             shortcut: alloc(&model_shape.main_shape(max_suffix_len), act_ty),

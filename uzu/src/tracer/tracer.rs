@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell},
+    env::consts::ARCH,
     fs::File,
     path::{Path, PathBuf},
     rc::Rc,
@@ -227,7 +228,6 @@ impl Tracer {
             self.generator_context.shared_buffers.clone(),
             &token_ids,
             &token_positions,
-            |r, c| !mask[r][c],
             true,
         );
 
