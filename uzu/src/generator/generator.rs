@@ -68,7 +68,6 @@ impl Generator {
 
         let speculator = &self.config.speculator_config.speculator;
         let proposals = speculator.generate_proposals(&tokens);
-        eprintln!("[PREFILL] Generated {} proposals", proposals.len());
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
             .linearize(0, unused_tokens_count);
 
@@ -193,10 +192,6 @@ impl Generator {
             let start_pos = self.tokens.len();
             let accepted_positions: Vec<usize> =
                 (0..accepted_tokens.len()).map(|i| start_pos + i).collect();
-            eprintln!(
-                "[PREFILL] Registering speculated tokens: {:?} at positions: {:?}",
-                accepted_tokens, accepted_positions
-            );
             self.context
                 .kv_cache
                 .borrow_mut()
@@ -225,8 +220,6 @@ impl Generator {
         if proposals.is_empty() {
             proposals = vec![vec![*last_token]];
         }
-
-        eprintln!("[GEN] Generated {} proposals", proposals.len());
 
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
             .linearize(0, self.config.generate_suffix_length());
@@ -257,16 +250,6 @@ impl Generator {
             self.allow_pre_encode(),
             Some(sampling_config),
         );
-        eprintln!(
-            "[GEN] About to sample, sequence length: {}",
-            self.tokens.len()
-        );
-        if self.tokens.len() >= 5 {
-            eprintln!(
-                "[GEN] Last 5 tokens: {:?}",
-                &self.tokens[self.tokens.len() - 5..]
-            );
-        }
 
         let argmax_tokens = self.gpu_sample(&mut state);
 
@@ -290,12 +273,6 @@ impl Generator {
             }
         }
 
-        eprintln!(
-            "[GEN] Accepted tokens: {:?}, new sequence length: {}",
-            accepted_tokens,
-            self.tokens.len()
-        );
-
         self.update_kv_cache(&mut state, &accepted_token_indices);
 
         let start_pos = self.tokens.len();
@@ -307,12 +284,6 @@ impl Generator {
             .register_accepted_tokens(&accepted_positions);
 
         self.tokens.extend(accepted_tokens.clone());
-
-        eprintln!(
-            "[GEN] Accepted tokens: {:?}, new sequence length: {}",
-            accepted_tokens,
-            self.tokens.len()
-        );
 
         GenerateResult {
             tokens: accepted_tokens,

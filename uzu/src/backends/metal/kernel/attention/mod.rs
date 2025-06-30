@@ -581,37 +581,11 @@ impl EncodableWithState for AttentionKernelEncodable {
         let window_length =
             state.kv_cache.borrow().data[self.layer_index].window_length();
 
-        // if self.layer_index == 0 {
-        //     eprintln!(
-        //         "[ATTN-ENC] layer=0 suffix_len={} prefix_len={} seq_len={} window_len={:?}",
-        //         suffix_length, prefix_length, sequence_length, window_length
-        //     );
-
-        //     if let KVCacheLayerState::Windowed {
-        //         ring_offset,
-        //         ring_length,
-        //         ..
-        //     } = &state.kv_cache.borrow().data[0].state
-        //     {
-        //         eprintln!(
-        //             "[ATTN-ENC] layer=0 ring_offset={} ring_length={}",
-        //             ring_offset, ring_length
-        //         );
-        //     }
-        // }
-
         let gqa_factor = num_heads / num_groups;
         let scale =
             self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
         let variant = self.kernel.choose_variant(sequence_length, head_dim);
-
-        if self.layer_index == 0 {
-            eprintln!(
-                "[ATTN-L0] suffix_len={}, prefix_len={}, seq_len={}, window={:?}",
-                suffix_length, prefix_length, sequence_length, window_length
-            );
-        }
 
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
@@ -674,35 +648,6 @@ impl EncodableWithState for AttentionKernelEncodable {
 
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
-
-        // I removed buffer clean up because it it's taking too much time and we override it anyway
-        // let blit_encoder = mtl_command_buffer.new_blit_command_encoder();
-        // let partials_size = (num_heads
-        //     * suffix_length
-        //     * total_blocks_count
-        //     * head_dim
-        //     * std::mem::size_of::<f32>()) as u64;
-        // let sums_maxs_size = (num_heads
-        //     * suffix_length
-        //     * total_blocks_count
-        //     * std::mem::size_of::<f32>()) as u64;
-
-        // blit_encoder.fill_buffer(
-        //     &partials_buffer,
-        //     metal::NSRange::new(0, partials_size),
-        //     0,
-        // );
-        // blit_encoder.fill_buffer(
-        //     &sums_buffer,
-        //     metal::NSRange::new(0, sums_maxs_size),
-        //     0,
-        // );
-        // blit_encoder.fill_buffer(
-        //     &maxs_buffer,
-        //     metal::NSRange::new(0, sums_maxs_size),
-        //     0,
-        // );
-        // blit_encoder.end_encoding();
 
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
@@ -803,63 +748,6 @@ impl EncodableWithState for AttentionKernelEncodable {
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
-
-            // if self.layer_index == 0 {
-            //     let key_ptr = key_cache_buffer.contents() as *const f32;
-            //     let key_total_size =
-            //         num_groups * max_sequence_length * head_dim;
-            //     let key_first_8 = unsafe {
-            //         std::slice::from_raw_parts(key_ptr, 8.min(key_total_size))
-            //     };
-            //     let key_last_8 = unsafe {
-            //         std::slice::from_raw_parts(
-            //             key_ptr.add(key_total_size.saturating_sub(8)),
-            //             8.min(key_total_size),
-            //         )
-            //     };
-            //     eprintln!(
-            //         "[KV-CACHE] Key first8: {:?} last8: {:?}",
-            //         key_first_8, key_last_8
-            //     );
-
-            //     // Print value cache values
-            //     let value_ptr = value_cache_buffer.contents() as *const f32;
-            //     let value_total_size =
-            //         num_groups * max_sequence_length * head_dim;
-            //     let value_first_8 = unsafe {
-            //         std::slice::from_raw_parts(
-            //             value_ptr,
-            //             8.min(value_total_size),
-            //         )
-            //     };
-            //     let value_last_8 = unsafe {
-            //         std::slice::from_raw_parts(
-            //             value_ptr.add(value_total_size.saturating_sub(8)),
-            //             8.min(value_total_size),
-            //         )
-            //     };
-            //     eprintln!(
-            //         "[KV-CACHE] Value first8: {:?} last8: {:?}",
-            //         value_first_8, value_last_8
-            //     );
-
-            //     // Print attention bias values
-            //     let bias_ptr = attention_bias_buffer.contents() as *const f32;
-            //     let bias_total_size = suffix_length * sequence_length;
-            //     let bias_first_8 = unsafe {
-            //         std::slice::from_raw_parts(bias_ptr, 8.min(bias_total_size))
-            //     };
-            //     let bias_last_8 = unsafe {
-            //         std::slice::from_raw_parts(
-            //             bias_ptr.add(bias_total_size.saturating_sub(8)),
-            //             8.min(bias_total_size),
-            //         )
-            //     };
-            //     eprintln!(
-            //         "[BIAS] window_len={:?} first8: {:?} last8: {:?}",
-            //         window_length, bias_first_8, bias_last_8
-            //     );
-            // }
         }
     }
 }

@@ -52,40 +52,6 @@ impl KVCacheLayer {
         }
     }
 
-    fn assert_window_integrity(
-        &self,
-        when: &str,
-        layer_idx: usize,
-    ) {
-        if layer_idx != 0 {
-            return; // Only check layer 0
-        }
-
-        if let KVCacheLayerState::Windowed {
-            ring_offset,
-            ring_length,
-            window_length,
-        } = self.state
-        {
-            // Build logical view [oldest … newest]
-            let mut logical: Vec<usize> = Vec::with_capacity(ring_length);
-            for i in 0..ring_length {
-                let phys = (ring_offset + i) % window_length;
-                logical.push(self.prefix_token_positions[phys]);
-            }
-
-            // 1. Must be strictly increasing by 1
-            for pair in logical.windows(2) {
-                assert!(
-                    pair[1] == pair[0] + 1,
-                    "\n[WINDOW-ASSERT {}] non-contiguous window: {:?}",
-                    when,
-                    logical
-                );
-            }
-        }
-    }
-
     pub fn is_sliding_window(&self) -> bool {
         matches!(self.state, KVCacheLayerState::Windowed { .. })
     }
@@ -196,8 +162,6 @@ impl KVCacheLayer {
                 );
             },
         }
-
-        self.assert_window_integrity("post‑scatter", 0);
     }
 
     fn scatter_if_required(
@@ -324,53 +288,6 @@ impl KVCacheLayer {
                         *ring_offset = (*ring_offset + 1) % *window_length;
                     }
                 }
-
-                if layer_idx == 0 {
-                    eprintln!(
-                        "[KV-L0] Registered positions: {:?}, ring_offset={}, ring_length={}",
-                        token_positions, ring_offset, ring_length
-                    );
-
-                    // Show first 8 tokens in logical order
-                    let first_8: Vec<usize> = (0..(*ring_length).min(8))
-                        .map(|i| {
-                            let idx = (*ring_offset + i) % *window_length;
-                            self.prefix_token_positions[idx]
-                        })
-                        .collect();
-                    eprintln!("[KV-L0] Cache first 8 (logical): {:?}", first_8);
-
-                    // Show last 8 tokens in logical order if we have more than 8
-                    if *ring_length > 8 {
-                        let start_offset = (*ring_length).saturating_sub(8);
-                        let last_8: Vec<usize> = (start_offset..*ring_length)
-                            .map(|i| {
-                                let idx = (*ring_offset + i) % *window_length;
-                                self.prefix_token_positions[idx]
-                            })
-                            .collect();
-                        eprintln!(
-                            "[KV-L0] Cache last 8 (logical): {:?}",
-                            last_8
-                        );
-                    }
-                }
-
-                // if layer_idx == 0 {
-                //     eprintln!(
-                //         "[KV-WINDOWED] registered {} tokens, ring_offset={}, ring_length={}, positions first8={:?} last8={:?}",
-                //         token_positions.len(),
-                //         ring_offset,
-                //         ring_length,
-                //         &self.prefix_token_positions
-                //             [..8.min(self.prefix_token_positions.len())],
-                //         &self.prefix_token_positions[self
-                //             .prefix_token_positions
-                //             .len()
-                //             .saturating_sub(8)
-                //             ..self.prefix_token_positions.len()],
-                //     );
-                // }
             },
         }
     }
@@ -508,7 +425,6 @@ impl KVCache {
                 kv_cache_update,
                 tokens_count,
             );
-            layer.assert_window_integrity("post-scatter", idx);
         }
     }
 
@@ -518,7 +434,6 @@ impl KVCache {
     ) {
         for (idx, layer) in self.data.iter_mut().enumerate() {
             layer.register_accepted_tokens(token_positions, idx);
-            layer.assert_window_integrity("post-register", idx);
         }
     }
 }
