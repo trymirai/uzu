@@ -59,43 +59,118 @@ impl Generator {
         self.tokens = tokens.clone();
 
         let tokens_length = tokens.len();
-        let number_of_prefill_steps = (tokens_length as f32
-            / self.config.prefill_step_size as f32)
-            .ceil() as usize;
-        let total_prefill_tokens_count =
-            number_of_prefill_steps * self.config.prefill_step_size;
-        let unused_tokens_count = total_prefill_tokens_count - tokens_length;
+        let step_size = self.config.prefill_step_size;
 
-        let speculator = &self.config.speculator_config.speculator;
-        let prefix_indices: Vec<usize> = (0..tokens_length).collect();
-        let proposals = speculator.generate_proposals(&tokens);
-        eprintln!("[PREFILL] Generated {} proposals", proposals.len());
-        let speculated_suffix = TokenTrie::from_sequences(&proposals)
-            .linearize(0, unused_tokens_count);
-        let speculated_suffix_indicies: Vec<usize> = speculated_suffix
-            .indices
-            .iter()
-            .map(|index| index + tokens_length)
-            .collect();
-        let mut indicies = prefix_indices.clone();
-        indicies.extend(speculated_suffix_indicies);
+        let use_padding =
+            self.config.speculator_config.number_of_speculated_tokens == 0;
 
-        let zero_padding_tokens: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-        let zero_padding_indicies: Vec<usize> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-        let padded_tokens =
-            [tokens, speculated_suffix.tokens, zero_padding_tokens].concat();
-        let padded_indicies = [indicies, zero_padding_indicies].concat();
+        let (
+            padded_tokens,
+            padded_indicies,
+            speculated_suffix,
+            number_of_prefill_steps,
+        ) = if use_padding {
+            let number_of_prefill_steps =
+                ((tokens_length as f32) / step_size as f32).ceil() as usize;
+
+            let total_prefill_tokens_count =
+                number_of_prefill_steps * step_size;
+            let unused_tokens_count =
+                total_prefill_tokens_count - tokens_length;
+
+            let proposals = self
+                .config
+                .speculator_config
+                .speculator
+                .generate_proposals(&tokens);
+
+            let speculated_suffix = TokenTrie::from_sequences(&proposals)
+                .linearize(0, unused_tokens_count);
+
+            let zero_padding_tokens: Vec<u64> =
+                vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
+
+            let mut padded_tokens =
+                Vec::with_capacity(total_prefill_tokens_count);
+            padded_tokens.extend_from_slice(&tokens);
+            padded_tokens.extend_from_slice(&speculated_suffix.tokens);
+            padded_tokens.extend_from_slice(&zero_padding_tokens);
+
+            let mut padded_indicies: Vec<usize> = (0..tokens_length).collect();
+            padded_indicies.extend(
+                speculated_suffix
+                    .indices
+                    .iter()
+                    .map(|index| index + tokens_length),
+            );
+            let zero_padding_indices: Vec<usize> =
+                vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
+            padded_indicies.extend(zero_padding_indices);
+
+            (
+                padded_tokens,
+                padded_indicies,
+                speculated_suffix,
+                number_of_prefill_steps,
+            )
+        } else {
+            let full_steps = tokens_length / step_size;
+            let remainder = tokens_length % step_size;
+
+            let proposals = if remainder == 0 {
+                Vec::new()
+            } else {
+                self.config
+                    .speculator_config
+                    .speculator
+                    .generate_proposals(&tokens)
+            };
+
+            let speculated_suffix = if remainder == 0 {
+                TokenTrie::from_sequences(&Vec::<Vec<u64>>::new())
+                    .linearize(0, 0)
+            } else {
+                let budget = step_size - remainder;
+                TokenTrie::from_sequences(&proposals).linearize(0, budget)
+            };
+
+            let mut padded_tokens: Vec<u64> = Vec::with_capacity(
+                tokens_length + speculated_suffix.tokens.len(),
+            );
+            padded_tokens.extend_from_slice(&tokens);
+            padded_tokens.extend_from_slice(&speculated_suffix.tokens);
+
+            let mut padded_indicies: Vec<usize> = (0..tokens_length).collect();
+            padded_indicies.extend(
+                speculated_suffix
+                    .indices
+                    .iter()
+                    .map(|index| index + tokens_length),
+            );
+
+            // Recompute steps after removing padding
+            let number_of_prefill_steps = ((padded_tokens.len() as f32)
+                / step_size as f32)
+                .ceil() as usize;
+
+            (
+                padded_tokens,
+                padded_indicies,
+                speculated_suffix,
+                number_of_prefill_steps,
+            )
+        };
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update KV cache immediately
         for step in 0..number_of_prefill_steps {
-            let tokens_start_index = step * self.config.prefill_step_size;
-            let tokens_end_index =
-                tokens_start_index + self.config.prefill_step_size;
+            let tokens_start_index = step * step_size;
+            let tokens_end_index = std::cmp::min(
+                tokens_start_index + step_size,
+                padded_tokens.len(),
+            );
             let tokens_for_step =
                 &padded_tokens[tokens_start_index..tokens_end_index];
             let indices_for_step =
@@ -109,7 +184,7 @@ impl Generator {
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: indices_for_step.to_vec(),
-                expected_amount_of_new_tokens: self.config.prefill_step_size,
+                expected_amount_of_new_tokens: tokens_for_step.len(),
             };
 
             let (state, run_time) = self.run_model(
@@ -146,10 +221,9 @@ impl Generator {
         let mut accepted_tokens: Vec<u64> = Vec::new();
         let mut current_token_index: isize = -1;
         loop {
-            let current_index_in_window = ((current_token_index
-                + tokens_length as isize)
-                % self.config.prefill_step_size as isize)
-                as usize;
+            let current_index_in_window =
+                ((current_token_index + tokens_length as isize)
+                    % step_size as isize) as usize;
 
             let new_token = argmax_tokens[current_index_in_window];
             accepted_tokens.push(new_token);
