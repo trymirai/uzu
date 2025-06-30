@@ -185,7 +185,11 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut final_state, &accepted_token_indices);
+        self.update_kv_cache(
+            &mut final_state,
+            &accepted_token_indices,
+            tokens_length,
+        );
 
         // Register the final accepted tokens (from speculation)
         if !accepted_tokens.is_empty() {
@@ -230,12 +234,9 @@ impl Generator {
         let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
         let padded_tokens =
             [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
+        let start_position = self.tokens.len() - 1;
         let padded_indicies: Vec<usize> =
-            [speculated_suffix.indices.clone(), vec![0; unused_tokens_count]]
-                .concat()
-                .iter()
-                .map(|index| index + self.tokens.len() - 1)
-                .collect();
+            (start_position..start_position + expected_suffix_length).collect();
 
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
@@ -273,7 +274,11 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut state, &accepted_token_indices);
+        self.update_kv_cache(
+            &mut state,
+            &accepted_token_indices,
+            self.tokens.len() - 1,
+        );
 
         let start_pos = self.tokens.len();
         let accepted_positions: Vec<usize> =
@@ -376,11 +381,8 @@ impl Generator {
         &mut self,
         _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
+        tokens_count: usize,
     ) {
-        let current_prefix_len = {
-            self.context.kv_cache.borrow().data[0].effective_prefix_length()
-        };
-
         let root_command_buffer =
             self.context.command_buffer.root_command_buffer().to_owned();
 
@@ -388,7 +390,7 @@ impl Generator {
             accepted_token_indices,
             &self.context.command_buffer,
             &self.context.kv_cache_update,
-            current_prefix_len,
+            tokens_count,
         );
 
         self.context.command_buffer.commit_and_continue();
