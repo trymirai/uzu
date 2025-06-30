@@ -14,6 +14,7 @@ pub struct GeneratorEncodedTask {
 pub struct GeneratorRunTask {
     pub token_ids: Vec<u64>,
     pub token_positions: Vec<usize>,
+    pub padding_mask: Option<Vec<bool>>,
     pub expected_amount_of_new_tokens: usize,
 }
 
@@ -22,6 +23,7 @@ impl GeneratorRunTask {
         GeneratorRunTask {
             token_ids: self.token_ids.clone(),
             token_positions: self.token_positions.clone(),
+            padding_mask: self.padding_mask.clone(),
             expected_amount_of_new_tokens: self.expected_amount_of_new_tokens,
         }
     }
@@ -47,6 +49,7 @@ impl GeneratorRunTask {
             context.shared_buffers.clone(),
             &self.token_ids,
             &self.token_positions,
+            self.padding_mask.as_deref(),
             false,
         );
 

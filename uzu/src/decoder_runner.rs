@@ -124,6 +124,7 @@ impl DecoderTestContext {
             shared_buffers.clone(),
             &token_ids,
             &token_positions,
+            None,
             false,
         );
 

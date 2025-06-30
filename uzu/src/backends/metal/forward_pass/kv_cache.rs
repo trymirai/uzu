@@ -107,6 +107,7 @@ impl KVCacheLayer {
         dst: &mut MetalArray,
         suffix_token_positions: &[usize],
         suffix_length: usize,
+        padding_mask: Option<&[bool]>,
         context: &MTLContext,
     ) {
         let effective_prefix_len = self.effective_prefix_length();
@@ -120,6 +121,7 @@ impl KVCacheLayer {
                     row_index,
                     column_index,
                     suffix_token_positions,
+                    padding_mask,
                 )
             },
         );
@@ -242,7 +244,19 @@ impl KVCacheLayer {
         row_index: usize,
         column_index: usize,
         suffix_token_positions: &[usize],
+        padding_mask: Option<&[bool]>,
     ) -> bool {
+        if let Some(mask) = padding_mask {
+            // Mask out any key that corresponds to a padding token in the suffix
+            if column_index >= self.effective_prefix_length() {
+                let suffix_column_index =
+                    column_index - self.effective_prefix_length();
+                if mask[suffix_column_index] {
+                    return true;
+                }
+            }
+        }
+
         let query_position = suffix_token_positions[row_index];
 
         let key_position = if column_index >= self.effective_prefix_length() {
@@ -454,6 +468,7 @@ impl KVCache {
         dst: &mut HashMap<Option<usize>, MetalArray>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
+        padding_mask: Option<&[bool]>,
         context: &MTLContext,
     ) {
         for layer in self.data.iter() {
@@ -472,6 +487,7 @@ impl KVCache {
                     array,
                     suffix_token_positions,
                     suffix_length,
+                    padding_mask,
                     context,
                 );
             }

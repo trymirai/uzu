@@ -6,14 +6,12 @@ use metal::{
     ComputePipelineState as MTLComputePipelineState, MTLResourceOptions,
     MTLSize,
 };
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
 use super::{
     super::MTLError, KernelDataType, MTLContext,
     metal_extensions::ComputeEncoderDispatch,
 };
-use crate::{Array, backends::metal::forward_pass::ForwardPassState};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
