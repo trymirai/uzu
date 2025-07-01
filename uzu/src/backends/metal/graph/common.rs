@@ -3,6 +3,7 @@ use std::rc::Rc;
 use mpsgraph::{
     Graph, GraphActivationOps, GraphArithmeticOps, Shape, ShapedType, Tensor,
 };
+use ndarray::Data;
 use objc2::rc::Retained;
 use thiserror::Error;
 
@@ -163,14 +164,40 @@ pub fn shaped_type(
     ShapedType::new(&Shape::from_dimensions(&shape_i64), data_type.into())
 }
 
-pub fn constant(
+fn map_last_dimension<F: FnMut(usize) -> usize>(
+    mut f: F,
+    shape: &[usize],
+) -> Box<[usize]> {
+    shape
+        .iter()
+        .enumerate()
+        .map(|(i, dim)| {
+            if i == shape.len() - 1 {
+                f(*dim)
+            } else {
+                *dim
+            }
+        })
+        .collect()
+}
+
+fn unpacked_shape_from_packed_shape(packed_shape: &[usize]) -> Box<[usize]> {
+    map_last_dimension(|dim| dim * 2, packed_shape)
+}
+
+fn packed_shape_from_unpacked_shape(packed_shape: &[usize]) -> Box<[usize]> {
+    map_last_dimension(|dim| dim / 2, packed_shape)
+}
+
+pub fn i4_constant_from_packed_u8_array(
     graph: &Graph,
     data: &MetalArray,
 ) -> Retained<Tensor> {
+    assert!(data.data_type() == DataType::U8);
     graph.constant_with_data(
         data.buffer(),
-        &mps_shape(data.shape()),
-        data.data_type().into(),
+        &mps_shape(&unpacked_shape_from_packed_shape(data.shape())),
+        DataType::I4.into(),
     )
 }
 
@@ -182,26 +209,52 @@ pub fn load_constant(
     expected_data_type: DataType,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let parameter = parameter_tree.leaf(name)?;
-    if parameter.shape() != expected_shape {
-        return Err(GraphConstructionError::IncompatibleShapes {
-            node_path: parameter_tree.path_prefix().map(str::to_string),
-            node_name: name.to_string(),
-            expected: expected_shape.into(),
-            actual: parameter.shape().into(),
-        });
-    }
-    if parameter.data_type() != expected_data_type {
-        return Err(GraphConstructionError::IncompatibleDataTypes {
-            node_path: parameter_tree.path_prefix().map(str::to_string),
-            node_name: name.to_string(),
-            expected: expected_data_type.into(),
-            actual: parameter.data_type().into(),
-        });
-    }
-
-    let constant_tensor = constant(graph, &parameter);
-
-    drop(parameter);
-
-    Ok(constant_tensor)
+    let result = if expected_data_type == DataType::U4 {
+        if parameter.data_type() != DataType::U8 {
+            return Err(GraphConstructionError::IncompatibleDataTypes {
+                node_path: parameter_tree.path_prefix().map(str::to_string),
+                node_name: name.to_string(),
+                expected: DataType::U8,
+                actual: parameter.data_type(),
+            });
+        };
+        let packed_expected_shape =
+            packed_shape_from_unpacked_shape(expected_shape);
+        if parameter.shape() != &*packed_expected_shape {
+            return Err(GraphConstructionError::IncompatibleShapes {
+                node_path: parameter_tree.path_prefix().map(str::to_string),
+                node_name: name.to_string(),
+                expected: packed_expected_shape.into(),
+                actual: parameter.shape().into(),
+            });
+        };
+        graph.constant_with_data(
+            parameter.buffer(),
+            &mps_shape(expected_shape),
+            DataType::U4.into(),
+        )
+    } else {
+        if parameter.shape() != expected_shape {
+            return Err(GraphConstructionError::IncompatibleShapes {
+                node_path: parameter_tree.path_prefix().map(str::to_string),
+                node_name: name.to_string(),
+                expected: expected_shape.into(),
+                actual: parameter.shape().into(),
+            });
+        }
+        if parameter.data_type() != expected_data_type {
+            return Err(GraphConstructionError::IncompatibleDataTypes {
+                node_path: parameter_tree.path_prefix().map(str::to_string),
+                node_name: name.to_string(),
+                expected: expected_data_type,
+                actual: parameter.data_type(),
+            });
+        };
+        graph.constant_with_data(
+            parameter.buffer(),
+            &mps_shape(parameter.shape()),
+            parameter.data_type().into(),
+        )
+    };
+    Ok(result)
 }

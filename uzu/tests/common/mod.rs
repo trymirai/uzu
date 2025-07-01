@@ -32,7 +32,7 @@ fn foundation_base_dir() -> Option<PathBuf> {
     }
 }
 
-fn default_root_dir() -> PathBuf {
+pub fn default_root_dir() -> PathBuf {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     if let Some(base) = foundation_base_dir() {
         return base.join("com.mirai.sdk.storage");
@@ -43,8 +43,7 @@ fn default_root_dir() -> PathBuf {
 }
 
 pub fn get_test_model_path() -> PathBuf {
-    let model_path =
-        default_root_dir().join("Meta-Llama-3.2-1B-Instruct-float16");
+    let model_path = default_root_dir().join("Qwen3-4B-AWQ");
     if !model_path.exists() {
         panic!(
             "Test model not found at {:?}. Please make sure the model is downloaded to the SDK storage area.",

@@ -11,7 +11,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"
 tokenizers = "0.21.1"
-mpsgraph = { git = "https://github.com/getmirai/mpsgraph-rs", rev = "371592c", package = "mpsgraph" }
+mpsgraph = { git = "https://github.com/getmirai/mpsgraph-rs", rev = "0b43a50", package = "mpsgraph" }
 objc2 = "0.6.1"
 objc2-foundation = "0.3.1"
 metal = "0.32.0"
