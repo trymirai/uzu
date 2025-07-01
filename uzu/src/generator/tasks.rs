@@ -40,6 +40,7 @@ impl GeneratorRunTask {
     pub fn create_state(
         &self,
         context: &mut GeneratorContext,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> ForwardPassState {
         let state = ForwardPassState::new(
             context.mtl_context.clone(),
@@ -51,6 +52,7 @@ impl GeneratorRunTask {
             &self.token_positions,
             self.padding_mask.as_deref(),
             false,
+            external_bias_fn,
         );
 
         return state;

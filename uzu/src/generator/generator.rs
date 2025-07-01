@@ -320,7 +320,7 @@ impl Generator {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let mut state = task.create_state(&mut self.context);
+            let mut state = task.create_state(&mut self.context, None);
             state.sampling_config = sampling_config;
 
             self.context.reset_command_buffer();

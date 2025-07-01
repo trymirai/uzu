@@ -219,6 +219,10 @@ impl Tracer {
         .map(|chunk| chunk.to_vec())
         .collect();
 
+        let external_bias_fn = |row: usize, col: usize| -> bool {
+            !mask[row][col]
+        };
+
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
             &self.generator_context.model_shape,
@@ -229,6 +233,7 @@ impl Tracer {
             &token_positions,
             None,
             true,
+            Some(&external_bias_fn),
         );
 
         let root_command_buffer = self

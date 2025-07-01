@@ -75,6 +75,7 @@ impl KVCacheLayer {
         suffix_length: usize,
         padding_mask: Option<&[bool]>,
         context: &MTLContext,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let effective_prefix_len = self.effective_prefix_length();
 
@@ -83,12 +84,16 @@ impl KVCacheLayer {
             suffix_length,
             effective_prefix_len,
             |row_index, column_index| {
-                self.bias_should_be_neg_inf(
-                    row_index,
-                    column_index,
-                    suffix_token_positions,
-                    padding_mask,
-                )
+                if let Some(bias_fn) = external_bias_fn {
+                    bias_fn(row_index, column_index)
+                } else {
+                    self.bias_should_be_neg_inf(
+                        row_index,
+                        column_index,
+                        suffix_token_positions,
+                        padding_mask,
+                    )
+                }
             },
         );
     }
@@ -387,6 +392,7 @@ impl KVCache {
         suffix_length: usize,
         padding_mask: Option<&[bool]>,
         context: &MTLContext,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         for layer in self.data.iter() {
             let key: Option<usize> = match &layer.state {
@@ -406,6 +412,7 @@ impl KVCache {
                     suffix_length,
                     padding_mask,
                     context,
+                    external_bias_fn,
                 );
             }
         }

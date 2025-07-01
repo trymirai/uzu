@@ -307,6 +307,7 @@ impl ForwardPassState {
         token_positions: &[usize],
         padding_mask: Option<&[bool]>,
         trace: bool,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -385,6 +386,7 @@ impl ForwardPassState {
             suffix_length,
             padding_mask,
             &context,
+            external_bias_fn,
         );
 
         let attention_bias: HashMap<Option<usize>, ArrayCell> =
