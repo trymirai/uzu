@@ -1,4 +1,5 @@
 use std::{collections::HashMap, fs::File, rc::Rc};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use metal::{
     CaptureDescriptor, CaptureManager, CaptureScope, MTLCaptureDestination,
@@ -121,11 +122,23 @@ fn main() -> Result<(), ExampleError> {
         let capture_manager_descriptor = CaptureDescriptor::new();
         capture_manager_descriptor
             .set_destination(MTLCaptureDestination::GpuTraceDocument);
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs();
+        let trace_path = root_dir(RootLocation::Downloads)
+            .join(format!("dequantize_qkv_layer0-{timestamp}.gputrace"));
+
+        capture_manager_descriptor.set_output_url(trace_path);
+
+        // Give a meaningful label to the command queue for easier debugging.
+        mtl_context.command_queue.set_label("uzu_command_queue");
+
+        // Capture the command queue instead of the whole device so the trace
+        // is scoped to work submitted through this queue.
         capture_manager_descriptor
-            .set_output_url("dequantize_qkv_layer0.gputrace");
-        //     root_dir(RootLocation::Downloads)
-        //         .join("dequantize_qkv_layer0.gputrace"),
-        // );
+            .set_capture_command_queue(&mtl_context.command_queue);
 
         let output_url = capture_manager_descriptor.output_url();
         println!("output_url: {:?}", output_url);
@@ -140,7 +153,9 @@ fn main() -> Result<(), ExampleError> {
         );
         executable.dump();
 
-        let _ = capture_manager.start_capture(&capture_manager_descriptor);
+        if let Err(err) = capture_manager.start_capture(&capture_manager_descriptor) {
+            eprintln!("⚠️  Failed to start GPU capture: {err}");
+        }
 
         let command_buffer =
             CommandBuffer::from_command_queue(&mtl_context.command_queue);
