@@ -185,11 +185,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
-            &mut final_state,
-            &accepted_token_indices,
-            tokens_length,
-        );
+        self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
         // Register the final accepted tokens (from speculation)
         if !accepted_tokens.is_empty() {
@@ -274,11 +270,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
-            &mut state,
-            &accepted_token_indices,
-            self.tokens.len() - 1,
-        );
+        self.update_kv_cache(&mut state, &accepted_token_indices);
 
         let start_pos = self.tokens.len();
         let accepted_positions: Vec<usize> =
@@ -381,7 +373,6 @@ impl Generator {
         &mut self,
         _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
-        tokens_count: usize,
     ) {
         let root_command_buffer =
             self.context.command_buffer.root_command_buffer().to_owned();
@@ -390,7 +381,6 @@ impl Generator {
             accepted_token_indices,
             &self.context.command_buffer,
             &self.context.kv_cache_update,
-            tokens_count,
         );
 
         self.context.command_buffer.commit_and_continue();

@@ -98,8 +98,8 @@ impl KVCacheLayer {
         accepted_suffix_indices: &[usize],
         command_buffer: &MPSCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
-        tokens_count: usize,
     ) {
+        let effective_prefix_length = self.effective_prefix_length();
         let effective_indices: Vec<usize> = if accepted_suffix_indices
             .is_empty()
             && matches!(self.state, KVCacheLayerState::Windowed { .. })
@@ -116,7 +116,7 @@ impl KVCacheLayer {
                 // Absolute positions of the *source* rows (still in suffix part).
                 let source_indices: Vec<usize> = effective_indices
                     .iter()
-                    .map(|i| i + tokens_count)
+                    .map(|i| i + effective_prefix_length)
                     .collect();
 
                 // Absolute positions of the *destination* rows in the prefix.
@@ -143,7 +143,7 @@ impl KVCacheLayer {
 
                 let source_indices: Vec<usize> = effective_indices
                     .iter()
-                    .map(|i| i + tokens_count)
+                    .map(|i| i + effective_prefix_length)
                     .collect();
 
                 // Consecutive slots starting at current ring_offset.
@@ -259,7 +259,7 @@ impl KVCacheLayer {
     pub fn register_accepted_tokens(
         &mut self,
         token_positions: &[usize],
-        layer_idx: usize,
+        _layer_idx: usize,
     ) {
         match &mut self.state {
             KVCacheLayerState::Full {
@@ -416,14 +416,12 @@ impl KVCache {
         accepted_suffix_indices: &[usize],
         command_buffer: &MPSCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
-        tokens_count: usize,
     ) {
-        for (idx, layer) in self.data.iter_mut().enumerate() {
+        for layer in self.data.iter_mut() {
             layer.update_after_acceptance(
                 accepted_suffix_indices,
                 command_buffer,
                 kv_cache_update,
-                tokens_count,
             );
         }
     }
