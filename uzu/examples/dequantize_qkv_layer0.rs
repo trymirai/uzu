@@ -99,7 +99,7 @@ fn main() -> Result<(), ExampleError> {
         let dequantized_weights = graph
             .dequantize_with_scale_tensor_and_zero_point_tensor(
                 &weights,
-                &scales_ones,
+                &scales,
                 &zero_points,
                 DataType::F16.into(),
                 None,
@@ -177,7 +177,7 @@ fn main() -> Result<(), ExampleError> {
         capture_manager.stop_capture();
 
         let result = dequantized_weights_buffer.as_view::<half::f16>().unwrap();
-        // println!("{:?}", result.slice(s![0, 0..8]));
+        println!("{:?}", result.slice(s![0, 0..8]));
 
         // println!("result: {:?}", result);
 
