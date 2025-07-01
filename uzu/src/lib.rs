@@ -11,6 +11,7 @@ pub mod env_utils;
 pub mod generator;
 pub mod linearizer;
 pub mod parameters;
+pub mod root_dir;
 pub mod session;
 pub mod speculators;
 pub mod tracer;
