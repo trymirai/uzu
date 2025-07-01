@@ -3,7 +3,6 @@ use std::rc::Rc;
 use mpsgraph::{
     Graph, GraphActivationOps, GraphArithmeticOps, Shape, ShapedType, Tensor,
 };
-use ndarray::Data;
 use objc2::rc::Retained;
 use thiserror::Error;
 
