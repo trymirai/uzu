@@ -9,7 +9,7 @@ pub enum BlockDevice {
     Gpu,
 }
 
-fn make_compilation_descriptor(
+pub fn make_compilation_descriptor(
     device: BlockDevice,
     optimization_level: Optimization,
     optimization_profile: OptimizationProfile,

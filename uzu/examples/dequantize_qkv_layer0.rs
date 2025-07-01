@@ -5,7 +5,11 @@ use metal::{
     CaptureDescriptor, CaptureManager, CaptureScope, MTLCaptureDestination,
 };
 use mpsgraph::{
-    CommandBuffer, CompilationDescriptor, Device as MPSDevice,
+    CompilationDescriptor, Optimization, OptimizationProfile,
+    device::MPSGraphComputeDevice,
+};
+use mpsgraph::{
+    CommandBuffer, Device as MPSDevice,
     ExecutableExecutionDescriptor, Graph, GraphQuantizationOps, Shape,
     ShapedType, Tensor, TensorData,
 };
@@ -16,6 +20,7 @@ use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
         MTLContext, error::MTLError, graph::common::load_constant,
+        compilation_parameters::{make_compilation_descriptor, BlockDevice},
     },
     parameters::{ParameterLoader, ParameterLoaderError},
 };
@@ -74,11 +79,11 @@ fn main() -> Result<(), ExampleError> {
                 .map_err(|_| ExampleError::ParamMismatch)
                 .unwrap();
 
-        let scales_ones = graph.constant_with_filled_scalar(
-            1.0_f64,
-            DataType::F16.into(),
-            &Shape::from_dimensions(&[20, 6144]),
-        );
+        // let scales_ones = graph.constant_with_filled_scalar(
+        //     1.0_f64,
+        //     DataType::F16.into(),
+        //     &Shape::from_dimensions(&[20, 6144]),
+        // );
 
         let zero_points = load_constant(
             &graph,
@@ -90,11 +95,11 @@ fn main() -> Result<(), ExampleError> {
         .map_err(|_| ExampleError::ParamMismatch)
         .unwrap();
 
-        let zero_points_zeroes = graph.constant_with_filled_scalar(
-            0.0_f64,
-            DataType::U4.into(),
-            &Shape::from_dimensions(&[20, 3072 * 2]),
-        );
+        // let zero_points_zeroes = graph.constant_with_filled_scalar(
+        //     0.0_f64,
+        //     DataType::U4.into(),
+        //     &Shape::from_dimensions(&[20, 3072 * 2]),
+        // );
 
         let dequantized_weights = graph
             .dequantize_with_scale_tensor_and_zero_point_tensor(
@@ -132,11 +137,7 @@ fn main() -> Result<(), ExampleError> {
 
         capture_manager_descriptor.set_output_url(trace_path);
 
-        // Give a meaningful label to the command queue for easier debugging.
         mtl_context.command_queue.set_label("uzu_command_queue");
-
-        // Capture the command queue instead of the whole device so the trace
-        // is scoped to work submitted through this queue.
         capture_manager_descriptor
             .set_capture_command_queue(&mtl_context.command_queue);
 
@@ -144,7 +145,16 @@ fn main() -> Result<(), ExampleError> {
         println!("output_url: {:?}", output_url);
 
         let feeds: HashMap<&Tensor, &ShapedType> = HashMap::new();
-        let compilation_descriptor = CompilationDescriptor::new();
+        let optimization_level = Optimization::Level1;
+        let optimization_profile = OptimizationProfile::Performance;
+        let perform_placement_analysis = false;
+        let compilation_descriptor = make_compilation_descriptor(
+            BlockDevice::Ane,
+            optimization_level,
+            optimization_profile,
+            perform_placement_analysis,
+        );
+
         let executable = graph.compile(
             &MPSDevice::with_device(&mtl_context.device),
             &feeds,
