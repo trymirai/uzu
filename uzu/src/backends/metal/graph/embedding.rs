@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::rc::Rc;
 
-use mpsgraph::{Graph, GraphCallOps, GraphGatherOps, GraphMatrixOps, Tensor};
+use mpsgraph::{Graph, GraphCallOps, GraphGatherOps, GraphMatrixOps, GraphTensorShapeOps, Tensor};
 use objc2::rc::Retained;
 
 use super::{
@@ -158,8 +158,6 @@ pub fn readout_callable_subgraph(
                 let result = graph.matmul(
                     input,
                     &embeddings_transposed,
-                    false,
-                    false,
                     None,
                 );
                 Ok(result)
@@ -199,7 +197,7 @@ pub fn readout_subgraph(
             let embeddings_transposed =
                 graph.transpose(&embeddings, &[1, 0], None);
             let result =
-                graph.matmul(input, &embeddings_transposed, false, false, None);
+                graph.matmul(input, &embeddings_transposed, None);
             Ok(result)
         },
         _ => {
@@ -217,10 +215,10 @@ pub fn readout_placeholder_weights_subgraph(
     if transpose_weights {
         let embeddings_transposed = graph.transpose(weights, &[1, 0], None);
         let result =
-            graph.matmul(input, &embeddings_transposed, false, false, None);
+            graph.matmul(input, &embeddings_transposed, None);
         Ok(result)
     } else {
-        let result = graph.matmul(input, weights, false, false, None);
+        let result = graph.matmul(input, weights, None);
         Ok(result)
     }
 }

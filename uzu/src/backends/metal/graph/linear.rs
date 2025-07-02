@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::{Graph, GraphQuantizationOps, GraphTensorShapeOps, Tensor};
+use mpsgraph::{Graph, GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Tensor};
 use objc2::rc::Retained;
 
 use super::{super::MTLContext, GraphConstructionError, load_constant};
@@ -34,8 +34,6 @@ pub fn linear_subgraph<const N: usize>(
                 &graph.matmul(
                     &graph.transpose(&weights, &[1, 0], None),
                     &graph.transpose(input, &[1, 0], None),
-                    false,
-                    false,
                     None,
                 ),
                 &[1, 0],
@@ -104,8 +102,6 @@ pub fn linear_subgraph<const N: usize>(
                 &graph.matmul(
                     &graph.transpose(&dequantized_weights, &[1, 0], None),
                     &graph.transpose(input, &[1, 0], None),
-                    false,
-                    false,
                     None,
                 ),
                 &[1, 0],
