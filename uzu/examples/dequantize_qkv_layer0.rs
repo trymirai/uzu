@@ -1,30 +1,28 @@
-use std::{collections::HashMap, fs::File, rc::Rc};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashMap, fs::File, rc::Rc};
 
 use metal::{
-    CaptureDescriptor, CaptureManager, CaptureScope, MTLCaptureDestination,
+    CaptureDescriptor, CaptureManager, MTLCaptureDestination,
 };
 use mpsgraph::{
-    CompilationDescriptor, Optimization, OptimizationProfile,
-    device::MPSGraphComputeDevice,
+    CommandBuffer, Device as MPSDevice, ExecutableExecutionDescriptor, Graph,
+    GraphQuantizationOps, Shape, ShapedType, Tensor, TensorData,
 };
-use mpsgraph::{
-    CommandBuffer, Device as MPSDevice,
-    ExecutableExecutionDescriptor, Graph, GraphQuantizationOps, Shape,
-    ShapedType, Tensor, TensorData,
-};
+use mpsgraph::{Optimization, OptimizationProfile};
 use ndarray::s;
 use objc2::rc::autoreleasepool;
 use thiserror::Error;
+use uzu::root_dir::{RootLocation, root_dir};
 use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
-        MTLContext, error::MTLError, graph::common::load_constant,
-        compilation_parameters::{make_compilation_descriptor, BlockDevice},
+        MTLContext,
+        compilation_parameters::{BlockDevice, make_compilation_descriptor},
+        error::MTLError,
+        graph::common::load_constant,
     },
     parameters::{ParameterLoader, ParameterLoaderError},
 };
-use uzu::root_dir::{RootLocation, root_dir};
 
 #[derive(Debug, Error)]
 pub enum ExampleError {
@@ -44,7 +42,10 @@ pub enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
-        let model_dir = root_dir(RootLocation::Downloads).join("Qwen3-4B-AWQ");
+        let dump_gpu_trace = false;
+
+        let model_dir =
+            root_dir(RootLocation::Downloads).join("Qwen3-4B-AWQ-Temp");
         let safetensors =
             File::open(model_dir.join("model.safetensors")).unwrap();
 
@@ -68,14 +69,14 @@ fn main() -> Result<(), ExampleError> {
             &graph,
             &tree,
             "weights",
-            &[2560, 3072 * 2],
+            &[3072 * 2, 2560],
             DataType::U4,
         )
         .map_err(|_| ExampleError::ParamMismatch)
         .unwrap();
 
         let scales =
-            load_constant(&graph, &tree, "scales", &[20, 6144], DataType::F16)
+            load_constant(&graph, &tree, "scales", &[6144, 20], DataType::F16)
                 .map_err(|_| ExampleError::ParamMismatch)
                 .unwrap();
 
@@ -89,7 +90,7 @@ fn main() -> Result<(), ExampleError> {
             &graph,
             &tree,
             "zero_points",
-            &[20, 3072 * 2],
+            &[3072 * 2, 20],
             DataType::U4,
         )
         .map_err(|_| ExampleError::ParamMismatch)
@@ -113,12 +114,12 @@ fn main() -> Result<(), ExampleError> {
             .unwrap();
 
         let mut dequantized_weights_buffer = unsafe {
-            mtl_context.array_uninitialized(&[2560, 3072 * 2], DataType::F16)
+            mtl_context.array_uninitialized(&[3072 * 2, 2560], DataType::F16)
         };
         let dequantized_weights_tensor_data = unsafe {
             TensorData::from_buffer(
                 &dequantized_weights_buffer.mtl_buffer(),
-                &Shape::from_dimensions(&[2560, 3072 * 2]),
+                &Shape::from_dimensions(&[3072 * 2, 2560]),
                 DataType::F16.into(),
             )
         };
@@ -163,10 +164,15 @@ fn main() -> Result<(), ExampleError> {
         );
         executable.dump();
 
-        if let Err(err) = capture_manager.start_capture(&capture_manager_descriptor) {
-            eprintln!("⚠️  Failed to start GPU capture: {err}");
+        if dump_gpu_trace {
+            if let Err(err) = capture_manager.start_capture(&capture_manager_descriptor) {
+                eprintln!("⚠️  Failed to start GPU capture: {err}");
+            } else {
+                println!("GPU capture started successfully");
+            }
         }
-
+        
+        
         let command_buffer =
             CommandBuffer::from_command_queue(&mtl_context.command_queue);
         let root_command_buffer =
@@ -184,7 +190,9 @@ fn main() -> Result<(), ExampleError> {
 
         root_command_buffer.wait_until_completed();
 
-        capture_manager.stop_capture();
+        if dump_gpu_trace {
+            capture_manager.stop_capture();
+        }
 
         let result = dequantized_weights_buffer.as_view::<half::f16>().unwrap();
         println!("{:?}", result.slice(s![0, 0..8]));
