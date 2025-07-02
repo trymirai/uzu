@@ -28,13 +28,12 @@ impl GeneratorRunTask {
         }
     }
 
-    pub fn encoded_task_key(&self) -> String {
-        "".to_string()
-
-        // format!(
-        //     "{}-{}"
-        //     // use hash map values of window_size -> [suffix length]
-        // )
+    pub fn encoded_task_key(&self, tokens_count: usize) -> String {
+        format!(
+            "tokens:{}_suffix:{}",
+            tokens_count,
+            self.expected_amount_of_new_tokens
+        )
     }
 
     pub fn create_state(
@@ -63,10 +62,11 @@ impl GeneratorRunTask {
         context: &GeneratorContext,
         state: &mut ForwardPassState,
         parameters: &EncodingParameters,
+        key: String,
     ) -> GeneratorEncodedTask {
         context.executables.encode(state, &context.command_buffer, parameters);
         GeneratorEncodedTask {
-            key: self.encoded_task_key(),
+            key,
         }
     }
 }

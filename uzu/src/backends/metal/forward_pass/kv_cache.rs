@@ -52,6 +52,21 @@ impl KVCacheLayer {
         }
     }
 
+    pub fn projected_effective_prefix_length(&self, projection_step: usize) -> usize {
+        match &self.state {
+            KVCacheLayerState::Full { prefix_len } => {
+                *prefix_len + projection_step
+            },
+            KVCacheLayerState::Windowed { 
+                ring_length, 
+                window_length, 
+                .. 
+            } => {
+                std::cmp::min(*ring_length + projection_step, *window_length)
+            },
+        }
+    }
+
     pub fn is_sliding_window(&self) -> bool {
         matches!(self.state, KVCacheLayerState::Windowed { .. })
     }
