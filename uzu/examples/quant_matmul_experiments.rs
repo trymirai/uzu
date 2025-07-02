@@ -54,16 +54,19 @@ fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
         let args = Args::parse();
 
-        let batch_size: usize = 1;
-        let input_dim: usize = 2560;
+        let suffix_length: usize = 128;
+        let model_dim: usize = 2560;
         let output_dim: usize = 3072 * 2;
         let group_size: usize = 20;
 
-        let weights_shape = [output_dim, input_dim];
-        let scales_shape = [output_dim, input_dim / group_size];
+        let weights_shape = [output_dim, model_dim];
+        let scales_shape = [output_dim, model_dim / group_size];
         let zero_points_shape = scales_shape;
-        let input_shape = [batch_size, input_dim];
-        let result_shape = [batch_size, output_dim];
+        let input_shape = [-1_i64, model_dim as i64];
+
+        // Concrete shapes for actual buffer allocation at runtime
+        let input_tensor_shape = [suffix_length, model_dim];
+        let result_tensor_shape = [suffix_length, output_dim];
 
         let device = Device::system_default().ok_or(ExampleError::NoDevice)?;
         let command_queue = device.new_command_queue();
@@ -81,10 +84,10 @@ fn main() -> Result<(), ExampleError> {
         };
         zero_points_array.buffer_mut().fill(0x00);
 
-        let mut input_array = mtl_context.array_from_elem(&input_shape, f16::from_f32(1.0));
+        let mut input_array = mtl_context.array_from_elem(&input_tensor_shape, f16::from_f32(1.0));
 
         let mut result_array = unsafe {
-            mtl_context.array_uninitialized(&result_shape, DataType::F16)
+            mtl_context.array_uninitialized(&result_tensor_shape, DataType::F16)
         };
 
         let graph = Graph::new();
@@ -109,7 +112,7 @@ fn main() -> Result<(), ExampleError> {
 
         let input_placeholder = graph.placeholder(
             MPSDataType::Float16,
-            &Shape::from_dimensions(&[batch_size as i64, input_dim as i64]),
+            &Shape::from_dimensions(&input_shape),
             Some("input"),
         );
 
@@ -142,7 +145,7 @@ fn main() -> Result<(), ExampleError> {
 
         let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> = HashMap::new();
         let input_shaped_type = ShapedType::new(
-            &Shape::from_dimensions(&[batch_size as i64, input_dim as i64]),
+            &Shape::from_dimensions(&input_shape),
             MPSDataType::Float16,
         );
         feeds.insert(input_placeholder.as_ref(), input_shaped_type.as_ref());
