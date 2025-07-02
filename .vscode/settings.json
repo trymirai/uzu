@@ -1,4 +1,14 @@
 {
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+  // Whether `--workspace` should be passed to `cargo check`. If false, `-p <package>` will be passed instead.
+  "rust-analyzer.check.workspace": false,
+  "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.testExplorer": true,
   // Run the lightweight `cargo check` command instead of the heavier `clippy`
   "rust-analyzer.check.command": "check",
 

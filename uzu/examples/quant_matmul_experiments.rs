@@ -1,28 +1,29 @@
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::{
+    collections::HashMap,
+    rc::Rc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use clap::Parser;
 use half::f16;
 use metal::Device;
 use mpsgraph::{
-    CommandBuffer, DataType as MPSDataType, ExecutableExecutionDescriptor, Graph,
-    GraphQuantizationOps, Shape, ShapedType, Optimization, OptimizationProfile,
-    GraphTensorShapeOps, GraphMatrixOps,
+    CommandBuffer, CompilationDescriptor, DataType as MPSDataType, Executable,
+    ExecutableExecutionDescriptor, Graph, GraphMatrixOps, GraphQuantizationOps,
+    GraphTensorShapeOps, Optimization, OptimizationProfile, Shape, ShapedType,
+    tensor_data::TensorData,
 };
-use objc2::rc::autoreleasepool;
+use objc2::rc::{Retained, autoreleasepool};
 use thiserror::Error;
-use mpsgraph::tensor_data::TensorData;
-use objc2::rc::Retained;
-use mpsgraph::{Executable, CompilationDescriptor};
-
-use uzu::backends::metal::{
-    compilation_parameters::{make_compilation_descriptor, BlockDevice},
-    utils::mps_shape,
-    MTLContext,
+use uzu::{
+    Array, DataType, DeviceContext,
+    backends::metal::{
+        MTLContext,
+        compilation_parameters::{BlockDevice, make_compilation_descriptor},
+        utils::mps_shape,
+    },
+    root_dir::{RootLocation, root_dir},
 };
-use uzu::{Array, DataType, DeviceContext};
-use uzu::root_dir::{root_dir, RootLocation};
 
 #[derive(Parser)]
 #[command(
@@ -49,7 +50,7 @@ pub enum ExampleError {
     Metal(#[from] uzu::backends::metal::error::MTLError),
     #[error("No Metal device available")]
     NoDevice,
-    #[error("Graph dequantization failed")] 
+    #[error("Graph dequantization failed")]
     Dequantization,
 }
 
@@ -60,7 +61,7 @@ enum Tensor<'a> {
     Constant(Retained<mpsgraph::Tensor>),
     Placeholder {
         placeholder: Retained<mpsgraph::Tensor>,
-        data:        &'a TensorData,
+        data: &'a TensorData,
     },
 }
 
@@ -69,7 +70,10 @@ impl<'a> Tensor<'a> {
     fn to_graph_tensor(&self) -> Retained<mpsgraph::Tensor> {
         match self {
             Self::Constant(t) => t.clone(),
-            Self::Placeholder { placeholder, .. } => placeholder.clone(),
+            Self::Placeholder {
+                placeholder,
+                ..
+            } => placeholder.clone(),
         }
     }
 }
@@ -77,15 +81,21 @@ impl<'a> Tensor<'a> {
 #[derive(Debug)]
 struct QuantizedMatmulTensors<'a> {
     weights: Tensor<'a>,
-    scales:  Tensor<'a>,
-    zeros:   Tensor<'a>,
+    scales: Tensor<'a>,
+    zeros: Tensor<'a>,
 }
 
 impl<'a> QuantizedMatmulTensors<'a> {
-    fn collect_feeds(&self) -> Vec<(Retained<mpsgraph::Tensor>, Retained<ShapedType>)> {
+    fn collect_feeds(
+        &self
+    ) -> Vec<(Retained<mpsgraph::Tensor>, Retained<ShapedType>)> {
         let mut feeds = Vec::new();
         for tensor in [&self.weights, &self.scales, &self.zeros] {
-            if let Tensor::Placeholder { placeholder, .. } = tensor {
+            if let Tensor::Placeholder {
+                placeholder,
+                ..
+            } = tensor
+            {
                 feeds.push((placeholder.clone(), placeholder.shaped_type()));
             }
         }
@@ -121,9 +131,8 @@ fn build_quantized_matmul<'a>(
     );
 
     let input_st = input_placeholder.shaped_type();
-    let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> = HashMap::from_iter(
-        [(input_placeholder, input_st.as_ref())]
-    );
+    let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> =
+        HashMap::from_iter([(input_placeholder, input_st.as_ref())]);
 
     let placeholder_pairs = tensors.collect_feeds();
     for (ph, st) in &placeholder_pairs {
@@ -131,7 +140,12 @@ fn build_quantized_matmul<'a>(
     }
 
     let device = mpsgraph::device::Device::with_device(&mtl_context.device);
-    let executable = graph.compile(&device, &feeds, &[matmul.as_ref()], Some(compilation_descriptor));
+    let executable = graph.compile(
+        &device,
+        &feeds,
+        &[matmul.as_ref()],
+        Some(compilation_descriptor),
+    );
 
     Ok(executable)
 }
@@ -172,14 +186,16 @@ fn main() -> Result<(), ExampleError> {
         };
         weights_array.buffer_mut().fill(0x11);
 
-        let scales_array = mtl_context.array_from_elem(&scales_shape, f16::from_f32(1.0));
+        let scales_array =
+            mtl_context.array_from_elem(&scales_shape, f16::from_f32(1.0));
 
         let mut zero_points_array = unsafe {
             mtl_context.array_uninitialized(&zero_points_shape, DataType::U4)
         };
         zero_points_array.buffer_mut().fill(0x00);
 
-        let mut input_array = mtl_context.array_from_elem(&input_tensor_shape, f16::from_f32(1.0));
+        let mut input_array = mtl_context
+            .array_from_elem(&input_tensor_shape, f16::from_f32(1.0));
 
         let mut result_array = unsafe {
             mtl_context.array_uninitialized(&result_tensor_shape, DataType::F16)
@@ -217,8 +233,8 @@ fn main() -> Result<(), ExampleError> {
 
         let qm_tensors = QuantizedMatmulTensors {
             weights: Tensor::Constant(weights_const.clone()),
-            scales:  Tensor::Constant(scales_const.clone()),
-            zeros:   Tensor::Constant(zero_points_const.clone()),
+            scales: Tensor::Constant(scales_const.clone()),
+            zeros: Tensor::Constant(zero_points_const.clone()),
         };
 
         let compilation_descriptor = make_compilation_descriptor(
@@ -228,7 +244,13 @@ fn main() -> Result<(), ExampleError> {
             args.print_placement_analysis,
         );
 
-        let executable = build_quantized_matmul(&graph, &qm_tensors, &input_placeholder, &mtl_context, &compilation_descriptor)?;
+        let executable = build_quantized_matmul(
+            &graph,
+            &qm_tensors,
+            &input_placeholder,
+            &mtl_context,
+            &compilation_descriptor,
+        )?;
 
         // --- Optional printing / dumping ---
 
@@ -284,7 +306,8 @@ fn run_once(
     inputs: &[&TensorData],
     outputs: &[&TensorData],
 ) {
-    let command_buffer = CommandBuffer::from_command_queue(&mtl_context.command_queue);
+    let command_buffer =
+        CommandBuffer::from_command_queue(&mtl_context.command_queue);
     let root_command_buffer = command_buffer.root_command_buffer().to_owned();
 
     let exec_desc = ExecutableExecutionDescriptor::new();
@@ -298,4 +321,4 @@ fn run_once(
 
     command_buffer.commit_and_continue();
     root_command_buffer.wait_until_completed();
-} 
+}
