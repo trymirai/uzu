@@ -522,7 +522,7 @@ impl Generator {
             &self.context.kv_cache_update,
         );
 
-        command_buffer.commit_and_continue();
+        command_buffer.commit();
     }
 
     fn allow_pre_encode(&self) -> bool {
