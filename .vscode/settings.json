@@ -1,0 +1,27 @@
+{
+  // Run the lightweight `cargo check` command instead of the heavier `clippy`
+  "rust-analyzer.check.command": "check",
+
+  // Do not build every target (benchmarks/examples/tests) on every save
+  "rust-analyzer.check.allTargets": false,
+
+  // Only use the default feature set; this prevents compiling optional features you don't need while editing
+  "rust-analyzer.cargo.noDefaultFeatures": false,
+  "rust-analyzer.cargo.features": [],
+
+  // Disable build-script & proc-macro execution if they are not required while editing.
+  // They are a common source of long build times.
+  "rust-analyzer.cargo.buildScripts.enable": false,
+  "rust-analyzer.procMacro.enable": false,
+
+  // Expose SCCACHE to every rust-analyzer cargo invocation
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTC_WRAPPER": "sccache"
+  },
+
+  // Ensure VS Code terminals inherit the same environment so manual `cargo` commands are cached too
+  "terminal.integrated.env.osx": {
+    "RUSTC_WRAPPER": "sccache",
+    "CARGO_INCREMENTAL": "1"
+  }
+}
