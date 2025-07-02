@@ -22,6 +22,7 @@ libc = "0.2.172"
 bitflags = "2.9.1"
 minijinja = "2.10.2"
 minijinja-contrib = { version = "2.10.2", features = ["pycompat"] }
+clap = { version = "4.5.39", features = ["derive"] }
 
 [dev-dependencies]
 is_close = "0.1.3"
