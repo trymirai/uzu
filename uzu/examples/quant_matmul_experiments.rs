@@ -8,10 +8,13 @@ use metal::Device;
 use mpsgraph::{
     CommandBuffer, DataType as MPSDataType, ExecutableExecutionDescriptor, Graph,
     GraphQuantizationOps, Shape, ShapedType, Optimization, OptimizationProfile,
-    GraphTensorShapeOps,
+    GraphTensorShapeOps, GraphMatrixOps,
 };
 use objc2::rc::autoreleasepool;
 use thiserror::Error;
+use mpsgraph::tensor_data::TensorData;
+use objc2::rc::Retained;
+use mpsgraph::{Executable, CompilationDescriptor};
 
 use uzu::backends::metal::{
     compilation_parameters::{make_compilation_descriptor, BlockDevice},
@@ -49,6 +52,91 @@ pub enum ExampleError {
     #[error("Graph dequantization failed")] 
     Dequantization,
 }
+
+// ================== Quantized Matmul Helpers =====================
+
+#[derive(Debug)]
+enum Tensor<'a> {
+    Constant(Retained<mpsgraph::Tensor>),
+    Placeholder {
+        placeholder: Retained<mpsgraph::Tensor>,
+        data:        &'a TensorData,
+    },
+}
+
+impl<'a> Tensor<'a> {
+    #[inline]
+    fn to_graph_tensor(&self) -> Retained<mpsgraph::Tensor> {
+        match self {
+            Self::Constant(t) => t.clone(),
+            Self::Placeholder { placeholder, .. } => placeholder.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct QuantizedMatmulTensors<'a> {
+    weights: Tensor<'a>,
+    scales:  Tensor<'a>,
+    zeros:   Tensor<'a>,
+}
+
+impl<'a> QuantizedMatmulTensors<'a> {
+    fn collect_feeds(&self) -> Vec<(Retained<mpsgraph::Tensor>, Retained<ShapedType>)> {
+        let mut feeds = Vec::new();
+        for tensor in [&self.weights, &self.scales, &self.zeros] {
+            if let Tensor::Placeholder { placeholder, .. } = tensor {
+                feeds.push((placeholder.clone(), placeholder.shaped_type()));
+            }
+        }
+        feeds
+    }
+}
+
+fn build_quantized_matmul<'a>(
+    graph: &Graph,
+    tensors: &QuantizedMatmulTensors<'a>,
+    input_placeholder: &mpsgraph::Tensor,
+    mtl_context: &Rc<MTLContext>,
+    compilation_descriptor: &CompilationDescriptor,
+) -> Result<Retained<Executable>, ExampleError> {
+    let w = tensors.weights.to_graph_tensor();
+    let s = tensors.scales.to_graph_tensor();
+    let zp = tensors.zeros.to_graph_tensor();
+
+    let deq = graph
+        .dequantize_with_scale_tensor_and_zero_point_tensor(
+            &w,
+            &s,
+            &zp,
+            MPSDataType::Float16,
+            None,
+        )
+        .ok_or(ExampleError::Dequantization)?;
+
+    let matmul = graph.matmul(
+        input_placeholder,
+        &graph.transpose(&deq, &[1, 0], None),
+        None,
+    );
+
+    let input_st = input_placeholder.shaped_type();
+    let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> = HashMap::from_iter(
+        [(input_placeholder, input_st.as_ref())]
+    );
+
+    let placeholder_pairs = tensors.collect_feeds();
+    for (ph, st) in &placeholder_pairs {
+        feeds.insert(ph.as_ref(), st.as_ref());
+    }
+
+    let device = mpsgraph::device::Device::with_device(&mtl_context.device);
+    let executable = graph.compile(&device, &feeds, &[matmul.as_ref()], Some(compilation_descriptor));
+
+    Ok(executable)
+}
+
+// ================== End helpers =====================
 
 fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
@@ -125,54 +213,24 @@ fn main() -> Result<(), ExampleError> {
             Some("input"),
         );
 
-        // --- Dequantize weights ---
+        // --- Quantized Matmul Sub-graph ---
 
-        let dequantized_weights = graph
-            .dequantize_with_scale_tensor_and_zero_point_tensor(
-                &weights_const,
-                &scales_const,
-                &zero_points_const,
-                MPSDataType::Float16,
-                None,
-            )
-            .ok_or(ExampleError::Dequantization)?;
+        let qm_tensors = QuantizedMatmulTensors {
+            weights: Tensor::Constant(weights_const.clone()),
+            scales:  Tensor::Constant(scales_const.clone()),
+            zeros:   Tensor::Constant(zero_points_const.clone()),
+        };
 
-        // --- Matmul ---
-
-        let matmul = graph.matmul(
-            &input_placeholder,
-            &graph.transpose(&dequantized_weights, &[1, 0], None),
-            false,
-            false,
-            None,
-        );
-
-        // --- Compile ---
-
-        let optimization_level = Optimization::Level1;
-        let optimization_profile = OptimizationProfile::PowerEfficiency;
         let compilation_descriptor = make_compilation_descriptor(
-            BlockDevice::Ane,
-            optimization_level,
-            optimization_profile,
+            BlockDevice::Gpu,
+            Optimization::Level1,
+            OptimizationProfile::Performance,
             args.print_placement_analysis,
         );
 
-        let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> = HashMap::new();
-        let input_shaped_type = ShapedType::new(
-            &Shape::from_dimensions(&input_shape),
-            MPSDataType::Float16,
-        );
-        feeds.insert(input_placeholder.as_ref(), input_shaped_type.as_ref());
+        let executable = build_quantized_matmul(&graph, &qm_tensors, &input_placeholder, &mtl_context, &compilation_descriptor)?;
 
-        let executable = graph.compile(
-            &mpsgraph::device::Device::with_device(&mtl_context.device),
-            &feeds,
-            &[matmul.as_ref()],
-            Some(&compilation_descriptor),
-        );
-
-        // --- Print ---
+        // --- Optional printing / dumping ---
 
         if args.print_exec_dump {
             executable.dump();
@@ -196,17 +254,17 @@ fn main() -> Result<(), ExampleError> {
         let input_td = unsafe { input_array.to_mps_tensor_data() };
         let result_td = unsafe { result_array.to_mps_tensor_data() };
 
-        let inputs = [input_td.as_ref()];
+        let inputs_slice = [input_td.as_ref()];
         let outputs = [result_td.as_ref()];
 
-        run_once(&mtl_context, &executable, &inputs, &outputs);
+        run_once(&mtl_context, &executable, &inputs_slice, &outputs);
 
         const NUM_ITERATIONS: usize = 50;
         let mut total_duration = 0.0f64; // milliseconds
 
         for _ in 0..NUM_ITERATIONS {
             let start = Instant::now();
-            run_once(&mtl_context, &executable, &inputs, &outputs);
+            run_once(&mtl_context, &executable, &inputs_slice, &outputs);
             total_duration += start.elapsed().as_secs_f64() * 1e3;
         }
 
@@ -222,9 +280,9 @@ fn main() -> Result<(), ExampleError> {
 
 fn run_once(
     mtl_context: &Rc<MTLContext>,
-    executable: &mpsgraph::Executable,
-    inputs: &[&mpsgraph::tensor_data::TensorData],
-    outputs: &[&mpsgraph::tensor_data::TensorData],
+    executable: &Executable,
+    inputs: &[&TensorData],
+    outputs: &[&TensorData],
 ) {
     let command_buffer = CommandBuffer::from_command_queue(&mtl_context.command_queue);
     let root_command_buffer = command_buffer.root_command_buffer().to_owned();
