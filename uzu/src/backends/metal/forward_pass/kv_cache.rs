@@ -52,18 +52,19 @@ impl KVCacheLayer {
         }
     }
 
-    pub fn projected_effective_prefix_length(&self, projection_step: usize) -> usize {
+    pub fn projected_effective_prefix_length(
+        &self,
+        projection_step: usize,
+    ) -> usize {
         match &self.state {
-            KVCacheLayerState::Full { prefix_len } => {
-                *prefix_len + projection_step
-            },
-            KVCacheLayerState::Windowed { 
-                ring_length, 
-                window_length, 
-                .. 
-            } => {
-                std::cmp::min(*ring_length + projection_step, *window_length)
-            },
+            KVCacheLayerState::Full {
+                prefix_len,
+            } => *prefix_len + projection_step,
+            KVCacheLayerState::Windowed {
+                ring_length,
+                window_length,
+                ..
+            } => std::cmp::min(*ring_length + projection_step, *window_length),
         }
     }
 
@@ -111,6 +112,59 @@ impl KVCacheLayer {
                 }
             },
         );
+    }
+
+    pub fn bias_should_be_neg_inf(
+        &self,
+        row_index: usize,
+        column_index: usize,
+        suffix_token_positions: &[usize],
+        padding_mask: Option<&[bool]>,
+    ) -> bool {
+        if let Some(mask) = padding_mask {
+            // Mask out any key that corresponds to a padding token in the suffix
+            if column_index >= self.effective_prefix_length() {
+                let suffix_column_index =
+                    column_index - self.effective_prefix_length();
+                if mask[suffix_column_index] {
+                    return true;
+                }
+            }
+        }
+
+        let query_position = suffix_token_positions[row_index];
+
+        let key_position = if column_index >= self.effective_prefix_length() {
+            suffix_token_positions
+                [column_index - self.effective_prefix_length()]
+        } else {
+            match &self.state {
+                KVCacheLayerState::Full {
+                    ..
+                } => column_index,
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    window_length,
+                    ..
+                } => {
+                    let physical_index =
+                        (*ring_offset + column_index) % *window_length;
+                    self.prefix_token_positions[physical_index]
+                },
+            }
+        };
+
+        if query_position < key_position {
+            return true;
+        }
+
+        match &self.state {
+            KVCacheLayerState::Windowed {
+                window_length,
+                ..
+            } => query_position > key_position + window_length,
+            _ => false,
+        }
     }
 
     pub fn update_after_acceptance(
@@ -221,59 +275,6 @@ impl KVCacheLayer {
             destination_indices,
             &root_cb,
         );
-    }
-
-    pub fn bias_should_be_neg_inf(
-        &self,
-        row_index: usize,
-        column_index: usize,
-        suffix_token_positions: &[usize],
-        padding_mask: Option<&[bool]>,
-    ) -> bool {
-        if let Some(mask) = padding_mask {
-            // Mask out any key that corresponds to a padding token in the suffix
-            if column_index >= self.effective_prefix_length() {
-                let suffix_column_index =
-                    column_index - self.effective_prefix_length();
-                if mask[suffix_column_index] {
-                    return true;
-                }
-            }
-        }
-
-        let query_position = suffix_token_positions[row_index];
-
-        let key_position = if column_index >= self.effective_prefix_length() {
-            suffix_token_positions
-                [column_index - self.effective_prefix_length()]
-        } else {
-            match &self.state {
-                KVCacheLayerState::Full {
-                    ..
-                } => column_index,
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    window_length,
-                    ..
-                } => {
-                    let physical_index =
-                        (*ring_offset + column_index) % *window_length;
-                    self.prefix_token_positions[physical_index]
-                },
-            }
-        };
-
-        if query_position < key_position {
-            return true;
-        }
-
-        match &self.state {
-            KVCacheLayerState::Windowed {
-                window_length,
-                ..
-            } => query_position > key_position + window_length,
-            _ => false,
-        }
     }
 
     pub fn register_accepted_tokens(

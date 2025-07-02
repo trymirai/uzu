@@ -1,6 +1,5 @@
 use std::{collections::HashMap, path::Path, time::Instant};
 
-use half::f16;
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -305,14 +304,14 @@ impl Generator {
         &mut self,
         suffix_length: usize,
     ) {
-        // let task = GeneratorRunTask {
-        //     token_ids: vec![0; suffix_length],
-        //     token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-        //     padding_mask: None,
-        //     expected_amount_of_new_tokens: suffix_length,
-        // };
+        let task = GeneratorRunTask {
+            token_ids: vec![0; suffix_length],
+            token_positions: (0..suffix_length).collect::<Vec<usize>>(),
+            padding_mask: None,
+            expected_amount_of_new_tokens: suffix_length,
+        };
 
-        // let (_, _) = self.run_model(task, true, false, None, false);
+        let (_, _) = self.run_model(task, true, false, None, false);
     }
 
     fn run_model(
