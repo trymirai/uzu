@@ -56,7 +56,7 @@ fn main() -> Result<(), ExampleError> {
 
         let batch_size: usize = 1;
         let input_dim: usize = 2560;
-        let output_dim: usize = 6144;
+        let output_dim: usize = 3072 * 2;
         let group_size: usize = 20;
 
         let weights_shape = [output_dim, input_dim];
@@ -131,10 +131,10 @@ fn main() -> Result<(), ExampleError> {
             None,
         );
 
-        let optimization_level = Optimization::Level0;
-        let optimization_profile = OptimizationProfile::Performance;
+        let optimization_level = Optimization::Level1;
+        let optimization_profile = OptimizationProfile::PowerEfficiency;
         let compilation_descriptor = make_compilation_descriptor(
-            BlockDevice::Gpu,
+            BlockDevice::Ane,
             optimization_level,
             optimization_profile,
             args.print_placement_analysis,
