@@ -67,7 +67,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "weights",
-                &[output_dim_sum, input_dim],
+                &[input_dim, output_dim_sum],
                 DataType::U4,
             )?;
 
@@ -75,7 +75,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "scales",
-                &[output_dim_sum, input_dim / group_size],
+                &[input_dim / group_size, output_dim_sum],
                 activation_precision.into(),
             )?;
 
@@ -83,7 +83,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "zero_points",
-                &[output_dim_sum, input_dim / group_size],
+                &[input_dim / group_size, output_dim_sum],
                 DataType::U4,
             )?;
 
@@ -100,11 +100,15 @@ pub fn linear_subgraph<const N: usize>(
                 )
                 .unwrap();
 
-            let matmul = graph.matmul(
-                &input,
-                &graph.transpose(&dequantized_weights, &[1, 0], None),
-                false,
-                false,
+            let matmul = graph.transpose(
+                &graph.matmul(
+                    &graph.transpose(&dequantized_weights, &[1, 0], None),
+                    &graph.transpose(input, &[1, 0], None),
+                    false,
+                    false,
+                    None,
+                ),
+                &[1, 0],
                 None,
             );
 
