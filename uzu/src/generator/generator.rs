@@ -1,6 +1,8 @@
 use std::{collections::HashMap, path::Path, time::Instant};
+
 use half::f16;
-use crate::env_utils::MetalEnvVar;
+use mpsgraph::CommandBuffer;
+
 use super::{
     config::GeneratorConfig,
     context::GeneratorContext,
@@ -15,10 +17,10 @@ use crate::{
             EncodableWithState, EncodingParameters,
         },
     },
+    env_utils::MetalEnvVar,
     generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
 };
-use mpsgraph::CommandBuffer;
 
 pub struct Generator {
     pub config: GeneratorConfig,
@@ -76,6 +78,7 @@ impl Generator {
         let zero_padding_tokens: Vec<u64> =
             vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
 
+        // use iterator to avoid extend duplication (without vec)
         let mut padded_tokens = Vec::with_capacity(total_prefill_tokens_count);
         padded_tokens.extend_from_slice(&tokens);
         padded_tokens.extend_from_slice(&speculated_suffix.tokens);
@@ -110,7 +113,7 @@ impl Generator {
             });
 
             let padding_mask = if step == number_of_prefill_steps - 1
-                && !speculated_suffix.tokens.is_empty()
+                && unused_tokens_count > 0
             {
                 let padding_mask_vec: Vec<bool> = (0..tokens_for_step.len())
                     .map(|i| (tokens_start_index + i) >= padding_start_index)
@@ -136,6 +139,7 @@ impl Generator {
                 false,
                 self.allow_pre_encode(),
                 Some(sampling_config.clone()),
+                true,
             );
 
             // Register tokens with KV cache immediately after each step
@@ -248,6 +252,7 @@ impl Generator {
             false,
             self.allow_pre_encode(),
             Some(sampling_config),
+            false,
         );
 
         let argmax_tokens = self.gpu_sample(&mut state);
@@ -300,14 +305,14 @@ impl Generator {
         &mut self,
         suffix_length: usize,
     ) {
-        let task = GeneratorRunTask {
-            token_ids: vec![0; suffix_length],
-            token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            padding_mask: None,
-            expected_amount_of_new_tokens: suffix_length,
-        };
+        // let task = GeneratorRunTask {
+        //     token_ids: vec![0; suffix_length],
+        //     token_positions: (0..suffix_length).collect::<Vec<usize>>(),
+        //     padding_mask: None,
+        //     expected_amount_of_new_tokens: suffix_length,
+        // };
 
-        let (_, _) = self.run_model(task, true, false, None);
+        // let (_, _) = self.run_model(task, true, false, None, false);
     }
 
     fn run_model(
@@ -318,6 +323,7 @@ impl Generator {
         sampling_config: Option<
             crate::session::sampling_config::SamplingConfig,
         >,
+        prefill: bool,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
@@ -326,18 +332,17 @@ impl Generator {
             state.sampling_config = sampling_config;
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
-            
+
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
             } else {
-                eprintln!("building encoded task for key: {}", encoded_task_key);
                 self.context.reset_command_buffer();
 
                 _ = task.build_encoded_task(
                     &self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, true, false),
-                    encoded_task_key.clone()
+                    encoded_task_key.clone(),
                 );
             }
 
@@ -355,137 +360,24 @@ impl Generator {
             self.context.command_buffer.commit_and_continue();
 
             if allow_pre_encode {
-                let next_task_key: String = task.encoded_task_key(self.tokens.len() + 1);
-
-                eprintln!("=== PRE-ENCODING NEXT TASK ===");
-                eprintln!("Next task key: {}", next_task_key);
-                eprintln!("Using projection step: 1");
-                
-                // The projection_step parameter should handle the simulation without modifying KV cache
-                eprintln!("Pre-encoding with projection_step=1, current prefix: {}", 
-                    self.context.kv_cache.borrow().data[0].effective_prefix_length());
+                let next_task_key: String =
+                    task.encoded_task_key(self.tokens.len() + 1);
 
                 let next_encoded_task = task.build_encoded_task(
                     &self.context,
                     &mut state,
-                    &EncodingParameters::new(warmup, false, false).with_projection(1),
-                    next_task_key.clone()
+                    &EncodingParameters::new(warmup, false, false)
+                        .with_projection(1),
+                    next_task_key.clone(),
                 );
 
-                self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
-                eprintln!("=== PRE-ENCODING COMPLETE ===");
+                self.encoded_tasks
+                    .insert(next_task_key.clone(), next_encoded_task);
             }
 
             root_command_buffer.wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
-            
-            // Debug prints after wait_until_completed
-            eprintln!("=== DEBUG AFTER WAIT_UNTIL_COMPLETED ===");
-            eprintln!("Current tokens length: {}", self.tokens.len());
-            
-            // Print prefix lengths for first few layers
-            for layer_idx in 0..std::cmp::min(3, self.context.kv_cache.borrow().data.len()) {
-                let layer = &self.context.kv_cache.borrow().data[layer_idx];
-                eprintln!("Layer {}: effective_prefix_length = {}, projected(0) = {}, projected(1) = {}", 
-                    layer_idx, 
-                    layer.effective_prefix_length(),
-                    layer.projected_effective_prefix_length(0),
-                    layer.projected_effective_prefix_length(1)
-                );
-            }
-            
-            // Print attention bias mask values (around prefix boundary)
-            let attention_bias_binding = state.hashmaps(&[crate::backends::metal::forward_pass::HashMapId::AttentionBias]);
-            let attention_bias_map = &attention_bias_binding[0];
-            
-            // Get the actual prefix length for the first layer
-            let actual_prefix_len = self.context.kv_cache.borrow().data[0].effective_prefix_length();
-            let suffix_len = state.arrays(&[crate::backends::metal::forward_pass::ArrayId::QKV])[0].borrow().shape()[0];
-            let total_seq_len = actual_prefix_len + suffix_len;
-            
-            for (window_key, bias_array) in attention_bias_map.iter() {
-                let bias_borrowed = bias_array.borrow();
-                let shape = bias_borrowed.shape();
-                eprintln!("Attention bias window {:?}: shape {:?}, actual_prefix_len: {}, suffix_len: {}, total_seq_len: {}", 
-                    window_key, shape, actual_prefix_len, suffix_len, total_seq_len);
-                
-                if shape.len() >= 2 && total_seq_len <= shape[1] {
-                    // Show values around the prefix boundary (prefix_len-4 to prefix_len+4)
-                    let start_col = actual_prefix_len.saturating_sub(4);
-                    let end_col = std::cmp::min(actual_prefix_len + 4, total_seq_len);
-                    print!("First row around prefix boundary [{}..{}]: [", start_col, end_col);
-                    
-                    // Try f16 first, then f32
-                    if let Ok(bias_view) = bias_borrowed.as_view::<f16>() {
-                        for col in start_col..end_col {
-                            print!("{:.1}, ", bias_view[[0, col]].to_f32());
-                        }
-                    } else if let Ok(bias_view) = bias_borrowed.as_view::<f32>() {
-                        for col in start_col..end_col {
-                            print!("{:.1}, ", bias_view[[0, col]]);
-                        }
-                    } else {
-                        print!("unknown type");
-                    }
-                    println!("]");
-                }
-                break; // Just print first bias matrix
-            }
-            
-            // Print KV cache values (around actual prefix positions)
-            if !self.context.kv_cache.borrow().data.is_empty() {
-                let first_layer = &self.context.kv_cache.borrow().data[0];
-                let keys_borrowed = first_layer.keys.borrow();
-                let values_borrowed = first_layer.values.borrow();
-                let keys_shape = keys_borrowed.shape();
-                let values_shape = values_borrowed.shape();
-                
-                eprintln!("KV cache keys shape: {:?}", keys_shape);
-                eprintln!("KV cache values shape: {:?}", values_shape);
-                
-                // Show values around the actual prefix length
-                if keys_shape.len() >= 3 && actual_prefix_len > 0 && keys_shape[2] >= 1 {
-                    let start_seq = actual_prefix_len.saturating_sub(4);
-                    let end_seq = std::cmp::min(actual_prefix_len + 4, keys_shape[1]);
-                    print!("Keys[0] around prefix [{}..{}], first dim: [", start_seq, end_seq);
-                    
-                    // Try f16 first, then f32
-                    if let Ok(keys_view) = keys_borrowed.as_view::<f16>() {
-                        for seq in start_seq..end_seq {
-                            print!("{:.3}, ", keys_view[[0, seq, 0]].to_f32());
-                        }
-                    } else if let Ok(keys_view) = keys_borrowed.as_view::<f32>() {
-                        for seq in start_seq..end_seq {
-                            print!("{:.3}, ", keys_view[[0, seq, 0]]);
-                        }
-                    } else {
-                        print!("unknown type");
-                    }
-                    println!("]");
-                }
-                
-                if values_shape.len() >= 3 && actual_prefix_len > 0 && values_shape[2] >= 1 {
-                    let start_seq = actual_prefix_len.saturating_sub(4);
-                    let end_seq = std::cmp::min(actual_prefix_len + 4, values_shape[1]);
-                    print!("Values[0] around prefix [{}..{}], first dim: [", start_seq, end_seq);
-                    
-                    // Try f16 first, then f32
-                    if let Ok(values_view) = values_borrowed.as_view::<f16>() {
-                        for seq in start_seq..end_seq {
-                            print!("{:.3}, ", values_view[[0, seq, 0]].to_f32());
-                        }
-                    } else if let Ok(values_view) = values_borrowed.as_view::<f32>() {
-                        for seq in start_seq..end_seq {
-                            print!("{:.3}, ", values_view[[0, seq, 0]]);
-                        }
-                    } else {
-                        print!("unknown type");
-                    }
-                    println!("]");
-                }
-            }
-            eprintln!("=== END DEBUG ===");
-            
+
             (state, run_time)
         })
     }
@@ -514,7 +406,9 @@ impl Generator {
         _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
     ) {
-        let command_buffer = CommandBuffer::from_command_queue(&self.context.mtl_context.command_queue);
+        let command_buffer = CommandBuffer::from_command_queue(
+            &self.context.mtl_context.command_queue,
+        );
 
         self.context.kv_cache.borrow_mut().update_after_acceptance(
             accepted_token_indices,
@@ -526,8 +420,7 @@ impl Generator {
     }
 
     fn allow_pre_encode(&self) -> bool {
-        let metal_debug_active =
-            MetalEnvVar::DeviceWrapperType.is_enabled();
+        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
 
         let result = self.config.allow_pre_encode
             && self.context.kernels_config.use_attention
