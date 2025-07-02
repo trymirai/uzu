@@ -54,6 +54,8 @@ fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
         let args = Args::parse();
 
+        // --- Constants ---
+
         let suffix_length: usize = 128;
         let model_dim: usize = 2560;
         let output_dim: usize = 3072 * 2;
@@ -64,13 +66,18 @@ fn main() -> Result<(), ExampleError> {
         let zero_points_shape = scales_shape;
         let input_shape = [-1_i64, model_dim as i64];
 
-        // Concrete shapes for actual buffer allocation at runtime
+        // --- Concrete shapes for actual buffer allocation at runtime ---
+
         let input_tensor_shape = [suffix_length, model_dim];
         let result_tensor_shape = [suffix_length, output_dim];
+
+        // --- Device ---
 
         let device = Device::system_default().ok_or(ExampleError::NoDevice)?;
         let command_queue = device.new_command_queue();
         let mtl_context = Rc::new(MTLContext::new(device, command_queue)?);
+
+        // --- Arrays ---
 
         let mut weights_array = unsafe {
             mtl_context.array_uninitialized(&weights_shape, DataType::U4)
@@ -89,6 +96,8 @@ fn main() -> Result<(), ExampleError> {
         let mut result_array = unsafe {
             mtl_context.array_uninitialized(&result_tensor_shape, DataType::F16)
         };
+
+        // --- Graph ---
 
         let graph = Graph::new();
 
@@ -116,6 +125,8 @@ fn main() -> Result<(), ExampleError> {
             Some("input"),
         );
 
+        // --- Dequantize weights ---
+
         let dequantized_weights = graph
             .dequantize_with_scale_tensor_and_zero_point_tensor(
                 &weights_const,
@@ -126,6 +137,8 @@ fn main() -> Result<(), ExampleError> {
             )
             .ok_or(ExampleError::Dequantization)?;
 
+        // --- Matmul ---
+
         let matmul = graph.matmul(
             &input_placeholder,
             &graph.transpose(&dequantized_weights, &[1, 0], None),
@@ -133,6 +146,8 @@ fn main() -> Result<(), ExampleError> {
             false,
             None,
         );
+
+        // --- Compile ---
 
         let optimization_level = Optimization::Level1;
         let optimization_profile = OptimizationProfile::PowerEfficiency;
@@ -157,6 +172,8 @@ fn main() -> Result<(), ExampleError> {
             Some(&compilation_descriptor),
         );
 
+        // --- Print ---
+
         if args.print_exec_dump {
             executable.dump();
         }
@@ -173,6 +190,8 @@ fn main() -> Result<(), ExampleError> {
             executable.serialize_to_url(&package_path, &serialization_desc);
             println!("MPSGraph package saved to {:?}", package_path);
         }
+
+        // --- Run ---
 
         let input_td = unsafe { input_array.to_mps_tensor_data() };
         let result_td = unsafe { result_array.to_mps_tensor_data() };
