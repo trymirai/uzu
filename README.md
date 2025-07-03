@@ -10,7 +10,13 @@
 
 # uzu
 
-A high-performance inference engine for AI models on Apple Silicon.
+A high-performance inference engine for AI models on Apple Silicon. Key features:
+
+- Simple, high-level API
+- [Hybrid architecture](https://docs.trymirai.com/components/inference-engine#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML with ANE access)
+- Unified model configurations, making it easy to add support for new models
+- Traceable computations to ensure correctness against the source-of-truth implementation
+- Utilizes unified memory on Apple devices
 
 ## Quick Start
 
