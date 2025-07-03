@@ -208,7 +208,7 @@ void attention_2pass_1_impl(
     queries += q_offset * head_dim + simd_lid * qk_elements_per_thread;
     keys += kv_head_idx * k_head_stride + (block_idx * sequence_block_size + simd_gid) * k_seq_stride + simd_lid * qk_elements_per_thread;
     values += kv_head_idx * v_head_stride + (block_idx * sequence_block_size + simd_gid) * v_seq_stride + simd_lid * value_elements_per_thread;
-    out += o_offset * total_blocks_count * value_dim + block_idx * value_dim + simd_gid * value_elements_per_thread;
+    out += o_offset * total_blocks_count * value_dim + block_idx * value_dim + simd_lid * value_elements_per_thread;
     
     if (bool_mask) {
         bmask += head_idx * mask_head_stride + (block_idx * sequence_block_size + simd_gid) * mask_kv_seq_stride + q_seq_idx * mask_q_seq_stride;

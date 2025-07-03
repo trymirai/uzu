@@ -26,11 +26,13 @@ impl GeneratorRunTask {
         }
     }
 
-    pub fn encoded_task_key(&self, tokens_count: usize) -> String {
+    pub fn encoded_task_key(
+        &self,
+        tokens_count: usize,
+    ) -> String {
         format!(
             "tokens:{}_suffix:{}",
-            tokens_count,
-            self.expected_amount_of_new_tokens
+            tokens_count, self.expected_amount_of_new_tokens
         )
     }
 
@@ -47,7 +49,7 @@ impl GeneratorRunTask {
             context.shared_buffers.clone(),
             &self.token_ids,
             &self.token_positions,
-             false,
+            false,
             external_bias_fn,
         );
 
