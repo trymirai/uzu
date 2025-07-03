@@ -12,10 +12,10 @@ use crate::{
     Array,
     backends::metal::{
         ForwardPassState,
-        forward_pass::encodable_with_state::{
-            EncodableWithState, EncodingParameters,
+        forward_pass::{
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+            kv_cache::INVALID_POSITION,
         },
-        forward_pass::kv_cache::INVALID_POSITION,
     },
     env_utils::MetalEnvVar,
     generator::error::GeneratorError,
@@ -77,23 +77,24 @@ impl Generator {
 
         let zero_padding_tokens: Vec<u64> =
             vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-            
 
         let padded_tokens = [
             &tokens[..],
             &speculated_suffix.tokens[..],
-            &zero_padding_tokens[..]
-        ].concat();
+            &zero_padding_tokens[..],
+        ]
+        .concat();
 
         let mut padded_positions: Vec<usize> = (0..tokens_length).collect();
         padded_positions.extend(
             speculated_suffix.indices.iter().map(|index| index + tokens_length),
         );
-        let padding_count = unused_tokens_count - speculated_suffix.tokens.len();
-        let zero_padding_indicies: Vec<usize> = vec![INVALID_POSITION; padding_count];
+        let padding_count =
+            unused_tokens_count - speculated_suffix.tokens.len();
+        let zero_padding_indicies: Vec<usize> =
+            vec![INVALID_POSITION; padding_count];
 
         padded_positions.extend(zero_padding_indicies);
-
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
@@ -113,7 +114,6 @@ impl Generator {
                 let _ = last_state.take();
             });
 
-
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
@@ -124,7 +124,7 @@ impl Generator {
                 task,
                 false,
                 self.allow_pre_encode(),
-                Some(sampling_config.clone())
+                Some(sampling_config.clone()),
             );
 
             // Register tokens with KV cache immediately after each step
@@ -228,7 +228,9 @@ impl Generator {
             .indices
             .iter()
             .map(|idx| idx + start_position)
-            .chain(std::iter::repeat(INVALID_POSITION).take(unused_tokens_count))
+            .chain(
+                std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
+            )
             .collect();
 
         let task = GeneratorRunTask {
@@ -241,7 +243,7 @@ impl Generator {
             task,
             false,
             self.allow_pre_encode(),
-            Some(sampling_config)
+            Some(sampling_config),
         );
 
         let argmax_tokens = self.gpu_sample(&mut state);
@@ -310,7 +312,7 @@ impl Generator {
         allow_pre_encode: bool,
         sampling_config: Option<
             crate::session::sampling_config::SamplingConfig,
-        >
+        >,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
