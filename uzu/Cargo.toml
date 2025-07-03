@@ -11,7 +11,8 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"
 tokenizers = "0.21.1"
-mpsgraph = { git = "https://github.com/getmirai/mpsgraph-rs", rev = "371592c", package = "mpsgraph" }
+# mpsgraph = { path = "../mpsgraph-rs" }
+mpsgraph = { git = "https://github.com/getmirai/mpsgraph-rs", rev = "6a3d803", package = "mpsgraph" }
 objc2 = "0.6.1"
 objc2-foundation = "0.3.1"
 metal = "0.32.0"
@@ -22,6 +23,7 @@ libc = "0.2.172"
 bitflags = "2.9.1"
 minijinja = "2.10.2"
 minijinja-contrib = { version = "2.10.2", features = ["pycompat"] }
+clap = { version = "4.5.39", features = ["derive"] }
 
 [dev-dependencies]
 is_close = "0.1.3"

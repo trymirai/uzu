@@ -4,12 +4,13 @@ use mpsgraph::{
 };
 use objc2::rc::Retained;
 
+#[derive(Debug, Clone, Copy)]
 pub enum BlockDevice {
     Ane,
     Gpu,
 }
 
-fn make_compilation_descriptor(
+pub fn make_compilation_descriptor(
     device: BlockDevice,
     optimization_level: Optimization,
     optimization_profile: OptimizationProfile,

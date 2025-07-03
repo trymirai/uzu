@@ -27,7 +27,7 @@ mod tests {
                 "linear_config": {
                     "type": "QLoRALinearConfig",
                     "group_size": 32,
-                    "weight_quantization_mode": "int4",
+                    "weight_quantization_mode": "uint4",
                     "activation_quantization_mode": "int8",
                     "activation_precision": "bfloat16",
                     "lora_rank": 16,
@@ -41,7 +41,7 @@ mod tests {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::Int4,
+                    weight_quantization_mode: QuantizationMode::UInt4,
                     activation_quantization_mode: Some(QuantizationMode::Int8),
                     activation_precision: ConfigDataType::BFloat16,
                 },

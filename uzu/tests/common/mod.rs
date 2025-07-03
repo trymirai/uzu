@@ -32,7 +32,7 @@ fn foundation_base_dir() -> Option<PathBuf> {
     }
 }
 
-fn default_root_dir() -> PathBuf {
+pub fn default_root_dir() -> PathBuf {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     if let Some(base) = foundation_base_dir() {
         return base.join("com.mirai.sdk.storage");

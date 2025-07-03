@@ -1,4 +1,4 @@
-mod common;
+pub mod common;
 use common::{GraphConstructionError, data_type_of, load_constant, shape_of};
 pub use common::{placeholder, shaped_type};
 mod attention;
