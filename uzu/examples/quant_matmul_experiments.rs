@@ -202,6 +202,8 @@ fn make_tensor_option(
 
 // ================== End helpers =====================
 
+// cargo run --example quant_matmul_experiments -- --print-exec-dump --print-placement-analysis --dump-mpsgraphpackage
+
 fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
         let args = Args::parse();
@@ -335,14 +337,6 @@ fn main() -> Result<(), ExampleError> {
         let input_td = unsafe { input_array.to_mps_tensor_data() };
         let result_td = unsafe { result_array.to_mps_tensor_data() };
 
-        // ------------------------------------------------------------------
-        // Build a single mapping from feed tensors to their corresponding
-        // `TensorData`s so that we can supply inputs in the exact order
-        // expected by `executable.feed_tensors()`.
-        // ------------------------------------------------------------------
-
-        // Treat the main input as another `TensorOption` so that we can reuse
-        // the same helper logic.
         let input_tensor_option = TensorOption::Placeholder {
             placeholder: input_placeholder.clone(),
             data: input_td.clone(),
