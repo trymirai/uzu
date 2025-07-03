@@ -4,6 +4,7 @@ use mpsgraph::{
 };
 use objc2::rc::Retained;
 
+#[derive(Debug, Clone, Copy)]
 pub enum BlockDevice {
     Ane,
     Gpu,
