@@ -1,12 +1,16 @@
 use std::rc::Rc;
 
-use mpsgraph::{Graph, GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Tensor};
+use mpsgraph::{
+    Graph, GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Tensor,
+};
 use objc2::rc::Retained;
 
 use super::{super::MTLContext, GraphConstructionError, load_constant};
-use crate::DataType;
-use crate::config::ConfigDataType;
-use crate::{config::LinearConfig, parameters::ParameterTree};
+use crate::{
+    DataType,
+    config::{ConfigDataType, LinearConfig},
+    parameters::ParameterTree,
+};
 
 pub fn linear_subgraph<const N: usize>(
     graph: &Graph,
@@ -65,7 +69,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "weights",
-                &[input_dim, output_dim_sum],
+                &[output_dim_sum, input_dim],
                 DataType::U4,
             )?;
 
@@ -73,7 +77,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "scales",
-                &[input_dim / group_size, output_dim_sum],
+                &[output_dim_sum, input_dim / group_size],
                 activation_precision.into(),
             )?;
 
@@ -81,7 +85,7 @@ pub fn linear_subgraph<const N: usize>(
                 graph,
                 parameter_tree,
                 "zero_points",
-                &[input_dim / group_size, output_dim_sum],
+                &[output_dim_sum, input_dim / group_size],
                 DataType::U4,
             )?;
 
@@ -98,13 +102,9 @@ pub fn linear_subgraph<const N: usize>(
                 )
                 .unwrap();
 
-            let matmul = graph.transpose(
-                &graph.matmul(
-                    &graph.transpose(&dequantized_weights, &[1, 0], None),
-                    &graph.transpose(input, &[1, 0], None),
-                    None,
-                ),
-                &[1, 0],
+            let matmul = graph.matmul(
+                &input,
+                &graph.transpose(&dequantized_weights, &[1, 0], None),
                 None,
             );
 
