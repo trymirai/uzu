@@ -6,6 +6,7 @@ pub struct EncodingParameters {
     pub warmup: bool,
     pub enable_commit: bool,
     pub wait_until_completed: bool,
+    pub projection_step: Option<usize>,
 }
 
 impl EncodingParameters {
@@ -18,7 +19,13 @@ impl EncodingParameters {
             warmup,
             enable_commit,
             wait_until_completed,
+            projection_step: None,
         }
+    }
+
+    pub fn with_projection(mut self, projection_step: usize) -> Self {
+        self.projection_step = Some(projection_step);
+        self
     }
 }
 

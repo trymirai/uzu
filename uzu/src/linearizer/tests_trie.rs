@@ -9,7 +9,6 @@ mod tests {
 
         assert!(suffix.tokens.is_empty());
         assert!(suffix.indices.is_empty());
-        assert!(suffix.causal_mask.is_empty());
         assert!(suffix.transition_map.len() == 1);
     }
 
@@ -86,7 +85,6 @@ mod tests {
 
         assert_eq!(suffix.tokens.len(), 5);
         assert_eq!(suffix.indices.len(), 5);
-        assert_eq!(suffix.causal_mask.len(), 5);
         assert_eq!(suffix.transition_map.len(), 6);
 
         for i in 1..=5 {

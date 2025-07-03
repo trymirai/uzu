@@ -1,5 +1,7 @@
 use std::{collections::HashMap, path::Path, time::Instant};
 
+use mpsgraph::CommandBuffer;
+
 use super::{
     config::GeneratorConfig,
     context::GeneratorContext,
@@ -10,15 +12,13 @@ use crate::{
     Array,
     backends::metal::{
         ForwardPassState,
-        forward_pass::encodable_with_state::{
-            EncodableWithState, EncodingParameters,
+        forward_pass::{
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+            kv_cache::INVALID_POSITION,
         },
     },
-    env_utils,
-    generator::{
-        error::GeneratorError,
-        mask_descriptor::{GeneratorMaskDescriptor, GeneratorPrefixLength},
-    },
+    env_utils::MetalEnvVar,
+    generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
 };
 
@@ -71,71 +71,52 @@ impl Generator {
         let unused_tokens_count = total_prefill_tokens_count - tokens_length;
 
         let speculator = &self.config.speculator_config.speculator;
-        let prefix_indices: Vec<usize> = (0..tokens_length).collect();
         let proposals = speculator.generate_proposals(&tokens);
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
             .linearize(0, unused_tokens_count);
-        let speculated_suffix_indicies: Vec<usize> = speculated_suffix
-            .indices
-            .iter()
-            .map(|index| index + tokens_length)
-            .collect();
-        let mut indicies = prefix_indices.clone();
-        indicies.extend(speculated_suffix_indicies);
 
         let zero_padding_tokens: Vec<u64> =
             vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
+
+        let padded_tokens = [
+            &tokens[..],
+            &speculated_suffix.tokens[..],
+            &zero_padding_tokens[..],
+        ]
+        .concat();
+
+        let mut padded_positions: Vec<usize> = (0..tokens_length).collect();
+        padded_positions.extend(
+            speculated_suffix.indices.iter().map(|index| index + tokens_length),
+        );
+        let padding_count =
+            unused_tokens_count - speculated_suffix.tokens.len();
         let zero_padding_indicies: Vec<usize> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-        let padded_tokens =
-            [tokens, speculated_suffix.tokens, zero_padding_tokens].concat();
-        let padded_indicies = [indicies, zero_padding_indicies].concat();
+            vec![INVALID_POSITION; padding_count];
+
+        padded_positions.extend(zero_padding_indicies);
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
+
+        // Process each prefill step and update KV cache immediately
         for step in 0..number_of_prefill_steps {
             let tokens_start_index = step * self.config.prefill_step_size;
             let tokens_end_index =
                 tokens_start_index + self.config.prefill_step_size;
             let tokens_for_step =
                 &padded_tokens[tokens_start_index..tokens_end_index];
-            let indices_for_step =
-                &padded_indicies[tokens_start_index..tokens_end_index];
+            let positions_for_step =
+                &padded_positions[tokens_start_index..tokens_end_index];
 
             objc2::rc::autoreleasepool(|_pool| {
                 // Drop previous state to release any transient Metal objects
                 let _ = last_state.take();
             });
 
-            let casual_mask: Option<Vec<Vec<bool>>>;
-            if step == number_of_prefill_steps - 1 {
-                let speculated_tokens_start =
-                    self.tokens.len() % self.config.prefill_step_size;
-                casual_mask = Some(
-                    GeneratorMaskDescriptor::prefill_last_step_casual_mask(
-                        self.config.prefill_step_size,
-                        speculated_tokens_start,
-                        speculated_suffix.causal_mask.clone(),
-                    ),
-                );
-            } else {
-                casual_mask = None
-            }
-
-            let prefix_length = tokens_start_index;
-            let mask_descriptor = GeneratorMaskDescriptor {
-                suffix_length: self.config.prefill_step_size,
-                prefix_length: GeneratorPrefixLength {
-                    real: prefix_length,
-                    step: None,
-                },
-                casual_mask,
-            };
-
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
-                token_positions: indices_for_step.to_vec(),
-                mask_descriptor,
+                token_positions: positions_for_step.to_vec(),
                 expected_amount_of_new_tokens: self.config.prefill_step_size,
             };
 
@@ -145,6 +126,21 @@ impl Generator {
                 self.allow_pre_encode(),
                 Some(sampling_config.clone()),
             );
+
+            // Register tokens with KV cache immediately after each step
+            let step_end_token_index =
+                std::cmp::min(tokens_end_index, tokens_length);
+            let tokens_processed_this_step =
+                step_end_token_index - tokens_start_index;
+
+            if tokens_processed_this_step > 0 {
+                let positions_for_step: Vec<usize> =
+                    (tokens_start_index..step_end_token_index).collect();
+                self.context
+                    .kv_cache
+                    .borrow_mut()
+                    .register_accepted_tokens(&positions_for_step);
+            }
 
             last_state = Some(state);
             run_times.push(run_time);
@@ -180,14 +176,19 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
-            &mut final_state,
-            &accepted_token_indices,
-            self.tokens.len(),
-        );
-        self.update_ring_buffers(accepted_tokens.len());
+        self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
-        self.register_tokens(accepted_tokens.clone());
+        // Register the final accepted tokens (from speculation)
+        if !accepted_tokens.is_empty() {
+            let start_pos = self.tokens.len();
+            let accepted_positions: Vec<usize> =
+                (0..accepted_tokens.len()).map(|i| start_pos + i).collect();
+            self.context
+                .kv_cache
+                .borrow_mut()
+                .register_accepted_tokens(&accepted_positions);
+            self.tokens.extend(accepted_tokens.clone());
+        }
 
         PrefillResult {
             tokens: accepted_tokens,
@@ -210,6 +211,7 @@ impl Generator {
         if proposals.is_empty() {
             proposals = vec![vec![*last_token]];
         }
+
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
             .linearize(0, self.config.generate_suffix_length());
 
@@ -217,34 +219,23 @@ impl Generator {
         let unused_tokens_count =
             expected_suffix_length - speculated_suffix.tokens.len();
         let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
-        let zero_padding_indicies: Vec<usize> = vec![0; unused_tokens_count];
         let padded_tokens =
-            [speculated_suffix.tokens, zero_padding_tokens].concat();
-        let padded_indicies: Vec<usize> =
-            [speculated_suffix.indices, zero_padding_indicies]
-                .concat()
-                .iter()
-                .map(|index| index + self.tokens.len() - 1)
-                .collect();
+            [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
 
-        let prefix_length = self.tokens.len() - 1;
+        let start_position = self.tokens.len() - 1;
 
-        let casual_mask: Option<Vec<Vec<bool>>> =
-            Some(speculated_suffix.causal_mask);
-
-        let mask_descriptor = GeneratorMaskDescriptor {
-            suffix_length: expected_suffix_length,
-            prefix_length: GeneratorPrefixLength {
-                real: prefix_length,
-                step: self.config.prefix_length_step,
-            },
-            casual_mask,
-        };
+        let padded_positions: Vec<usize> = speculated_suffix
+            .indices
+            .iter()
+            .map(|idx| idx + start_position)
+            .chain(
+                std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
+            )
+            .collect();
 
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
-            token_positions: padded_indicies,
-            mask_descriptor,
+            token_positions: padded_positions,
             expected_amount_of_new_tokens: 1,
         };
 
@@ -254,6 +245,7 @@ impl Generator {
             self.allow_pre_encode(),
             Some(sampling_config),
         );
+
         let argmax_tokens = self.gpu_sample(&mut state);
 
         let mut accepted_token_indices = Vec::new();
@@ -276,14 +268,17 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
-            &mut state,
-            &accepted_token_indices,
-            self.tokens.len() - 1,
-        );
-        self.update_ring_buffers(accepted_tokens.len());
+        self.update_kv_cache(&mut state, &accepted_token_indices);
 
-        self.register_tokens(accepted_tokens.clone());
+        let start_pos = self.tokens.len();
+        let accepted_positions: Vec<usize> =
+            (0..accepted_tokens.len()).map(|i| start_pos + i).collect();
+        self.context
+            .kv_cache
+            .borrow_mut()
+            .register_accepted_tokens(&accepted_positions);
+
+        self.tokens.extend(accepted_tokens.clone());
 
         GenerateResult {
             tokens: accepted_tokens,
@@ -301,19 +296,9 @@ impl Generator {
         &mut self,
         suffix_length: usize,
     ) {
-        let mask_descriptor = GeneratorMaskDescriptor {
-            suffix_length,
-            prefix_length: GeneratorPrefixLength {
-                real: 0,
-                step: None,
-            },
-            casual_mask: None,
-        };
-
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            mask_descriptor,
             expected_amount_of_new_tokens: suffix_length,
         };
 
@@ -332,10 +317,11 @@ impl Generator {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let mut state = task.create_state(&mut self.context);
+            let mut state = task.create_state(&mut self.context, None);
             state.sampling_config = sampling_config;
 
-            let encoded_task_key = task.encoded_task_key();
+            let encoded_task_key = task.encoded_task_key(self.tokens.len());
+
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
             } else {
@@ -345,19 +331,12 @@ impl Generator {
                     &self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, true, false),
+                    encoded_task_key.clone(),
                 );
             }
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
-
-            if let Some(_) = task.mask_descriptor.kv_cache_update_task() {
-                self.context.kv_cache_update.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &EncodingParameters::new(warmup, true, false),
-                );
-            }
 
             if !warmup {
                 self.context.gpu_sampler.encode(
@@ -370,22 +349,24 @@ impl Generator {
             self.context.command_buffer.commit_and_continue();
 
             if allow_pre_encode {
-                let next_task = task.speculate_next_task();
-                next_task.apply_to_context(&mut self.context);
+                let next_task_key: String =
+                    task.encoded_task_key(self.tokens.len() + 1);
 
-                let next_encoded_task = next_task.build_encoded_task(
-                    &mut self.context,
+                let next_encoded_task = task.build_encoded_task(
+                    &self.context,
                     &mut state,
-                    &EncodingParameters::new(warmup, false, false),
+                    &EncodingParameters::new(warmup, false, false)
+                        .with_projection(1),
+                    next_task_key.clone(),
                 );
 
-                let next_task_key = next_task.encoded_task_key();
-                self.encoded_tasks.insert(next_task_key, next_encoded_task);
+                self.encoded_tasks
+                    .insert(next_task_key.clone(), next_encoded_task);
             }
 
             root_command_buffer.wait_until_completed();
-
             let run_time = run_start.elapsed().as_secs_f64();
+
             (state, run_time)
         })
     }
@@ -409,66 +390,31 @@ impl Generator {
         result
     }
 
-    fn register_tokens(
-        &mut self,
-        tokens: Vec<u64>,
-    ) {
-        self.tokens.extend(tokens);
-    }
-
     fn update_kv_cache(
         &mut self,
-        state: &mut ForwardPassState,
+        _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
-        tokens_count: usize,
     ) {
-        if accepted_token_indices.is_empty() {
-            return;
-        }
-
-        let source_indices: Vec<usize> = accepted_token_indices
-            .iter()
-            .map(|index| index + tokens_count)
-            .collect();
-        let destination_indices: Vec<usize> = (self.tokens.len()
-            ..self.tokens.len() + accepted_token_indices.len())
-            .collect();
-        if source_indices == destination_indices {
-            return;
-        }
-
-        state.kv_cache_update_source_indices = source_indices;
-        state.kv_cache_update_destination_indices = destination_indices;
-
-        let root_command_buffer =
-            self.context.command_buffer.root_command_buffer().to_owned();
-        self.context.kv_cache_update.encode(
-            state,
-            &self.context.command_buffer,
-            &EncodingParameters::new(false, true, false),
+        let command_buffer = CommandBuffer::from_command_queue(
+            &self.context.mtl_context.command_queue,
         );
-        self.context.command_buffer.commit_and_continue();
-        root_command_buffer.wait_until_completed();
+
+        self.context.kv_cache.borrow_mut().update_after_acceptance(
+            accepted_token_indices,
+            &command_buffer,
+            &self.context.kv_cache_update,
+        );
+
+        command_buffer.commit();
     }
 
     fn allow_pre_encode(&self) -> bool {
-        let metal_debug_active =
-            env_utils::MetalEnvVar::DeviceWrapperType.is_enabled();
+        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
 
         let result = self.config.allow_pre_encode
             && self.context.kernels_config.use_attention
             && !metal_debug_active;
 
         result
-    }
-
-    fn update_ring_buffers(
-        &mut self,
-        suffix_length: usize,
-    ) {
-        let mut kv_cache = self.context.kv_cache.borrow_mut();
-        for layer in kv_cache.data.iter_mut() {
-            layer.update_after_acceptance(suffix_length);
-        }
     }
 }

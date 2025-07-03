@@ -60,8 +60,6 @@ impl DecoderTestContext {
             .ok_or("No Metal device available".to_string())?;
         let mtl_command_queue = mtl_device.new_command_queue();
 
-        // Compilation descriptor setup
-        let mut attention_bias_closure = |r: usize, c: usize| c > r;
         let compilation_config = Rc::new(CompilationConfig::default());
 
         // -----------------------------------------------------------------
@@ -126,8 +124,8 @@ impl DecoderTestContext {
             shared_buffers.clone(),
             &token_ids,
             &token_positions,
-            &mut attention_bias_closure,
             false,
+            None,
         );
 
         let executables = DecoderExecutables::new(

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use serde::{Deserialize, Serialize};
 
@@ -280,14 +280,12 @@ pub struct ForwardPassState {
     /// [suffix_length] - i32
     token_positions: ArrayCell,
     /// [suffix_length, suffix_length + prefix_length]
-    attention_bias: ArrayCell,
+    attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
     logits: ArrayCell,
     pub kv_cache: Rc<RefCell<KVCache>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
-    pub kv_cache_update_source_indices: Vec<usize>,
-    pub kv_cache_update_destination_indices: Vec<usize>,
     /// [suffix_length] - u32 sampling output buffer
     pub sampling_output: Option<ArrayCell>,
     /// Current sampling configuration for this forward pass
@@ -297,7 +295,7 @@ pub struct ForwardPassState {
 }
 
 impl ForwardPassState {
-    pub fn new<F>(
+    pub fn new(
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
@@ -305,12 +303,9 @@ impl ForwardPassState {
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
-        attention_bias_should_be_neg_inf: F,
         trace: bool,
-    ) -> Self
-    where
-        F: FnMut(usize, usize) -> bool,
-    {
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+    ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
             suffix_length,
@@ -361,27 +356,40 @@ impl ForwardPassState {
         // --------------------
         // Attention Bias
         // --------------------
-        let prefix_length = kv_cache.borrow().max_effective_prefix_length();
+        let prefix_length = kv_cache.borrow().max_prefix_length();
         let attention_bias_shape =
             [suffix_length, suffix_length + prefix_length];
         let act_dtype = model_shape.activation_data_type();
-        let mut attention_bias_array = unsafe {
-            MetalArray::new(
-                scratch.attention_bias.clone(),
-                &attention_bias_shape,
-                act_dtype,
-            )
-        };
 
-        // Initialize attention bias buffer via DeviceContext helper
-        context.fill_attention_bias(
-            &mut attention_bias_array,
+        let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
+            scratch
+                .attention_window_size_to_bias
+                .iter()
+                .map(|(window_size, buffer)| {
+                    let array = unsafe {
+                        MetalArray::new(
+                            buffer.clone(),
+                            &attention_bias_shape,
+                            act_dtype,
+                        )
+                    };
+                    (*window_size, array)
+                })
+                .collect();
+
+        kv_cache.borrow().fill_attention_bias(
+            &mut attention_bias_map,
+            token_positions,
             suffix_length,
-            prefix_length,
-            act_dtype,
-            attention_bias_should_be_neg_inf,
+            &context,
+            external_bias_fn,
         );
-        let attention_bias = RefCell::new(attention_bias_array);
+
+        let attention_bias: HashMap<Option<usize>, ArrayCell> =
+            attention_bias_map
+                .into_iter()
+                .map(|(k, v)| (k, RefCell::new(v)))
+                .collect();
 
         // --------------------
         // Logits
@@ -421,8 +429,6 @@ impl ForwardPassState {
             kv_cache,
             shared_buffers,
             aux_buffers,
-            kv_cache_update_source_indices: vec![],
-            kv_cache_update_destination_indices: vec![],
             sampling_output: Some(sampling_output),
             sampling_config: None,
             traces,
@@ -436,7 +442,6 @@ impl ForwardPassState {
         match id {
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
-            ArrayId::AttentionBias => self.attention_bias.clone(),
             ArrayId::Logits => self.logits.clone(),
             ArrayId::Main => self.aux_buffers.main.clone(),
             ArrayId::Shortcut => self.aux_buffers.shortcut.clone(),
@@ -444,10 +449,6 @@ impl ForwardPassState {
             ArrayId::AttentionOutput => {
                 self.aux_buffers.attention_output.clone()
             },
-            ArrayId::PrefixLength(layer_index) => self.kv_cache.borrow().data
-                [layer_index]
-                .prefix_length_buffer
-                .clone(),
             ArrayId::Keys(layer_index) => {
                 self.kv_cache.borrow().data[layer_index].keys.clone()
             },
@@ -513,6 +514,24 @@ impl ForwardPassState {
         }
     }
 
+    pub fn hashmap_cell(
+        &self,
+        id: &HashMapId,
+    ) -> RefCell<HashMap<Option<usize>, ArrayCell>> {
+        match id {
+            HashMapId::AttentionBias => {
+                RefCell::new(self.attention_bias.clone())
+            },
+        }
+    }
+
+    pub fn hashmaps(
+        &self,
+        ids: &[HashMapId],
+    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
+        ids.iter().map(|id| self.hashmap_cell(id).into_inner()).collect()
+    }
+
     pub fn arrays(
         &self,
         ids: &[ArrayId],
@@ -569,7 +588,6 @@ pub enum RopeType {
 pub enum ArrayId {
     TokenIds,
     TokenPositions,
-    AttentionBias,
     Logits,
 
     Main,
@@ -577,7 +595,6 @@ pub enum ArrayId {
     QKV,
     AttentionOutput,
 
-    PrefixLength(usize),
     Keys(usize),
     Values(usize),
 
@@ -592,4 +609,9 @@ pub enum ArrayId {
     EmbeddingsOutput,
     RopeCosines(RopeType),
     RopeSines(RopeType),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HashMapId {
+    AttentionBias,
 }

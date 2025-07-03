@@ -45,7 +45,9 @@ void applyRope(
     const uint totalHeads = numHeads + 2 * numGroups;
 
     // Use actual token position from buffer
-    const uint absolutePosition = tokenPositions[tokenIndex];
+    const uint rawPosition = tokenPositions[tokenIndex];
+    const uint absolutePosition = rawPosition > maxSequenceLength ? 0 : rawPosition;
+
     const uint halfDimension = headDim / 2;
 
     TensorView3D<const T> qkvTensorView = TensorView3D<const T>(qkv).shaped(suffixLength, totalHeads, headDim);

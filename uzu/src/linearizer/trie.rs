@@ -59,7 +59,6 @@ impl TokenTrie {
         });
 
         let tokens_len = tokens.len();
-        let mut causal_mask = vec![vec![false; tokens_len]; tokens_len];
 
         let mut transition_map: HashMap<
             isize,
@@ -86,21 +85,11 @@ impl TokenTrie {
             if let Some(transitions) = transition_map.get_mut(&parent_index) {
                 transitions.insert(current_token, current_index);
             }
-
-            for (prev_index, _) in path {
-                if *prev_index < (tokens_len as isize)
-                    && current_index < (tokens_len as isize)
-                {
-                    causal_mask[current_index as usize]
-                        [(*prev_index) as usize] = true;
-                }
-            }
         });
 
         SpeculatedSuffix {
             tokens,
             indices,
-            causal_mask,
             transition_map,
         }
     }
