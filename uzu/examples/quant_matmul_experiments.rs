@@ -67,6 +67,7 @@ struct QuantizedMatmulDescriptor {
     weights: TensorLoadType,
     scales: TensorLoadType,
     zeros: TensorLoadType,
+    transposed_shapes: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +146,7 @@ fn build_quantized_matmul(
     tensor_options: &QMTensorOptions,
     mtl_context: &Rc<MTLContext>,
     compilation_descriptor: &CompilationDescriptor,
+    transposed_shapes: bool,
 ) -> Result<Retained<Executable>, ExampleError> {
     let i = tensor_options.input.tensor();
     let w = tensor_options.weights.tensor();
@@ -161,11 +163,19 @@ fn build_quantized_matmul(
         )
         .ok_or(ExampleError::Dequantization)?;
 
-    let matmul = graph.matmul(
-        &i,
-        &graph.transpose(&dequantized_weights, &[1, 0], None),
-        None,
-    );
+    let matmul = if transposed_shapes {
+        graph.matmul(
+            &i,
+            &graph.transpose(&dequantized_weights, &[1, 0], None),
+            None,
+        )
+    } else {
+        graph.matmul(
+            &graph.transpose(&dequantized_weights, &[1, 0], None),
+            &graph.transpose(&i, &[1, 0], None),
+            None,
+        )
+    };
 
     let device = MPSDevice::with_device(&mtl_context.device);
 
@@ -221,25 +231,34 @@ fn main() -> Result<(), ExampleError> {
 
         let qm_descriptor = QuantizedMatmulDescriptor {
             weights: TensorLoadType::Baked,
-            scales: TensorLoadType::RuntimeLoaded,
-            zeros: TensorLoadType::Baked,
+            scales: TensorLoadType::Baked,
+            zeros: TensorLoadType::RuntimeLoaded,
+            transposed_shapes: true,
         };
 
         // --- Constants ---
 
         let suffix_length: usize = 128;
-        let model_dim: usize = 2560;
+        let input_dim: usize = 2560;
         let output_dim: usize = 3072 * 2;
         let group_size: usize = 20;
 
-        let weights_shape = [output_dim, model_dim];
-        let scales_shape = [output_dim, model_dim / group_size];
+        let weights_shape = if qm_descriptor.transposed_shapes {
+            [output_dim, input_dim]
+        } else {
+            [input_dim, output_dim]
+        };
+        let scales_shape = if qm_descriptor.transposed_shapes {
+            [output_dim, input_dim / group_size]
+        } else {
+            [input_dim / group_size, output_dim]
+        };
         let zero_points_shape = scales_shape;
-        let input_shape = [-1_i64, model_dim as i64];
+        let input_shape = [-1_i64, input_dim as i64];
 
         // --- Concrete shapes for actual buffer allocation at runtime ---
 
-        let input_tensor_shape = [suffix_length, model_dim];
+        let input_tensor_shape = [suffix_length, input_dim];
         let result_tensor_shape = [suffix_length, output_dim];
 
         // --- Device ---
@@ -315,9 +334,9 @@ fn main() -> Result<(), ExampleError> {
         };
 
         let compilation_descriptor = make_compilation_descriptor(
-            BlockDevice::Gpu,
+            BlockDevice::Ane,
             Optimization::Level1,
-            OptimizationProfile::Performance,
+            OptimizationProfile::PowerEfficiency,
             args.print_placement_analysis,
         );
 
@@ -326,6 +345,7 @@ fn main() -> Result<(), ExampleError> {
             &tensor_options,
             &mtl_context,
             &compilation_descriptor,
+            qm_descriptor.transposed_shapes,
         )?;
 
         // --- Optional printing / dumping ---
