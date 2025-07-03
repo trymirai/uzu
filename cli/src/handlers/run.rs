@@ -7,8 +7,8 @@ use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Text;
 use uzu::session::{
-    sampling_config::SamplingConfig, session_config::SessionRunConfig,
-    session_input::SessionInput, session_output::SessionOutput,
+    session_config::SessionRunConfig, session_input::SessionInput,
+    session_output::SessionOutput,
 };
 
 use crate::server::load_session;
@@ -91,12 +91,7 @@ pub fn handle_run(
 
         let session_output = session.run(
             SessionInput::Text(input.to_string()),
-            SessionRunConfig::new_with_sampling(
-                tokens_limit as u64,
-                SamplingConfig::TopP {
-                    top_p: 0.95,
-                },
-            ),
+            SessionRunConfig::new(tokens_limit as u64),
             Some(session_progress),
         );
         let result = format_output(session_output);
