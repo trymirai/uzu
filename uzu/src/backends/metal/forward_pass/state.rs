@@ -292,8 +292,6 @@ pub struct ForwardPassState {
     pub sampling_config:
         Option<crate::session::sampling_config::SamplingConfig>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
-    /// Padding mask for this forward pass
-    pub padding_mask: Option<Vec<bool>>,
 }
 
 impl ForwardPassState {
@@ -305,7 +303,6 @@ impl ForwardPassState {
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
-        padding_mask: Option<&[bool]>,
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> Self {
@@ -384,7 +381,6 @@ impl ForwardPassState {
             &mut attention_bias_map,
             token_positions,
             suffix_length,
-            padding_mask,
             &context,
             external_bias_fn,
         );
@@ -436,7 +432,6 @@ impl ForwardPassState {
             sampling_output: Some(sampling_output),
             sampling_config: None,
             traces,
-            padding_mask: padding_mask.map(|mask| mask.to_vec()),
         }
     }
 

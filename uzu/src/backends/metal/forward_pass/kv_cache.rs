@@ -1,6 +1,4 @@
 use std::{cell::RefCell, collections::HashMap};
-
-// External Metal command buffer type used by the update kernel
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -27,6 +25,8 @@ pub enum KVCacheLayerState {
         window_length: usize,
     },
 }
+
+pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 pub struct KVCacheLayer {
     pub state: KVCacheLayerState,
@@ -89,7 +89,6 @@ impl KVCacheLayer {
         dst: &mut MetalArray,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        padding_mask: Option<&[bool]>,
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
@@ -103,12 +102,12 @@ impl KVCacheLayer {
                 if let Some(bias_fn) = external_bias_fn {
                     bias_fn(row_index, column_index)
                 } else {
-                    self.bias_should_be_neg_inf(
+                    let result = self.bias_should_be_neg_inf(
                         row_index,
                         column_index,
                         suffix_token_positions,
-                        padding_mask,
-                    )
+                    );
+                    result
                 }
             },
         );
@@ -119,20 +118,11 @@ impl KVCacheLayer {
         row_index: usize,
         column_index: usize,
         suffix_token_positions: &[usize],
-        padding_mask: Option<&[bool]>,
     ) -> bool {
-        if let Some(mask) = padding_mask {
-            // Mask out any key that corresponds to a padding token in the suffix
-            if column_index >= self.effective_prefix_length() {
-                let suffix_column_index =
-                    column_index - self.effective_prefix_length();
-                if mask[suffix_column_index] {
-                    return true;
-                }
-            }
-        }
-
         let query_position = suffix_token_positions[row_index];
+        if query_position == INVALID_POSITION {
+            return true;
+        }
 
         let key_position = if column_index >= self.effective_prefix_length() {
             suffix_token_positions
@@ -153,6 +143,10 @@ impl KVCacheLayer {
                 },
             }
         };
+
+        if key_position == INVALID_POSITION {
+            return true;
+        }
 
         if query_position < key_position {
             return true;
@@ -279,8 +273,7 @@ impl KVCacheLayer {
 
     pub fn register_accepted_tokens(
         &mut self,
-        token_positions: &[usize],
-        _layer_idx: usize,
+        token_positions: &[usize]
     ) {
         match &mut self.state {
             KVCacheLayerState::Full {
@@ -406,7 +399,6 @@ impl KVCache {
         dst: &mut HashMap<Option<usize>, MetalArray>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        padding_mask: Option<&[bool]>,
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
@@ -426,9 +418,8 @@ impl KVCache {
                     array,
                     suffix_token_positions,
                     suffix_length,
-                    padding_mask,
                     context,
-                    external_bias_fn,
+                    external_bias_fn
                 );
             }
         }
@@ -453,8 +444,8 @@ impl KVCache {
         &mut self,
         token_positions: &[usize],
     ) {
-        for (idx, layer) in self.data.iter_mut().enumerate() {
-            layer.register_accepted_tokens(token_positions, idx);
+        for layer in self.data.iter_mut() {
+            layer.register_accepted_tokens(token_positions);
         }
     }
 }

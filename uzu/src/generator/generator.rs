@@ -15,6 +15,7 @@ use crate::{
         forward_pass::encodable_with_state::{
             EncodableWithState, EncodingParameters,
         },
+        forward_pass::kv_cache::INVALID_POSITION,
     },
     env_utils::MetalEnvVar,
     generator::error::GeneratorError,
@@ -76,22 +77,23 @@ impl Generator {
 
         let zero_padding_tokens: Vec<u64> =
             vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
+            
 
-        // use iterator to avoid extend duplication (without vec)
-        let mut padded_tokens = Vec::with_capacity(total_prefill_tokens_count);
-        padded_tokens.extend_from_slice(&tokens);
-        padded_tokens.extend_from_slice(&speculated_suffix.tokens);
-        padded_tokens.extend_from_slice(&zero_padding_tokens);
+        let padded_tokens = [
+            &tokens[..],
+            &speculated_suffix.tokens[..],
+            &zero_padding_tokens[..]
+        ].concat();
 
-        let mut padded_indicies: Vec<usize> = (0..tokens_length).collect();
-        padded_indicies.extend(
+        let mut padded_positions: Vec<usize> = (0..tokens_length).collect();
+        padded_positions.extend(
             speculated_suffix.indices.iter().map(|index| index + tokens_length),
         );
-        let zero_padding_indicies: Vec<usize> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-        padded_indicies.extend(zero_padding_indicies);
+        let padding_count = unused_tokens_count - speculated_suffix.tokens.len();
+        let zero_padding_indicies: Vec<usize> = vec![INVALID_POSITION; padding_count];
 
-        let padding_start_index = tokens.len() + speculated_suffix.tokens.len();
+        padded_positions.extend(zero_padding_indicies);
+
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
@@ -103,33 +105,18 @@ impl Generator {
                 tokens_start_index + self.config.prefill_step_size;
             let tokens_for_step =
                 &padded_tokens[tokens_start_index..tokens_end_index];
-            let indices_for_step =
-                &padded_indicies[tokens_start_index..tokens_end_index];
+            let positions_for_step =
+                &padded_positions[tokens_start_index..tokens_end_index];
 
             objc2::rc::autoreleasepool(|_pool| {
                 // Drop previous state to release any transient Metal objects
                 let _ = last_state.take();
             });
 
-            let padding_mask = if step == number_of_prefill_steps - 1
-                && unused_tokens_count > 0
-            {
-                let padding_mask_vec: Vec<bool> = (0..tokens_for_step.len())
-                    .map(|i| (tokens_start_index + i) >= padding_start_index)
-                    .collect();
-                if padding_mask_vec.iter().any(|&b| b) {
-                    Some(padding_mask_vec)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
-                token_positions: indices_for_step.to_vec(),
-                padding_mask: padding_mask,
+                token_positions: positions_for_step.to_vec(),
                 expected_amount_of_new_tokens: self.config.prefill_step_size,
             };
 
@@ -137,8 +124,7 @@ impl Generator {
                 task,
                 false,
                 self.allow_pre_encode(),
-                Some(sampling_config.clone()),
-                true,
+                Some(sampling_config.clone())
             );
 
             // Register tokens with KV cache immediately after each step
@@ -235,14 +221,19 @@ impl Generator {
         let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
         let padded_tokens =
             [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
+
         let start_position = self.tokens.len() - 1;
-        let padded_indicies: Vec<usize> =
-            (start_position..start_position + expected_suffix_length).collect();
+
+        let padded_positions: Vec<usize> = speculated_suffix
+            .indices
+            .iter()
+            .map(|idx| idx + start_position)
+            .chain(std::iter::repeat(INVALID_POSITION).take(unused_tokens_count))
+            .collect();
 
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
-            token_positions: padded_indicies,
-            padding_mask: None,
+            token_positions: padded_positions,
             expected_amount_of_new_tokens: 1,
         };
 
@@ -250,8 +241,7 @@ impl Generator {
             task,
             false,
             self.allow_pre_encode(),
-            Some(sampling_config),
-            false,
+            Some(sampling_config)
         );
 
         let argmax_tokens = self.gpu_sample(&mut state);
@@ -307,11 +297,10 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            padding_mask: None,
             expected_amount_of_new_tokens: suffix_length,
         };
 
-        let (_, _) = self.run_model(task, true, false, None, false);
+        let (_, _) = self.run_model(task, true, false, None);
     }
 
     fn run_model(
@@ -321,8 +310,7 @@ impl Generator {
         allow_pre_encode: bool,
         sampling_config: Option<
             crate::session::sampling_config::SamplingConfig,
-        >,
-        prefill: bool,
+        >
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
