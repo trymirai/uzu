@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    process::exit,
     rc::Rc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -377,7 +378,7 @@ fn run_quant_matmul(
     // Warm-up
     run_once(&mtl_context, &executable, &inputs, &outputs);
 
-    const NUM_ITERATIONS: usize = 50;
+    const NUM_ITERATIONS: usize = 1000;
     let mut total_duration = 0.0f64; // milliseconds
 
     for _ in 0..NUM_ITERATIONS {
@@ -397,6 +398,22 @@ fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
         let args = Args::parse();
 
+        let descriptor = QuantizedMatmulDescriptor {
+            weights: TensorLoadType::Baked,
+            scales: TensorLoadType::Baked,
+            zeros: TensorLoadType::RuntimeLoaded,
+            transposed_shapes: true,
+            device: BlockDevice::Ane,
+            optimization_level: Optimization::Level0,
+            optimization_profile: OptimizationProfile::PowerEfficiency,
+        };
+
+        let avg_ms = run_quant_matmul(&descriptor, &args)?;
+
+        println!("Time: {:.3} ms", avg_ms);
+
+        exit(0);
+
         // ---------------- Collect results -----------------
 
         #[derive(Debug)]
@@ -413,8 +430,8 @@ fn main() -> Result<(), ExampleError> {
 
         let tensor_variants =
             [TensorLoadType::Baked, TensorLoadType::RuntimeLoaded];
-        let bool_variants = [false, true];
-        let device_variants = [BlockDevice::Gpu]; // Ane can be re-added if desired
+        let bool_variants = [true];
+        let device_variants = [BlockDevice::Ane];
         let opt_levels = [Optimization::Level0, Optimization::Level1];
         let opt_profiles = [
             OptimizationProfile::Performance,
