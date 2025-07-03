@@ -24,3 +24,7 @@
   "rust-analyzer.cargo.buildScripts.enable": false,
   "rust-analyzer.procMacro.enable": false,
 }
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  }
+}

@@ -342,7 +342,6 @@ pub fn attention_block(
             ArrayId::Values(layer_index),
             ArrayId::RotatedQueries,
             ArrayId::RotatedKeys,
-            ArrayId::AttentionBias,
         ];
         let output_array_ids = vec![ArrayId::AttentionOutput];
 

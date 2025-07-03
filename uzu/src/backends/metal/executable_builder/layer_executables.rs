@@ -345,8 +345,9 @@ impl LayerExecutables {
         state: &ForwardPassState,
     ) -> MPSGraphBlock {
         let suffix_length = self.get_suffix_length(state);
-        let prefix_length: usize =
-            state.kv_cache.borrow().data[self.layer_index].prefix_length();
+        let prefix_length: usize = state.kv_cache.borrow().data
+            [self.layer_index]
+            .effective_prefix_length();
 
         let mut attention_executable_provider =
             self.attention_executable_provider.as_ref().unwrap().borrow_mut();

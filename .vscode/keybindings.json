@@ -1,0 +1,22 @@
+[
+    {
+        "key": "cmd+shift+b",
+        "command": "workbench.action.tasks.runTask",
+        "args": "cargo build"
+    },
+    {
+        "key": "cmd+shift+c",
+        "command": "workbench.action.tasks.runTask",
+        "args": "cargo check"
+    },
+    {
+        "key": "cmd+shift+t",
+        "command": "workbench.action.tasks.runTask",
+        "args": "cargo test"
+    },
+    {
+        "key": "cmd+shift+r",
+        "command": "workbench.action.tasks.runTask",
+        "args": "cargo run"
+    }
+]
