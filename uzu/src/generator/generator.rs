@@ -60,6 +60,7 @@ impl Generator {
         sampling_config: crate::session::sampling_config::SamplingConfig,
     ) -> PrefillResult {
         assert!(!tokens.is_empty());
+        self.context.kv_cache.borrow_mut().clear();
         self.tokens = tokens.clone();
 
         let tokens_length = tokens.len();
