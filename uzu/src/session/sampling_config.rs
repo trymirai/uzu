@@ -29,6 +29,8 @@ impl SamplingConfig {
 
 impl Default for SamplingConfig {
     fn default() -> Self {
-        Self::Argmax
+        Self::TopP {
+            top_p: 0.9,
+        }
     }
 }

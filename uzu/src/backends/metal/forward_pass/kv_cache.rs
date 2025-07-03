@@ -1,4 +1,5 @@
 use std::{cell::RefCell, collections::HashMap};
+
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -273,7 +274,7 @@ impl KVCacheLayer {
 
     pub fn register_accepted_tokens(
         &mut self,
-        token_positions: &[usize]
+        token_positions: &[usize],
     ) {
         match &mut self.state {
             KVCacheLayerState::Full {
@@ -390,7 +391,6 @@ impl KVCache {
     }
 
     pub fn max_prefix_length(&self) -> usize {
-        // self.data.iter().map(|l| l.effective_prefix_length()).max().unwrap()
         self.max_prefix_length
     }
 
@@ -419,7 +419,7 @@ impl KVCache {
                     suffix_token_positions,
                     suffix_length,
                     context,
-                    external_bias_fn
+                    external_bias_fn,
                 );
             }
         }
