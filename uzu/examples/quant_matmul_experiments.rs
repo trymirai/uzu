@@ -8,17 +8,17 @@ use clap::Parser;
 use half::f16;
 use metal::Device;
 use mpsgraph::{
-    CommandBuffer, CompilationDescriptor, DataType as MPSDataType, Executable,
-    ExecutableExecutionDescriptor, Graph, GraphMatrixOps, GraphQuantizationOps,
-    GraphTensorShapeOps, Optimization, OptimizationProfile, Shape, ShapedType,
-    tensor_data::TensorData,
+    CommandBuffer, CompilationDescriptor, DataType as MPSDataType,
+    Device as MPSDevice, Executable, ExecutableExecutionDescriptor, Graph,
+    GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Optimization,
+    OptimizationProfile, Shape, ShapedType, Tensor, tensor_data::TensorData,
 };
 use objc2::rc::{Retained, autoreleasepool};
 use thiserror::Error;
 use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
-        MTLContext,
+        MTLContext, MetalArray,
         compilation_parameters::{BlockDevice, make_compilation_descriptor},
         utils::mps_shape,
     },
@@ -56,18 +56,30 @@ pub enum ExampleError {
 
 // ================== Quantized Matmul Helpers =====================
 
-#[derive(Debug)]
-enum Tensor<'a> {
-    Constant(Retained<mpsgraph::Tensor>),
+#[derive(Debug, Clone, Copy)]
+enum TensorLoadType {
+    Baked,
+    RuntimeLoaded,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QuantizedMatmulDescriptor {
+    weights: TensorLoadType,
+    scales: TensorLoadType,
+    zeros: TensorLoadType,
+}
+
+enum TensorOption {
+    Constant(Retained<Tensor>),
     Placeholder {
-        placeholder: Retained<mpsgraph::Tensor>,
-        data: &'a TensorData,
+        placeholder: Retained<Tensor>,
+        data: Retained<TensorData>,
     },
 }
 
-impl<'a> Tensor<'a> {
+impl TensorOption {
     #[inline]
-    fn to_graph_tensor(&self) -> Retained<mpsgraph::Tensor> {
+    fn to_graph_tensor(&self) -> Retained<Tensor> {
         match self {
             Self::Constant(t) => t.clone(),
             Self::Placeholder {
@@ -76,22 +88,31 @@ impl<'a> Tensor<'a> {
             } => placeholder.clone(),
         }
     }
+
+    /// Return a HashMap that maps the placeholder tensor to its corresponding `TensorData`.
+    /// For `Constant` variants the map is empty because no runtime data needs to be supplied.
+    fn to_data_map(&self) -> HashMap<Retained<Tensor>, Retained<TensorData>> {
+        match self {
+            TensorOption::Constant(_) => HashMap::new(),
+            TensorOption::Placeholder {
+                placeholder,
+                data,
+            } => HashMap::from_iter([(placeholder.clone(), data.clone())]),
+        }
+    }
 }
 
-#[derive(Debug)]
-struct QuantizedMatmulTensors<'a> {
-    weights: Tensor<'a>,
-    scales: Tensor<'a>,
-    zeros: Tensor<'a>,
+struct QuantizedMatmulTensors {
+    weights: TensorOption,
+    scales: TensorOption,
+    zeros: TensorOption,
 }
 
-impl<'a> QuantizedMatmulTensors<'a> {
-    fn collect_feeds(
-        &self
-    ) -> Vec<(Retained<mpsgraph::Tensor>, Retained<ShapedType>)> {
+impl QuantizedMatmulTensors {
+    fn collect_feeds(&self) -> Vec<(Retained<Tensor>, Retained<ShapedType>)> {
         let mut feeds = Vec::new();
         for tensor in [&self.weights, &self.scales, &self.zeros] {
-            if let Tensor::Placeholder {
+            if let TensorOption::Placeholder {
                 placeholder,
                 ..
             } = tensor
@@ -103,10 +124,10 @@ impl<'a> QuantizedMatmulTensors<'a> {
     }
 }
 
-fn build_quantized_matmul<'a>(
+fn build_quantized_matmul(
     graph: &Graph,
-    tensors: &QuantizedMatmulTensors<'a>,
-    input_placeholder: &mpsgraph::Tensor,
+    tensors: &QuantizedMatmulTensors,
+    input_placeholder: &Tensor,
     mtl_context: &Rc<MTLContext>,
     compilation_descriptor: &CompilationDescriptor,
 ) -> Result<Retained<Executable>, ExampleError> {
@@ -131,15 +152,15 @@ fn build_quantized_matmul<'a>(
     );
 
     let input_st = input_placeholder.shaped_type();
-    let mut feeds: HashMap<&mpsgraph::Tensor, &ShapedType> =
-        HashMap::from_iter([(input_placeholder, input_st.as_ref())]);
+    let mut feeds: HashMap<&Tensor, &ShapedType> =
+        HashMap::from_iter([(input_placeholder, &*input_st)]);
 
     let placeholder_pairs = tensors.collect_feeds();
     for (ph, st) in &placeholder_pairs {
-        feeds.insert(ph.as_ref(), st.as_ref());
+        feeds.insert(&*ph, &*st);
     }
 
-    let device = mpsgraph::device::Device::with_device(&mtl_context.device);
+    let device = MPSDevice::with_device(&mtl_context.device);
     let executable = graph.compile(
         &device,
         &feeds,
@@ -150,11 +171,46 @@ fn build_quantized_matmul<'a>(
     Ok(executable)
 }
 
+fn make_tensor_option(
+    graph: &Graph,
+    load_type: TensorLoadType,
+    array: &mut MetalArray,
+    shape: &[usize],
+    dtype: DataType,
+    name: &str,
+) -> TensorOption {
+    match load_type {
+        TensorLoadType::Baked => {
+            let tensor_const = graph.constant_with_data(
+                array.buffer(),
+                &mps_shape(shape),
+                dtype.into(),
+            );
+            TensorOption::Constant(tensor_const)
+        },
+        TensorLoadType::RuntimeLoaded => {
+            let td = unsafe { array.to_mps_tensor_data() };
+            let placeholder =
+                graph.placeholder(dtype.into(), &mps_shape(shape), Some(name));
+            TensorOption::Placeholder {
+                placeholder,
+                data: td,
+            }
+        },
+    }
+}
+
 // ================== End helpers =====================
 
 fn main() -> Result<(), ExampleError> {
     autoreleasepool(|_| {
         let args = Args::parse();
+
+        let qm_descriptor = QuantizedMatmulDescriptor {
+            weights: TensorLoadType::Baked,
+            scales: TensorLoadType::RuntimeLoaded,
+            zeros: TensorLoadType::Baked,
+        };
 
         // --- Constants ---
 
@@ -186,7 +242,7 @@ fn main() -> Result<(), ExampleError> {
         };
         weights_array.buffer_mut().fill(0x11);
 
-        let scales_array =
+        let mut scales_array =
             mtl_context.array_from_elem(&scales_shape, f16::from_f32(1.0));
 
         let mut zero_points_array = unsafe {
@@ -205,24 +261,6 @@ fn main() -> Result<(), ExampleError> {
 
         let graph = Graph::new();
 
-        let weights_const = graph.constant_with_data(
-            weights_array.buffer(),
-            &mps_shape(&weights_shape),
-            DataType::U4.into(),
-        );
-
-        let scales_const = graph.constant_with_data(
-            scales_array.buffer(),
-            &mps_shape(&scales_shape),
-            DataType::F16.into(),
-        );
-
-        let zero_points_const = graph.constant_with_data(
-            zero_points_array.buffer(),
-            &mps_shape(&zero_points_shape),
-            DataType::U4.into(),
-        );
-
         let input_placeholder = graph.placeholder(
             MPSDataType::Float16,
             &Shape::from_dimensions(&input_shape),
@@ -232,9 +270,30 @@ fn main() -> Result<(), ExampleError> {
         // --- Quantized Matmul Sub-graph ---
 
         let qm_tensors = QuantizedMatmulTensors {
-            weights: Tensor::Constant(weights_const.clone()),
-            scales: Tensor::Constant(scales_const.clone()),
-            zeros: Tensor::Constant(zero_points_const.clone()),
+            weights: make_tensor_option(
+                graph.as_ref(),
+                qm_descriptor.weights,
+                &mut weights_array,
+                &weights_shape,
+                DataType::U4,
+                "weights_ph",
+            ),
+            scales: make_tensor_option(
+                graph.as_ref(),
+                qm_descriptor.scales,
+                &mut scales_array,
+                &scales_shape,
+                DataType::F16,
+                "scales_ph",
+            ),
+            zeros: make_tensor_option(
+                graph.as_ref(),
+                qm_descriptor.zeros,
+                &mut zero_points_array,
+                &zero_points_shape,
+                DataType::U4,
+                "zeros_ph",
+            ),
         };
 
         let compilation_descriptor = make_compilation_descriptor(
@@ -276,17 +335,53 @@ fn main() -> Result<(), ExampleError> {
         let input_td = unsafe { input_array.to_mps_tensor_data() };
         let result_td = unsafe { result_array.to_mps_tensor_data() };
 
-        let inputs_slice = [input_td.as_ref()];
-        let outputs = [result_td.as_ref()];
+        // ------------------------------------------------------------------
+        // Build a single mapping from feed tensors to their corresponding
+        // `TensorData`s so that we can supply inputs in the exact order
+        // expected by `executable.feed_tensors()`.
+        // ------------------------------------------------------------------
 
-        run_once(&mtl_context, &executable, &inputs_slice, &outputs);
+        // Treat the main input as another `TensorOption` so that we can reuse
+        // the same helper logic.
+        let input_tensor_option = TensorOption::Placeholder {
+            placeholder: input_placeholder.clone(),
+            data: input_td.clone(),
+        };
+
+        let tensor_options: [&TensorOption; 4] = [
+            &qm_tensors.weights,
+            &qm_tensors.scales,
+            &qm_tensors.zeros,
+            &input_tensor_option,
+        ];
+
+        let mut td_map: HashMap<Retained<Tensor>, Retained<TensorData>> =
+            HashMap::new();
+        for opt in &tensor_options {
+            td_map.extend(opt.to_data_map());
+        }
+
+        let inputs: Vec<&TensorData> = match executable.feed_tensors() {
+            Some(feed_tensors) => feed_tensors
+                .iter()
+                .map(|t| {
+                    td_map.get(t).expect("TensorData for feed tensor not found")
+                })
+                .map(|td| &**td)
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let outputs = [&*result_td];
+
+        run_once(&mtl_context, &executable, &inputs, &outputs);
 
         const NUM_ITERATIONS: usize = 50;
         let mut total_duration = 0.0f64; // milliseconds
 
         for _ in 0..NUM_ITERATIONS {
             let start = Instant::now();
-            run_once(&mtl_context, &executable, &inputs_slice, &outputs);
+            run_once(&mtl_context, &executable, &inputs, &outputs);
             total_duration += start.elapsed().as_secs_f64() * 1e3;
         }
 
