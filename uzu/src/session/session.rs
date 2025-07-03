@@ -83,6 +83,7 @@ impl Session {
     where
         F: Fn(SessionOutput) -> bool,
     {
+        let skip_special_tokens = false;
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
         let tokens: Vec<u64> = self
@@ -110,6 +111,7 @@ impl Session {
                 None
             }
         };
+
         let build_generated_text = |generator: &Generator,
                                     tokenizer: &Tokenizer|
          -> String {
@@ -118,8 +120,9 @@ impl Session {
                 .iter()
                 .map(|value| *value as u32)
                 .collect();
-            let generated_text =
-                tokenizer.decode(&generated_tokens, true).unwrap();
+            let generated_text = tokenizer
+                .decode(&generated_tokens, skip_special_tokens)
+                .unwrap();
             generated_text
         };
 
