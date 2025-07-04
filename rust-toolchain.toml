@@ -1,0 +1,3 @@
+[toolchain]
+channel = "stable"
+targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "aarch64-apple-darwin"]
