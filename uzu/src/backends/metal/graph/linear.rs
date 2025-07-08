@@ -174,15 +174,7 @@ fn quantized_matmul_subgraph<const N: usize>(
         output_dims,
         parameter_tree,
     )?;
-    Ok(graph.transpose(
-        &graph.matmul(
-            &graph.transpose(&weights, &[1, 0], None),
-            &graph.transpose(input, &[1, 0], None),
-            None,
-        ),
-        &[1, 0],
-        None,
-    ))
+    Ok(graph.matmul(input, &weights, None))
 }
 
 fn lora_subgraph<const N: usize>(
