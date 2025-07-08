@@ -11,8 +11,8 @@ use super::{
         MTLContext,
         graph::{
             EmbeddingParams, attention_subgraph, embed_callable_subgraph,
-            embed_placeholder_weights_subgraph, embed_subgraph,
-            embedding_params, linear_subgraph, mlp_subgraph, placeholder,
+            embed_placeholder_weights_subgraph, embedding_params,
+            linear_subgraph, mlp_subgraph, placeholder,
             readout_callable_subgraph, readout_placeholder_weights_subgraph,
             readout_subgraph, rms_norm_subgraph, shaped_type,
         },
