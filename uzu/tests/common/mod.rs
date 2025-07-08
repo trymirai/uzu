@@ -8,7 +8,7 @@ pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
 pub fn get_test_model_path() -> PathBuf {
-    let path = storage_path().join(MODEL_DIR_NAME);
+    let path = PathBuf::from("/Users/norpadon/Work/lalamo/models/Qwen3-4B-AWQ");
     if !path.exists() {
         panic!(
             "Test model not found at {:?}. Please make sure the model is downloaded to the SDK storage area.",

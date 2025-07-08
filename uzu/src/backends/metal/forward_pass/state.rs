@@ -77,8 +77,7 @@ impl EmbeddingsBuffers {
             EmbeddingsBuffers::Tied {
                 embeddings,
             } => {
-                let embeddings_view =
-                    embeddings_tree.leaf("token_embeddings").unwrap();
+                let embeddings_view = embeddings_tree.leaf("weights").unwrap();
                 embeddings.borrow_mut().copy_from_array(&embeddings_view);
             },
             EmbeddingsBuffers::Untied {
