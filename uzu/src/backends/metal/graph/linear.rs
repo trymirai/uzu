@@ -191,6 +191,7 @@ fn lora_subgraph<const N: usize>(
         lora_rank,
         parameter_tree,
     )?;
+
     let lora_inner = graph.transpose(
         &graph.matmul(
             &graph.transpose(&lora_weights.down_weights, &[1, 0], None),
@@ -200,14 +201,19 @@ fn lora_subgraph<const N: usize>(
         &[1, 0],
         None,
     );
-    let lora_outputs = lora_weights
-        .up_weights
+
+    let lora_inner_splits =
+        graph.split(&lora_inner, output_dims.len(), 1, None);
+    assert_eq!(lora_inner_splits.len(), lora_weights.up_weights.len());
+
+    let lora_outputs = lora_inner_splits
         .iter()
-        .map(|weights| {
+        .zip(lora_weights.up_weights.iter())
+        .map(|(lora_inner_split, up_weights)| {
             graph.transpose(
                 &graph.matmul(
-                    &graph.transpose(&weights, &[1, 0], None),
-                    &graph.transpose(&lora_inner, &[1, 0], None),
+                    &graph.transpose(&up_weights, &[1, 0], None),
+                    &graph.transpose(&lora_inner_split, &[1, 0], None),
                     None,
                 ),
                 &[1, 0],
@@ -215,7 +221,8 @@ fn lora_subgraph<const N: usize>(
             )
         })
         .collect::<Box<[Retained<Tensor>]>>();
-    Ok(graph.stack(
+
+    Ok(graph.concat_tensors(
         &lora_outputs
             .iter()
             .map(|tensor| &**tensor)
