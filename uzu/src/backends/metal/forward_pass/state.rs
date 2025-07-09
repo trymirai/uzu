@@ -21,13 +21,19 @@ type ArrayCell = RefCell<MetalArray>;
 pub enum EmbeddingsBuffers {
     Tied {
         /// [vocab_size, model_dim]
-        embeddings: ArrayCell,
+        weights: ArrayCell,
     },
     Untied {
         /// [vocab_size, model_dim]
-        input: ArrayCell,
+        input_weights: ArrayCell,
         /// [vocab_size, model_dim]
-        output: ArrayCell,
+        output_weights: ArrayCell,
+    },
+    QuantizedTied {
+        /// [vocab_size, model_dim]
+        weights: ArrayCell,
+        /// [vocab_size]
+        scales: ArrayCell,
     },
 }
 
@@ -43,7 +49,7 @@ impl EmbeddingsBuffers {
                     common: _,
                     precision: _,
                 } => Self::Tied {
-                    embeddings: RefCell::new(context.array_uninitialized(
+                    weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_input_shape(),
                         model_shape.activation_data_type(),
                     )),
@@ -52,17 +58,27 @@ impl EmbeddingsBuffers {
                     common: _,
                     precision: _,
                 } => Self::Untied {
-                    input: RefCell::new(context.array_uninitialized(
+                    input_weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_input_shape(),
                         model_shape.activation_data_type(),
                     )),
-                    output: RefCell::new(context.array_uninitialized(
+                    output_weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_output_shape(),
                         model_shape.activation_data_type(),
                     )),
                 },
-                _ => {
-                    unimplemented!()
+                EmbeddingConfig::QuantizedTied {
+                    embedding_quantization_mode,
+                    ..
+                } => Self::QuantizedTied {
+                    weights: RefCell::new(context.array_uninitialized(
+                        &model_shape.quantized_embeddings_weights_shape(),
+                        (*embedding_quantization_mode).into(),
+                    )),
+                    scales: RefCell::new(context.array_uninitialized(
+                        &model_shape.quantized_embeddings_scales_shape(),
+                        model_shape.activation_data_type(),
+                    )),
                 },
             }
         }
@@ -75,17 +91,29 @@ impl EmbeddingsBuffers {
         let embeddings_tree = parameter_tree.subtree("embedding").unwrap();
         match self {
             EmbeddingsBuffers::Tied {
-                embeddings,
+                weights,
             } => {
                 let embeddings_view = embeddings_tree.leaf("weights").unwrap();
-                embeddings.borrow_mut().copy_from_array(&embeddings_view);
+                weights.borrow_mut().copy_from_array(&embeddings_view);
             },
             EmbeddingsBuffers::Untied {
-                input,
-                output,
+                input_weights,
+                output_weights,
             } => {
-                let mapping =
-                    vec![("input_weights", input), ("output_weights", output)];
+                let mapping = vec![
+                    ("input_weights", input_weights),
+                    ("output_weights", output_weights),
+                ];
+                for (name, buffer) in mapping {
+                    let view = embeddings_tree.leaf(name).unwrap();
+                    buffer.borrow_mut().copy_from_array(&view);
+                }
+            },
+            EmbeddingsBuffers::QuantizedTied {
+                weights,
+                scales,
+            } => {
+                let mapping = vec![("weights", weights), ("scales", scales)];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
                     buffer.borrow_mut().copy_from_array(&view);
@@ -462,26 +490,43 @@ impl ForwardPassState {
             ArrayId::AttentionSums => self.aux_buffers.attention_sums.clone(),
             ArrayId::AttentionMaxs => self.aux_buffers.attention_maxs.clone(),
 
-            ArrayId::EmbeddingsInput => {
+            ArrayId::EmbeddingsInputWeights => {
                 match &self.shared_buffers.borrow().embeddings {
                     EmbeddingsBuffers::Tied {
-                        embeddings,
-                    } => embeddings.clone(),
+                        weights,
+                    } => weights.clone(),
                     EmbeddingsBuffers::Untied {
-                        input,
-                        output: _,
-                    } => input.clone(),
+                        input_weights,
+                        ..
+                    } => input_weights.clone(),
+                    EmbeddingsBuffers::QuantizedTied {
+                        weights,
+                        ..
+                    } => weights.clone(),
                 }
             },
-            ArrayId::EmbeddingsOutput => {
+            ArrayId::EmbeddingsOutputWeights => {
                 match &self.shared_buffers.borrow().embeddings {
                     EmbeddingsBuffers::Tied {
-                        embeddings,
-                    } => embeddings.clone(),
+                        weights,
+                    } => weights.clone(),
                     EmbeddingsBuffers::Untied {
-                        input: _,
-                        output,
-                    } => output.clone(),
+                        output_weights,
+                        ..
+                    } => output_weights.clone(),
+                    EmbeddingsBuffers::QuantizedTied {
+                        weights,
+                        ..
+                    } => weights.clone(),
+                }
+            },
+            ArrayId::EmbeddingsScales => {
+                match &self.shared_buffers.borrow().embeddings {
+                    EmbeddingsBuffers::QuantizedTied {
+                        scales,
+                        ..
+                    } => scales.clone(),
+                    _ => panic!("Expected EmbeddingsBuffers::QuantizedTied"),
                 }
             },
             ArrayId::RopeCosines(rope_type) => match rope_type {
@@ -604,8 +649,9 @@ pub enum ArrayId {
     AttentionSums,
     AttentionMaxs,
 
-    EmbeddingsInput,
-    EmbeddingsOutput,
+    EmbeddingsInputWeights,
+    EmbeddingsOutputWeights,
+    EmbeddingsScales,
     RopeCosines(RopeType),
     RopeSines(RopeType),
 }

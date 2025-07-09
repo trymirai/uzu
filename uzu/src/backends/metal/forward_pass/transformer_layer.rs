@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use mpsgraph::{
     CompilationDescriptor, Device as MPSDevice, Executable,
-    ExecutableExecutionDescriptor, Graph, ShapedType, Tensor,
+    ExecutableExecutionDescriptor, Graph, GraphTensorShapeOps,
 };
 use objc2::rc::{Retained, autoreleasepool};
 
@@ -10,11 +10,8 @@ use super::{
     super::{
         MTLContext,
         graph::{
-            EmbeddingParams, attention_subgraph, embed_callable_subgraph,
-            embed_placeholder_weights_subgraph, embedding_params,
-            linear_subgraph, mlp_subgraph, placeholder,
-            readout_callable_subgraph, readout_placeholder_weights_subgraph,
-            readout_subgraph, rms_norm_subgraph, shaped_type,
+            attention_subgraph, linear_subgraph, mlp_subgraph, placeholder,
+            rms_norm_subgraph, shaped_type,
         },
     },
     io_arrays::IOArrays,
@@ -23,7 +20,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::graph::rotation_subgraph,
+    backends::metal::graph::{
+        embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
+        embeddings_readout_subgraph, rotation_subgraph,
+    },
     config::{
         DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig, RMSNormConfig,
         RoPEConfig,
@@ -354,379 +354,340 @@ pub fn attention_block(
     })
 }
 
-pub struct EmbeddingBlocks {
-    pub embedding: Option<MPSGraphBlock>,
-    pub embed: MPSGraphBlock,
-    pub readout: MPSGraphBlock,
-}
-
-pub fn embedding_callable_blocks(
-    config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    compilation_descriptor: &CompilationDescriptor,
-) -> EmbeddingBlocks {
-    autoreleasepool(|_| {
-        let embedding_graph = Graph::new();
-        let embedding_params = embedding_params(
-            &embedding_graph,
-            &config.embedding_config,
-            config.vocab_size,
-            config.model_dim,
-            parameter_tree,
-        )
-        .unwrap();
-
-        match embedding_params {
-            EmbeddingParams::Tied(embeddings) => {
-                let embedding_callable_name: &str = "embedding";
-                let embedding_output = embeddings;
-                let embedding_executable = embedding_graph.compile(
-                    &MPSDevice::with_device(&context.device),
-                    &HashMap::<&Tensor, &ShapedType>::new(),
-                    &[&embedding_output],
-                    Some(compilation_descriptor),
-                );
-
-                let compilation_desctiptor_with_embedding_callable =
-                    CompilationDescriptor::new();
-                compilation_desctiptor_with_embedding_callable.add_callable(
-                    embedding_callable_name,
-                    &embedding_executable,
-                );
-
-                let embed_graph = Graph::new();
-                let embed_input_shape = [-1 as isize];
-                let embed_input_data_type = DataType::U64;
-                let embed_input_placeholder = placeholder(
-                    &embed_graph,
-                    &embed_input_shape,
-                    embed_input_data_type,
-                );
-                let retained_embed_input_shaped_type =
-                    shaped_type(&embed_input_shape, embed_input_data_type);
-                let embed_output = embed_callable_subgraph(
-                    &embed_graph,
-                    &config.embedding_config,
-                    embedding_callable_name,
-                    [config.vocab_size as isize, config.model_dim as isize],
-                    &embed_input_placeholder,
-                )
-                .unwrap();
-
-                let embed_feeds = HashMap::from([(
-                    &*embed_input_placeholder,
-                    &*retained_embed_input_shaped_type,
-                )]);
-
-                let embed_executable = embed_graph.compile(
-                    &MPSDevice::with_device(&context.device),
-                    &embed_feeds,
-                    &[&embed_output],
-                    Some(&compilation_desctiptor_with_embedding_callable),
-                );
-
-                let readout_graph = Graph::new();
-                let readout_input_shape =
-                    [-1 as isize, config.model_dim as isize];
-                let readout_input = placeholder(
-                    &readout_graph,
-                    &readout_input_shape,
-                    config.output_norm_config.scale_precision.into(),
-                );
-                let retained_readout_input_shaped_type = shaped_type(
-                    &readout_input_shape,
-                    config.output_norm_config.scale_precision.into(),
-                );
-                let readout_output = readout_callable_subgraph(
-                    &readout_graph,
-                    &config.embedding_config,
-                    embedding_callable_name,
-                    [config.vocab_size as isize, config.model_dim as isize],
-                    &readout_input,
-                )
-                .unwrap();
-
-                let readout_feeds = HashMap::from([(
-                    &*readout_input,
-                    &*retained_readout_input_shaped_type,
-                )]);
-
-                let readout_executable = readout_graph.compile(
-                    &MPSDevice::with_device(&context.device),
-                    &readout_feeds,
-                    &[&readout_output],
-                    Some(&compilation_desctiptor_with_embedding_callable),
-                );
-
-                let embedding_block = MPSGraphBlock::new(
-                    embedding_executable,
-                    make_execution_descriptor(),
-                    IOArrays::new(Box::new([]), Box::new([])),
-                );
-                let embed_block = MPSGraphBlock::new(
-                    embed_executable,
-                    make_execution_descriptor(),
-                    IOArrays::new(
-                        vec![ArrayId::TokenIds].into_boxed_slice(),
-                        vec![ArrayId::Main].into_boxed_slice(),
-                    ),
-                );
-                let readout_block = MPSGraphBlock::new(
-                    readout_executable,
-                    make_execution_descriptor(),
-                    IOArrays::new(
-                        Box::new([ArrayId::Main]),
-                        Box::new([ArrayId::Logits]),
-                    ),
-                );
-                EmbeddingBlocks {
-                    embedding: Some(embedding_block),
-                    embed: embed_block,
-                    readout: readout_block,
-                }
-            },
-            EmbeddingParams::Untied {
-                input_weights: _,
-                output_weights: _,
-            } => {
-                unimplemented!()
-            },
-        }
-    })
-}
-
-pub fn embedding_blocks(
-    config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    compilation_descriptor: &CompilationDescriptor,
-) -> EmbeddingBlocks {
-    autoreleasepool(|_| {
-        let embed_graph = Graph::new();
-        let embed_input_shape = [-1 as isize];
-        let embed_input_data_type = DataType::U64;
-        let embed_input_placeholder = placeholder(
-            &embed_graph,
-            &embed_input_shape,
-            embed_input_data_type,
-        );
-        let retained_embed_input_shaped_type =
-            shaped_type(&embed_input_shape, embed_input_data_type);
-        let embed_output = embed_subgraph(
-            &embed_graph,
-            &config.embedding_config,
-            config.vocab_size,
-            config.model_dim,
-            &embed_input_placeholder,
-            parameter_tree,
-        )
-        .unwrap();
-
-        let embed_feeds = HashMap::from([(
-            &*embed_input_placeholder,
-            &*retained_embed_input_shaped_type,
-        )]);
-
-        let embed_executable = embed_graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &embed_feeds,
-            &[&embed_output],
-            Some(compilation_descriptor),
-        );
-
-        let readout_graph = Graph::new();
-        let readout_input_shape = [-1 as isize, config.model_dim as isize];
-        let readout_input = placeholder(
-            &readout_graph,
-            &readout_input_shape,
-            config.output_norm_config.scale_precision.into(),
-        );
-        let retained_readout_input_shaped_type = shaped_type(
-            &readout_input_shape,
-            config.output_norm_config.scale_precision.into(),
-        );
-        let readout_output = readout_subgraph(
-            &readout_graph,
-            &config.embedding_config,
-            config.vocab_size,
-            config.model_dim,
-            &readout_input,
-            parameter_tree,
-        )
-        .unwrap();
-
-        let readout_feeds = HashMap::from([(
-            &*readout_input,
-            &*retained_readout_input_shaped_type,
-        )]);
-
-        let readout_executable = readout_graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &readout_feeds,
-            &[&readout_output],
-            Some(compilation_descriptor),
-        );
-
-        let embed_block = MPSGraphBlock::new(
-            embed_executable,
-            make_execution_descriptor(),
-            IOArrays::new(
-                vec![ArrayId::TokenIds].into_boxed_slice(),
-                vec![ArrayId::Main].into_boxed_slice(),
-            ),
-        );
-        let readout_block = MPSGraphBlock::new(
-            readout_executable,
-            make_execution_descriptor(),
-            IOArrays::new(
-                Box::new([ArrayId::Main]),
-                Box::new([ArrayId::Logits]),
-            ),
-        );
-        EmbeddingBlocks {
-            embedding: None,
-            embed: embed_block,
-            readout: readout_block,
-        }
-    })
-}
-
-pub fn embedding_with_placeholder_weights_blocks(
+pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
     compilation_descriptor: &CompilationDescriptor,
-) -> EmbeddingBlocks {
-    autoreleasepool(|_| {
-        let embed_weights_shape =
-            [config.vocab_size as isize, config.model_dim as isize];
-        let embed_weights_data_type: DataType =
-            config.output_norm_config.scale_precision.into();
-        let embed_weights_shaped_type =
-            shaped_type(&embed_weights_shape, embed_weights_data_type);
+) -> MPSGraphBlock {
+    let graph = Graph::new();
 
-        let embed_graph = Graph::new();
-        let embed_input_shape = [-1 as isize];
-        let embed_input_data_type = DataType::U64;
-        let embed_input_placeholder = placeholder(
-            &embed_graph,
-            &embed_input_shape,
-            embed_input_data_type,
-        );
-        let embed_input_shaped_type =
-            shaped_type(&embed_input_shape, embed_input_data_type);
-        let embed_weights_placeholder = placeholder(
-            &embed_graph,
-            &embed_weights_shape,
-            embed_weights_data_type,
-        );
-        let embed_output = embed_placeholder_weights_subgraph(
-            &embed_graph,
-            &config.embedding_config,
-            &embed_input_placeholder,
-            &embed_weights_placeholder,
-        )
-        .unwrap();
+    let input_shape = [-1 as isize];
+    let input_data_type = DataType::U64;
+    let input_placeholder = placeholder(&graph, &input_shape, input_data_type);
+    let input_shaped_type = shaped_type(&input_shape, input_data_type);
 
-        let embed_feeds = HashMap::from([
-            (&*embed_input_placeholder, &*embed_input_shaped_type),
-            (&*embed_weights_placeholder, &*embed_weights_shaped_type),
-        ]);
+    match config.embedding_config {
+        EmbeddingConfig::Tied {
+            precision,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType = precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
 
-        let embed_executable = embed_graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &embed_feeds,
-            &[&embed_output],
-            Some(compilation_descriptor),
-        );
+            let output = embeddings_embed_subgraph(
+                &graph,
+                &config.embedding_config,
+                &input_placeholder,
+                &weights_placeholder,
+            )
+            .unwrap();
 
-        let embed_block = MPSGraphBlock::new(
-            embed_executable,
-            make_execution_descriptor(),
-            IOArrays::new(
-                vec![ArrayId::TokenIds, ArrayId::EmbeddingsInput]
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Main].into_boxed_slice(),
+                ),
+            );
+
+            block
+        },
+        EmbeddingConfig::Untied {
+            precision,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType = precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let output = embeddings_embed_subgraph(
+                &graph,
+                &config.embedding_config,
+                &input_placeholder,
+                &weights_placeholder,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Main].into_boxed_slice(),
+                ),
+            );
+
+            block
+        },
+        EmbeddingConfig::QuantizedTied {
+            embedding_quantization_mode,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType =
+                embedding_quantization_mode.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let scales_shape = [config.vocab_size as isize];
+            let scales_data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+            let scales_shaped_type =
+                shaped_type(&scales_shape, scales_data_type);
+            let scales_placeholder =
+                placeholder(&graph, &scales_shape, scales_data_type);
+
+            let weights = embeddings_dequantize_weights_subgraph(
+                &graph,
+                &weights_placeholder,
+                &scales_placeholder,
+            )
+            .unwrap();
+
+            let output = embeddings_embed_subgraph(
+                &graph,
+                &config.embedding_config,
+                &input_placeholder,
+                &weights,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+                (&*scales_placeholder, &*scales_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![
+                        ArrayId::TokenIds,
+                        ArrayId::EmbeddingsInputWeights,
+                        ArrayId::EmbeddingsScales,
+                    ]
                     .into_boxed_slice(),
-                vec![ArrayId::Main].into_boxed_slice(),
-            ),
-        );
+                    vec![ArrayId::Main].into_boxed_slice(),
+                ),
+            );
 
-        let readout_weights_shape: [isize; 2];
-        let readout_weights_data_type: DataType;
-        let readout_transpose_weights: bool;
-        match config.embedding_config {
-            EmbeddingConfig::Tied {
-                common: _,
-                precision,
-            } => {
-                readout_weights_shape =
-                    [config.vocab_size as isize, config.model_dim as isize];
-                readout_weights_data_type = precision.into();
-                readout_transpose_weights = true;
-            },
-            EmbeddingConfig::Untied {
-                common: _,
-                precision,
-            } => {
-                readout_weights_shape =
-                    [config.model_dim as isize, config.vocab_size as isize];
-                readout_weights_data_type = precision.into();
-                readout_transpose_weights = false;
-            },
-            _ => {
-                unimplemented!()
-            },
-        }
-        let readout_weights_shaped_type =
-            shaped_type(&readout_weights_shape, readout_weights_data_type);
+            block
+        },
+    }
+}
 
-        let readout_graph = Graph::new();
-        let readout_input_shape = [-1 as isize, config.model_dim as isize];
-        let readout_input = placeholder(
-            &readout_graph,
-            &readout_input_shape,
-            config.output_norm_config.scale_precision.into(),
-        );
-        let readout_input_shaped_type = shaped_type(
-            &readout_input_shape,
-            config.output_norm_config.scale_precision.into(),
-        );
-        let readout_weights_placeholder = placeholder(
-            &readout_graph,
-            &readout_weights_shape,
-            readout_weights_data_type,
-        );
-        let readout_output = readout_placeholder_weights_subgraph(
-            &readout_graph,
-            &readout_input,
-            &readout_weights_placeholder,
-            readout_transpose_weights,
-        )
-        .unwrap();
+pub fn readout_block(
+    config: &DecoderConfig,
+    context: &MTLContext,
+    compilation_descriptor: &CompilationDescriptor,
+) -> MPSGraphBlock {
+    let graph = Graph::new();
 
-        let readout_feeds = HashMap::from([
-            (&*readout_input, &*readout_input_shaped_type),
-            (&*readout_weights_placeholder, &*readout_weights_shaped_type),
-        ]);
+    let input_shape = [-1 as isize, config.model_dim as isize];
+    let input_data_type: DataType =
+        config.output_norm_config.scale_precision.into();
+    let input_placeholder = placeholder(&graph, &input_shape, input_data_type);
+    let input_shaped_type = shaped_type(&input_shape, input_data_type);
 
-        let readout_executable = readout_graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &readout_feeds,
-            &[&readout_output],
-            Some(compilation_descriptor),
-        );
+    match config.embedding_config {
+        EmbeddingConfig::Tied {
+            precision,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType = precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
 
-        let readout_block = MPSGraphBlock::new(
-            readout_executable,
-            make_execution_descriptor(),
-            IOArrays::new(
-                Box::new([ArrayId::Main, ArrayId::EmbeddingsOutput]),
-                Box::new([ArrayId::Logits]),
-            ),
-        );
-        EmbeddingBlocks {
-            embedding: None,
-            embed: embed_block,
-            readout: readout_block,
-        }
-    })
+            let weights_transposed =
+                graph.transpose(&weights_placeholder, &[1, 0], None);
+            let output = embeddings_readout_subgraph(
+                &graph,
+                &input_placeholder,
+                &weights_transposed,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::Main, ArrayId::EmbeddingsOutputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Logits].into_boxed_slice(),
+                ),
+            );
+
+            block
+        },
+        EmbeddingConfig::Untied {
+            precision,
+            ..
+        } => {
+            let weights_shape =
+                [config.model_dim as isize, config.vocab_size as isize];
+            let weights_data_type: DataType = precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let output = embeddings_readout_subgraph(
+                &graph,
+                &input_placeholder,
+                &weights_placeholder,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::Main, ArrayId::EmbeddingsOutputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Logits].into_boxed_slice(),
+                ),
+            );
+
+            block
+        },
+        EmbeddingConfig::QuantizedTied {
+            embedding_quantization_mode,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType =
+                embedding_quantization_mode.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let scales_shape = [config.vocab_size as isize];
+            let scales_data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+            let scales_shaped_type =
+                shaped_type(&scales_shape, scales_data_type);
+            let scales_placeholder =
+                placeholder(&graph, &scales_shape, scales_data_type);
+
+            let weights = embeddings_dequantize_weights_subgraph(
+                &graph,
+                &weights_placeholder,
+                &scales_placeholder,
+            )
+            .unwrap();
+            let weights_transposed = graph.transpose(&weights, &[1, 0], None);
+            let output = embeddings_readout_subgraph(
+                &graph,
+                &input_placeholder,
+                &weights_transposed,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+                (&*scales_placeholder, &*scales_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                Some(compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![
+                        ArrayId::Main,
+                        ArrayId::EmbeddingsOutputWeights,
+                        ArrayId::EmbeddingsScales,
+                    ]
+                    .into_boxed_slice(),
+                    vec![ArrayId::Logits].into_boxed_slice(),
+                ),
+            );
+
+            block
+        },
+    }
 }

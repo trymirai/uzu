@@ -41,9 +41,6 @@ fn quantized_weights_subgraph<const N: usize>(
     if config.weight_quantization_mode != QuantizationMode::UInt4 {
         unimplemented!("8-bit quantization is not yet implemented.");
     }
-    if config.activation_quantization_mode.is_some() {
-        unimplemented!("Activation quantization is not yet implemented.");
-    }
     let output_dim_sum: usize = output_dims.iter().sum();
 
     let weights = load_constant(

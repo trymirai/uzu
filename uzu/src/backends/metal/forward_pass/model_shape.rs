@@ -87,6 +87,14 @@ impl ModelShape {
         [self.model_dim, self.vocabulary_size]
     }
 
+    pub fn quantized_embeddings_weights_shape(&self) -> [usize; 2] {
+        [self.vocabulary_size, self.model_dim]
+    }
+
+    pub fn quantized_embeddings_scales_shape(&self) -> [usize; 1] {
+        [self.vocabulary_size]
+    }
+
     pub fn attention_output_shape(
         &self,
         suffix_length: usize,

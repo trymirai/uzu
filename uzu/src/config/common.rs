@@ -46,6 +46,16 @@ pub enum QuantizationMode {
     UInt8,
 }
 
+impl Into<DataType> for QuantizationMode {
+    fn into(self) -> DataType {
+        match self {
+            QuantizationMode::UInt4 => DataType::U4,
+            QuantizationMode::Int8 => DataType::I8,
+            QuantizationMode::UInt8 => DataType::U8,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Activation {
