@@ -8,6 +8,7 @@
   ],
   "rust-analyzer.check.workspace": false,
   "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.cargo.noDefaultFeatures": true,
   "rust-analyzer.testExplorer": true,
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
