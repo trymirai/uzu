@@ -8,13 +8,12 @@ use std::{
 };
 
 fn main() {
-    // Skip Metal shader compilation when the "metal-shaders" feature is disabled (e.g. during `cargo check --no-default-features`).
-    if !cfg!(feature = "metal-shaders") {
-        return;
+    if cfg!(feature = "metal-shaders") {
+        println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
+        compile_metal_shaders();
+    } else {
+        write_empty_metallib();
     }
-    // Watch for environment changes (e.g., custom API level) if used
-    println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
-    compile_metal_shaders();
 }
 
 fn compile_metal_shaders() {
@@ -305,4 +304,15 @@ fn write_metallib_as_bytes(
         writeln!(f).unwrap();
     }
     writeln!(f, "];").unwrap();
+}
+
+fn write_empty_metallib() {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let metal_lib_rs = out_dir.join("metal_lib.rs");
+
+    if let Some(parent) = metal_lib_rs.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(metal_lib_rs, b"pub const METAL_LIBRARY_DATA: &[u8] = &[];\n")
+        .expect("Cannot create stub metal_lib.rs");
 }
