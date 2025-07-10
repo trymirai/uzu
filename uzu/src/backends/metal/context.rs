@@ -1,9 +1,5 @@
 #![allow(dead_code)]
-#[cfg(feature = "metal-shaders")]
 include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
-
-#[cfg(not(feature = "metal-shaders"))]
-pub const METAL_LIBRARY_DATA: &[u8] = &[];
 
 use std::rc::Rc;
 
