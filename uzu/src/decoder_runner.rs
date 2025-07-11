@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::metal::{
-        DecoderExecutables, ForwardPassState, KVCache, KernelsConfig,
-        MTLContext, ModelShape,
+        DecoderExecutables, ForwardPassState, KVCache, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ForwardPassBuffers, SharedBuffers,
@@ -132,7 +131,6 @@ impl DecoderTestContext {
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-            KernelsConfig::default(),
         );
         Ok((
             Self {

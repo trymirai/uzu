@@ -7,8 +7,8 @@ use super::{config::GeneratorConfig, error::GeneratorError};
 use crate::{
     DataType,
     backends::metal::{
-        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType,
-        KernelsConfig, MTLContext, ModelShape,
+        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
+        ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
@@ -18,7 +18,6 @@ use crate::{
 };
 
 pub struct GeneratorContext {
-    pub kernels_config: KernelsConfig,
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
@@ -37,8 +36,6 @@ impl GeneratorContext {
         model_path: &Path,
         config: &GeneratorConfig,
     ) -> Result<Self, GeneratorError> {
-        let kernels_config = KernelsConfig::default();
-
         let mtl_device = metal::Device::system_default()
             .ok_or(GeneratorError::UnableToCreateMetalContext)?;
         let mtl_command_queue =
@@ -101,7 +98,6 @@ impl GeneratorContext {
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-            kernels_config.clone(),
         );
 
         let kv_cache = Rc::new(RefCell::new(KVCache::new(
@@ -133,7 +129,6 @@ impl GeneratorContext {
         .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
 
         let context = Self {
-            kernels_config,
             mtl_context,
             command_buffer,
             kv_cache,

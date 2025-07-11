@@ -9,10 +9,7 @@ use objc2::rc::{Retained, autoreleasepool};
 use super::{
     super::{
         MTLContext,
-        graph::{
-            linear_subgraph, mlp_subgraph, placeholder, rms_norm_subgraph,
-            shaped_type,
-        },
+        graph::{linear_subgraph, mlp_subgraph, placeholder, shaped_type},
     },
     io_arrays::IOArrays,
     mpsgraph_block::MPSGraphBlock,
@@ -24,9 +21,7 @@ use crate::{
         embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
         embeddings_readout_subgraph,
     },
-    config::{
-        DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig, RMSNormConfig,
-    },
+    config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
     parameters::ParameterTree,
 };
 
@@ -127,51 +122,6 @@ pub fn mlp_block(
         let arguments = IOArrays::new(
             vec![ArrayId::Main].into_boxed_slice(),
             vec![ArrayId::Main].into_boxed_slice(),
-        );
-
-        MPSGraphBlock::new(executable, make_execution_descriptor(), arguments)
-    })
-}
-
-pub fn rms_norm_block(
-    config: &RMSNormConfig,
-    model_dim: usize,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-    compilation_descriptor: &CompilationDescriptor,
-) -> MPSGraphBlock {
-    autoreleasepool(|_| {
-        let graph = Graph::new();
-
-        let input_shape = [-1, model_dim as isize];
-        let input_data_type: DataType = config.scale_precision.into();
-        let input_placeholder =
-            placeholder(&graph, &input_shape, input_data_type);
-
-        let output = rms_norm_subgraph(
-            &graph,
-            config,
-            &input_placeholder,
-            parameter_tree,
-        )
-        .unwrap();
-
-        let retained_shaped_type = shaped_type(&input_shape, input_data_type);
-        let feeds =
-            HashMap::from([(&*input_placeholder, &*retained_shaped_type)]);
-
-        let executable = graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &feeds,
-            &[&output],
-            Some(compilation_descriptor),
-        );
-
-        let arguments = IOArrays::new(
-            vec![input_array_id].into_boxed_slice(),
-            vec![output_array_id].into_boxed_slice(),
         );
 
         MPSGraphBlock::new(executable, make_execution_descriptor(), arguments)

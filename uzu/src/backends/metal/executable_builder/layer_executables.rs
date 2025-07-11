@@ -3,7 +3,6 @@ use std::rc::Rc;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
-use super::decoder_executables::KernelsConfig;
 use crate::{
     DataType,
     backends::metal::{
@@ -37,7 +36,6 @@ pub struct LayerExecutables {
     pub pre_mlp_norm: Box<dyn EncodableWithState>,
     pub mlp: MPSGraphBlock,
     pub post_mlp_norm: Option<Box<dyn EncodableWithState>>,
-    pub kernels_config: KernelsConfig,
 }
 
 impl LayerExecutables {
@@ -54,7 +52,6 @@ impl LayerExecutables {
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
         rope: Rc<Box<dyn EncodableWithState>>,
-        kernels_config: KernelsConfig,
     ) -> Self {
         autoreleasepool(|_| {
             let intermediate_data_type: DataType = layer_config
@@ -74,34 +71,19 @@ impl LayerExecutables {
                 .unwrap(),
             );
 
-            let pre_attention_norm: Box<dyn EncodableWithState> =
-                if kernels_config.use_rms_norm {
-                    Box::new(
-                        RMSNormKernelEncodable::new(
-                            mtl_context,
-                            intermediate_data_type,
-                            layer_config.pre_attention_norm_config.clone(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &decoder_layer_loader
-                                .subtree("pre_attention_norm")
-                                .unwrap(),
-                        )
-                        .expect("Failed to create RMS norm kernel"),
-                    )
-                } else {
-                    Box::new(transformer_layer::rms_norm_block(
-                        &layer_config.pre_attention_norm_config,
-                        model_dim,
-                        mtl_context,
-                        &decoder_layer_loader
-                            .subtree("pre_attention_norm")
-                            .unwrap(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &compilation_config.descriptor_general,
-                    ))
-                };
+            let pre_attention_norm: Box<dyn EncodableWithState> = Box::new(
+                RMSNormKernelEncodable::new(
+                    mtl_context,
+                    intermediate_data_type,
+                    layer_config.pre_attention_norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &decoder_layer_loader
+                        .subtree("pre_attention_norm")
+                        .unwrap(),
+                )
+                .expect("Failed to create RMS norm kernel"),
+            );
 
             let qkv_projection = transformer_layer::linear_block(
                 &layer_config.attention_config.qkv_projection_config,
@@ -166,33 +148,19 @@ impl LayerExecutables {
                 if let Some(norm_config) =
                     &layer_config.post_attention_norm_config
                 {
-                    if kernels_config.use_rms_norm {
-                        Some(Box::new(
-                            RMSNormKernelEncodable::new(
-                                mtl_context,
-                                intermediate_data_type,
-                                norm_config.clone(),
-                                ArrayId::Main,
-                                ArrayId::Main,
-                                &decoder_layer_loader
-                                    .subtree("post_attention_norm")
-                                    .unwrap(),
-                            )
-                            .expect("Failed to create RMS norm kernel"),
-                        ))
-                    } else {
-                        Some(Box::new(transformer_layer::rms_norm_block(
-                            norm_config,
-                            model_dim,
+                    Some(Box::new(
+                        RMSNormKernelEncodable::new(
                             mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
                             &decoder_layer_loader
                                 .subtree("post_attention_norm")
                                 .unwrap(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &compilation_config.descriptor_general,
-                        )))
-                    }
+                        )
+                        .expect("Failed to create RMS norm kernel"),
+                    ))
                 } else {
                     None
                 };
@@ -206,31 +174,17 @@ impl LayerExecutables {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableWithState> = if kernels_config
-                .use_rms_norm
-            {
-                Box::new(
-                    RMSNormKernelEncodable::new(
-                        mtl_context,
-                        intermediate_data_type,
-                        layer_config.pre_mlp_norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                    )
-                    .expect("Failed to create RMS norm kernel"),
-                )
-            } else {
-                Box::new(transformer_layer::rms_norm_block(
-                    &layer_config.pre_mlp_norm_config,
-                    model_dim,
+            let pre_mlp_norm: Box<dyn EncodableWithState> = Box::new(
+                RMSNormKernelEncodable::new(
                     mtl_context,
+                    intermediate_data_type,
+                    layer_config.pre_mlp_norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
                     &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &compilation_config.descriptor_general,
-                ))
-            };
+                )
+                .expect("Failed to create RMS norm kernel"),
+            );
 
             let mlp = transformer_layer::mlp_block(
                 &layer_config.mlp_config,
@@ -243,33 +197,19 @@ impl LayerExecutables {
 
             let post_mlp_norm: Option<Box<dyn EncodableWithState>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-                    if kernels_config.use_rms_norm {
-                        Some(Box::new(
-                            RMSNormKernelEncodable::new(
-                                mtl_context,
-                                intermediate_data_type,
-                                norm_config.clone(),
-                                ArrayId::Main,
-                                ArrayId::Main,
-                                &decoder_layer_loader
-                                    .subtree("post_mlp_norm")
-                                    .unwrap(),
-                            )
-                            .expect("Failed to create RMS norm kernel"),
-                        ))
-                    } else {
-                        Some(Box::new(transformer_layer::rms_norm_block(
-                            norm_config,
-                            model_dim,
+                    Some(Box::new(
+                        RMSNormKernelEncodable::new(
                             mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
                             &decoder_layer_loader
                                 .subtree("post_mlp_norm")
                                 .unwrap(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &compilation_config.descriptor_general,
-                        )))
-                    }
+                        )
+                        .expect("Failed to create RMS norm kernel"),
+                    ))
                 } else {
                     None
                 };
@@ -298,7 +238,6 @@ impl LayerExecutables {
                 pre_mlp_norm,
                 mlp,
                 post_mlp_norm,
-                kernels_config,
             }
         })
     }

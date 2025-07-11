@@ -11,7 +11,7 @@ use crate::{
         forward_pass::{
             ArrayId, ForwardPassState, MPSGraphBlock, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
-            transformer_layer::{embed_block, readout_block, rms_norm_block},
+            transformer_layer::{embed_block, readout_block},
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
     },
@@ -19,18 +19,6 @@ use crate::{
     parameters::ParameterTree,
 };
 
-#[derive(Debug, Clone)]
-pub struct KernelsConfig {
-    pub use_rms_norm: bool,
-}
-
-impl KernelsConfig {
-    pub fn default() -> Self {
-        Self {
-            use_rms_norm: true,
-        }
-    }
-}
 pub struct DecoderExecutables {
     pub embed: MPSGraphBlock,
     pub layers: Box<[LayerExecutables]>,
@@ -46,7 +34,6 @@ impl DecoderExecutables {
         decoder_config: Rc<DecoderConfig>,
         decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
         compilation_config: Rc<CompilationConfig>,
-        kernels_config: KernelsConfig,
     ) -> Self {
         let embed = embed_block(
             &decoder_config,
@@ -111,35 +98,21 @@ impl DecoderExecutables {
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
                     rope,
-                    kernels_config.clone(),
                 )
             })
             .collect::<Vec<_>>();
 
-        let norm_block: Box<dyn EncodableWithState> =
-            if kernels_config.use_rms_norm {
-                Box::new(
-                    RMSNormKernelEncodable::new(
-                        &mtl_context,
-                        intermediate_data_type,
-                        decoder_config.output_norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_weight_loader.subtree("output_norm").unwrap(),
-                    )
-                    .expect("Failed to create output RMS norm kernel"),
-                )
-            } else {
-                Box::new(rms_norm_block(
-                    &decoder_config.output_norm_config,
-                    decoder_config.model_dim,
-                    &mtl_context,
-                    &decoder_weight_loader.subtree("output_norm").unwrap(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &compilation_config.descriptor_general,
-                ))
-            };
+        let norm_block: Box<dyn EncodableWithState> = Box::new(
+            RMSNormKernelEncodable::new(
+                &mtl_context,
+                intermediate_data_type,
+                decoder_config.output_norm_config.clone(),
+                ArrayId::Main,
+                ArrayId::Main,
+                &decoder_weight_loader.subtree("output_norm").unwrap(),
+            )
+            .expect("Failed to create output RMS norm kernel"),
+        );
 
         Self {
             embed: embed,
