@@ -36,7 +36,7 @@ impl Session {
         // Load tokenizer JSON
         let tokenizer_path = model_path.join("tokenizer.json");
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|_| SessionError::UnableToLoadTokenizerConfig)?;
+            .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
         // Load tokenizer configuration
         let tokenizer_config =

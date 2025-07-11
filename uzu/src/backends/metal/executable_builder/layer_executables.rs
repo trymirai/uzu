@@ -1,21 +1,17 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
-use super::{
-    attention_executable_provider::AttentionExecutableProvider,
-    decoder_executables::KernelsConfig,
-};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ArrayId, ForwardPassState, MPSGraphBlock,
             encodable_with_state::{EncodableWithState, EncodingParameters},
-            transformer_layer::{self, attention_block},
+            transformer_layer,
         },
         kernel::{
             AttentionKernelEncodable, KernelDataType, QKNormKernelEncodable,
@@ -34,15 +30,12 @@ pub struct LayerExecutables {
     pub qk_norm: Option<Box<dyn EncodableWithState>>,
     pub rope: Rc<Box<dyn EncodableWithState>>,
     pub attention: Box<dyn EncodableWithState>,
-    pub attention_executable_provider:
-        Option<Rc<RefCell<AttentionExecutableProvider>>>,
     pub out_projection: MPSGraphBlock,
     pub post_attention_norm: Option<Box<dyn EncodableWithState>>,
     pub main_shortcut_add_swap: Box<dyn EncodableWithState>,
     pub pre_mlp_norm: Box<dyn EncodableWithState>,
     pub mlp: MPSGraphBlock,
     pub post_mlp_norm: Option<Box<dyn EncodableWithState>>,
-    pub kernels_config: KernelsConfig,
 }
 
 impl LayerExecutables {
@@ -58,11 +51,7 @@ impl LayerExecutables {
         num_groups: usize,
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
-        attention_executable_provider: Option<
-            Rc<RefCell<AttentionExecutableProvider>>,
-        >,
         rope: Rc<Box<dyn EncodableWithState>>,
-        kernels_config: KernelsConfig,
     ) -> Self {
         autoreleasepool(|_| {
             let intermediate_data_type: DataType = layer_config
@@ -82,34 +71,19 @@ impl LayerExecutables {
                 .unwrap(),
             );
 
-            let pre_attention_norm: Box<dyn EncodableWithState> =
-                if kernels_config.use_rms_norm {
-                    Box::new(
-                        RMSNormKernelEncodable::new(
-                            mtl_context,
-                            intermediate_data_type,
-                            layer_config.pre_attention_norm_config.clone(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &decoder_layer_loader
-                                .subtree("pre_attention_norm")
-                                .unwrap(),
-                        )
-                        .expect("Failed to create RMS norm kernel"),
-                    )
-                } else {
-                    Box::new(transformer_layer::rms_norm_block(
-                        &layer_config.pre_attention_norm_config,
-                        model_dim,
-                        mtl_context,
-                        &decoder_layer_loader
-                            .subtree("pre_attention_norm")
-                            .unwrap(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &compilation_config.descriptor_general,
-                    ))
-                };
+            let pre_attention_norm: Box<dyn EncodableWithState> = Box::new(
+                RMSNormKernelEncodable::new(
+                    mtl_context,
+                    intermediate_data_type,
+                    layer_config.pre_attention_norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &decoder_layer_loader
+                        .subtree("pre_attention_norm")
+                        .unwrap(),
+                )
+                .expect("Failed to create RMS norm kernel"),
+            );
 
             let qkv_projection = transformer_layer::linear_block(
                 &layer_config.attention_config.qkv_projection_config,
@@ -174,33 +148,19 @@ impl LayerExecutables {
                 if let Some(norm_config) =
                     &layer_config.post_attention_norm_config
                 {
-                    if kernels_config.use_rms_norm {
-                        Some(Box::new(
-                            RMSNormKernelEncodable::new(
-                                mtl_context,
-                                intermediate_data_type,
-                                norm_config.clone(),
-                                ArrayId::Main,
-                                ArrayId::Main,
-                                &decoder_layer_loader
-                                    .subtree("post_attention_norm")
-                                    .unwrap(),
-                            )
-                            .expect("Failed to create RMS norm kernel"),
-                        ))
-                    } else {
-                        Some(Box::new(transformer_layer::rms_norm_block(
-                            norm_config,
-                            model_dim,
+                    Some(Box::new(
+                        RMSNormKernelEncodable::new(
                             mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
                             &decoder_layer_loader
                                 .subtree("post_attention_norm")
                                 .unwrap(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &compilation_config.descriptor_general,
-                        )))
-                    }
+                        )
+                        .expect("Failed to create RMS norm kernel"),
+                    ))
                 } else {
                     None
                 };
@@ -214,31 +174,17 @@ impl LayerExecutables {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableWithState> = if kernels_config
-                .use_rms_norm
-            {
-                Box::new(
-                    RMSNormKernelEncodable::new(
-                        mtl_context,
-                        intermediate_data_type,
-                        layer_config.pre_mlp_norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                    )
-                    .expect("Failed to create RMS norm kernel"),
-                )
-            } else {
-                Box::new(transformer_layer::rms_norm_block(
-                    &layer_config.pre_mlp_norm_config,
-                    model_dim,
+            let pre_mlp_norm: Box<dyn EncodableWithState> = Box::new(
+                RMSNormKernelEncodable::new(
                     mtl_context,
+                    intermediate_data_type,
+                    layer_config.pre_mlp_norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
                     &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &compilation_config.descriptor_general,
-                ))
-            };
+                )
+                .expect("Failed to create RMS norm kernel"),
+            );
 
             let mlp = transformer_layer::mlp_block(
                 &layer_config.mlp_config,
@@ -251,61 +197,32 @@ impl LayerExecutables {
 
             let post_mlp_norm: Option<Box<dyn EncodableWithState>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-                    if kernels_config.use_rms_norm {
-                        Some(Box::new(
-                            RMSNormKernelEncodable::new(
-                                mtl_context,
-                                intermediate_data_type,
-                                norm_config.clone(),
-                                ArrayId::Main,
-                                ArrayId::Main,
-                                &decoder_layer_loader
-                                    .subtree("post_mlp_norm")
-                                    .unwrap(),
-                            )
-                            .expect("Failed to create RMS norm kernel"),
-                        ))
-                    } else {
-                        Some(Box::new(transformer_layer::rms_norm_block(
-                            norm_config,
-                            model_dim,
+                    Some(Box::new(
+                        RMSNormKernelEncodable::new(
                             mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
                             &decoder_layer_loader
                                 .subtree("post_mlp_norm")
                                 .unwrap(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &compilation_config.descriptor_general,
-                        )))
-                    }
+                        )
+                        .expect("Failed to create RMS norm kernel"),
+                    ))
                 } else {
                     None
                 };
 
-            let attention: Box<dyn EncodableWithState>;
-            if kernels_config.use_attention {
-                attention = Box::new(
-                    AttentionKernelEncodable::new(
-                        mtl_context,
-                        kernel_data_type,
-                        layer_index,
-                        attention_scale,
-                    )
-                    .expect(
-                        "Failed to create AttentionWrapper with Metal kernel",
-                    ),
-                );
-            } else {
-                attention = Box::new(
-                    AttentionKernelEncodable::new(
-                        mtl_context,
-                        kernel_data_type,
-                        layer_index,
-                        attention_scale,
-                    )
-                    .expect("Failed to create AttentionWrapper for MPS Graph"),
-                );
-            }
+            let attention: Box<dyn EncodableWithState> = Box::new(
+                AttentionKernelEncodable::new(
+                    mtl_context,
+                    kernel_data_type,
+                    layer_index,
+                    attention_scale,
+                )
+                .expect("Failed to create AttentionWrapper with Metal kernel"),
+            );
 
             Self {
                 layer_index,
@@ -315,47 +232,14 @@ impl LayerExecutables {
                 qk_norm,
                 rope,
                 attention,
-                attention_executable_provider,
                 out_projection,
                 post_attention_norm,
                 main_shortcut_add_swap,
                 pre_mlp_norm,
                 mlp,
                 post_mlp_norm,
-                kernels_config,
             }
         })
-    }
-
-    fn get_suffix_length(
-        &self,
-        state: &ForwardPassState,
-    ) -> usize {
-        let shape: Vec<usize> = (*state.arrays(&[ArrayId::TokenIds]))[0]
-            .borrow()
-            .shape()
-            .iter()
-            .map(|value| *value)
-            .collect();
-        *shape.first().unwrap()
-    }
-
-    pub fn attention_block(
-        &self,
-        state: &ForwardPassState,
-    ) -> MPSGraphBlock {
-        let suffix_length = self.get_suffix_length(state);
-        let prefix_length: usize = state.kv_cache.borrow().data
-            [self.layer_index]
-            .effective_prefix_length();
-
-        let mut attention_executable_provider =
-            self.attention_executable_provider.as_ref().unwrap().borrow_mut();
-        let attention_executable = attention_executable_provider
-            .executable(suffix_length, prefix_length);
-        let attention =
-            attention_block(attention_executable.clone(), self.layer_index);
-        attention
     }
 }
 
@@ -379,8 +263,6 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        let first_layer = self.layer_index == 0;
-
         self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
         // shortcut = input
 
@@ -397,40 +279,7 @@ impl EncodableWithState for LayerExecutables {
             qk_norm.encode(state, command_buffer, parameters);
         }
         self.rope.encode(state, command_buffer, parameters);
-
-        if parameters.warmup {
-            if first_layer {
-                if self.kernels_config.use_attention {
-                    self.attention.encode(state, command_buffer, parameters);
-                } else {
-                    let suffix_length = self.get_suffix_length(state);
-                    if let Some(executables) = self
-                        .attention_executable_provider
-                        .as_ref()
-                        .unwrap()
-                        .borrow()
-                        .executables
-                        .get(&suffix_length)
-                    {
-                        for (_, executable) in executables {
-                            let attention = attention_block(
-                                executable.clone(),
-                                self.layer_index,
-                            );
-                            attention.encode(state, command_buffer, parameters);
-                        }
-                    }
-                }
-            }
-        } else {
-            if self.kernels_config.use_attention {
-                self.attention.encode(state, command_buffer, parameters);
-            } else {
-                let attention = self.attention_block(state);
-                attention.encode(state, command_buffer, parameters);
-            }
-        }
-
+        self.attention.encode(state, command_buffer, parameters);
         self.out_projection.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(

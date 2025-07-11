@@ -8,6 +8,8 @@ pub enum SessionError {
     UnableToLoadConfig,
     #[error("Unable to load model weights")]
     UnableToLoadWeights,
+    #[error("Unable to load tokenizer")]
+    UnableToLoadTokenizer,
     #[error("Unable to load tokenizer configuration")]
     UnableToLoadTokenizerConfig,
 }

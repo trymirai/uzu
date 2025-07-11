@@ -1,13 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{
-    attention_executable_provider::{
-        AttentionExecutableProvider, AttentionExecutableProviderConfig,
-    },
-    layer_executables::LayerExecutables,
-};
+use super::layer_executables::LayerExecutables;
 use crate::{
     DataType,
     backends::metal::{
@@ -16,33 +11,14 @@ use crate::{
         forward_pass::{
             ArrayId, ForwardPassState, MPSGraphBlock, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
-            transformer_layer::{
-                embed_block, readout_block, rms_norm_block, rotation_block,
-                rotation_executable,
-            },
+            transformer_layer::{embed_block, readout_block},
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
     },
-    config::{RoPEConfig, decoder::DecoderConfig},
+    config::decoder::DecoderConfig,
     parameters::ParameterTree,
 };
 
-#[derive(Debug, Clone)]
-pub struct KernelsConfig {
-    pub use_rope: bool,
-    pub use_attention: bool,
-    pub use_rms_norm: bool,
-}
-
-impl KernelsConfig {
-    pub fn default() -> Self {
-        Self {
-            use_rope: true,
-            use_attention: true,
-            use_rms_norm: true,
-        }
-    }
-}
 pub struct DecoderExecutables {
     pub embed: MPSGraphBlock,
     pub layers: Box<[LayerExecutables]>,
@@ -58,8 +34,6 @@ impl DecoderExecutables {
         decoder_config: Rc<DecoderConfig>,
         decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
         compilation_config: Rc<CompilationConfig>,
-        attention_executable_provider_config: AttentionExecutableProviderConfig,
-        kernels_config: KernelsConfig,
     ) -> Self {
         let embed = embed_block(
             &decoder_config,
@@ -76,43 +50,18 @@ impl DecoderExecutables {
         let global_rope = Self::create_rope_block(
             &mtl_context,
             &decoder_config,
-            &decoder_weight_loader,
-            compilation_config.clone(),
-            &kernels_config,
-            String::from("global_rope"),
-            &decoder_config.global_rope_config,
             RopeType::Global,
         );
 
         let local_rope: Option<Rc<Box<dyn EncodableWithState>>>;
-        if let Some(local_rope_config) = &decoder_config.local_rope_config {
+        if let Some(_) = &decoder_config.local_rope_config {
             local_rope = Some(Self::create_rope_block(
                 &mtl_context,
                 &decoder_config,
-                &decoder_weight_loader,
-                compilation_config.clone(),
-                &kernels_config,
-                String::from("local_rope"),
-                local_rope_config,
                 RopeType::Local,
             ));
         } else {
             local_rope = None;
-        }
-
-        let attention_executable_provider: Option<
-            Rc<RefCell<AttentionExecutableProvider>>,
-        >;
-        if kernels_config.use_attention {
-            attention_executable_provider = None;
-        } else {
-            attention_executable_provider =
-                Some(Rc::new(RefCell::new(AttentionExecutableProvider::new(
-                    mtl_context.clone(),
-                    decoder_config.clone(),
-                    compilation_config.clone(),
-                    attention_executable_provider_config,
-                ))));
         }
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
@@ -148,37 +97,22 @@ impl DecoderExecutables {
                     &decoder_weight_loader
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
-                    attention_executable_provider.clone(),
                     rope,
-                    kernels_config.clone(),
                 )
             })
             .collect::<Vec<_>>();
 
-        let norm_block: Box<dyn EncodableWithState> =
-            if kernels_config.use_rms_norm {
-                Box::new(
-                    RMSNormKernelEncodable::new(
-                        &mtl_context,
-                        intermediate_data_type,
-                        decoder_config.output_norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_weight_loader.subtree("output_norm").unwrap(),
-                    )
-                    .expect("Failed to create output RMS norm kernel"),
-                )
-            } else {
-                Box::new(rms_norm_block(
-                    &decoder_config.output_norm_config,
-                    decoder_config.model_dim,
-                    &mtl_context,
-                    &decoder_weight_loader.subtree("output_norm").unwrap(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &compilation_config.descriptor_general,
-                ))
-            };
+        let norm_block: Box<dyn EncodableWithState> = Box::new(
+            RMSNormKernelEncodable::new(
+                &mtl_context,
+                intermediate_data_type,
+                decoder_config.output_norm_config.clone(),
+                ArrayId::Main,
+                ArrayId::Main,
+                &decoder_weight_loader.subtree("output_norm").unwrap(),
+            )
+            .expect("Failed to create output RMS norm kernel"),
+        );
 
         Self {
             embed: embed,
@@ -193,11 +127,6 @@ impl DecoderExecutables {
     fn create_rope_block(
         mtl_context: &MTLContext,
         decoder_config: &DecoderConfig,
-        decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
-        compilation_config: Rc<CompilationConfig>,
-        kernels_config: &KernelsConfig,
-        rope_name: String,
-        rope_config: &RoPEConfig,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableWithState>> {
         let intermediate_data_type: DataType = decoder_config
@@ -208,30 +137,10 @@ impl DecoderExecutables {
             .into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
-        let rotation: Box<dyn EncodableWithState>;
-        if kernels_config.use_rope {
-            rotation = Box::new(
-                RopeKernelEncodable::new(
-                    mtl_context,
-                    kernel_data_type,
-                    rope_type,
-                )
+        let rotation: Box<dyn EncodableWithState> = Box::new(
+            RopeKernelEncodable::new(mtl_context, kernel_data_type, rope_type)
                 .expect("Failed to create RopeKernelEncodable"),
-            );
-        } else {
-            let rotation_executable = rotation_executable(
-                rope_name,
-                rope_config,
-                decoder_config.head_dim,
-                decoder_config.num_groups,
-                decoder_config.num_heads,
-                decoder_config.context_length,
-                &mtl_context,
-                decoder_weight_loader,
-                &compilation_config.descriptor_general,
-            );
-            rotation = Box::new(rotation_block(rotation_executable));
-        }
+        );
         return Rc::new(rotation);
     }
 }

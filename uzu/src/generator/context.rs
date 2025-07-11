@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell, collections::HashMap, fs::File, io::BufReader, path::Path,
-    rc::Rc,
-};
+use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
@@ -10,8 +7,8 @@ use super::{config::GeneratorConfig, error::GeneratorError};
 use crate::{
     DataType,
     backends::metal::{
-        AttentionExecutableProviderConfig, DecoderExecutables, KVCache,
-        KVCacheUpdate, KernelDataType, KernelsConfig, MTLContext, ModelShape,
+        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
+        ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
@@ -21,7 +18,6 @@ use crate::{
 };
 
 pub struct GeneratorContext {
-    pub kernels_config: KernelsConfig,
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
@@ -40,8 +36,6 @@ impl GeneratorContext {
         model_path: &Path,
         config: &GeneratorConfig,
     ) -> Result<Self, GeneratorError> {
-        let kernels_config = KernelsConfig::default();
-
         let mtl_device = metal::Device::system_default()
             .ok_or(GeneratorError::UnableToCreateMetalContext)?;
         let mtl_command_queue =
@@ -99,17 +93,11 @@ impl GeneratorContext {
             max_suffix_length,
         );
 
-        let prefix_length_step = config.prefix_length_step.unwrap_or(0);
         let executables = DecoderExecutables::new(
             mtl_context.clone(),
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-            AttentionExecutableProviderConfig::new(HashMap::from([
-                (config.prefill_step_size, 0),
-                (1, prefix_length_step),
-            ])),
-            kernels_config.clone(),
         );
 
         let kv_cache = Rc::new(RefCell::new(KVCache::new(
@@ -141,7 +129,6 @@ impl GeneratorContext {
         .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
 
         let context = Self {
-            kernels_config,
             mtl_context,
             command_buffer,
             kv_cache,

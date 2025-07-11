@@ -143,7 +143,6 @@ impl Tracer {
     pub fn new(model_path: &Path) -> Self {
         let generator_config = GeneratorConfig::new(
             1024,
-            None,
             SpeculatorConfig {
                 number_of_speculated_tokens: 0,
                 speculator: Arc::new(EmptySpeculator {}),
@@ -168,7 +167,6 @@ impl Tracer {
     ) -> Self {
         let generator_config = GeneratorConfig::new(
             1024,
-            None,
             SpeculatorConfig {
                 number_of_speculated_tokens: 0,
                 speculator: Arc::new(EmptySpeculator {}),
@@ -219,9 +217,8 @@ impl Tracer {
         .map(|chunk| chunk.to_vec())
         .collect();
 
-        let external_bias_fn = |row: usize, col: usize| -> bool {
-            !mask[row][col]
-        };
+        let external_bias_fn =
+            |row: usize, col: usize| -> bool { !mask[row][col] };
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),

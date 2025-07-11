@@ -16,10 +16,7 @@ pub use array::MetalArray;
 pub use buffer_allocator::BufferAllocator;
 pub use context::MTLContext;
 pub use error::MTLError;
-pub use executable_builder::{
-    DecoderExecutables, KernelsConfig,
-    attention_executable_provider::AttentionExecutableProviderConfig,
-};
+pub use executable_builder::DecoderExecutables;
 pub use forward_pass::{ForwardPassState, KVCache, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 // pub use kernel::{
