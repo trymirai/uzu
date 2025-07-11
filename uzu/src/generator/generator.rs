@@ -28,6 +28,7 @@ pub struct Generator {
 
     context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
+    registered_prefix_len: usize,
 }
 
 impl Generator {
@@ -45,6 +46,7 @@ impl Generator {
             tokens: Vec::new(),
             context,
             encoded_tasks: HashMap::new(),
+            registered_prefix_len: 0,
         };
 
         //Warmup
@@ -60,6 +62,7 @@ impl Generator {
         sampling_config: crate::session::sampling_config::SamplingConfig,
     ) -> PrefillResult {
         assert!(!tokens.is_empty());
+
         self.context.kv_cache.borrow_mut().clear();
         self.tokens = tokens.clone();
 
@@ -135,12 +138,21 @@ impl Generator {
                 step_end_token_index - tokens_start_index;
 
             if tokens_processed_this_step > 0 {
-                let positions_for_step: Vec<usize> =
+                let mut positions_for_step: Vec<usize> =
                     (tokens_start_index..step_end_token_index).collect();
-                self.context
-                    .kv_cache
-                    .borrow_mut()
-                    .register_accepted_tokens(&positions_for_step);
+                if step == number_of_prefill_steps - 1 {
+                    positions_for_step.pop();
+                }
+
+                if !positions_for_step.is_empty() {
+                    self.context
+                        .kv_cache
+                        .borrow_mut()
+                        .register_accepted_tokens(&positions_for_step);
+                    if let Some(&last_idx) = positions_for_step.last() {
+                        self.registered_prefix_len = last_idx + 1;
+                    }
+                }
             }
 
             last_state = Some(state);
@@ -179,17 +191,8 @@ impl Generator {
 
         self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
-        // Register the final accepted tokens (from speculation)
-        if !accepted_tokens.is_empty() {
-            let start_pos = self.tokens.len();
-            let accepted_positions: Vec<usize> =
-                (0..accepted_tokens.len()).map(|i| start_pos + i).collect();
-            self.context
-                .kv_cache
-                .borrow_mut()
-                .register_accepted_tokens(&accepted_positions);
-            self.tokens.extend(accepted_tokens.clone());
-        }
+        self.tokens.extend(accepted_tokens.clone());
+        self.sync_prefix();
 
         PrefillResult {
             tokens: accepted_tokens,
@@ -271,15 +274,8 @@ impl Generator {
 
         self.update_kv_cache(&mut state, &accepted_token_indices);
 
-        let start_pos = self.tokens.len();
-        let accepted_positions: Vec<usize> =
-            (0..accepted_tokens.len()).map(|i| start_pos + i).collect();
-        self.context
-            .kv_cache
-            .borrow_mut()
-            .register_accepted_tokens(&accepted_positions);
-
         self.tokens.extend(accepted_tokens.clone());
+        self.sync_prefix();
 
         GenerateResult {
             tokens: accepted_tokens,
@@ -417,5 +413,24 @@ impl Generator {
             && !metal_debug_active;
 
         result
+    }
+
+    fn sync_prefix(&mut self) {
+        if self.tokens.is_empty() {
+            return;
+        }
+
+        let desired_prefix_len = self.tokens.len() - 1;
+        if desired_prefix_len > self.registered_prefix_len {
+            let positions: Vec<usize> =
+                (self.registered_prefix_len..desired_prefix_len).collect();
+            if !positions.is_empty() {
+                self.context
+                    .kv_cache
+                    .borrow_mut()
+                    .register_accepted_tokens(&positions);
+            }
+            self.registered_prefix_len = desired_prefix_len;
+        }
     }
 }
