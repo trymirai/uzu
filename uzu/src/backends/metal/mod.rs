@@ -5,7 +5,7 @@ mod context;
 pub mod error;
 mod executable_builder;
 pub mod forward_pass;
-mod graph;
+pub mod graph;
 pub mod image;
 pub mod kernel;
 pub mod media_utils;

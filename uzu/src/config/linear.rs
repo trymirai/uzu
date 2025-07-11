@@ -47,7 +47,7 @@ impl LinearConfig {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::from_str;
+    use serde_json5::from_str;
 
     use super::*;
 
@@ -57,18 +57,18 @@ mod tests {
             {
                 "type": "QLoRALinearConfig",
                 "group_size": 32,
-                "weight_quantization_mode": "int4",
+                "weight_quantization_mode": "uint4",
                 "activation_quantization_mode": "int8",
                 "activation_precision": "bfloat16",
                 "lora_rank": 16,
-                "lora_scale": 2.0
+                "lora_scale": 2.0,
             }
         "#;
 
         let ground_truth_config = LinearConfig::QLoRA {
             quantization: QuantizationConfig {
                 group_size: 32,
-                weight_quantization_mode: QuantizationMode::Int4,
+                weight_quantization_mode: QuantizationMode::UInt4,
                 activation_quantization_mode: Some(QuantizationMode::Int8),
                 activation_precision: ConfigDataType::BFloat16,
             },

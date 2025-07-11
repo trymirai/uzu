@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use metal::{Device, MTLResourceOptions};
 use mpsgraph::{
     CommandBuffer, CompilationDescriptor, DataType as MPSDataType,
-    ExecutableExecutionDescriptor, Graph, data_types::ShapedType,
-    device::Device as MPSDevice, shape::Shape, tensor_data::TensorData,
+    ExecutableExecutionDescriptor, Graph, GraphMatrixOps,
+    data_types::ShapedType, device::Device as MPSDevice, shape::Shape,
+    tensor_data::TensorData,
 };
 use ndarray::{Array2, ArrayView2};
 use uzu::{Array, DataType, backends::metal::MetalArray};
@@ -165,7 +166,7 @@ fn test_row_split_no_copy_matmul() {
             Shape::from_dimensions(&[a_shape[1] as i64, b_shape[1] as i64]);
         let b_ph = graph.placeholder(MPSDataType::Float32, &shape_b, Some("B"));
 
-        let c_tensor = graph.matmul(&a_ph, &b_ph, false, false, Some("MatMul"));
+        let c_tensor = graph.matmul(&a_ph, &b_ph, Some("MatMul"));
 
         let mps_device = MPSDevice::with_device(&device);
         let compilation_descriptor = CompilationDescriptor::new();

@@ -41,8 +41,19 @@ impl From<DataType> for ConfigDataType {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationMode {
-    Int4,
+    UInt4,
     Int8,
+    UInt8,
+}
+
+impl Into<DataType> for QuantizationMode {
+    fn into(self) -> DataType {
+        match self {
+            QuantizationMode::UInt4 => DataType::U4,
+            QuantizationMode::Int8 => DataType::I8,
+            QuantizationMode::UInt8 => DataType::U8,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]

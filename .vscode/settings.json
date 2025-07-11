@@ -1,14 +1,21 @@
 {
   "editor.formatOnSave": true,
-  "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit"
   },
-  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
-  // Whether `--workspace` should be passed to `cargo check`. If false, `-p <package>` will be passed instead.
+  "rust-analyzer.rustfmt.extraArgs": [
+    "+nightly"
+  ],
   "rust-analyzer.check.workspace": false,
-  "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.check.noDefaultFeatures": true,
   "rust-analyzer.testExplorer": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  },
+  "[swift]": {
+    "editor.formatOnSave": true
+  },
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml"
   }

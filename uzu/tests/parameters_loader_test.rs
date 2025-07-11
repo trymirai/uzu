@@ -14,12 +14,12 @@ fn test_parameter_loader_basic() {
 
     let loader = ParameterLoader::new(&file, &context).expect("create loader");
     let embeddings =
-        loader.get("embedding.token_embeddings").expect("load embeddings");
+        loader.get("embedding.weights").expect("weights embeddings");
     let view = embeddings.as_view::<f16>().unwrap();
     assert!(is_close!(view[[5usize, 3usize]], f16::from_f32(-0.01819)));
 
     // tree API check
     let subtree = loader.tree().subtree("embedding").unwrap();
-    let same = subtree.leaf("token_embeddings").unwrap();
+    let same = subtree.leaf("weights").unwrap();
     assert_eq!(view, same.as_view::<f16>().unwrap());
 }

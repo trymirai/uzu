@@ -8,72 +8,72 @@ use std::{
 };
 
 fn main() {
-    compile_metal_shaders();
+    if cfg!(feature = "metal-shaders") {
+        println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
+        compile_metal_shaders();
+    } else {
+        write_empty_metallib();
+    }
 }
 
 fn compile_metal_shaders() {
-    // Determine the target platform
+    // Determine target platform (only proceed on Apple platforms)
     let target = env::var("TARGET").unwrap_or_default();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
-    // Exit early if not compiling for Apple platforms
-    if !target.contains("apple") {
-        println!(
-            "cargo:warning=Not on Apple platform, skipping Metal shader compilation"
-        );
-        return;
-    }
-
-    // Set SDK based on target
-    let sdk = if target.contains("ios") {
-        "iphoneos"
-    } else if target.contains("apple-darwin") {
-        if env::var("CARGO_CFG_TARGET_FEATURE")
-            .unwrap_or_default()
-            .contains("catalyst")
-        {
+    // Choose appropriate SDK: macosx, iphoneos, iphonesimulator, or maccatalyst
+    let sdk = if target_os == "ios" {
+        if target.contains("macabi") || target_env == "macabi" {
             "maccatalyst"
+        } else if target.contains("ios")
+            && (target.contains("86_64") || target_env == "sim")
+        {
+            // Use iPhoneSimulator SDK for simulator targets (x86_64 or explicit 'sim')
+            "iphonesimulator"
         } else {
-            "macosx"
+            "iphoneos"
         }
+    } else if target_os == "macos" {
+        "macosx"
     } else {
         println!(
-            "cargo:warning=Unsupported Apple platform, skipping Metal shader compilation"
+            "cargo:warning=Not an Apple platform, skipping Metal shader compilation"
         );
         return;
     };
 
-    println!("cargo:info=Compiling Metal shaders for {}", sdk);
+    println!("cargo:info=Compiling Metal shaders for SDK: {}", sdk);
 
-    // Find all .metal files
+    // Gather all .metal files in the project (src directory and subdirs)
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src_dir = manifest_dir.join("src");
     let metal_files = find_metal_files(&src_dir);
-
     if metal_files.is_empty() {
-        println!("cargo:warning=No .metal files found in src directory");
+        println!("cargo:warning=No .metal files found; nothing to compile");
         return;
     }
-
     println!("cargo:info=Found {} Metal shader files", metal_files.len());
 
-    // Create output directory
+    // Prepare output directory for metallib
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let metallib_dir = out_dir.join("metallib");
     fs::create_dir_all(&metallib_dir).unwrap();
 
-    // Check if xcrun is available
+    // Require xcrun (should be present on macOS with Xcode)
     if !Command::new("xcrun")
         .arg("--version")
         .status()
-        .is_ok_and(|s| s.success())
+        .map(|s| s.success())
+        .unwrap_or(false)
     {
         panic!(
-            "xcrun not found. Metal shader compilation requires macOS with Xcode tools installed."
+            "xcrun not found. Please install Xcode command-line tools to compile Metal shaders."
         );
     }
 
-    // Create platform-specific metallib path
-    let platform_suffix = if sdk == "macosx" {
+    // Platform-specific metallib path (separate for macos vs ios for caching)
+    let platform_suffix = if sdk == "macosx" || sdk == "maccatalyst" {
         "macos"
     } else {
         "ios"
@@ -81,109 +81,91 @@ fn compile_metal_shaders() {
     let metallib_path =
         metallib_dir.join(format!("shaders_{}.metallib", platform_suffix));
 
-    // Determine if we need to recompile based on source file timestamps
-    let should_compile = needs_compilation(&metal_files, &metallib_path);
-
+    // Decide whether to compile (if metallib missing or any source changed)
+    let should_compile =
+        needs_compilation(&metal_files, &metallib_path, &target);
     if should_compile {
-        // Compile the metal files
         compile_metal_files(&metal_files, &metallib_dir, sdk, &src_dir);
-
-        // Write the current target to a file for future comparison
-        let target_file = metallib_path.with_extension("target");
-        if let Err(e) = fs::write(&target_file, &target) {
-            println!("cargo:warning=Failed to write target file: {}", e);
-        }
+        // Record the target triple for which we built the metallib
+        let _ = fs::write(metallib_path.with_extension("target"), &target);
     } else {
-        println!("cargo:info=Using existing metallib as it's up to date");
+        println!(
+            "cargo:info=Metal shaders are up-to-date; skipping compilation"
+        );
     }
 
-    // Read metallib content - use the platform-specific one
-    let metallib_data = fs::read(&metallib_path).unwrap_or_else(|_| {
-        // Fall back to standard name if platform-specific one doesn't exist
-        fs::read(metallib_dir.join("shaders.metallib")).unwrap()
-    });
+    // Read the (new or existing) metallib bytes
+    let metallib_data = fs::read(&metallib_path)
+        .or_else(|_| fs::read(metallib_dir.join("shaders.metallib")))
+        .expect("Failed to read metallib data");
+    // Write bytes into a Rust source file as a static array
+    write_metallib_as_bytes(&metallib_data, &out_dir.join("metal_lib.rs"));
 
-    // Write the metallib data as a Rust file with a static byte array
-    let rust_output = out_dir.join("metal_lib.rs");
-    write_metallib_as_bytes(&metallib_data, &rust_output);
-
-    // Tell Cargo to rerun this script if any .metal files change
-    for file in &metal_files {
+    // Tell Cargo when to re-run this build script: all shader files, plus build.rs and any FFI headers
+    let mut sorted_files: Vec<&PathBuf> = metal_files.iter().collect();
+    sorted_files.sort();
+    for file in sorted_files {
         println!("cargo:rerun-if-changed={}", file.display());
     }
-
-    // Also rerun if build.rs changes
-    println!("cargo:rerun-if-changed=build.rs");
-    // Also rerun if ffi.rs changes
     println!("cargo:rerun-if-changed=src/ffi.rs");
+    println!("cargo:rerun-if-changed=build.rs");
 }
 
+// Recursively find all .metal files in the given directory
 fn find_metal_files(dir: &Path) -> Vec<PathBuf> {
-    let mut metal_files = Vec::new();
-
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
             let path = entry.path();
-
             if path.is_dir() {
-                metal_files.extend(find_metal_files(&path));
-            } else if let Some(ext) = path.extension() {
-                if ext == "metal" {
-                    metal_files.push(path);
-                }
+                files.extend(find_metal_files(&path));
+            } else if path.extension().and_then(|s| s.to_str()) == Some("metal")
+            {
+                files.push(path);
             }
         }
     }
-
-    metal_files
+    files
 }
 
+// Check timestamps and target to determine if recompilation is needed
 fn needs_compilation(
     metal_files: &[PathBuf],
     metallib_path: &Path,
+    target: &str,
 ) -> bool {
-    // If metallib doesn't exist, we need to compile
+    // If output metallib doesn't exist, need to compile
     if !metallib_path.exists() {
         return true;
     }
-
-    // Check if target has changed since last build
-    let target = env::var("TARGET").unwrap_or_default();
-    let target_file = metallib_path.with_extension("target");
-
-    if let Ok(contents) = fs::read_to_string(&target_file) {
-        if contents != target {
+    // If the previously built target differs (target changed, e.g. arch or OS)
+    if let Ok(prev_target) =
+        fs::read_to_string(metallib_path.with_extension("target"))
+    {
+        if prev_target != target {
             println!(
-                "cargo:warning=Target changed from {} to {}, recompiling Metal shaders",
-                contents, target
+                "cargo:warning=Target changed from {} to {}, recompiling shaders",
+                prev_target, target
             );
             return true;
         }
-    } else {
-        // No target file, recompile
-        return true;
     }
-
-    // Get the modification time of the metallib
+    // If any source file is newer than the metallib, recompile
     let metallib_mtime = fs::metadata(metallib_path)
-        .and_then(|meta| meta.modified())
+        .and_then(|m| m.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH);
-
-    // Check if any metal file is newer than the metallib
     for metal_file in metal_files {
-        if let Ok(metal_mtime) =
-            fs::metadata(metal_file).and_then(|meta| meta.modified())
+        if let Ok(src_mtime) =
+            fs::metadata(metal_file).and_then(|m| m.modified())
         {
-            if metal_mtime > metallib_mtime {
+            if src_mtime > metallib_mtime {
                 return true;
             }
         } else {
-            // If we can't get the mtime, be safe and recompile
+            // If any file's metadata can't be read, assume we should rebuild
             return true;
         }
     }
-
     false
 }
 
@@ -193,184 +175,144 @@ fn compile_metal_files(
     sdk: &str,
     src_dir: &Path,
 ) {
-    // Create temporary directory for intermediate .air files
+    // Create temp directory for .air files
     let air_dir = out_dir.join("air");
     fs::create_dir_all(&air_dir).unwrap();
 
-    // Collect unique include directories (parent directories of all metal files)
+    // Collect include directories (parents of each metal file + src dir)
     let mut include_dirs = HashSet::new();
+    include_dirs.insert(src_dir.to_path_buf());
     for metal_file in metal_files {
         if let Some(parent) = metal_file.parent() {
             include_dirs.insert(parent.to_path_buf());
         }
     }
-    // Always include the src directory
-    include_dirs.insert(src_dir.to_path_buf());
 
-    // Get appropriate optimization level
-    let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
-    let metal_opt = match opt_level.as_str() {
+    // Optimization level: Metal supports up to -O2
+    let opt = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".into());
+    let metal_opt_flag = match opt.as_str() {
         "0" => "-O0",
         "1" => "-O1",
-        "2" | "3" | "s" | "z" => "-O2", // Metal only has up to -O2
-        _ => "-O0",
+        _ => "-O2", // treat levels 2,3,s,z as O2 for metal
     };
 
-    // Platform-specific compilation flags
-    let is_macos = sdk == "macosx";
-    let platform_flags = if is_macos {
-        // macOS specific flags
-        // Set minimum macOS version to 14.0 for Metal 3.1 and bfloat support
+    // Platform-specific min version flags (Metal 3.1 requires macOS 14 / iOS 17)
+    let platform_flags = if sdk == "macosx" || sdk == "maccatalyst" {
         vec!["-mmacosx-version-min=14.0"]
     } else {
-        // iOS specific flags
-        // Set minimum iOS version to 17.0 for Metal 3.1 and bfloat support
         vec!["-mios-version-min=17.0"]
     };
 
-    println!(
-        "cargo:info=Using platform-specific flags for {}: {:?}",
-        sdk, platform_flags
-    );
-
-    // Step 1: Compile each .metal file to .air
+    // Compile each .metal source to an intermediate .air file
     let mut air_files = Vec::new();
     for metal_file in metal_files {
-        let file_stem = metal_file.file_stem().unwrap().to_str().unwrap();
-
-        // Create platform-specific AIR files to avoid conflicts
-        let platform_prefix = if is_macos {
+        let name = metal_file.file_stem().unwrap().to_str().unwrap();
+        // Name .air with platform prefix to avoid collisions
+        let prefix = if sdk == "macosx" || sdk == "maccatalyst" {
             "macos_"
         } else {
             "ios_"
         };
-        let air_file =
-            air_dir.join(format!("{}_{}.air", platform_prefix, file_stem));
-        air_files.push(air_file.clone());
+        let air_path = air_dir.join(format!("{}{}.air", prefix, name));
+        air_files.push(air_path.clone());
 
-        let mut command = Command::new("xcrun");
-        command.args(["-sdk", sdk, "metal", metal_opt]);
-
-        // Use platform-neutral Metal 3.1 standard for both macOS and iOS
-        let metal_std = "metal3.1";
-        command.args([&format!("-std={}", metal_std)]);
-
-        // Add platform-specific flags
+        // Invoke Metal compiler
+        let mut cmd = Command::new("xcrun");
+        cmd.args(&["-sdk", sdk, "metal", metal_opt_flag]);
+        cmd.arg(format!("-std={}", "metal3.1")); // target Metal 3.1 shading language
         for flag in &platform_flags {
-            command.arg(flag);
+            cmd.arg(flag);
         }
-
-        // Add all include directories
-        for include_dir in &include_dirs {
-            command.args(["-I", include_dir.to_str().unwrap()]);
+        for inc in &include_dirs {
+            cmd.args(&["-I", inc.to_str().unwrap()]);
         }
-
-        // Debug build gets better error messages
-        if opt_level == "0" {
-            command.arg("-gline-tables-only");
-
-            // Add extra debug options for macOS
-            if is_macos {
-                command.args(["-frecord-sources", "-fpreserve-invariance"]);
+        if opt == "0" {
+            cmd.arg("-gline-tables-only");
+            if sdk == "macosx" {
+                cmd.args(&["-frecord-sources", "-fpreserve-invariance"]);
             }
         }
-
-        // Add the source file and output
-        command.args([
+        cmd.args(&[
             "-c",
             metal_file.to_str().unwrap(),
             "-o",
-            air_file.to_str().unwrap(),
+            air_path.to_str().unwrap(),
         ]);
 
-        // Print the command for debugging purposes
-        let cmd_str = format!("{:?}", command);
-        println!("cargo:info=Running: {}", cmd_str);
-
-        let status =
-            command.status().expect("Failed to execute metal compiler");
-
-        if !status.success() {
-            panic!("Failed to compile {} to .air", metal_file.display());
-        }
-    }
-
-    // Step 2: Link all .air files into a single .metallib
-    let platform_suffix = if is_macos {
-        "macos"
-    } else {
-        "ios"
-    };
-    let metallib_path =
-        out_dir.join(format!("shaders_{}.metallib", platform_suffix));
-
-    let mut command = Command::new("xcrun");
-    command.args(["-sdk", sdk, "metallib"]);
-
-    for air_file in &air_files {
-        command.arg(air_file.to_str().unwrap());
-    }
-
-    command.args(["-o", metallib_path.to_str().unwrap()]);
-
-    // Print the command for debugging purposes
-    let cmd_str = format!("{:?}", command);
-    println!("cargo:info=Running: {}", cmd_str);
-
-    let status = command.status().expect("Failed to execute metallib");
-
-    if !status.success() {
-        panic!("Failed to link .air files into .metallib");
-    }
-
-    // Create a symbolic link or copy to the standard name for backward compatibility
-    let standard_metallib_path = out_dir.join("shaders.metallib");
-    if let Err(e) = fs::copy(&metallib_path, &standard_metallib_path) {
         println!(
-            "cargo:warning=Failed to create standard metallib link: {}",
-            e
+            "cargo:info=Running Metal compiler: {}",
+            cmd.get_args()
+                .map(|a| a.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
         );
-    }
-
-    // Clean up .air files after successful compilation
-    for air_file in &air_files {
-        if let Err(e) = fs::remove_file(air_file) {
-            println!(
-                "cargo:warning=Failed to remove {}: {}",
-                air_file.display(),
-                e
+        if !cmd.status().expect("Failed to run metal compiler").success() {
+            panic!(
+                "Metal shader compilation failed for {}",
+                metal_file.display()
             );
         }
     }
 
+    // Link all .air files into a single .metallib library
+    let metallib_path =
+        out_dir.join(if sdk == "macosx" || sdk == "maccatalyst" {
+            "shaders_macos.metallib"
+        } else {
+            "shaders_ios.metallib"
+        });
+    let mut lib_cmd = Command::new("xcrun");
+    lib_cmd.args(&["-sdk", sdk, "metallib"]);
+    for air in &air_files {
+        lib_cmd.arg(air);
+    }
+    lib_cmd.args(&["-o", metallib_path.to_str().unwrap()]);
     println!(
-        "cargo:info=Successfully compiled Metal shaders to {}",
+        "cargo:info=Linking Metal libraries: {}",
+        lib_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    if !lib_cmd.status().expect("Failed to run metallib linker").success() {
+        panic!("Failed to link Metal shader libraries");
+    }
+
+    // Clean up intermediate .air files
+    for air in air_files {
+        let _ = fs::remove_file(air);
+    }
+    println!(
+        "cargo:info=Metal shaders compiled successfully to {}",
         metallib_path.display()
     );
 }
 
 fn write_metallib_as_bytes(
     metallib_data: &[u8],
-    output_path: &Path,
+    out_path: &Path,
 ) {
-    let mut file = fs::File::create(output_path).unwrap();
-
-    // Write the header of the Rust file
-    writeln!(file, "// This file is auto-generated. Do not edit.").unwrap();
-    writeln!(file).unwrap();
-    writeln!(file, "pub const METAL_LIBRARY_DATA: &[u8] = &[").unwrap();
-
-    // Write the byte array
-    const BYTES_PER_LINE: usize = 16;
-
-    for chunk in metallib_data.chunks(BYTES_PER_LINE) {
-        write!(file, "    ").unwrap();
+    let mut f = fs::File::create(out_path).expect("Cannot create metal_lib.rs");
+    writeln!(f, "// AUTO-GENERATED Metal library byte array").unwrap();
+    writeln!(f, "pub const METAL_LIBRARY_DATA: &[u8] = &[").unwrap();
+    for chunk in metallib_data.chunks(16) {
+        write!(f, "    ").unwrap();
         for byte in chunk {
-            write!(file, "0x{:02x}, ", byte).unwrap();
+            write!(f, "0x{:02x}, ", byte).unwrap();
         }
-        writeln!(file).unwrap();
+        writeln!(f).unwrap();
     }
+    writeln!(f, "];").unwrap();
+}
 
-    // Close the array
-    writeln!(file, "];").unwrap();
+fn write_empty_metallib() {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let metal_lib_rs = out_dir.join("metal_lib.rs");
+
+    if let Some(parent) = metal_lib_rs.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(metal_lib_rs, b"pub const METAL_LIBRARY_DATA: &[u8] = &[];\n")
+        .expect("Cannot create stub metal_lib.rs");
 }

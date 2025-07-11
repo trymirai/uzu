@@ -1,4 +1,4 @@
-mod common;
+pub mod common;
 use common::{GraphConstructionError, data_type_of, load_constant, shape_of};
 pub use common::{placeholder, shaped_type};
 mod attention;
@@ -11,9 +11,7 @@ mod rms_norm;
 pub use rms_norm::rms_norm_subgraph;
 mod embedding;
 pub use embedding::{
-    EmbeddingParams, embed_callable_subgraph,
-    embed_placeholder_weights_subgraph, embed_subgraph, embedding_params,
-    readout_callable_subgraph, readout_placeholder_weights_subgraph,
-    readout_subgraph,
+    embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
+    embeddings_readout_subgraph,
 };
 mod rope;

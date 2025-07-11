@@ -17,8 +17,8 @@ use crate::{
             ArrayId, ForwardPassState, MPSGraphBlock, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::{
-                embedding_with_placeholder_weights_blocks, rms_norm_block,
-                rotation_block, rotation_executable,
+                embed_block, readout_block, rms_norm_block, rotation_block,
+                rotation_executable,
             },
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
@@ -44,7 +44,6 @@ impl KernelsConfig {
     }
 }
 pub struct DecoderExecutables {
-    pub embedding: Option<MPSGraphBlock>,
     pub embed: MPSGraphBlock,
     pub layers: Box<[LayerExecutables]>,
     pub norm: Box<dyn EncodableWithState>,
@@ -62,7 +61,13 @@ impl DecoderExecutables {
         attention_executable_provider_config: AttentionExecutableProviderConfig,
         kernels_config: KernelsConfig,
     ) -> Self {
-        let embedding_blocks = embedding_with_placeholder_weights_blocks(
+        let embed = embed_block(
+            &decoder_config,
+            &mtl_context,
+            &compilation_config.descriptor_general,
+        );
+
+        let readout = readout_block(
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
@@ -176,11 +181,10 @@ impl DecoderExecutables {
             };
 
         Self {
-            embed: embedding_blocks.embed,
-            embedding: embedding_blocks.embedding,
+            embed: embed,
             layers: layers.into_boxed_slice(),
             norm: norm_block,
-            readout: embedding_blocks.readout,
+            readout: readout,
             global_rope,
             local_rope,
         }
