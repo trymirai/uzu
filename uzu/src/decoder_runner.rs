@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use std::{
-    cell::RefCell, collections::HashMap, fs::File, io::BufReader, path::Path,
-    rc::Rc, time::Instant,
+    cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc, time::Instant,
 };
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
@@ -9,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::metal::{
-        AttentionExecutableProviderConfig, DecoderExecutables,
-        ForwardPassState, KVCache, KernelsConfig, MTLContext, ModelShape,
+        DecoderExecutables, ForwardPassState, KVCache, KernelsConfig,
+        MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ForwardPassBuffers, SharedBuffers,
@@ -133,7 +132,6 @@ impl DecoderTestContext {
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-            AttentionExecutableProviderConfig::new(HashMap::from([(1, 0)])),
             KernelsConfig::default(),
         );
         Ok((

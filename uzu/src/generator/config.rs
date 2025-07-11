@@ -76,7 +76,6 @@ pub trait GeneratorConfigProvider {
 
 pub struct GeneratorConfig {
     pub prefill_step_size: usize,
-    pub prefix_length_step: Option<usize>,
     pub speculator_config: SpeculatorConfig,
     pub allow_pre_encode: bool,
     pub sampling_seed: u64,
@@ -86,7 +85,6 @@ pub struct GeneratorConfig {
 impl GeneratorConfig {
     pub fn new(
         prefill_step_size: usize,
-        prefix_length_step: Option<usize>,
         speculator_config: SpeculatorConfig,
         allow_pre_encode: bool,
         sampling_seed: SamplingSeed,
@@ -94,7 +92,6 @@ impl GeneratorConfig {
     ) -> Self {
         Self {
             prefill_step_size,
-            prefix_length_step,
             speculator_config,
             allow_pre_encode,
             sampling_seed: sampling_seed.get_value(),

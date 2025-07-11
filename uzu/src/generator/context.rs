@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell, collections::HashMap, fs::File, io::BufReader, path::Path,
-    rc::Rc,
-};
+use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
@@ -10,8 +7,8 @@ use super::{config::GeneratorConfig, error::GeneratorError};
 use crate::{
     DataType,
     backends::metal::{
-        AttentionExecutableProviderConfig, DecoderExecutables, KVCache,
-        KVCacheUpdate, KernelDataType, KernelsConfig, MTLContext, ModelShape,
+        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType,
+        KernelsConfig, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
@@ -99,16 +96,11 @@ impl GeneratorContext {
             max_suffix_length,
         );
 
-        let prefix_length_step = config.prefix_length_step.unwrap_or(0);
         let executables = DecoderExecutables::new(
             mtl_context.clone(),
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-            AttentionExecutableProviderConfig::new(HashMap::from([
-                (config.prefill_step_size, 0),
-                (1, prefix_length_step),
-            ])),
             kernels_config.clone(),
         );
 

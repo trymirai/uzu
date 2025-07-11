@@ -1,13 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{
-    attention_executable_provider::{
-        AttentionExecutableProvider, AttentionExecutableProviderConfig,
-    },
-    layer_executables::LayerExecutables,
-};
+use super::layer_executables::LayerExecutables;
 use crate::{
     DataType,
     backends::metal::{
@@ -30,7 +25,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct KernelsConfig {
     pub use_rope: bool,
-    pub use_attention: bool,
     pub use_rms_norm: bool,
 }
 
@@ -38,7 +32,6 @@ impl KernelsConfig {
     pub fn default() -> Self {
         Self {
             use_rope: true,
-            use_attention: true,
             use_rms_norm: true,
         }
     }
@@ -58,7 +51,6 @@ impl DecoderExecutables {
         decoder_config: Rc<DecoderConfig>,
         decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
         compilation_config: Rc<CompilationConfig>,
-        attention_executable_provider_config: AttentionExecutableProviderConfig,
         kernels_config: KernelsConfig,
     ) -> Self {
         let embed = embed_block(
@@ -100,21 +92,6 @@ impl DecoderExecutables {
             local_rope = None;
         }
 
-        let attention_executable_provider: Option<
-            Rc<RefCell<AttentionExecutableProvider>>,
-        >;
-        if kernels_config.use_attention {
-            attention_executable_provider = None;
-        } else {
-            attention_executable_provider =
-                Some(Rc::new(RefCell::new(AttentionExecutableProvider::new(
-                    mtl_context.clone(),
-                    decoder_config.clone(),
-                    compilation_config.clone(),
-                    attention_executable_provider_config,
-                ))));
-        }
-
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let sliding_window_sizes = model_shape.sliding_window_length_per_layer;
 
@@ -148,7 +125,6 @@ impl DecoderExecutables {
                     &decoder_weight_loader
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
-                    attention_executable_provider.clone(),
                     rope,
                     kernels_config.clone(),
                 )

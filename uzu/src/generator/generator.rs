@@ -408,9 +408,7 @@ impl Generator {
     fn allow_pre_encode(&self) -> bool {
         let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
 
-        let result = self.config.allow_pre_encode
-            && self.context.kernels_config.use_attention
-            && !metal_debug_active;
+        let result = self.config.allow_pre_encode && !metal_debug_active;
 
         result
     }

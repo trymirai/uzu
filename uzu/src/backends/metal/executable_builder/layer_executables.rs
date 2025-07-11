@@ -1,21 +1,18 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
-use super::{
-    attention_executable_provider::AttentionExecutableProvider,
-    decoder_executables::KernelsConfig,
-};
+use super::decoder_executables::KernelsConfig;
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ArrayId, ForwardPassState, MPSGraphBlock,
             encodable_with_state::{EncodableWithState, EncodingParameters},
-            transformer_layer::{self, attention_block},
+            transformer_layer,
         },
         kernel::{
             AttentionKernelEncodable, KernelDataType, QKNormKernelEncodable,
@@ -34,8 +31,6 @@ pub struct LayerExecutables {
     pub qk_norm: Option<Box<dyn EncodableWithState>>,
     pub rope: Rc<Box<dyn EncodableWithState>>,
     pub attention: Box<dyn EncodableWithState>,
-    pub attention_executable_provider:
-        Option<Rc<RefCell<AttentionExecutableProvider>>>,
     pub out_projection: MPSGraphBlock,
     pub post_attention_norm: Option<Box<dyn EncodableWithState>>,
     pub main_shortcut_add_swap: Box<dyn EncodableWithState>,
@@ -58,9 +53,6 @@ impl LayerExecutables {
         num_groups: usize,
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
-        attention_executable_provider: Option<
-            Rc<RefCell<AttentionExecutableProvider>>,
-        >,
         rope: Rc<Box<dyn EncodableWithState>>,
         kernels_config: KernelsConfig,
     ) -> Self {
@@ -282,30 +274,15 @@ impl LayerExecutables {
                     None
                 };
 
-            let attention: Box<dyn EncodableWithState>;
-            if kernels_config.use_attention {
-                attention = Box::new(
-                    AttentionKernelEncodable::new(
-                        mtl_context,
-                        kernel_data_type,
-                        layer_index,
-                        attention_scale,
-                    )
-                    .expect(
-                        "Failed to create AttentionWrapper with Metal kernel",
-                    ),
-                );
-            } else {
-                attention = Box::new(
-                    AttentionKernelEncodable::new(
-                        mtl_context,
-                        kernel_data_type,
-                        layer_index,
-                        attention_scale,
-                    )
-                    .expect("Failed to create AttentionWrapper for MPS Graph"),
-                );
-            }
+            let attention: Box<dyn EncodableWithState> = Box::new(
+                AttentionKernelEncodable::new(
+                    mtl_context,
+                    kernel_data_type,
+                    layer_index,
+                    attention_scale,
+                )
+                .expect("Failed to create AttentionWrapper with Metal kernel"),
+            );
 
             Self {
                 layer_index,
@@ -315,7 +292,6 @@ impl LayerExecutables {
                 qk_norm,
                 rope,
                 attention,
-                attention_executable_provider,
                 out_projection,
                 post_attention_norm,
                 main_shortcut_add_swap,
@@ -325,37 +301,6 @@ impl LayerExecutables {
                 kernels_config,
             }
         })
-    }
-
-    fn get_suffix_length(
-        &self,
-        state: &ForwardPassState,
-    ) -> usize {
-        let shape: Vec<usize> = (*state.arrays(&[ArrayId::TokenIds]))[0]
-            .borrow()
-            .shape()
-            .iter()
-            .map(|value| *value)
-            .collect();
-        *shape.first().unwrap()
-    }
-
-    pub fn attention_block(
-        &self,
-        state: &ForwardPassState,
-    ) -> MPSGraphBlock {
-        let suffix_length = self.get_suffix_length(state);
-        let prefix_length: usize = state.kv_cache.borrow().data
-            [self.layer_index]
-            .effective_prefix_length();
-
-        let mut attention_executable_provider =
-            self.attention_executable_provider.as_ref().unwrap().borrow_mut();
-        let attention_executable = attention_executable_provider
-            .executable(suffix_length, prefix_length);
-        let attention =
-            attention_block(attention_executable.clone(), self.layer_index);
-        attention
     }
 }
 
@@ -379,8 +324,6 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        let first_layer = self.layer_index == 0;
-
         self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
         // shortcut = input
 
@@ -397,40 +340,7 @@ impl EncodableWithState for LayerExecutables {
             qk_norm.encode(state, command_buffer, parameters);
         }
         self.rope.encode(state, command_buffer, parameters);
-
-        if parameters.warmup {
-            if first_layer {
-                if self.kernels_config.use_attention {
-                    self.attention.encode(state, command_buffer, parameters);
-                } else {
-                    let suffix_length = self.get_suffix_length(state);
-                    if let Some(executables) = self
-                        .attention_executable_provider
-                        .as_ref()
-                        .unwrap()
-                        .borrow()
-                        .executables
-                        .get(&suffix_length)
-                    {
-                        for (_, executable) in executables {
-                            let attention = attention_block(
-                                executable.clone(),
-                                self.layer_index,
-                            );
-                            attention.encode(state, command_buffer, parameters);
-                        }
-                    }
-                }
-            }
-        } else {
-            if self.kernels_config.use_attention {
-                self.attention.encode(state, command_buffer, parameters);
-            } else {
-                let attention = self.attention_block(state);
-                attention.encode(state, command_buffer, parameters);
-            }
-        }
-
+        self.attention.encode(state, command_buffer, parameters);
         self.out_projection.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
