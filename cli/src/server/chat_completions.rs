@@ -67,47 +67,55 @@ pub fn handle_chat_completions(
     );
     let processing_time = start_time.elapsed();
 
+    println!("output: {:?}", &output);
+
+    let SessionOutput {
+        text,
+        stats,
+        finish_reason,
+        ..
+    } = output;
+
+    let finish_reason_val =
+        finish_reason.unwrap_or(SessionOutputFinishReason::Cancelled);
+
+    println!("📤 [{}] Sending response:", id);
+    println!("   Response length: {} chars", text.len());
+    println!("   Finish reason: {:?}", finish_reason_val);
+    println!("   Processing time: {:.3}s", processing_time.as_secs_f64());
+    println!(
+        "   Tokens/second: {:.1}",
+        stats
+            .generate_stats
+            .as_ref()
+            .map(|s| s.tokens_per_second)
+            .unwrap_or(0.0)
+    );
+
+    print!("   Response preview: ");
+    if text.len() > 3000 {
+        print!("{}", &text[..3000]);
+        println!("...");
+    } else {
+        println!("{}", &text);
+    }
+    println!();
+
     let choice = ChatCompletionsResponseChoice {
         index: 0,
         message: SessionMessage {
             role: SessionMessageRole::Assistant,
-            content: output.text.clone(),
+            content: text,
         },
-        finish_reason: output
-            .finish_reason
-            .clone()
-            .unwrap_or(SessionOutputFinishReason::Cancelled),
+        finish_reason: finish_reason_val,
     };
 
     let response = ChatCompletionsResponse {
         id: id.clone(),
         model: state.model_name.clone(),
         choices: vec![choice],
-        stats: output.stats.clone(),
+        stats,
     };
-
-    // Log response
-    println!("output: {:?}", output.clone());
-    println!("📤 [{}] Sending response:", id);
-    println!("   Response length: {} chars", output.text.len());
-    println!("   Finish reason: {:?}", response.choices[0].finish_reason);
-    println!("   Processing time: {:.3}s", processing_time.as_secs_f64());
-    println!(
-        "   Tokens/second: {:.1}",
-        response
-            .stats
-            .generate_stats
-            .as_ref()
-            .map(|s| s.tokens_per_second)
-            .unwrap_or(0.0)
-    );
-    let response_preview = if output.text.len() > 3000 {
-        format!("{}...", &output.text[..3000])
-    } else {
-        output.text.clone()
-    };
-    println!("   Response preview: {}", response_preview);
-    println!();
 
     Json(response)
 }

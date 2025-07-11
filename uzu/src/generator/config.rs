@@ -38,7 +38,7 @@ impl Default for ContextLength {
 impl ContextLength {
     pub fn get_value(&self) -> u64 {
         match self {
-            ContextLength::Default => 8192,
+            ContextLength::Default => 18192,
             ContextLength::Custom(length) => *length,
         }
     }
