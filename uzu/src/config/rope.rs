@@ -32,6 +32,11 @@ pub enum RoPEConfig {
         low_frequency_factor: f32,
         high_frequency_factor: f32,
     },
+    LinearScalingRoPEConfig {
+        #[serde(flatten)]
+        common: RopeConfigCommon,
+        scaling_factor: f32,
+    },
 }
 
 impl RoPEConfig {
@@ -43,6 +48,10 @@ impl RoPEConfig {
                 ..
             } => common,
             RoPEConfig::YARN {
+                common,
+                ..
+            } => common,
+            RoPEConfig::LinearScalingRoPEConfig {
                 common,
                 ..
             } => common,
