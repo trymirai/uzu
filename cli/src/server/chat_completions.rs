@@ -2,12 +2,12 @@ use rocket::{post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use uzu::session::{
-    session_config::SessionRunConfig,
     session_input::SessionInput,
     session_message::{SessionMessage, SessionMessageRole},
     session_output::{
         SessionOutput, SessionOutputFinishReason, SessionOutputStats,
     },
+    session_run_config::SessionRunConfig,
 };
 
 use crate::server::SessionState;

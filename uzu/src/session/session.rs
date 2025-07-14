@@ -4,7 +4,7 @@ use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
 use super::{
-    session_config::{SessionConfig, SessionRunConfig},
+    session_config::SessionConfig,
     session_input::{
         SessionInput, SessionInputProcessor, SessionInputProcessorDefault,
     },
@@ -12,7 +12,7 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
-    tokenizer_config::TokenizerConfig,
+    session_run_config::SessionRunConfig,
 };
 use crate::{
     generator::{
@@ -20,13 +20,16 @@ use crate::{
         generator::Generator,
         result::{GenerateResult, PrefillResult},
     },
-    session::session_error::SessionError,
+    session::{
+        session_error::SessionError,
+        session_tokenizer_config::SessionTokenizerConfig,
+    },
 };
 
 pub struct Session {
     model_path: PathBuf,
     tokenizer: Tokenizer,
-    tokenizer_config: TokenizerConfig,
+    tokenizer_config: SessionTokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
     generator: Option<Generator>,
 }
@@ -35,12 +38,16 @@ impl Session {
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
         // Load tokenizer JSON
         let tokenizer_path = model_path.join("tokenizer.json");
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
         // Load tokenizer configuration
         let tokenizer_config =
-            TokenizerConfig::load(model_path.clone()).unwrap();
+            SessionTokenizerConfig::load_and_add_special_tokens_to_tokenizer(
+                model_path.clone(),
+                &mut tokenizer,
+            )
+            .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
 
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());
@@ -94,15 +101,22 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
-        let eos_token = self
-            .tokenizer
-            .token_to_id(self.tokenizer_config.eos_token().as_str())
-            .unwrap() as u64;
+        let eos_tokens = self
+            .tokenizer_config
+            .eos_tokens
+            .iter()
+            .map(|token| {
+                self.tokenizer.token_to_id(token.as_str()).unwrap() as u64
+            })
+            .collect::<Vec<_>>();
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
          -> Option<SessionOutputFinishReason> {
             let total_new_tokens = generator.tokens[tokens.len()..].len();
-            if tokens_new.contains(&eos_token) {
+            let has_eos_token =
+                tokens_new.iter().any(|token| eos_tokens.contains(token));
+
+            if has_eos_token {
                 Some(SessionOutputFinishReason::Stop)
             } else if total_new_tokens >= config.tokens_limit as usize {
                 Some(SessionOutputFinishReason::Length)
@@ -124,10 +138,12 @@ impl Session {
         };
 
         let generator = self.generator.as_mut().unwrap();
+        let sampling_config = config
+            .sampling_config
+            .unwrap_or(self.tokenizer_config.sampling_config);
 
         let prefill_start = Instant::now();
-        let prefill_result =
-            generator.prefill(tokens.clone(), config.sampling_method);
+        let prefill_result = generator.prefill(tokens.clone(), sampling_config);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
@@ -170,7 +186,7 @@ impl Session {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(config.sampling_method);
+            let generate_result = generator.generate(sampling_config);
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);

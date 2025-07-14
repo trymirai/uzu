@@ -16,6 +16,7 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
             kv_cache::INVALID_POSITION,
         },
+        sampling_config::SamplingConfig,
     },
     env_utils::MetalEnvVar,
     generator::error::GeneratorError,
@@ -59,7 +60,7 @@ impl Generator {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        sampling_config: crate::session::sampling_config::SamplingConfig,
+        sampling_config: SamplingConfig,
     ) -> PrefillResult {
         assert!(!tokens.is_empty());
 
@@ -202,7 +203,7 @@ impl Generator {
 
     pub fn generate(
         &mut self,
-        sampling_config: crate::session::sampling_config::SamplingConfig,
+        sampling_config: SamplingConfig,
     ) -> GenerateResult {
         let last_token = self.tokens.last().unwrap();
 
@@ -307,9 +308,7 @@ impl Generator {
         task: GeneratorRunTask,
         warmup: bool,
         allow_pre_encode: bool,
-        sampling_config: Option<
-            crate::session::sampling_config::SamplingConfig,
-        >,
+        sampling_config: Option<SamplingConfig>,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
