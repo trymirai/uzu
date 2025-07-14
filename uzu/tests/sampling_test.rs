@@ -1,16 +1,14 @@
 mod common;
 use metal::{Device, MTLResourceOptions};
 use rand::seq::SliceRandom; // for Vec::shuffle
-use uzu::{
-    backends::metal::{
-        KernelDataType, MTLContext,
-        kernel::{
-            SamplingKernel,
-            sampling::{ArgmaxStrategy, CategoricalStrategy},
-        },
-        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+use uzu::backends::metal::{
+    KernelDataType, MTLContext,
+    kernel::{
+        SamplingKernel,
+        sampling::{ArgmaxStrategy, CategoricalStrategy},
     },
-    session::sampling_config::SamplingConfig,
+    metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+    sampling_config::SamplingConfig,
 };
 
 // Constant seed for reproducible test results
