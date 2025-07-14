@@ -7,8 +7,8 @@ use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Text;
 use uzu::session::{
-    session_config::SessionRunConfig, session_input::SessionInput,
-    session_output::SessionOutput,
+    session_input::SessionInput, session_output::SessionOutput,
+    session_run_config::SessionRunConfig,
 };
 
 use crate::server::load_session;
