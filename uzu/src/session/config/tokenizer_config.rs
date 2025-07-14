@@ -6,6 +6,7 @@ use tokenizers::AddedToken;
 use crate::session::config::common::ValueOrToken;
 
 #[derive(Clone, Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct TokenizerConfig {
     pub add_bos_token: Option<bool>,
     pub add_eos_token: Option<bool>,

@@ -3,6 +3,7 @@ use serde::Deserialize;
 use crate::session::config::common::ValueOrList;
 
 #[derive(Clone, Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct GenerationConfig {
     pub bos_token_id: Option<ValueOrList<u32>>,
     pub eos_token_id: Option<ValueOrList<u32>>,

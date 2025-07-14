@@ -46,6 +46,20 @@ impl SessionTokenizerConfig {
             }
         }
 
+        if let Some(generation_config) = &generation_metadata.generation_config
+        {
+            if let Some(eos_token_id) = &generation_config.eos_token_id {
+                let eos_token_id_list = eos_token_id.to_list();
+                let eos_token_list = eos_token_id_list
+                    .iter()
+                    .flat_map(|token_id| tokenizer.id_to_token(*token_id))
+                    .collect::<Vec<_>>();
+                eos_tokens.extend(eos_token_list);
+            }
+        }
+
+        eos_tokens.sort();
+        eos_tokens.dedup();
         eos_tokens
     }
 
