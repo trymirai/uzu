@@ -4,7 +4,7 @@ use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
 use super::{
-    session_config::{SessionConfig, SessionRunConfig},
+    session_config::SessionConfig,
     session_input::{
         SessionInput, SessionInputProcessor, SessionInputProcessorDefault,
     },
@@ -12,6 +12,7 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
+    session_run_config::SessionRunConfig,
 };
 use crate::{
     generator::{
@@ -20,7 +21,7 @@ use crate::{
         result::{GenerateResult, PrefillResult},
     },
     session::{
-        session_error::SessionError,
+        session_error::SessionError, session_run_config::SessionSamplingConfig,
         session_tokenizer_config::SessionTokenizerConfig,
     },
 };
@@ -137,10 +138,15 @@ impl Session {
         };
 
         let generator = self.generator.as_mut().unwrap();
+        let sampling_config = match config.sampling_config {
+            SessionSamplingConfig::Default => {
+                self.tokenizer_config.sampling_config
+            },
+            SessionSamplingConfig::Custom(sampling_config) => sampling_config,
+        };
 
         let prefill_start = Instant::now();
-        let prefill_result =
-            generator.prefill(tokens.clone(), config.sampling_method);
+        let prefill_result = generator.prefill(tokens.clone(), sampling_config);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
@@ -183,7 +189,7 @@ impl Session {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(config.sampling_method);
+            let generate_result = generator.generate(sampling_config);
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);

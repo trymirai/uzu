@@ -2,10 +2,9 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::session::{
-    session::Session,
-    session_config::{SessionConfig, SessionRunConfig},
-    session_input::SessionInput,
-    session_output::SessionOutput,
+    session::Session, session_config::SessionConfig,
+    session_input::SessionInput, session_output::SessionOutput,
+    session_run_config::SessionRunConfig,
 };
 
 fn build_model_path() -> PathBuf {

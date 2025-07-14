@@ -1,11 +1,8 @@
 use tokenizers::Tokenizer;
 
-use crate::{
-    backends::metal::sampling_config::SamplingConfig,
-    generator::config::{
-        ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
-        SpeculatorConfig,
-    },
+use crate::generator::config::{
+    ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
+    SpeculatorConfig,
 };
 
 #[derive(Clone)]
@@ -63,30 +60,5 @@ impl GeneratorConfigProvider for SessionConfig {
         _tokenizer: &Tokenizer,
     ) -> GeneratorConfig {
         self.to_generator_config()
-    }
-}
-
-#[derive(Debug)]
-pub struct SessionRunConfig {
-    pub tokens_limit: u64,
-    pub sampling_method: SamplingConfig,
-}
-
-impl SessionRunConfig {
-    pub fn new(tokens_limit: u64) -> Self {
-        Self {
-            tokens_limit: tokens_limit,
-            sampling_method: SamplingConfig::default(),
-        }
-    }
-
-    pub fn new_with_sampling(
-        tokens_limit: u64,
-        sampling_method: SamplingConfig,
-    ) -> Self {
-        Self {
-            tokens_limit: tokens_limit,
-            sampling_method,
-        }
     }
 }
