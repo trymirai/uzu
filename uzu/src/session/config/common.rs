@@ -22,6 +22,9 @@ impl<T: Clone> ValueOrList<T> {
 pub enum ValueOrToken {
     Value(String),
     Token(AddedToken),
+    Property {
+        content: String,
+    },
 }
 
 impl ValueOrToken {
@@ -29,6 +32,9 @@ impl ValueOrToken {
         match self {
             ValueOrToken::Value(value) => value.clone(),
             ValueOrToken::Token(token) => token.content.clone(),
+            ValueOrToken::Property {
+                content,
+            } => content.clone(),
         }
     }
 }
