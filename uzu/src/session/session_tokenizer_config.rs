@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
-use tokenizers::Tokenizer;
+use tokenizers::{AddedToken, Tokenizer};
 
 use crate::session::config::generation_metadata::GenerationMetadata;
 
@@ -11,11 +11,15 @@ pub struct SessionTokenizerConfig {
 }
 
 impl SessionTokenizerConfig {
-    pub fn load(
+    pub fn load_and_add_special_tokens_to_tokenizer(
         model_path: PathBuf,
-        tokenizer: &Tokenizer,
+        tokenizer: &mut Tokenizer,
     ) -> Option<Self> {
         let generation_metadata = GenerationMetadata::load(model_path);
+        Self::add_special_tokens_to_tokenizer_from_metadata(
+            tokenizer,
+            &generation_metadata,
+        );
 
         let eos_tokens =
             Self::build_eos_tokens(tokenizer, &generation_metadata);
@@ -32,6 +36,53 @@ impl SessionTokenizerConfig {
             eos_tokens,
             chat_template,
         })
+    }
+
+    fn add_special_tokens_to_tokenizer_from_metadata(
+        tokenizer: &mut Tokenizer,
+        generation_metadata: &GenerationMetadata,
+    ) {
+        if let Some(tokenizer_config) = &generation_metadata.tokenizer_config {
+            if let Some(added_tokens_decoder) =
+                &tokenizer_config.added_tokens_decoder
+            {
+                if let Some(additional_special_tokens) =
+                    &tokenizer_config.additional_special_tokens
+                {
+                    Self::add_special_tokens_to_tokenizer_from_list(
+                        tokenizer,
+                        added_tokens_decoder,
+                        additional_special_tokens.clone(),
+                    );
+                }
+
+                if let Some(extra_special_tokens) =
+                    &tokenizer_config.extra_special_tokens
+                {
+                    Self::add_special_tokens_to_tokenizer_from_list(
+                        tokenizer,
+                        added_tokens_decoder,
+                        extra_special_tokens
+                            .values()
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_special_tokens_to_tokenizer_from_list(
+        tokenizer: &mut Tokenizer,
+        added_tokens_decoder: &HashMap<u32, AddedToken>,
+        special_tokens: Vec<String>,
+    ) {
+        let special_added_tokens = added_tokens_decoder
+            .iter()
+            .filter(|(_, token)| special_tokens.contains(&token.content))
+            .map(|(_, token)| token.clone())
+            .collect::<Vec<_>>();
+        tokenizer.add_special_tokens(&special_added_tokens);
     }
 
     fn build_eos_tokens(

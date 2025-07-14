@@ -37,13 +37,16 @@ impl Session {
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
         // Load tokenizer JSON
         let tokenizer_path = model_path.join("tokenizer.json");
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
         // Load tokenizer configuration
         let tokenizer_config =
-            SessionTokenizerConfig::load(model_path.clone(), &tokenizer)
-                .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
+            SessionTokenizerConfig::load_and_add_special_tokens_to_tokenizer(
+                model_path.clone(),
+                &mut tokenizer,
+            )
+            .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
 
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());
