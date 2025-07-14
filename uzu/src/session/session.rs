@@ -21,7 +21,7 @@ use crate::{
         result::{GenerateResult, PrefillResult},
     },
     session::{
-        session_error::SessionError, session_run_config::SessionSamplingConfig,
+        session_error::SessionError,
         session_tokenizer_config::SessionTokenizerConfig,
     },
 };
@@ -138,12 +138,9 @@ impl Session {
         };
 
         let generator = self.generator.as_mut().unwrap();
-        let sampling_config = match config.sampling_config {
-            SessionSamplingConfig::Default => {
-                self.tokenizer_config.sampling_config
-            },
-            SessionSamplingConfig::Custom(sampling_config) => sampling_config,
-        };
+        let sampling_config = config
+            .sampling_config
+            .unwrap_or(self.tokenizer_config.sampling_config);
 
         let prefill_start = Instant::now();
         let prefill_result = generator.prefill(tokens.clone(), sampling_config);
