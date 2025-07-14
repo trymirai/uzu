@@ -2,12 +2,16 @@ use std::{collections::HashMap, path::PathBuf};
 
 use tokenizers::{AddedToken, Tokenizer};
 
-use crate::session::config::generation_metadata::GenerationMetadata;
+use crate::session::{
+    config::generation_metadata::GenerationMetadata,
+    sampling_config::SamplingConfig,
+};
 
 #[derive(Clone, Debug)]
 pub struct SessionTokenizerConfig {
     pub eos_tokens: Vec<String>,
     pub chat_template: String,
+    pub sampling_config: SamplingConfig,
 }
 
 impl SessionTokenizerConfig {
@@ -32,9 +36,12 @@ impl SessionTokenizerConfig {
             return None;
         }
 
+        let sampling_config = Self::build_sampling_config(&generation_metadata);
+
         Some(Self {
             eos_tokens,
             chat_template,
+            sampling_config,
         })
     }
 
@@ -126,5 +133,24 @@ impl SessionTokenizerConfig {
         }
 
         "".to_string()
+    }
+
+    fn build_sampling_config(
+        generation_metadata: &GenerationMetadata
+    ) -> SamplingConfig {
+        if let Some(generation_config) = &generation_metadata.generation_config
+        {
+            if let Some(top_p) = &generation_config.top_p {
+                return SamplingConfig::TopP {
+                    top_p: *top_p,
+                };
+            }
+            if let Some(temperature) = &generation_config.temperature {
+                return SamplingConfig::Categorical {
+                    temperature: *temperature,
+                };
+            }
+        }
+        return SamplingConfig::Argmax;
     }
 }
