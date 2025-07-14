@@ -2,9 +2,9 @@ use std::{collections::HashMap, path::PathBuf};
 
 use tokenizers::{AddedToken, Tokenizer};
 
-use crate::session::{
-    config::generation_metadata::GenerationMetadata,
-    sampling_config::SamplingConfig,
+use crate::{
+    backends::metal::sampling_config::SamplingConfig,
+    session::config::generation_metadata::GenerationMetadata,
 };
 
 #[derive(Clone, Debug)]

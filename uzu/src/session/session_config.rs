@@ -1,9 +1,11 @@
 use tokenizers::Tokenizer;
 
-use super::sampling_config::SamplingConfig;
-use crate::generator::config::{
-    ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
-    SpeculatorConfig,
+use crate::{
+    backends::metal::sampling_config::SamplingConfig,
+    generator::config::{
+        ContextLength, GeneratorConfig, GeneratorConfigProvider, SamplingSeed,
+        SpeculatorConfig,
+    },
 };
 
 #[derive(Clone)]

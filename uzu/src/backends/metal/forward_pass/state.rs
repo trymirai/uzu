@@ -11,7 +11,10 @@ use super::{
 };
 use crate::{
     DataType, DeviceContext,
-    backends::metal::forward_pass::traces::DecoderActivationTrace,
+    backends::metal::{
+        forward_pass::traces::DecoderActivationTrace,
+        sampling_config::SamplingConfig,
+    },
     config::{DecoderConfig, EmbeddingConfig},
     parameters::ParameterTree,
 };
@@ -316,8 +319,7 @@ pub struct ForwardPassState {
     /// [suffix_length] - u32 sampling output buffer
     pub sampling_output: Option<ArrayCell>,
     /// Current sampling configuration for this forward pass
-    pub sampling_config:
-        Option<crate::session::sampling_config::SamplingConfig>,
+    pub sampling_config: Option<SamplingConfig>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
 }
 
