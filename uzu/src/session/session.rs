@@ -12,7 +12,6 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
-    tokenizer_config::TokenizerConfig,
 };
 use crate::{
     generator::{
@@ -20,13 +19,16 @@ use crate::{
         generator::Generator,
         result::{GenerateResult, PrefillResult},
     },
-    session::session_error::SessionError,
+    session::{
+        session_error::SessionError,
+        session_tokenizer_config::SessionTokenizerConfig,
+    },
 };
 
 pub struct Session {
     model_path: PathBuf,
     tokenizer: Tokenizer,
-    tokenizer_config: TokenizerConfig,
+    tokenizer_config: SessionTokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
     generator: Option<Generator>,
 }
@@ -40,7 +42,8 @@ impl Session {
 
         // Load tokenizer configuration
         let tokenizer_config =
-            TokenizerConfig::load(model_path.clone()).unwrap();
+            SessionTokenizerConfig::load(model_path.clone(), &tokenizer)
+                .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
 
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());
@@ -94,15 +97,22 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
-        let eos_token = self
-            .tokenizer
-            .token_to_id(self.tokenizer_config.eos_token().as_str())
-            .unwrap() as u64;
+        let eos_tokens = self
+            .tokenizer_config
+            .eos_tokens
+            .iter()
+            .map(|token| {
+                self.tokenizer.token_to_id(token.as_str()).unwrap() as u64
+            })
+            .collect::<Vec<_>>();
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
          -> Option<SessionOutputFinishReason> {
             let total_new_tokens = generator.tokens[tokens.len()..].len();
-            if tokens_new.contains(&eos_token) {
+            let has_eos_token =
+                tokens_new.iter().any(|token| eos_tokens.contains(token));
+
+            if has_eos_token {
                 Some(SessionOutputFinishReason::Stop)
             } else if total_new_tokens >= config.tokens_limit as usize {
                 Some(SessionOutputFinishReason::Length)
