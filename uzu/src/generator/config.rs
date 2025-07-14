@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use rand::prelude::*;
 use tokenizers::Tokenizer;
 
 use crate::speculators::{
@@ -46,9 +47,7 @@ impl ContextLength {
 
 #[derive(Debug, Clone, Copy)]
 pub enum SamplingSeed {
-    // 42 is the default sampling seed
     Default,
-    // Custom sampling seed
     Custom(u64),
 }
 
@@ -61,7 +60,7 @@ impl Default for SamplingSeed {
 impl SamplingSeed {
     pub fn get_value(&self) -> u64 {
         match self {
-            SamplingSeed::Default => 42,
+            SamplingSeed::Default => rand::rng().random::<u64>(),
             SamplingSeed::Custom(seed) => *seed,
         }
     }
