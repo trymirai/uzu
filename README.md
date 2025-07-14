@@ -33,12 +33,13 @@ Then, create an inference `Session` with a specific model and configuration:
 
 ```rust
 use std::path::PathBuf;
-use uzu::session::{
-    sampling_config::SamplingConfig,
-    session::Session,
-    session_config::{SessionConfig, SessionRunConfig},
-    session_input::SessionInput,
-    session_output::SessionOutput
+use uzu::{
+    backends::metal::sampling_config::SamplingConfig,
+    session::{
+        session::Session, session_config::SessionConfig,
+        session_input::SessionInput, session_output::SessionOutput,
+        session_run_config::SessionRunConfig,
+    },
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,9 +51,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = SessionInput::Text("Tell about London".to_string());
 
     let tokens_limit = 128;
-    let run_config = SessionRunConfig::new_with_sampling(
+    let run_config = SessionRunConfig::new_with_sampling_config(
         tokens_limit,
-        SamplingConfig::default()
+        Some(SamplingConfig::default())
     );
 
     let output = session.run(input, run_config, Some(|_: SessionOutput| {
