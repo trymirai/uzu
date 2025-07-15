@@ -20,6 +20,52 @@ A high-performance inference engine for AI models on Apple Silicon. Key features
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
 
+## Overview
+
+For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/components/inference-engine).
+
+### [Models](https://trymirai.com/models)
+
+`uzu` uses its own model format. To export a specific model, use [lalamo](https://github.com/trymirai/lalamo). First, get the list of supported models:
+
+```bash
+uv run lalamo list-models
+```
+
+Then, export the specific one:
+
+```bash
+uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct --precision float16
+```
+
+Alternatively, you can download a prepared model using the sample script:
+
+```bash
+./scripts/download_test_model.sh $MODEL_PATH
+```
+
+### Bindings
+
+- [uzu-swift](https://github.com/trymirai/uzu-swift) - a prebuilt Swift framework, ready to use with SPM
+
+### CLI
+
+You can run `uzu` in a [CLI](https://docs.trymirai.com/components/cli) mode:
+
+```bash
+cargo run --release -p cli -- help
+```
+
+```bash
+
+Usage: uzu_cli [COMMAND]
+​
+Commands:
+  run    Run a model with the specified path
+  serve  Start a server with the specified model path
+  help   Print this message or the help of the given subcommand(s)
+```
+
 ## Quick Start
 
 First, add the `uzu` dependency to your `Cargo.toml`:
@@ -64,51 +110,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Overview
+## Benchmarks
 
-For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/components/inference-engine).
+Here are the performance metrics for various models:
 
-### [Models](https://trymirai.com/models)
+| `Apple M2`, `tokens/s` | Llama-3.2-1B-Instruct | Qwen2.5-1.5B-Instruct | Qwen3-0.6B | Qwen3-4B | R1-Distill-Qwen-1.5B | SmolLM2-1.7B-Instruct | Gemma-3-1B-Instruct |
+|-----------|-----------------------|-----------------------|------------|----------|----------------------|-----------------------|---------------------|
+| `uzu`       | 35.17                 | 28.32                 | 68.9       | 11.28    | 20.47                | 25.01                 | 41.50               |
+| `llama.cpp` | 32.48                 | 25.85                 | 5.37       | 1.08     | 2.81                 | 23.74                 | 37.68               |
 
-`uzu` uses its own model format. To export a specific model, use [lalamo](https://github.com/trymirai/lalamo). First, get the list of supported models:
-
-```bash
-uv run lalamo list-models
-```
-
-Then, export the specific one:
-
-```bash
-uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct --precision float16
-```
-
-Alternatively, you can download a preprepared model using the sample script:
-
-```bash
-./scripts/download_test_model.sh $MODEL_PATH
-```
-
-### CLI
-
-You can run `uzu` in a [CLI](https://docs.trymirai.com/components/cli) mode:
-
-```bash
-cargo run --release -p cli -- help
-```
-
-```bash
-
-Usage: uzu_cli [COMMAND]
-​
-Commands:
-  run    Run a model with the specified path
-  serve  Start a server with the specified model path
-  help   Print this message or the help of the given subcommand(s)
-```
-
-### Bindings
-
-- [uzu-swift](https://github.com/trymirai/uzu-swift) - a prebuilt Swift framework, ready to use with SPM
+> Note that all performance comparisons were done using bf16/f16 precision. Comparing quantized models isn't entirely fair, as different engines use different quantization approaches. For running llama.cpp, we used LM Studio (v0.3.17, Metal llama.cpp runtime v1.39.0). It's also worth mentioning that using the `release` build profile is crucial for obtaining the most accurate performance metrics.
 
 ## License
 
