@@ -5,7 +5,7 @@ use std::{
 
 use objc2::rc::autoreleasepool;
 #[cfg(target_os = "ios")]
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 use tokenizers::Tokenizer;
 
 use super::{
@@ -57,16 +57,14 @@ impl Session {
 
     #[cfg(target_os = "ios")]
     fn assert_model_fits_ram(model_path: &Path) -> Result<(), SessionError> {
-        use sysinfo::{System, SystemExt};
+        use sysinfo::System;
 
         let model_size_bytes = Self::directory_size(model_path).unwrap_or(0);
 
         let mut sys = System::new();
         sys.refresh_memory();
 
-        // sysinfo reports memory in KiB; convert to bytes.
-        let total_memory_bytes: u64 = sys.total_memory() * 1024;
-        let allowed_bytes: u64 = total_memory_bytes * 70 / 100; // 70%
+        let allowed_bytes = sys.total_memory() * 60 / 100; // 60%
 
         if model_size_bytes > allowed_bytes {
             Err(SessionError::UnsupportedModel)
