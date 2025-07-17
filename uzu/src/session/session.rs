@@ -4,8 +4,6 @@ use std::{
 };
 
 use objc2::rc::autoreleasepool;
-#[cfg(target_os = "ios")]
-use sysinfo::System;
 use tokenizers::Tokenizer;
 
 use super::{
