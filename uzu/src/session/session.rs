@@ -64,7 +64,7 @@ impl Session {
         let mut sys = System::new();
         sys.refresh_memory();
 
-        let allowed_bytes = sys.total_memory() * 60 / 100; // 60%
+        let allowed_bytes = sys.total_memory() * 60 / 100;
 
         if model_size_bytes > allowed_bytes {
             Err(SessionError::UnsupportedModel)
@@ -74,16 +74,13 @@ impl Session {
     }
 
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
-        // On iOS, ensure the model fits in available RAM (<= 70% of total memory).
         #[cfg(target_os = "ios")]
         Self::assert_model_fits_ram(&model_path)?;
 
-        // Load tokenizer JSON
         let tokenizer_path = model_path.join("tokenizer.json");
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
-        // Load tokenizer configuration
         let tokenizer_config =
             SessionTokenizerConfig::load_and_add_special_tokens_to_tokenizer(
                 model_path.clone(),
