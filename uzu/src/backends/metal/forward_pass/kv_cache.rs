@@ -13,6 +13,7 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
+#[derive(Clone)]
 pub enum KVCacheLayerState {
     Full {
         // Prefix length so far (number of tokens in the prefix)
@@ -446,6 +447,45 @@ impl KVCache {
     ) {
         for layer in self.data.iter_mut() {
             layer.register_accepted_tokens(token_positions);
+        }
+    }
+
+    pub fn clone_with_prefix(
+        &self,
+        context: &MTLContext,
+    ) -> Self {
+        fn duplicate_layer(
+            layer: &KVCacheLayer,
+            context: &MTLContext,
+        ) -> KVCacheLayer {
+            let shape = layer.keys.borrow().shape().to_vec();
+            let data_type = layer.keys.borrow().data_type();
+
+            let mut new_keys = context.array(&shape, data_type);
+            let mut new_values = context.array(&shape, data_type);
+
+            new_keys.copy_from_array(&layer.keys.borrow());
+            new_values.copy_from_array(&layer.values.borrow());
+
+            KVCacheLayer {
+                state: layer.state.clone(),
+                keys: RefCell::new(new_keys),
+                values: RefCell::new(new_values),
+                prefix_token_positions: layer.prefix_token_positions.clone(),
+                max_suffix_length: layer.max_suffix_length,
+            }
+        }
+
+        let data: Box<[KVCacheLayer]> = self
+            .data
+            .iter()
+            .map(|layer| duplicate_layer(layer, context))
+            .collect();
+
+        Self {
+            max_suffix_length: self.max_suffix_length,
+            max_prefix_length: self.max_prefix_length,
+            data,
         }
     }
 }

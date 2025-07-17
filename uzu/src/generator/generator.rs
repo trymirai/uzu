@@ -61,11 +61,12 @@ impl Generator {
         &mut self,
         tokens: Vec<u64>,
         sampling_config: SamplingConfig,
+        prefix_offset: usize,
     ) -> PrefillResult {
         assert!(!tokens.is_empty());
 
-        self.context.kv_cache.borrow_mut().clear();
-        self.tokens = tokens.clone();
+        let _new_tokens_start_pos = self.tokens.len();
+        self.tokens.extend(tokens.clone());
 
         let tokens_length = tokens.len();
         let number_of_prefill_steps = (tokens_length as f32
@@ -90,21 +91,23 @@ impl Generator {
         ]
         .concat();
 
-        let mut padded_positions: Vec<usize> = (0..tokens_length).collect();
+        let mut padded_positions: Vec<usize> =
+            (prefix_offset..prefix_offset + tokens_length).collect();
         padded_positions.extend(
-            speculated_suffix.indices.iter().map(|index| index + tokens_length),
+            speculated_suffix
+                .indices
+                .iter()
+                .map(|index| index + prefix_offset + tokens_length),
         );
         let padding_count =
             unused_tokens_count - speculated_suffix.tokens.len();
-        let zero_padding_indicies: Vec<usize> =
-            vec![INVALID_POSITION; padding_count];
-
-        padded_positions.extend(zero_padding_indicies);
+        padded_positions
+            .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
-        // Process each prefill step and update KV cache immediately
+        // Process each prefill step and update the KV cache.
         for step in 0..number_of_prefill_steps {
             let tokens_start_index = step * self.config.prefill_step_size;
             let tokens_end_index =
@@ -115,7 +118,6 @@ impl Generator {
                 &padded_positions[tokens_start_index..tokens_end_index];
 
             objc2::rc::autoreleasepool(|_pool| {
-                // Drop previous state to release any transient Metal objects
                 let _ = last_state.take();
             });
 
@@ -132,16 +134,20 @@ impl Generator {
                 Some(sampling_config.clone()),
             );
 
-            // Register tokens with KV cache immediately after each step
+            // Register the *accepted* real tokens from this step (exclude the
+            // padding token at the very end of the overall prefill).
             let step_end_token_index =
                 std::cmp::min(tokens_end_index, tokens_length);
             let tokens_processed_this_step =
                 step_end_token_index - tokens_start_index;
 
             if tokens_processed_this_step > 0 {
-                let mut positions_for_step: Vec<usize> =
-                    (tokens_start_index..step_end_token_index).collect();
+                let mut positions_for_step: Vec<usize> = (tokens_start_index
+                    ..step_end_token_index)
+                    .map(|idx| idx + prefix_offset)
+                    .collect();
                 if step == number_of_prefill_steps - 1 {
+                    // Exclude the last token because it belongs to the suffix for sampling.
                     positions_for_step.pop();
                 }
 
@@ -161,7 +167,6 @@ impl Generator {
         }
 
         let mut final_state = last_state.unwrap();
-
         let argmax_tokens = self.gpu_sample(&mut final_state);
 
         let mut accepted_token_indices: Vec<usize> = Vec::new();
@@ -172,7 +177,6 @@ impl Generator {
                 + tokens_length as isize)
                 % self.config.prefill_step_size as isize)
                 as usize;
-
             let new_token = argmax_tokens[current_index_in_window];
             accepted_tokens.push(new_token);
 
@@ -193,6 +197,7 @@ impl Generator {
         self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
+
         self.sync_prefix();
 
         PrefillResult {
@@ -288,6 +293,31 @@ impl Generator {
         objc2::rc::autoreleasepool(|_pool| {
             self.encoded_tasks.clear();
         });
+    }
+
+    pub fn reset_state(&mut self) {
+        self.context.kv_cache.borrow_mut().clear();
+        self.tokens.clear();
+        self.registered_prefix_len = 0;
+        self.encoded_tasks.clear();
+    }
+
+    pub fn prefix_len(&self) -> usize {
+        self.registered_prefix_len
+    }
+
+    /// Creates a new Generator that shares all read-only resources but starts
+    /// with an independent KV-cache already containing the same prefix.
+    pub fn clone_with_prefix(&self) -> Self {
+        let context = self.context.clone_with_prefix();
+
+        Self {
+            config: self.config.clone(),
+            tokens: self.tokens.clone(),
+            context,
+            encoded_tasks: HashMap::new(),
+            registered_prefix_len: self.registered_prefix_len,
+        }
     }
 
     fn warmup(

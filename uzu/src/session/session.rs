@@ -12,7 +12,7 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
-    session_run_config::SessionRunConfig,
+    session_run_config::{RunMode, SessionRunConfig},
 };
 use crate::{
     generator::{
@@ -92,6 +92,16 @@ impl Session {
     {
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
+
+        let use_prefix = matches!(config.run_mode, RunMode::WithPrefix);
+
+        let prefix_len_before =
+            if matches!(config.run_mode, RunMode::WithPrefix) {
+                self.generator.as_ref().map(|g| g.prefix_len()).unwrap_or(0)
+            } else {
+                0
+            };
+
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
@@ -112,7 +122,8 @@ impl Session {
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
          -> Option<SessionOutputFinishReason> {
-            let total_new_tokens = generator.tokens[tokens.len()..].len();
+            let start_idx = prefix_len_before + tokens.len();
+            let total_new_tokens = generator.tokens[start_idx..].len();
             let has_eos_token =
                 tokens_new.iter().any(|token| eos_tokens.contains(token));
 
@@ -124,18 +135,18 @@ impl Session {
                 None
             }
         };
-        let build_generated_text = |generator: &Generator,
-                                    tokenizer: &Tokenizer|
-         -> String {
-            let generated_tokens: Vec<u32> = generator.tokens[tokens.len()..]
-                .to_vec()
-                .iter()
-                .map(|value| *value as u32)
-                .collect();
-            let generated_text =
-                tokenizer.decode(&generated_tokens, true).unwrap();
-            generated_text
-        };
+        let build_generated_text =
+            |generator: &Generator, tokenizer: &Tokenizer| -> String {
+                let start_idx = prefix_len_before + tokens.len();
+                let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
+                    .to_vec()
+                    .iter()
+                    .map(|value| *value as u32)
+                    .collect();
+                let generated_text =
+                    tokenizer.decode(&generated_tokens, true).unwrap();
+                generated_text
+            };
 
         let generator = self.generator.as_mut().unwrap();
         let sampling_config = config
@@ -143,7 +154,18 @@ impl Session {
             .unwrap_or(self.tokenizer_config.sampling_config);
 
         let prefill_start = Instant::now();
-        let prefill_result = generator.prefill(tokens.clone(), sampling_config);
+        let prefix_offset = if use_prefix {
+            generator.tokens.len()
+        } else {
+            0
+        };
+
+        if !use_prefix {
+            generator.reset_state();
+        }
+
+        let prefill_result =
+            generator.prefill(tokens.clone(), sampling_config, prefix_offset);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
@@ -228,7 +250,22 @@ impl Session {
         };
         generator.clear_cache();
 
-        generate_output.clone_with_duration(run_start.elapsed().as_secs_f64())
+        let final_output = generate_output
+            .clone_with_duration(run_start.elapsed().as_secs_f64());
+
+        final_output
+    }
+
+    pub fn attach_generator(
+        &mut self,
+        generator: Generator,
+    ) {
+        self.generator = Some(generator);
+    }
+
+    pub fn take_generator(&mut self) -> Option<Generator> {
+        let taken_gen = self.generator.take();
+        taken_gen
     }
 }
 

@@ -26,9 +26,9 @@ pub struct GeneratorContext {
     pub scratch_buffers: ForwardPassBuffers,
 
     pub model_shape: ModelShape,
-    pub executables: DecoderExecutables,
-    pub kv_cache_update: Box<KVCacheUpdate>,
-    pub gpu_sampler: SamplingKernelEncodable,
+    pub executables: Rc<DecoderExecutables>,
+    pub kv_cache_update: Rc<KVCacheUpdate>,
+    pub gpu_sampler: Rc<SamplingKernelEncodable>,
 }
 
 impl GeneratorContext {
@@ -93,12 +93,12 @@ impl GeneratorContext {
             max_suffix_length,
         );
 
-        let executables = DecoderExecutables::new(
+        let executables = Rc::new(DecoderExecutables::new(
             mtl_context.clone(),
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-        );
+        ));
 
         let kv_cache = Rc::new(RefCell::new(KVCache::new(
             &mtl_context,
@@ -110,7 +110,7 @@ impl GeneratorContext {
         let intermediate_data_type: DataType =
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
-        let kv_cache_update: Box<KVCacheUpdate> = Box::new(
+        let kv_cache_update: Rc<KVCacheUpdate> = Rc::new(
             KVCacheUpdate::new(
                 &mtl_context,
                 kernel_data_type,
@@ -119,14 +119,16 @@ impl GeneratorContext {
             .unwrap(),
         );
 
-        let gpu_sampler = SamplingKernelEncodable::new(
-            &mtl_context,
-            kernel_data_type,
-            max_suffix_length,
-            decoder_config.vocab_size,
-            config.sampling_seed,
-        )
-        .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
+        let gpu_sampler = Rc::new(
+            SamplingKernelEncodable::new(
+                &mtl_context,
+                kernel_data_type,
+                max_suffix_length,
+                decoder_config.vocab_size,
+                config.sampling_seed,
+            )
+            .map_err(|_| GeneratorError::UnableToCreateMetalContext)?,
+        );
 
         let context = Self {
             mtl_context,
@@ -141,6 +143,37 @@ impl GeneratorContext {
         };
 
         return Ok(context);
+    }
+
+    /// Creates a shallow clone of the context that shares all read-only GPU
+    /// resources but owns an **independent** KV-cache
+    pub fn clone_with_prefix(&self) -> Self {
+        let command_buffer = MPSCommandBuffer::from_command_queue(
+            &self.mtl_context.command_queue,
+        );
+
+        let kv_cache = Rc::new(RefCell::new(
+            self.kv_cache.borrow().clone_with_prefix(&self.mtl_context),
+        ));
+
+        let scratch_buffers = ForwardPassBuffers::new(
+            &self.mtl_context,
+            &self.model_shape,
+            kv_cache.borrow().max_prefix_length(),
+            kv_cache.borrow().max_suffix_length(),
+        );
+
+        Self {
+            mtl_context: self.mtl_context.clone(),
+            command_buffer,
+            kv_cache,
+            shared_buffers: self.shared_buffers.clone(),
+            scratch_buffers,
+            model_shape: self.model_shape.clone(),
+            executables: self.executables.clone(),
+            kv_cache_update: self.kv_cache_update.clone(),
+            gpu_sampler: self.gpu_sampler.clone(),
+        }
     }
 
     pub fn reset_command_buffer(&mut self) {

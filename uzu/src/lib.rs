@@ -6,6 +6,7 @@ pub use data_type::{ArrayElement, DataType};
 pub mod device_context;
 pub use array::Array;
 pub use device_context::DeviceContext;
+pub mod context_registry;
 pub mod decoder_runner;
 pub mod env_utils;
 pub mod generator;
