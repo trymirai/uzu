@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 use log::LevelFilter;
 use rocket::{Config, config::LogLevel, log::private as log, routes};
+use uzu::context_registry::ContextRegistry;
 
 use crate::server::{
     SessionState, SessionWrapper, handle_chat_completions, load_session,
+    state::ContextCache,
 };
 
 struct SilentLogger;
@@ -57,6 +59,8 @@ pub async fn run_server(model_path: String) {
     let state = SessionState {
         model_name,
         session_wrapper: SessionWrapper::new(session),
+        context_registry: ContextRegistry::new(),
+        cache: std::sync::Mutex::new(ContextCache::new(5)),
     };
 
     let _ = rocket::custom(config)

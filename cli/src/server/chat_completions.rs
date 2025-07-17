@@ -1,3 +1,9 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    time::Instant,
+};
+
 use rocket::{post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -11,6 +17,12 @@ use uzu::session::{
 };
 
 use crate::server::SessionState;
+
+fn hash_prompt(prompt: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    prompt.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[derive(Deserialize)]
 pub struct ChatCompletionsRequest {
@@ -54,19 +66,64 @@ pub fn handle_chat_completions(
 
     let tokens_limit = request.max_completion_tokens.unwrap_or(512) as u64;
     let input = SessionInput::Messages(request.messages.clone());
-    let run_config = SessionRunConfig::new(tokens_limit);
 
     let start_time = std::time::Instant::now();
-    let mut session = state.session_wrapper.lock();
-    let output = session.run(
-        input,
-        run_config,
-        Some(|_: SessionOutput| {
-            return true;
-        }),
-    );
-    let processing_time = start_time.elapsed();
+    let system_prompt_key = request
+        .messages
+        .iter()
+        .find(|m| matches!(m.role, SessionMessageRole::System))
+        .map(|m| hash_prompt(&m.content));
 
+    let mut session = state.session_wrapper.lock();
+
+    let output = if let Some(key) = system_prompt_key {
+        if let Some(ctx_id) = { state.cache.lock().unwrap().get(&key) } {
+            let run_config = SessionRunConfig::new(tokens_limit);
+
+            let mut user_only_messages: Vec<SessionMessage> = request
+                .messages
+                .iter()
+                .filter(|m| !matches!(m.role, SessionMessageRole::System))
+                .cloned()
+                .collect();
+
+            if user_only_messages.is_empty() {
+                user_only_messages = request.messages.clone();
+            }
+            let user_input = SessionInput::Messages(user_only_messages);
+
+            let out = session.run_with_context(
+                &state.context_registry,
+                &ctx_id,
+                user_input,
+                run_config,
+                Some(|_: SessionOutput| true),
+            );
+
+            out
+        } else {
+            let run_config = SessionRunConfig::new(tokens_limit);
+            let out =
+                session.run(input, run_config, Some(|_: SessionOutput| true));
+
+            let ctx_id = session.capture_context(&state.context_registry);
+
+            if let Some((old_key, old_id)) =
+                state.cache.lock().unwrap().insert(key.clone(), ctx_id)
+            {
+                state.context_registry.remove(&old_id);
+            }
+
+            out
+        }
+    } else {
+        let run_config = SessionRunConfig::new(tokens_limit);
+        let out = session.run(input, run_config, Some(|_: SessionOutput| true));
+
+        out
+    };
+
+    let processing_time = start_time.elapsed();
     println!("output: {:?}", &output);
 
     let SessionOutput {
