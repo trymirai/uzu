@@ -12,6 +12,8 @@ pub enum SessionError {
     UnableToLoadTokenizer,
     #[error("Unable to load tokenizer configuration")]
     UnableToLoadTokenizerConfig,
+    #[error("Model is too large to fit into available RAM")]
+    UnsupportedModel,
 }
 
 impl From<GeneratorError> for SessionError {
