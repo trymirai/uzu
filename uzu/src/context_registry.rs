@@ -71,4 +71,12 @@ impl ContextRegistry {
     ) {
         self.inner.write().unwrap().remove(id);
     }
+
+    pub fn clone_generator_by_id(
+        &self,
+        id: &u64,
+    ) -> Option<Generator> {
+        self.get(id)
+            .and_then(|handle| handle.read().ok().map(|h| h.clone_generator()))
+    }
 }

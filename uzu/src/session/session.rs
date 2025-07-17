@@ -15,6 +15,7 @@ use super::{
     session_run_config::{RunMode, SessionRunConfig},
 };
 use crate::{
+    context_registry::{ContextHandle, ContextRegistry},
     generator::{
         config::GeneratorConfigProvider,
         generator::Generator,
@@ -266,6 +267,52 @@ impl Session {
     pub fn take_generator(&mut self) -> Option<Generator> {
         let taken_gen = self.generator.take();
         taken_gen
+    }
+
+    pub fn capture_context(
+        &mut self,
+        registry: &ContextRegistry,
+    ) -> u64 {
+        let generator =
+            self.take_generator().expect("Session has no generator to capture");
+
+        let handle = ContextHandle::new(generator.tokens.clone(), generator);
+        let id = registry.insert(handle);
+
+        let cloned_gen = registry
+            .clone_generator_by_id(&id)
+            .expect("Failed to clone generator after capture_context");
+        self.attach_generator(cloned_gen);
+
+        id
+    }
+
+    pub fn run_with_context<F>(
+        &mut self,
+        registry: &ContextRegistry,
+        ctx_id: &u64,
+        input: SessionInput,
+        mut config: SessionRunConfig,
+        progress: Option<F>,
+    ) -> SessionOutput
+    where
+        F: Fn(SessionOutput) -> bool,
+    {
+        config = config.with_run_mode(RunMode::WithPrefix);
+        let original_gen = self.take_generator();
+
+        let context_gen =
+            registry.clone_generator_by_id(ctx_id).expect("Invalid context id");
+        self.attach_generator(context_gen);
+
+        let output = self.run(input, config, progress);
+
+        let _ = self.take_generator();
+        if let Some(orig_gen) = original_gen {
+            self.attach_generator(orig_gen);
+        }
+
+        output
     }
 }
 

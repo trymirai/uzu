@@ -25,8 +25,8 @@ fn test_context_reuse() {
     let registry = ContextRegistry::new();
 
     let system_prompt = "Name: Alice. Age: 30. Occupation: Engineer.";
-    let handle = build_context(&mut session, system_prompt);
-    let ctx_id = registry.insert(handle);
+    let handle = build_context(&mut session, &registry, system_prompt);
+    let ctx_id = handle;
 
     let answer = ask_with_context(
         &mut session,
@@ -44,12 +44,19 @@ fn test_multiple_contexts() {
     let mut session = create_session();
     let registry = ContextRegistry::new();
 
-    let ctx1 =
-        build_context(&mut session, "Name: Alice. Occupation: Engineer.");
-    let id1 = registry.insert(ctx1);
+    let ctx1 = build_context(
+        &mut session,
+        &registry,
+        "Name: Alice. Occupation: Engineer.",
+    );
+    let id1 = ctx1;
 
-    let ctx2 = build_context(&mut session, "Name: Alice. Occupation: Artist.");
-    let id2 = registry.insert(ctx2);
+    let ctx2 = build_context(
+        &mut session,
+        &registry,
+        "Name: Alice. Occupation: Artist.",
+    );
+    let id2 = ctx2;
 
     let answer1 = ask_with_context(
         &mut session,
@@ -74,8 +81,12 @@ fn test_multiple_contexts() {
 fn test_context_extension() {
     let mut session = create_session();
     let registry = ContextRegistry::new();
-    let handle = build_context(&mut session, "Name: Dave. Occupation: Nurse.");
-    let id = registry.insert(handle);
+    let handle = build_context(
+        &mut session,
+        &registry,
+        "Name: Dave. Occupation: Nurse.",
+    );
+    let id = handle;
 
     let answer_initial = ask_with_context(
         &mut session,
@@ -118,9 +129,12 @@ fn test_deep_copy_isolated() {
     let mut session = create_session();
     let registry = ContextRegistry::new();
 
-    let handle =
-        build_context(&mut session, "Name: Alice. Occupation: Singer.");
-    let id = registry.insert(handle);
+    let handle = build_context(
+        &mut session,
+        &registry,
+        "Name: Alice. Occupation: Singer.",
+    );
+    let id = handle;
 
     let answer_no_ctx1 =
         ask_without_context(&mut session, "What is Alice's occupation?");
@@ -195,8 +209,8 @@ fn test_performance_cached_vs_plain() {
 
     let start_cached = Instant::now();
     let registry = ContextRegistry::new();
-    let handle = build_context(&mut session, system_prompt);
-    let id = registry.insert(handle);
+    let handle = build_context(&mut session, &registry, system_prompt);
+    let id = handle;
 
     let cached_answers: Vec<String> = questions
         .iter()
@@ -261,8 +275,10 @@ fn create_session() -> Session {
 
 fn build_context(
     session: &mut Session,
+    registry: &ContextRegistry,
     prompt: &str,
-) -> ContextHandle {
+) -> u64 {
+    // Run the prompt once to build the prefix.
     let _ = session.run(
         SessionInput::Text(prompt.to_string()),
         SessionRunConfig::new_with_sampling_config(
@@ -271,10 +287,9 @@ fn build_context(
         ),
         None::<fn(SessionOutput) -> bool>,
     );
-    let extracted_gen = session.take_generator().unwrap();
-    let cloned_gen = extracted_gen.clone_with_prefix();
-    session.attach_generator(cloned_gen);
-    ContextHandle::new(extracted_gen.tokens.clone(), extracted_gen)
+
+    // Capture the context and get its ID.
+    session.capture_context(registry)
 }
 
 fn ask_with_context(
@@ -283,15 +298,14 @@ fn ask_with_context(
     id: &u64,
     question: &str,
 ) -> String {
-    let cloned = registry.get(id).unwrap().read().unwrap().clone_generator();
-    session.attach_generator(cloned);
-    let output = session.run(
+    let output = session.run_with_context(
+        registry,
+        id,
         SessionInput::Text(format!("{} /no_think", question)),
         SessionRunConfig::new_with_sampling_config(
             96,
             Some(SamplingConfig::Argmax),
-        )
-        .with_run_mode(RunMode::WithPrefix),
+        ),
         None::<fn(SessionOutput) -> bool>,
     );
     output.text
