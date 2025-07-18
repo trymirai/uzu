@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -36,13 +39,47 @@ pub struct Session {
 }
 
 impl Session {
+    #[cfg(target_os = "ios")]
+    fn directory_size(path: &Path) -> std::io::Result<u64> {
+        let mut size = 0u64;
+        for entry_result in std::fs::read_dir(path)? {
+            let entry = entry_result?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                size += Self::directory_size(&entry.path())?;
+            } else {
+                size += metadata.len();
+            }
+        }
+        Ok(size)
+    }
+
+    #[cfg(target_os = "ios")]
+    fn assert_model_fits_ram(model_path: &Path) -> Result<(), SessionError> {
+        use sysinfo::System;
+
+        let model_size_bytes = Self::directory_size(model_path).unwrap_or(0);
+
+        let mut sys = System::new();
+        sys.refresh_memory();
+
+        let allowed_bytes = sys.total_memory() * 60 / 100;
+
+        if model_size_bytes > allowed_bytes {
+            Err(SessionError::UnsupportedModel)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
-        // Load tokenizer JSON
+        #[cfg(target_os = "ios")]
+        Self::assert_model_fits_ram(&model_path)?;
+
         let tokenizer_path = model_path.join("tokenizer.json");
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
-        // Load tokenizer configuration
         let tokenizer_config =
             SessionTokenizerConfig::load_and_add_special_tokens_to_tokenizer(
                 model_path.clone(),

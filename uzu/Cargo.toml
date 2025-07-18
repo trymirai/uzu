@@ -25,6 +25,7 @@ minijinja = "2.10.2"
 minijinja-contrib = { version = "2.10.2", features = ["pycompat"] }
 clap = { version = "4.5.39", features = ["derive"] }
 rand = "0.9.1"
+sysinfo = "0.36.0"
 
 [dev-dependencies]
 is_close = "0.1.3"

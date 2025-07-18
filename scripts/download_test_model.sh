@@ -10,10 +10,11 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 # Optional first argument specifies the root directory where the model
-# should be stored. Defaults to the SDK cache path.
+# should be stored. Defaults to <project-root>/../mirai_models
 #   Usage: bash download_test_model.sh [ROOT_DIR]
 
-ROOT_DIR="${1:-$HOME/Library/Caches/com.mirai.sdk.storage}"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="${1:-$PROJECT_ROOT/../mirai_models}"
 
 MODEL_DIR="$ROOT_DIR/Meta-Llama-3.2-1B-Instruct-float16"
 
