@@ -93,6 +93,18 @@ impl Session {
     {
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
+        let tokens: Vec<u64> = self
+            .tokenizer
+            .encode(text.as_str(), false)
+            .unwrap()
+            .get_ids()
+            .iter()
+            .map(|&id| id as u64)
+            .collect();
+
+        let generator = self.generator.as_mut().unwrap();
+        let required_prefix_len = generator.prefix_len() + tokens.len();
+        generator.ensure_prefix_capacity(required_prefix_len);
 
         let use_prefix = matches!(config.run_mode, RunMode::WithPrefix);
 
@@ -102,15 +114,6 @@ impl Session {
             } else {
                 0
             };
-
-        let tokens: Vec<u64> = self
-            .tokenizer
-            .encode(text.as_str(), false)
-            .unwrap()
-            .get_ids()
-            .iter()
-            .map(|&id| id as u64)
-            .collect();
 
         let eos_tokens = self
             .tokenizer_config
@@ -186,7 +189,7 @@ impl Session {
                 generator.config.generate_suffix_length(),
                 run_start.elapsed().as_secs_f64(),
                 tokens.len(),
-                generator.tokens[tokens.len()..].len(),
+                generator.tokens[prefix_len_before + tokens.len()..].len(),
             ),
             finish_reason: prefill_finish_reason.clone(),
         };
@@ -230,7 +233,7 @@ impl Session {
                     generator.config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
-                    generator.tokens[tokens.len()..].len(),
+                    generator.tokens[prefix_len_before + tokens.len()..].len(),
                 ),
                 finish_reason: generate_finish_reason.clone(),
             };
@@ -276,12 +279,11 @@ impl Session {
         let generator =
             self.take_generator().expect("Session has no generator to capture");
 
+        let cloned_gen = generator.clone_with_prefix();
+
         let handle = ContextHandle::new(generator.tokens.clone(), generator);
         let id = registry.insert(handle);
 
-        let cloned_gen = registry
-            .clone_generator_by_id(&id)
-            .expect("Failed to clone generator after capture_context");
         self.attach_generator(cloned_gen);
 
         id
@@ -303,7 +305,10 @@ impl Session {
 
         let context_gen =
             registry.clone_generator_by_id(ctx_id).expect("Invalid context id");
-        self.attach_generator(context_gen);
+        let mut gen_instance = context_gen;
+        gen_instance.ensure_prefix_capacity(gen_instance.config.context_length);
+
+        self.attach_generator(gen_instance);
 
         let output = self.run(input, config, progress);
 

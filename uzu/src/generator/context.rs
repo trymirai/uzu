@@ -147,19 +147,22 @@ impl GeneratorContext {
 
     /// Creates a shallow clone of the context that shares all read-only GPU
     /// resources but owns an **independent** KV-cache
-    pub fn clone_with_prefix(&self) -> Self {
+    pub fn clone_with_prefix(
+        &self,
+        prefix_len: usize,
+    ) -> Self {
         let command_buffer = MPSCommandBuffer::from_command_queue(
             &self.mtl_context.command_queue,
         );
 
         let kv_cache = Rc::new(RefCell::new(
-            self.kv_cache.borrow().clone_with_prefix(&self.mtl_context),
+            self.kv_cache.borrow().clone_sliced(&self.mtl_context, prefix_len),
         ));
 
         let scratch_buffers = ForwardPassBuffers::new(
             &self.mtl_context,
             &self.model_shape,
-            kv_cache.borrow().max_prefix_length(),
+            prefix_len,
             kv_cache.borrow().max_suffix_length(),
         );
 
@@ -174,6 +177,27 @@ impl GeneratorContext {
             kv_cache_update: self.kv_cache_update.clone(),
             gpu_sampler: self.gpu_sampler.clone(),
         }
+    }
+
+    pub fn ensure_prefix_capacity(
+        &mut self,
+        new_prefix_len: usize,
+    ) {
+        let max_prefix_length = self.kv_cache.borrow().max_prefix_length();
+        if new_prefix_len <= max_prefix_length {
+            return;
+        }
+
+        self.kv_cache
+            .borrow_mut()
+            .ensure_capacity(&self.mtl_context, new_prefix_len);
+
+        self.scratch_buffers = ForwardPassBuffers::new(
+            &self.mtl_context,
+            &self.model_shape,
+            new_prefix_len,
+            self.kv_cache.borrow().max_suffix_length(),
+        );
     }
 
     pub fn reset_command_buffer(&mut self) {

@@ -1,7 +1,6 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    time::Instant,
 };
 
 use rocket::{post, serde::json::Json};
@@ -108,7 +107,7 @@ pub fn handle_chat_completions(
 
             let ctx_id = session.capture_context(&state.context_registry);
 
-            if let Some((old_key, old_id)) =
+            if let Some((_, old_id)) =
                 state.cache.lock().unwrap().insert(key.clone(), ctx_id)
             {
                 state.context_registry.remove(&old_id);

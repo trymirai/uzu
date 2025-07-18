@@ -306,10 +306,23 @@ impl Generator {
         self.registered_prefix_len
     }
 
+    pub fn ensure_prefix_capacity(
+        &mut self,
+        new_len: usize,
+    ) {
+        let old_cap = self.context.kv_cache.borrow().max_prefix_length();
+        if new_len <= old_cap {
+            return;
+        }
+        self.context.ensure_prefix_capacity(new_len);
+        self.clear_cache();
+    }
+
     /// Creates a new Generator that shares all read-only resources but starts
     /// with an independent KV-cache already containing the same prefix.
     pub fn clone_with_prefix(&self) -> Self {
-        let context = self.context.clone_with_prefix();
+        let context =
+            self.context.clone_with_prefix(self.registered_prefix_len);
 
         Self {
             config: self.config.clone(),
