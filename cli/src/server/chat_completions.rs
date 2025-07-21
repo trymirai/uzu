@@ -1,13 +1,17 @@
+use std::{
+    rc::Rc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use rocket::{State, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use uzu::session::{
     session_input::SessionInput,
     session_message::{SessionMessage, SessionMessageRole},
     session_output::{
-        SessionOutput, SessionOutputFinishReason, SessionOutputStats,
+        SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
+        SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
     session_run_config::SessionRunConfig,
 };
@@ -17,7 +21,7 @@ use crate::server::SessionState;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     pub content: String,
-    pub role: String,
+    pub role: SessionMessageRole,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,7 +68,7 @@ pub fn handle_chat_completions(
         } else {
             msg.content.clone()
         };
-        println!("   Message {}: {} - {}", i + 1, msg.role, content_preview);
+        println!("   Message {}: {:?} - {}", i + 1, msg.role, content_preview);
     }
 
     let model_name = state.model_name.clone();
@@ -75,12 +79,7 @@ pub fn handle_chat_completions(
         .into_iter()
         .map(|m| SessionMessage {
             content: m.content,
-            role: match m.role.as_str() {
-                "system" => SessionMessageRole::System,
-                "user" => SessionMessageRole::User,
-                "assistant" => SessionMessageRole::Assistant,
-                _ => SessionMessageRole::User,
-            },
+            role: m.role,
         })
         .collect();
     let input = SessionInput::Messages(messages);
@@ -91,12 +90,102 @@ pub fn handle_chat_completions(
 
     let output = if let Some(key) = system_prompt_key {
         let context = state.cache.lock().unwrap().get(&key);
-        let (output, new_context) =
-            session.extend(input, context.as_deref(), run_config);
-        state.cache.lock().unwrap().insert(key.clone(), Rc::new(new_context));
-        output
+        match session.extend(input, context.as_deref(), run_config) {
+            Ok((output, new_context)) => {
+                state
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), Rc::new(new_context));
+                output
+            },
+            Err(e) => {
+                eprintln!("❌ [{}] Session extend error: {}", id, e);
+                // Return error response
+                let error_response = ChatCompletionResponse {
+                    id: id.clone(),
+                    object: "chat.completion".to_string(),
+                    created: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    model: model_name.clone(),
+                    choices: vec![ChatCompletionChoice {
+                        index: 0,
+                        message: ChatMessage {
+                            content: format!("Error: {}", e),
+                            role: SessionMessageRole::Assistant,
+                        },
+                        finish_reason: "error".to_string(),
+                    }],
+                    stats: SessionOutputStats {
+                        prefill_stats: SessionOutputStepStats {
+                            duration: 0.0,
+                            suffix_length: 0,
+                            tokens_count: 0,
+                            tokens_per_second: 0.0,
+                            model_run: SessionOutputRunStats {
+                                count: 0,
+                                average_duration: 0.0,
+                            },
+                            run: None,
+                        },
+                        generate_stats: None,
+                        total_stats: SessionOutputTotalStats {
+                            duration: 0.0,
+                            tokens_count_input: 0,
+                            tokens_count_output: 0,
+                        },
+                    },
+                };
+                return Json(error_response);
+            },
+        }
     } else {
-        session.run_with_context(input, None, run_config)
+        match session.run_with_context(input, None, run_config) {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("❌ [{}] Session run error: {}", id, e);
+                // Return error response
+                let error_response = ChatCompletionResponse {
+                    id: id.clone(),
+                    object: "chat.completion".to_string(),
+                    created: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    model: model_name.clone(),
+                    choices: vec![ChatCompletionChoice {
+                        index: 0,
+                        message: ChatMessage {
+                            content: format!("Error: {}", e),
+                            role: SessionMessageRole::Assistant,
+                        },
+                        finish_reason: "error".to_string(),
+                    }],
+                    stats: SessionOutputStats {
+                        prefill_stats: SessionOutputStepStats {
+                            duration: 0.0,
+                            suffix_length: 0,
+                            tokens_count: 0,
+                            tokens_per_second: 0.0,
+                            model_run: SessionOutputRunStats {
+                                count: 0,
+                                average_duration: 0.0,
+                            },
+                            run: None,
+                        },
+                        generate_stats: None,
+                        total_stats: SessionOutputTotalStats {
+                            duration: 0.0,
+                            tokens_count_input: 0,
+                            tokens_count_output: 0,
+                        },
+                    },
+                };
+                return Json(error_response);
+            },
+        }
     };
 
     let processing_time = start_time.elapsed();
@@ -145,7 +234,7 @@ pub fn handle_chat_completions(
             index: 0,
             message: ChatMessage {
                 content: text,
-                role: "assistant".to_string(),
+                role: SessionMessageRole::Assistant,
             },
             finish_reason: format!("{:?}", finish_reason_val).to_lowercase(),
         }],

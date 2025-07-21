@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output = session.run(input, run_config, Some(|_: SessionOutput| {
         return true;
-    }));
+    }))?;
     println!("{}", output.text);
     Ok(())
 }

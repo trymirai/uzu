@@ -121,14 +121,18 @@ impl Session {
         input: SessionInput,
         context: Option<&SessionContext>,
         config: SessionRunConfig,
-    ) -> (SessionOutput, SessionContext) {
-        self.reconfigure_generator(context);
-        let output =
-            self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
-        let new_context = self.build_context_from_generator();
-        let generator = self.generator.as_mut().unwrap();
+    ) -> Result<(SessionOutput, SessionContext), SessionError> {
+        self.reconfigure_generator(context)?;
+        let output = self.run_internal(
+            input,
+            config,
+            None::<fn(SessionOutput) -> bool>,
+        )?;
+        let new_context = self.build_context_from_generator()?;
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
-        (output, new_context)
+        Ok((output, new_context))
     }
 
     pub fn run<F>(
@@ -136,16 +140,18 @@ impl Session {
         input: SessionInput,
         config: SessionRunConfig,
         progress: Option<F>,
-    ) -> SessionOutput
+    ) -> Result<SessionOutput, SessionError>
     where
         F: Fn(SessionOutput) -> bool,
     {
-        let generator = self.generator.as_mut().unwrap();
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
-        let output = self.run_internal(input, config, progress);
-        let generator = self.generator.as_mut().unwrap();
+        let output = self.run_internal(input, config, progress)?;
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
-        output
+        Ok(output)
     }
 
     pub fn run_with_context(
@@ -153,13 +159,17 @@ impl Session {
         input: SessionInput,
         context: Option<&SessionContext>,
         config: SessionRunConfig,
-    ) -> SessionOutput {
-        self.reconfigure_generator(context);
-        let output =
-            self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
-        let generator = self.generator.as_mut().unwrap();
+    ) -> Result<SessionOutput, SessionError> {
+        self.reconfigure_generator(context)?;
+        let output = self.run_internal(
+            input,
+            config,
+            None::<fn(SessionOutput) -> bool>,
+        )?;
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
-        output
+        Ok(output)
     }
 
     fn run_internal<F>(
@@ -167,11 +177,12 @@ impl Session {
         input: SessionInput,
         config: SessionRunConfig,
         progress: Option<F>,
-    ) -> SessionOutput
+    ) -> Result<SessionOutput, SessionError>
     where
         F: Fn(SessionOutput) -> bool,
     {
-        let generator = self.generator.as_mut().unwrap();
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
 
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
@@ -265,11 +276,11 @@ impl Session {
 
         if !prefill_should_continue || prefill_finish_reason.is_some() {
             if prefill_should_continue {
-                return prefill_output;
+                return Ok(prefill_output);
             } else {
-                return prefill_output.clone_with_finish_reason(Some(
+                return Ok(prefill_output.clone_with_finish_reason(Some(
                     SessionOutputFinishReason::Cancelled,
-                ));
+                )));
             }
         }
 
@@ -322,14 +333,16 @@ impl Session {
         };
 
         generator.clear_cache();
-        generate_output.clone_with_duration(run_start.elapsed().as_secs_f64())
+        Ok(generate_output
+            .clone_with_duration(run_start.elapsed().as_secs_f64()))
     }
 
     fn reconfigure_generator(
         &mut self,
         context: Option<&SessionContext>,
-    ) {
-        let generator = self.generator.as_mut().unwrap();
+    ) -> Result<(), SessionError> {
+        let generator =
+            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
         if let Some(ctx) = context {
             let mut generator_cache = generator.context.kv_cache.borrow_mut();
@@ -359,10 +372,14 @@ impl Session {
 
             generator.tokens = ctx.tokens.clone();
         }
+        Ok(())
     }
 
-    fn build_context_from_generator(&self) -> SessionContext {
-        let generator = self.generator.as_ref().unwrap();
+    fn build_context_from_generator(
+        &self
+    ) -> Result<SessionContext, SessionError> {
+        let generator =
+            self.generator.as_ref().ok_or(SessionError::GeneratorNotLoaded)?;
         let prefix_len = generator.prefix_len();
         let kv_cache = generator
             .context
@@ -374,7 +391,7 @@ impl Session {
             kv_cache,
             generator.config.clone(),
         );
-        context
+        Ok(context)
     }
 }
 

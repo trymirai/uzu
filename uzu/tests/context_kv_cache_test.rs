@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::rc::Rc;
+use std::{path::PathBuf, rc::Rc};
 
 use uzu::{
     backends::metal::sampling_config::SamplingConfig,
@@ -74,13 +73,15 @@ fn test_context_extension() {
     println!("Answer initial: {}", answer_initial);
 
     // Extend the context with new information
-    let (_, extended_context) = session.extend(
-        SessionInput::Text(
-            "Update: Name: Dave. Occupation: Doctor.".to_string(),
-        ),
-        Some(initial_context.as_ref()),
-        SessionRunConfig::new(1),
-    );
+    let (_, extended_context) = session
+        .extend(
+            SessionInput::Text(
+                "Update: Name: Dave. Occupation: Doctor.".to_string(),
+            ),
+            Some(initial_context.as_ref()),
+            SessionRunConfig::new(1),
+        )
+        .unwrap();
 
     let answer_updated = ask_with_context(
         &mut session,
@@ -233,11 +234,13 @@ fn build_context(
     prompt: &str,
 ) -> Rc<SessionContext> {
     // Run the prompt once to build the context.
-    let (_, context) = session.extend(
-        SessionInput::Text(prompt.to_string()),
-        None,
-        SessionRunConfig::new(1),
-    );
+    let (_, context) = session
+        .extend(
+            SessionInput::Text(prompt.to_string()),
+            None,
+            SessionRunConfig::new(1),
+        )
+        .unwrap();
     Rc::new(context)
 }
 
@@ -255,6 +258,7 @@ fn ask_with_context(
                 Some(SamplingConfig::Argmax),
             ),
         )
+        .unwrap()
         .text
 }
 
@@ -271,5 +275,6 @@ fn ask_without_context(
             ),
             None::<fn(SessionOutput) -> bool>,
         )
+        .unwrap()
         .text
 }

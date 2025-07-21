@@ -37,16 +37,18 @@ fn run(
     session.load_with_session_config(config).unwrap();
 
     let input = SessionInput::Text(text);
-    let output = session.run(
-        input,
-        SessionRunConfig::new_with_sampling_config(
-            tokens_limit,
-            Some(SamplingConfig::Argmax),
-        ),
-        Some(|_: SessionOutput| {
-            return true;
-        }),
-    );
+    let output = session
+        .run(
+            input,
+            SessionRunConfig::new_with_sampling_config(
+                tokens_limit,
+                Some(SamplingConfig::Argmax),
+            ),
+            Some(|_: SessionOutput| {
+                return true;
+            }),
+        )
+        .unwrap();
 
     println!("-------------------------");
     println!("{}", output.text);
