@@ -11,6 +11,7 @@ use uzu::{
     session::{
         session::Session,
         session_context::SessionContext,
+        session_config::SessionConfig,
     },
 };
 
@@ -99,8 +100,12 @@ pub fn load_session(model_path: String) -> Session {
     );
     progress_bar.set_message(model_name.clone());
 
-    let session =
+    let mut session =
         Session::new(model_path_buf).expect("Failed to create session");
+
+    session
+    .load_with_session_config(SessionConfig::default())
+    .expect("Failed to load session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),

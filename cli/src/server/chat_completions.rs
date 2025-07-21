@@ -5,7 +5,6 @@ use uuid::Uuid;
 use uzu::session::{
     session_input::SessionInput,
     session_message::SessionMessage,
-    session_output::SessionOutputFinishReason,
     session_run_config::SessionRunConfig,
 };
 

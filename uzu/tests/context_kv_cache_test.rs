@@ -9,6 +9,7 @@ use uzu::{
         session_input::SessionInput,
         session_output::SessionOutput,
         session_run_config::SessionRunConfig,
+        session_config::SessionConfig,
     },
 };
 
@@ -229,7 +230,12 @@ fn test_performance_cached_vs_plain() {
 }
 
 fn create_session() -> Session {
-    Session::new(model_path()).unwrap()
+    let mut session = Session::new(model_path()).unwrap();
+    session
+    .load_with_session_config(SessionConfig::default())
+    .expect("Failed to load session");
+
+    session
 }
 
 fn build_context(
