@@ -1,6 +1,6 @@
 use crate::{DataType, config::DecoderConfig};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ModelShape {
     activation_type: DataType,
     kv_cache_type: DataType,

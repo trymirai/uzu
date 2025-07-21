@@ -1,5 +1,6 @@
 use crate::{
-    backends::metal::forward_pass::kv_cache::KVCache, generator::config::GeneratorConfig,
+    backends::metal::forward_pass::kv_cache::KVCache,
+    generator::config::GeneratorConfig,
 };
 
 pub struct SessionContext {
@@ -9,11 +10,15 @@ pub struct SessionContext {
 }
 
 impl SessionContext {
-    pub fn new(tokens: Vec<u64>, kv_cache: KVCache, config: GeneratorConfig) -> Self {
+    pub fn new(
+        tokens: Vec<u64>,
+        kv_cache: KVCache,
+        config: GeneratorConfig,
+    ) -> Self {
         Self {
             tokens,
             kv_cache,
             config,
         }
     }
-} 
+}

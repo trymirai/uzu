@@ -4,12 +4,9 @@ use std::rc::Rc;
 use uzu::{
     backends::metal::sampling_config::SamplingConfig,
     session::{
-        session::Session,
-        session_context::SessionContext,
-        session_input::SessionInput,
-        session_output::SessionOutput,
-        session_run_config::SessionRunConfig,
-        session_config::SessionConfig,
+        session::Session, session_config::SessionConfig,
+        session_context::SessionContext, session_input::SessionInput,
+        session_output::SessionOutput, session_run_config::SessionRunConfig,
     },
 };
 
@@ -40,15 +37,10 @@ fn test_context_reuse() {
 fn test_multiple_contexts() {
     let mut session = create_session();
 
-    let ctx1 = build_context(
-        &mut session,
-        "Name: Alice. Occupation: Engineer.",
-    );
+    let ctx1 =
+        build_context(&mut session, "Name: Alice. Occupation: Engineer.");
 
-    let ctx2 = build_context(
-        &mut session,
-        "Name: Alice. Occupation: Artist.",
-    );
+    let ctx2 = build_context(&mut session, "Name: Alice. Occupation: Artist.");
 
     let answer1 = ask_with_context(
         &mut session,
@@ -70,10 +62,8 @@ fn test_multiple_contexts() {
 #[test]
 fn test_context_extension() {
     let mut session = create_session();
-    let initial_context = build_context(
-        &mut session,
-        "Name: Dave. Occupation: Nurse.",
-    );
+    let initial_context =
+        build_context(&mut session, "Name: Dave. Occupation: Nurse.");
 
     let answer_initial = ask_with_context(
         &mut session,
@@ -85,7 +75,9 @@ fn test_context_extension() {
 
     // Extend the context with new information
     let (_, extended_context) = session.extend(
-        SessionInput::Text("Update: Name: Dave. Occupation: Doctor.".to_string()),
+        SessionInput::Text(
+            "Update: Name: Dave. Occupation: Doctor.".to_string(),
+        ),
         Some(initial_context),
         SessionRunConfig::new(1),
     );
@@ -103,10 +95,8 @@ fn test_context_extension() {
 fn test_deep_copy_isolated() {
     let mut session = create_session();
 
-    let context = build_context(
-        &mut session,
-        "Name: Alice. Occupation: Singer.",
-    );
+    let context =
+        build_context(&mut session, "Name: Alice. Occupation: Singer.");
 
     let answer_no_ctx1 =
         ask_without_context(&mut session, "What is Alice's occupation?");
@@ -232,8 +222,8 @@ fn test_performance_cached_vs_plain() {
 fn create_session() -> Session {
     let mut session = Session::new(model_path()).unwrap();
     session
-    .load_with_session_config(SessionConfig::default())
-    .expect("Failed to load session");
+        .load_with_session_config(SessionConfig::default())
+        .expect("Failed to load session");
 
     session
 }
@@ -256,26 +246,30 @@ fn ask_with_context(
     context: Option<Rc<SessionContext>>,
     question: &str,
 ) -> String {
-    session.run_with_context(
-        SessionInput::Text(format!("{} /no_think", question)),
-        context,
-        SessionRunConfig::new_with_sampling_config(
-            96,
-            Some(SamplingConfig::Argmax),
-        ),
-    ).text
+    session
+        .run_with_context(
+            SessionInput::Text(format!("{} /no_think", question)),
+            context,
+            SessionRunConfig::new_with_sampling_config(
+                96,
+                Some(SamplingConfig::Argmax),
+            ),
+        )
+        .text
 }
 
 fn ask_without_context(
     session: &mut Session,
     question: &str,
 ) -> String {
-    session.run(
-        SessionInput::Text(format!("{} /no_think", question)),
-        SessionRunConfig::new_with_sampling_config(
-            96,
-            Some(SamplingConfig::Argmax),
-        ),
-        None::<fn(SessionOutput) -> bool>,
-    ).text
+    session
+        .run(
+            SessionInput::Text(format!("{} /no_think", question)),
+            SessionRunConfig::new_with_sampling_config(
+                96,
+                Some(SamplingConfig::Argmax),
+            ),
+            None::<fn(SessionOutput) -> bool>,
+        )
+        .text
 }

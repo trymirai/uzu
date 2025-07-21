@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, fmt};
+use std::{cell::RefCell, collections::HashMap};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -7,9 +7,9 @@ use super::{
     model_shape::ModelShape,
 };
 use crate::{
-    array::Array,
-    backends::metal::kernel::{kv_cache_update::KVLayerData, KVCacheUpdate},
     DeviceContext,
+    array::Array,
+    backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
 };
 
 type ArrayCell = RefCell<MetalArray>;
@@ -31,7 +31,6 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-#[derive(Clone)]
 pub struct KVCacheLayer {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
@@ -41,16 +40,6 @@ pub struct KVCacheLayer {
 
     pub prefix_token_positions: Vec<usize>,
     pub max_suffix_length: usize,
-}
-
-impl fmt::Debug for KVCacheLayer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KVCacheLayer")
-            .field("state", &self.state)
-            .field("prefix_token_positions", &self.prefix_token_positions)
-            .field("max_suffix_length", &self.max_suffix_length)
-            .finish()
-    }
 }
 
 impl KVCacheLayer {
@@ -321,7 +310,6 @@ impl KVCacheLayer {
     }
 }
 
-#[derive(Clone)]
 pub struct KVCache {
     max_suffix_length: usize,
     max_prefix_length: usize,

@@ -124,7 +124,7 @@ impl GeneratorContext {
             kernel_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
-            config.sampling_seed as u64,
+            config.sampling_seed,
         )
         .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
 

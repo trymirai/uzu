@@ -12,9 +12,9 @@ use crate::{
     Array,
     backends::metal::{
         forward_pass::{
+            ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             kv_cache::INVALID_POSITION,
-            ForwardPassState,
         },
         sampling_config::SamplingConfig,
     },

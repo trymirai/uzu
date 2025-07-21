@@ -1,18 +1,15 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
-    sync::Mutex,
     rc::Rc,
+    sync::Mutex,
 };
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::{
-    session::{
-        session::Session,
-        session_context::SessionContext,
-        session_config::SessionConfig,
-    },
+use uzu::session::{
+    session::Session, session_config::SessionConfig,
+    session_context::SessionContext,
 };
 
 pub struct ContextCache {
@@ -104,8 +101,8 @@ pub fn load_session(model_path: String) -> Session {
         Session::new(model_path_buf).expect("Failed to create session");
 
     session
-    .load_with_session_config(SessionConfig::default())
-    .expect("Failed to load session");
+        .load_with_session_config(SessionConfig::default())
+        .expect("Failed to load session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),

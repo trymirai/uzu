@@ -575,7 +575,10 @@ impl EncodableWithState for AttentionKernelEncodable {
             )
         };
 
-        let prefix_length = state.kv_cache.borrow().data[self.layer_index].projected_effective_prefix_length(parameters.projection_step.unwrap_or(0));
+        let prefix_length = state.kv_cache.borrow().data[self.layer_index]
+            .projected_effective_prefix_length(
+                parameters.projection_step.unwrap_or(0),
+            );
 
         let sequence_length = prefix_length + suffix_length;
         let window_length =

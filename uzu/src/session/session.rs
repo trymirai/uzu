@@ -1,8 +1,4 @@
-use std::{
-    path::PathBuf,
-    rc::Rc,
-    time::Instant,
-};
+use std::{path::PathBuf, rc::Rc, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -127,7 +123,8 @@ impl Session {
         config: SessionRunConfig,
     ) -> (SessionOutput, Rc<SessionContext>) {
         self.reconfigure_generator(context);
-        let output = self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
+        let output =
+            self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
         let new_context = self.build_context_from_generator();
         let generator = self.generator.as_mut().unwrap();
         generator.reset_state();
@@ -143,7 +140,6 @@ impl Session {
     where
         F: Fn(SessionOutput) -> bool,
     {
-        // Old API - no context support, direct run
         let generator = self.generator.as_mut().unwrap();
         generator.reset_state();
         let output = self.run_internal(input, config, progress);
@@ -159,7 +155,8 @@ impl Session {
         config: SessionRunConfig,
     ) -> SessionOutput {
         self.reconfigure_generator(context);
-        let output = self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
+        let output =
+            self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
         let generator = self.generator.as_mut().unwrap();
         generator.reset_state();
         output
@@ -175,7 +172,7 @@ impl Session {
         F: Fn(SessionOutput) -> bool,
     {
         let generator = self.generator.as_mut().unwrap();
-        
+
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
         let tokens: Vec<u64> = self
@@ -186,7 +183,6 @@ impl Session {
             .iter()
             .map(|&id| id as u64)
             .collect();
-
 
         let prefix_len_before = generator.prefix_len();
 
@@ -260,13 +256,13 @@ impl Session {
             ),
             finish_reason: prefill_finish_reason.clone(),
         };
-        
+
         let prefill_should_continue = if let Some(progress) = &progress {
             progress(prefill_output.clone())
         } else {
             true
         };
-        
+
         if !prefill_should_continue || prefill_finish_reason.is_some() {
             if prefill_should_continue {
                 return prefill_output;
@@ -291,7 +287,7 @@ impl Session {
                 finish_reason(generator, generate_tokens);
             let generate_generated_text =
                 build_generated_text(generator, &self.tokenizer);
-            
+
             let generate_output = SessionOutput {
                 text: generate_generated_text,
                 stats: Self::build_stats(
@@ -313,7 +309,7 @@ impl Session {
             } else {
                 true
             };
-            
+
             if !generate_should_continue || generate_finish_reason.is_some() {
                 if generate_should_continue {
                     break generate_output;
@@ -324,7 +320,7 @@ impl Session {
                 }
             }
         };
-        
+
         generator.clear_cache();
         generate_output.clone_with_duration(run_start.elapsed().as_secs_f64())
     }
@@ -337,7 +333,9 @@ impl Session {
         generator.reset_state();
         if let Some(ctx) = context {
             let mut generator_cache = generator.context.kv_cache.borrow_mut();
-            for (ctx_layer, gen_layer) in ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut()) {
+            for (ctx_layer, gen_layer) in
+                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
+            {
                 let copy_rows = ctx_layer.effective_prefix_length();
                 if copy_rows > 0 {
                     gen_layer.keys.borrow_mut().copy_slice(
@@ -354,10 +352,11 @@ impl Session {
                     );
                 }
                 gen_layer.state = ctx_layer.state.clone();
-                gen_layer.prefix_token_positions = ctx_layer.prefix_token_positions.clone();
+                gen_layer.prefix_token_positions =
+                    ctx_layer.prefix_token_positions.clone();
             }
             drop(generator_cache);
-            
+
             generator.tokens = ctx.tokens.clone();
         }
     }
@@ -365,10 +364,11 @@ impl Session {
     fn build_context_from_generator(&self) -> Rc<SessionContext> {
         let generator = self.generator.as_ref().unwrap();
         let prefix_len = generator.prefix_len();
-        let kv_cache = generator.context.kv_cache.borrow().clone_and_slice(
-            &generator.context.mtl_context,
-            prefix_len,
-        );
+        let kv_cache = generator
+            .context
+            .kv_cache
+            .borrow()
+            .clone_and_slice(&generator.context.mtl_context, prefix_len);
         let context = SessionContext::new(
             generator.tokens.clone(),
             kv_cache,
