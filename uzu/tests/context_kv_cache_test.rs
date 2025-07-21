@@ -78,13 +78,13 @@ fn test_context_extension() {
         SessionInput::Text(
             "Update: Name: Dave. Occupation: Doctor.".to_string(),
         ),
-        Some(initial_context),
+        Some(initial_context.as_ref()),
         SessionRunConfig::new(1),
     );
 
     let answer_updated = ask_with_context(
         &mut session,
-        Some(extended_context),
+        Some(Rc::new(extended_context)),
         "What is Dave's occupation?",
     );
     println!("Answer updated: {}", answer_updated);
@@ -238,7 +238,7 @@ fn build_context(
         None,
         SessionRunConfig::new(1),
     );
-    context
+    Rc::new(context)
 }
 
 fn ask_with_context(
@@ -249,7 +249,7 @@ fn ask_with_context(
     session
         .run_with_context(
             SessionInput::Text(format!("{} /no_think", question)),
-            context,
+            context.as_deref(),
             SessionRunConfig::new_with_sampling_config(
                 96,
                 Some(SamplingConfig::Argmax),

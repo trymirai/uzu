@@ -1,5 +1,6 @@
 use rocket::{State, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use uzu::session::{
@@ -90,8 +91,9 @@ pub fn handle_chat_completions(
 
     let output = if let Some(key) = system_prompt_key {
         let context = state.cache.lock().unwrap().get(&key);
-        let (output, new_context) = session.extend(input, context, run_config);
-        state.cache.lock().unwrap().insert(key.clone(), new_context);
+        let (output, new_context) =
+            session.extend(input, context.as_deref(), run_config);
+        state.cache.lock().unwrap().insert(key.clone(), Rc::new(new_context));
         output
     } else {
         session.run_with_context(input, None, run_config)

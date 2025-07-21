@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc, time::Instant};
+use std::{path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -119,9 +119,9 @@ impl Session {
     pub fn extend(
         &mut self,
         input: SessionInput,
-        context: Option<Rc<SessionContext>>,
+        context: Option<&SessionContext>,
         config: SessionRunConfig,
-    ) -> (SessionOutput, Rc<SessionContext>) {
+    ) -> (SessionOutput, SessionContext) {
         self.reconfigure_generator(context);
         let output =
             self.run_internal(input, config, None::<fn(SessionOutput) -> bool>);
@@ -151,7 +151,7 @@ impl Session {
     pub fn run_with_context(
         &mut self,
         input: SessionInput,
-        context: Option<Rc<SessionContext>>,
+        context: Option<&SessionContext>,
         config: SessionRunConfig,
     ) -> SessionOutput {
         self.reconfigure_generator(context);
@@ -327,7 +327,7 @@ impl Session {
 
     fn reconfigure_generator(
         &mut self,
-        context: Option<Rc<SessionContext>>,
+        context: Option<&SessionContext>,
     ) {
         let generator = self.generator.as_mut().unwrap();
         generator.reset_state();
@@ -361,20 +361,20 @@ impl Session {
         }
     }
 
-    fn build_context_from_generator(&self) -> Rc<SessionContext> {
+    fn build_context_from_generator(&self) -> SessionContext {
         let generator = self.generator.as_ref().unwrap();
         let prefix_len = generator.prefix_len();
         let kv_cache = generator
             .context
             .kv_cache
             .borrow()
-            .clone_and_slice(&generator.context.mtl_context, prefix_len);
+            .clone_with_prefix_len(&generator.context.mtl_context, prefix_len);
         let context = SessionContext::new(
             generator.tokens.clone(),
             kv_cache,
             generator.config.clone(),
         );
-        Rc::new(context)
+        context
     }
 }
 

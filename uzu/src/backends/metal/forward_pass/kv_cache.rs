@@ -451,7 +451,7 @@ impl KVCache {
         }
     }
 
-    pub fn clone_and_slice(
+    pub fn clone_with_prefix_len(
         &self,
         context: &MTLContext,
         prefix_len: usize,
