@@ -65,7 +65,6 @@ impl Generator {
     ) -> PrefillResult {
         assert!(!tokens.is_empty());
 
-        let _new_tokens_start_pos = self.tokens.len();
         self.tokens.extend(tokens.clone());
 
         let tokens_length = tokens.len();
