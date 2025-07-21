@@ -26,9 +26,9 @@ pub struct GeneratorContext {
     pub scratch_buffers: ForwardPassBuffers,
 
     pub model_shape: ModelShape,
-    pub executables: Rc<DecoderExecutables>,
-    pub kv_cache_update: Rc<KVCacheUpdate>,
-    pub gpu_sampler: Rc<SamplingKernelEncodable>,
+    pub executables: DecoderExecutables,
+    pub kv_cache_update: Box<KVCacheUpdate>,
+    pub gpu_sampler: SamplingKernelEncodable,
 }
 
 impl GeneratorContext {
@@ -93,12 +93,12 @@ impl GeneratorContext {
             max_suffix_length,
         );
 
-        let executables = Rc::new(DecoderExecutables::new(
+        let executables = DecoderExecutables::new(
             mtl_context.clone(),
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
-        ));
+        );
 
         let kv_cache = Rc::new(RefCell::new(KVCache::new(
             &mtl_context,
@@ -110,7 +110,7 @@ impl GeneratorContext {
         let intermediate_data_type: DataType =
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
-        let kv_cache_update: Rc<KVCacheUpdate> = Rc::new(
+        let kv_cache_update = Box::new(
             KVCacheUpdate::new(
                 &mtl_context,
                 kernel_data_type,
@@ -119,16 +119,14 @@ impl GeneratorContext {
             .unwrap(),
         );
 
-        let gpu_sampler = Rc::new(
-            SamplingKernelEncodable::new(
-                &mtl_context,
-                kernel_data_type,
-                max_suffix_length,
-                decoder_config.vocab_size,
-                config.sampling_seed,
-            )
-            .map_err(|_| GeneratorError::UnableToCreateMetalContext)?,
-        );
+        let gpu_sampler = SamplingKernelEncodable::new(
+            &mtl_context,
+            kernel_data_type,
+            max_suffix_length,
+            decoder_config.vocab_size,
+            config.sampling_seed as u64,
+        )
+        .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
 
         let context = Self {
             mtl_context,
@@ -143,61 +141,6 @@ impl GeneratorContext {
         };
 
         return Ok(context);
-    }
-
-    /// Creates a shallow clone of the context that shares all read-only GPU
-    /// resources but owns an **independent** KV-cache
-    pub fn clone_with_prefix(
-        &self,
-        prefix_len: usize,
-    ) -> Self {
-        let command_buffer = MPSCommandBuffer::from_command_queue(
-            &self.mtl_context.command_queue,
-        );
-
-        let kv_cache = Rc::new(RefCell::new(
-            self.kv_cache.borrow().clone_sliced(&self.mtl_context, prefix_len),
-        ));
-
-        let scratch_buffers = ForwardPassBuffers::new(
-            &self.mtl_context,
-            &self.model_shape,
-            prefix_len,
-            kv_cache.borrow().max_suffix_length(),
-        );
-
-        Self {
-            mtl_context: self.mtl_context.clone(),
-            command_buffer,
-            kv_cache,
-            shared_buffers: self.shared_buffers.clone(),
-            scratch_buffers,
-            model_shape: self.model_shape.clone(),
-            executables: self.executables.clone(),
-            kv_cache_update: self.kv_cache_update.clone(),
-            gpu_sampler: self.gpu_sampler.clone(),
-        }
-    }
-
-    pub fn ensure_prefix_capacity(
-        &mut self,
-        new_prefix_len: usize,
-    ) {
-        let max_prefix_length = self.kv_cache.borrow().max_prefix_length();
-        if new_prefix_len <= max_prefix_length {
-            return;
-        }
-
-        self.kv_cache
-            .borrow_mut()
-            .ensure_capacity(&self.mtl_context, new_prefix_len);
-
-        self.scratch_buffers = ForwardPassBuffers::new(
-            &self.mtl_context,
-            &self.model_shape,
-            new_prefix_len,
-            self.kv_cache.borrow().max_suffix_length(),
-        );
     }
 
     pub fn reset_command_buffer(&mut self) {

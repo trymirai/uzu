@@ -89,10 +89,10 @@ pub fn handle_run(
             return true;
         };
 
-        let session_output = session.run(
+        let session_output = session.run_with_context(
             SessionInput::Text(input.to_string()),
+            None,
             SessionRunConfig::new(tokens_limit as u64),
-            Some(session_progress),
         );
         let result = format_output(session_output);
 

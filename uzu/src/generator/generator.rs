@@ -11,10 +11,10 @@ use super::{
 use crate::{
     Array,
     backends::metal::{
-        ForwardPassState,
         forward_pass::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
             kv_cache::INVALID_POSITION,
+            ForwardPassState,
         },
         sampling_config::SamplingConfig,
     },
@@ -27,7 +27,7 @@ pub struct Generator {
     pub config: GeneratorConfig,
     pub tokens: Vec<u64>,
 
-    context: GeneratorContext,
+    pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
 }
@@ -304,33 +304,6 @@ impl Generator {
 
     pub fn prefix_len(&self) -> usize {
         self.registered_prefix_len
-    }
-
-    pub fn ensure_prefix_capacity(
-        &mut self,
-        new_len: usize,
-    ) {
-        let old_cap = self.context.kv_cache.borrow().max_prefix_length();
-        if new_len <= old_cap {
-            return;
-        }
-        self.context.ensure_prefix_capacity(new_len);
-        self.clear_cache();
-    }
-
-    /// Creates a new Generator that shares all read-only resources but starts
-    /// with an independent KV-cache already containing the same prefix.
-    pub fn clone_with_prefix(&self) -> Self {
-        let context =
-            self.context.clone_with_prefix(self.registered_prefix_len);
-
-        Self {
-            config: self.config.clone(),
-            tokens: self.tokens.clone(),
-            context,
-            encoded_tasks: HashMap::new(),
-            registered_prefix_len: self.registered_prefix_len,
-        }
     }
 
     fn warmup(

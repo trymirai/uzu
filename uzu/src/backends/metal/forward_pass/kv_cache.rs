@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::HashMap, fmt};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -7,13 +7,14 @@ use super::{
     model_shape::ModelShape,
 };
 use crate::{
-    Array, DeviceContext,
-    backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
+    array::Array,
+    backends::metal::kernel::{kv_cache_update::KVLayerData, KVCacheUpdate},
+    DeviceContext,
 };
 
 type ArrayCell = RefCell<MetalArray>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
     Full {
         // Prefix length so far (number of tokens in the prefix)
@@ -30,6 +31,7 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
+#[derive(Clone)]
 pub struct KVCacheLayer {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
@@ -39,6 +41,16 @@ pub struct KVCacheLayer {
 
     pub prefix_token_positions: Vec<usize>,
     pub max_suffix_length: usize,
+}
+
+impl fmt::Debug for KVCacheLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KVCacheLayer")
+            .field("state", &self.state)
+            .field("prefix_token_positions", &self.prefix_token_positions)
+            .field("max_suffix_length", &self.max_suffix_length)
+            .finish()
+    }
 }
 
 impl KVCacheLayer {
@@ -309,6 +321,7 @@ impl KVCacheLayer {
     }
 }
 
+#[derive(Clone)]
 pub struct KVCache {
     max_suffix_length: usize,
     max_prefix_length: usize,
@@ -450,85 +463,7 @@ impl KVCache {
         }
     }
 
-    pub fn clone_with_prefix(
-        &self,
-        context: &MTLContext,
-    ) -> Self {
-        fn duplicate_layer(
-            layer: &KVCacheLayer,
-            context: &MTLContext,
-        ) -> KVCacheLayer {
-            let shape = layer.keys.borrow().shape().to_vec();
-            let data_type = layer.keys.borrow().data_type();
-
-            let mut new_keys = context.array(&shape, data_type);
-            let mut new_values = context.array(&shape, data_type);
-
-            new_keys.copy_from_array(&layer.keys.borrow());
-            new_values.copy_from_array(&layer.values.borrow());
-
-            KVCacheLayer {
-                state: layer.state.clone(),
-                keys: RefCell::new(new_keys),
-                values: RefCell::new(new_values),
-                prefix_token_positions: layer.prefix_token_positions.clone(),
-                max_suffix_length: layer.max_suffix_length,
-            }
-        }
-
-        let data: Box<[KVCacheLayer]> = self
-            .data
-            .iter()
-            .map(|layer| duplicate_layer(layer, context))
-            .collect();
-
-        Self {
-            max_suffix_length: self.max_suffix_length,
-            max_prefix_length: self.max_prefix_length,
-            data,
-        }
-    }
-
-    pub fn ensure_capacity(
-        &mut self,
-        context: &MTLContext,
-        new_prefix_len: usize,
-    ) {
-        if new_prefix_len <= self.max_prefix_length {
-            return;
-        }
-
-        let new_total_len = new_prefix_len + self.max_suffix_length;
-        for layer in self.data.iter_mut() {
-            if layer.is_sliding_window() {
-                continue;
-            }
-
-            let shape = layer.keys.borrow().shape().to_vec();
-            let num_groups = shape[0];
-            let head_dim = shape[2];
-            let dtype = layer.keys.borrow().data_type();
-            let old_total_len = shape[1];
-
-            let new_shape = [num_groups, new_total_len, head_dim];
-            let mut new_keys = context.array(&new_shape, dtype);
-            let mut new_values = context.array(&new_shape, dtype);
-
-            new_keys.copy_slice(&layer.keys.borrow(), 1, 0..old_total_len, 0);
-            new_values.copy_slice(
-                &layer.values.borrow(),
-                1,
-                0..old_total_len,
-                0,
-            );
-
-            layer.keys = RefCell::new(new_keys);
-            layer.values = RefCell::new(new_values);
-        }
-        self.max_prefix_length = new_prefix_len;
-    }
-
-    pub fn clone_sliced(
+    pub fn clone_and_slice(
         &self,
         context: &MTLContext,
         prefix_len: usize,

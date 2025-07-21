@@ -2,17 +2,20 @@ use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::Mutex,
+    rc::Rc,
 };
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
-    context_registry::ContextRegistry,
-    session::{session::Session, session_config::SessionConfig},
+    session::{
+        session::Session,
+        session_context::SessionContext,
+    },
 };
 
 pub struct ContextCache {
-    pub map: HashMap<String, u64>,
+    pub map: HashMap<String, Rc<SessionContext>>,
     pub order: VecDeque<String>,
     pub capacity: usize,
 }
@@ -29,18 +32,18 @@ impl ContextCache {
     pub fn insert(
         &mut self,
         key: String,
-        ctx_id: u64,
-    ) -> Option<(String, u64)> {
+        context: Rc<SessionContext>,
+    ) -> Option<(String, Rc<SessionContext>)> {
         if self.map.contains_key(&key) {
             return None;
         }
-        self.map.insert(key.clone(), ctx_id);
+        self.map.insert(key.clone(), context);
         self.order.push_back(key.clone());
 
         if self.order.len() > self.capacity {
             if let Some(old_key) = self.order.pop_front() {
-                if let Some(old_id) = self.map.remove(&old_key) {
-                    return Some((old_key, old_id));
+                if let Some(old_context) = self.map.remove(&old_key) {
+                    return Some((old_key, old_context));
                 }
             }
         }
@@ -50,8 +53,8 @@ impl ContextCache {
     pub fn get(
         &self,
         key: &str,
-    ) -> Option<u64> {
-        self.map.get(key).copied()
+    ) -> Option<Rc<SessionContext>> {
+        self.map.get(key).cloned()
     }
 }
 
@@ -71,7 +74,6 @@ impl SessionWrapper {
 pub struct SessionState {
     pub model_name: String,
     pub session_wrapper: SessionWrapper,
-    pub context_registry: ContextRegistry,
     pub cache: Mutex<ContextCache>,
 }
 
@@ -97,11 +99,8 @@ pub fn load_session(model_path: String) -> Session {
     );
     progress_bar.set_message(model_name.clone());
 
-    let mut session =
+    let session =
         Session::new(model_path_buf).expect("Failed to create session");
-    session
-        .load_with_session_config(SessionConfig::default())
-        .expect("Failed to load session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),

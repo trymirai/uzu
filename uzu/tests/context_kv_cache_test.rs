@@ -1,15 +1,14 @@
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use uzu::{
     backends::metal::sampling_config::SamplingConfig,
-    context_registry::{ContextHandle, ContextRegistry},
-    generator::config::{ContextLength, SamplingSeed, SpeculatorConfig},
     session::{
         session::Session,
-        session_config::SessionConfig,
+        session_context::SessionContext,
         session_input::SessionInput,
         session_output::SessionOutput,
-        session_run_config::{RunMode, SessionRunConfig},
+        session_run_config::SessionRunConfig,
     },
 };
 
@@ -22,16 +21,13 @@ fn model_path() -> PathBuf {
 #[test]
 fn test_context_reuse() {
     let mut session = create_session();
-    let registry = ContextRegistry::new();
 
     let system_prompt = "Name: Alice. Age: 30. Occupation: Engineer.";
-    let handle = build_context(&mut session, &registry, system_prompt);
-    let ctx_id = handle;
+    let context = build_context(&mut session, system_prompt);
 
     let answer = ask_with_context(
         &mut session,
-        &registry,
-        &ctx_id,
+        Some(context),
         "What is Alice's occupation?",
     );
 
@@ -42,26 +38,20 @@ fn test_context_reuse() {
 #[test]
 fn test_multiple_contexts() {
     let mut session = create_session();
-    let registry = ContextRegistry::new();
 
     let ctx1 = build_context(
         &mut session,
-        &registry,
         "Name: Alice. Occupation: Engineer.",
     );
-    let id1 = ctx1;
 
     let ctx2 = build_context(
         &mut session,
-        &registry,
         "Name: Alice. Occupation: Artist.",
     );
-    let id2 = ctx2;
 
     let answer1 = ask_with_context(
         &mut session,
-        &registry,
-        &id1,
+        Some(ctx1),
         "What is Alice's occupation?",
     );
     println!("Answer 1: {}", answer1);
@@ -69,8 +59,7 @@ fn test_multiple_contexts() {
 
     let answer2 = ask_with_context(
         &mut session,
-        &registry,
-        &id2,
+        Some(ctx2),
         "What is Alice's occupation?",
     );
     println!("Answer 2: {}", answer2);
@@ -80,44 +69,29 @@ fn test_multiple_contexts() {
 #[test]
 fn test_context_extension() {
     let mut session = create_session();
-    let registry = ContextRegistry::new();
-    let handle = build_context(
+    let initial_context = build_context(
         &mut session,
-        &registry,
         "Name: Dave. Occupation: Nurse.",
     );
-    let id = handle;
 
     let answer_initial = ask_with_context(
         &mut session,
-        &registry,
-        &id,
+        Some(initial_context.clone()),
         "What is Dave's occupation?",
     );
     assert!(answer_initial.to_lowercase().contains("nurse"));
     println!("Answer initial: {}", answer_initial);
 
-    let cloned_gen =
-        registry.get(&id).unwrap().read().unwrap().clone_generator();
-    session.attach_generator(cloned_gen);
-    let _ = session.run(
-        SessionInput::Text("Update:Name: Dave. Occupation: Doctor.".into()),
-        SessionRunConfig::new_with_sampling_config(
-            1,
-            Some(SamplingConfig::Argmax),
-        )
-        .with_run_mode(RunMode::WithPrefix),
-        None::<fn(SessionOutput) -> bool>,
+    // Extend the context with new information
+    let (_, extended_context) = session.extend(
+        SessionInput::Text("Update: Name: Dave. Occupation: Doctor.".to_string()),
+        Some(initial_context),
+        SessionRunConfig::new(1),
     );
-    let new_gen = session.take_generator().unwrap();
-    registry.remove(&id);
-    let new_handle = ContextHandle::new(new_gen.tokens.clone(), new_gen);
-    let new_id = registry.insert(new_handle);
 
     let answer_updated = ask_with_context(
         &mut session,
-        &registry,
-        &new_id,
+        Some(extended_context),
         "What is Dave's occupation?",
     );
     println!("Answer updated: {}", answer_updated);
@@ -127,14 +101,11 @@ fn test_context_extension() {
 #[test]
 fn test_deep_copy_isolated() {
     let mut session = create_session();
-    let registry = ContextRegistry::new();
 
-    let handle = build_context(
+    let context = build_context(
         &mut session,
-        &registry,
         "Name: Alice. Occupation: Singer.",
     );
-    let id = handle;
 
     let answer_no_ctx1 =
         ask_without_context(&mut session, "What is Alice's occupation?");
@@ -142,8 +113,7 @@ fn test_deep_copy_isolated() {
 
     let answer_with_ctx = ask_with_context(
         &mut session,
-        &registry,
-        &id,
+        Some(context),
         "What is Alice's occupation?",
     );
     println!("Answer with context: {}", answer_with_ctx);
@@ -208,13 +178,11 @@ fn test_performance_cached_vs_plain() {
     use std::time::Instant;
 
     let start_cached = Instant::now();
-    let registry = ContextRegistry::new();
-    let handle = build_context(&mut session, &registry, system_prompt);
-    let id = handle;
+    let context = build_context(&mut session, system_prompt);
 
     let cached_answers: Vec<String> = questions
         .iter()
-        .map(|q| ask_with_context(&mut session, &registry, &id, q))
+        .map(|q| ask_with_context(&mut session, Some(context.clone()), q))
         .collect();
     let duration_cached = start_cached.elapsed().as_secs_f64();
 
@@ -261,67 +229,47 @@ fn test_performance_cached_vs_plain() {
 }
 
 fn create_session() -> Session {
-    let config = SessionConfig::new(
-        8,
-        SpeculatorConfig::default(),
-        true,
-        SamplingSeed::Custom(42),
-        ContextLength::Default,
-    );
-    let mut session = Session::new(model_path()).unwrap();
-    session.load_with_session_config(config).unwrap();
-    session
+    Session::new(model_path()).unwrap()
 }
 
 fn build_context(
     session: &mut Session,
-    registry: &ContextRegistry,
     prompt: &str,
-) -> u64 {
-    // Run the prompt once to build the prefix.
-    let _ = session.run(
+) -> Rc<SessionContext> {
+    // Run the prompt once to build the context.
+    let (_, context) = session.extend(
         SessionInput::Text(prompt.to_string()),
-        SessionRunConfig::new_with_sampling_config(
-            1,
-            Some(SamplingConfig::Argmax),
-        ),
-        None::<fn(SessionOutput) -> bool>,
+        None,
+        SessionRunConfig::new(1),
     );
-
-    // Capture the context and get its ID.
-    session.capture_context(registry)
+    context
 }
 
 fn ask_with_context(
     session: &mut Session,
-    registry: &ContextRegistry,
-    id: &u64,
+    context: Option<Rc<SessionContext>>,
     question: &str,
 ) -> String {
-    let output = session.run_with_context(
-        registry,
-        id,
+    session.run_with_context(
         SessionInput::Text(format!("{} /no_think", question)),
+        context,
         SessionRunConfig::new_with_sampling_config(
             96,
             Some(SamplingConfig::Argmax),
         ),
-        None::<fn(SessionOutput) -> bool>,
-    );
-    output.text
+    ).text
 }
 
 fn ask_without_context(
     session: &mut Session,
     question: &str,
 ) -> String {
-    let output = session.run(
+    session.run(
         SessionInput::Text(format!("{} /no_think", question)),
         SessionRunConfig::new_with_sampling_config(
             96,
             Some(SamplingConfig::Argmax),
         ),
         None::<fn(SessionOutput) -> bool>,
-    );
-    output.text
+    ).text
 }

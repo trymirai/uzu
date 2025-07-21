@@ -1,5 +1,6 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
+    rc::Rc,
     time::Instant,
 };
 
@@ -8,6 +9,7 @@ use tokenizers::Tokenizer;
 
 use super::{
     session_config::SessionConfig,
+    session_context::SessionContext,
     session_input::{
         SessionInput, SessionInputProcessor, SessionInputProcessorDefault,
     },
@@ -15,10 +17,9 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
-    session_run_config::{RunMode, SessionRunConfig},
+    session_run_config::SessionRunConfig,
 };
 use crate::{
-    context_registry::{ContextHandle, ContextRegistry},
     generator::{
         config::GeneratorConfigProvider,
         generator::Generator,
@@ -35,47 +36,11 @@ pub struct Session {
     tokenizer: Tokenizer,
     tokenizer_config: SessionTokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
-    generator: Option<Generator>,
+    generator: Generator,
 }
 
 impl Session {
-    #[cfg(target_os = "ios")]
-    fn directory_size(path: &Path) -> std::io::Result<u64> {
-        let mut size = 0u64;
-        for entry_result in std::fs::read_dir(path)? {
-            let entry = entry_result?;
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                size += Self::directory_size(&entry.path())?;
-            } else {
-                size += metadata.len();
-            }
-        }
-        Ok(size)
-    }
-
-    #[cfg(target_os = "ios")]
-    fn assert_model_fits_ram(model_path: &Path) -> Result<(), SessionError> {
-        use sysinfo::System;
-
-        let model_size_bytes = Self::directory_size(model_path).unwrap_or(0);
-
-        let mut sys = System::new();
-        sys.refresh_memory();
-
-        let allowed_bytes = sys.total_memory() * 60 / 100;
-
-        if model_size_bytes > allowed_bytes {
-            Err(SessionError::UnsupportedModel)
-        } else {
-            Ok(())
-        }
-    }
-
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
-        #[cfg(target_os = "ios")]
-        Self::assert_model_fits_ram(&model_path)?;
-
         let tokenizer_path = model_path.join("tokenizer.json");
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
@@ -90,44 +55,72 @@ impl Session {
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());
 
+        let generator_config = SessionConfig::default().generator_config(&tokenizer);
+        let generator = Generator::new(&model_path, generator_config)
+            .map_err(SessionError::from)?;
+
         Ok(Self {
             model_path,
             tokenizer,
             tokenizer_config,
             input_processor: Box::new(input_processor),
-            generator: None,
+            generator,
         })
-    }
-
-    pub fn load(
-        &mut self,
-        generator_config_provider: Box<dyn GeneratorConfigProvider>,
-    ) -> Result<(), SessionError> {
-        let generator_config =
-            generator_config_provider.generator_config(&self.tokenizer);
-        let generator = Generator::new(&self.model_path, generator_config)
-            .map_err(SessionError::from)?;
-
-        self.generator = Some(generator);
-        Ok(())
     }
 
     pub fn load_with_session_config(
         &mut self,
         config: SessionConfig,
     ) -> Result<(), SessionError> {
-        self.load(Box::new(config))
+        let generator_config = config.generator_config(&self.tokenizer);
+        self.generator = Generator::new(&self.model_path, generator_config)
+            .map_err(SessionError::from)?;
+        Ok(())
     }
 
-    pub fn run<F>(
+    pub fn extend(
+        &mut self,
+        input: SessionInput,
+        context: Option<Rc<SessionContext>>,
+        config: SessionRunConfig,
+    ) -> (SessionOutput, Rc<SessionContext>) {
+        self.reconfigure_generator(context);
+        let output = self.run_internal(input, config);
+        let new_context = self.build_context_from_generator();
+        self.generator.reset_state();
+        (output, new_context)
+    }
+
+    pub fn run(
         &mut self,
         input: SessionInput,
         config: SessionRunConfig,
-        progress: Option<F>,
-    ) -> SessionOutput
-    where
-        F: Fn(SessionOutput) -> bool,
-    {
+        _callback: Option<impl Fn(SessionOutput) -> bool>,
+    ) -> SessionOutput {
+        // Old API - no context support, direct run
+        self.generator.reset_state();
+        let output = self.run_internal(input, config);
+        self.generator.reset_state();
+        output
+    }
+
+    pub fn run_with_context(
+        &mut self,
+        input: SessionInput,
+        context: Option<Rc<SessionContext>>,
+        config: SessionRunConfig,
+    ) -> SessionOutput {
+        self.reconfigure_generator(context);
+        let output = self.run_internal(input, config);
+        self.generator.reset_state();
+        output
+    }
+
+    fn run_internal(
+        &mut self,
+        input: SessionInput,
+        config: SessionRunConfig,
+    ) -> SessionOutput {
         let run_start = Instant::now();
         let text = self.input_processor.process(&input);
         let tokens: Vec<u64> = self
@@ -139,18 +132,8 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
-        let generator = self.generator.as_mut().unwrap();
-        let required_prefix_len = generator.prefix_len() + tokens.len();
-        generator.ensure_prefix_capacity(required_prefix_len);
 
-        let use_prefix = matches!(config.run_mode, RunMode::WithPrefix);
-
-        let prefix_len_before =
-            if matches!(config.run_mode, RunMode::WithPrefix) {
-                self.generator.as_ref().map(|g| g.prefix_len()).unwrap_or(0)
-            } else {
-                0
-            };
+        let prefix_len_before = self.generator.prefix_len();
 
         let eos_tokens = self
             .tokenizer_config
@@ -160,6 +143,7 @@ impl Session {
                 self.tokenizer.token_to_id(token.as_str()).unwrap() as u64
             })
             .collect::<Vec<_>>();
+
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
          -> Option<SessionOutputFinishReason> {
@@ -176,6 +160,7 @@ impl Session {
                 None
             }
         };
+
         let build_generated_text =
             |generator: &Generator, tokenizer: &Tokenizer| -> String {
                 let start_idx = prefix_len_before + tokens.len();
@@ -184,177 +169,131 @@ impl Session {
                     .iter()
                     .map(|value| *value as u32)
                     .collect();
-                let generated_text =
-                    tokenizer.decode(&generated_tokens, true).unwrap();
-                generated_text
+                tokenizer.decode(&generated_tokens, true).unwrap()
             };
 
-        let generator = self.generator.as_mut().unwrap();
         let sampling_config = config
             .sampling_config
             .unwrap_or(self.tokenizer_config.sampling_config);
 
         let prefill_start = Instant::now();
-        let prefix_offset = if use_prefix {
-            generator.tokens.len()
-        } else {
-            0
-        };
-
-        if !use_prefix {
-            generator.reset_state();
-        }
+        let prefix_offset = self.generator.tokens.len();
 
         let prefill_result =
-            generator.prefill(tokens.clone(), sampling_config, prefix_offset);
+            self.generator.prefill(tokens.clone(), sampling_config, prefix_offset);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
-        generator.clear_cache();
+        self.generator.clear_cache();
 
         let prefill_finish_reason =
-            finish_reason(generator, prefill_tokens.clone());
+            finish_reason(&self.generator, prefill_tokens.clone());
         let prefill_generated_text =
-            build_generated_text(generator, &self.tokenizer);
-        let prefill_output = SessionOutput {
+            build_generated_text(&self.generator, &self.tokenizer);
+
+        let mut output = SessionOutput {
             text: prefill_generated_text,
             stats: Self::build_stats(
                 prefill_result.clone(),
                 prefill_duration,
-                generator.config.prefill_step_size,
+                self.generator.config.prefill_step_size,
                 Vec::new(),
                 Vec::new(),
-                generator.config.generate_suffix_length(),
+                self.generator.config.generate_suffix_length(),
                 run_start.elapsed().as_secs_f64(),
                 tokens.len(),
-                generator.tokens[prefix_len_before + tokens.len()..].len(),
+                self.generator.tokens[prefix_len_before + tokens.len()..].len(),
             ),
             finish_reason: prefill_finish_reason.clone(),
         };
-        let prefill_should_continue = if let Some(progress) = &progress {
-            progress(prefill_output.clone())
-        } else {
-            true
-        };
-        if !prefill_should_continue || prefill_finish_reason.is_some() {
-            if prefill_should_continue {
-                return prefill_output;
-            } else {
-                return prefill_output.clone_with_finish_reason(Some(
-                    SessionOutputFinishReason::Cancelled,
-                ));
-            }
+
+        if prefill_finish_reason.is_some() {
+            return output;
         }
 
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
-        let generate_output = loop {
+        loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_config);
+            let generate_result = self.generator.generate(sampling_config);
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
             let generate_finish_reason =
-                finish_reason(generator, generate_tokens);
+                finish_reason(&self.generator, generate_tokens);
             let generate_generated_text =
-                build_generated_text(generator, &self.tokenizer);
-            let generate_output = SessionOutput {
+                build_generated_text(&self.generator, &self.tokenizer);
+            
+            output = SessionOutput {
                 text: generate_generated_text,
                 stats: Self::build_stats(
                     prefill_result.clone(),
                     prefill_duration,
-                    generator.config.prefill_step_size,
+                    self.generator.config.prefill_step_size,
                     generate_results.clone(),
                     generate_durations.clone(),
-                    generator.config.generate_suffix_length(),
+                    self.generator.config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
-                    generator.tokens[prefix_len_before + tokens.len()..].len(),
+                    self.generator.tokens[prefix_len_before + tokens.len()..].len(),
                 ),
                 finish_reason: generate_finish_reason.clone(),
             };
-            let generate_should_continue = if let Some(progress) = &progress {
-                progress(generate_output.clone())
-            } else {
-                true
-            };
-            if !generate_should_continue || generate_finish_reason.is_some() {
-                if generate_should_continue {
-                    break generate_output;
-                } else {
-                    break generate_output.clone_with_finish_reason(Some(
-                        SessionOutputFinishReason::Cancelled,
-                    ));
-                }
+
+            if generate_finish_reason.is_some() {
+                break;
             }
-        };
-        generator.clear_cache();
-
-        let final_output = generate_output
-            .clone_with_duration(run_start.elapsed().as_secs_f64());
-
-        final_output
-    }
-
-    pub fn attach_generator(
-        &mut self,
-        generator: Generator,
-    ) {
-        self.generator = Some(generator);
-    }
-
-    pub fn take_generator(&mut self) -> Option<Generator> {
-        let taken_gen = self.generator.take();
-        taken_gen
-    }
-
-    pub fn capture_context(
-        &mut self,
-        registry: &ContextRegistry,
-    ) -> u64 {
-        let generator =
-            self.take_generator().expect("Session has no generator to capture");
-
-        let cloned_gen = generator.clone_with_prefix();
-
-        let handle = ContextHandle::new(generator.tokens.clone(), generator);
-        let id = registry.insert(handle);
-
-        self.attach_generator(cloned_gen);
-
-        id
-    }
-
-    pub fn run_with_context<F>(
-        &mut self,
-        registry: &ContextRegistry,
-        ctx_id: &u64,
-        input: SessionInput,
-        mut config: SessionRunConfig,
-        progress: Option<F>,
-    ) -> SessionOutput
-    where
-        F: Fn(SessionOutput) -> bool,
-    {
-        config = config.with_run_mode(RunMode::WithPrefix);
-        let original_gen = self.take_generator();
-
-        let context_gen =
-            registry.clone_generator_by_id(ctx_id).expect("Invalid context id");
-        let mut gen_instance = context_gen;
-        gen_instance.ensure_prefix_capacity(gen_instance.config.context_length);
-
-        self.attach_generator(gen_instance);
-
-        let output = self.run(input, config, progress);
-
-        let _ = self.take_generator();
-        if let Some(orig_gen) = original_gen {
-            self.attach_generator(orig_gen);
         }
+        self.generator.clear_cache();
+        output.clone_with_duration(run_start.elapsed().as_secs_f64())
+    }
 
-        output
+    fn reconfigure_generator(
+        &mut self,
+        context: Option<Rc<SessionContext>>,
+    ) {
+        self.generator.reset_state();
+        if let Some(ctx) = context {
+            // Copy context data into the generator's already properly-sized KV cache
+            let mut generator_cache = self.generator.context.kv_cache.borrow_mut();
+            for (ctx_layer, gen_layer) in ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut()) {
+                let copy_rows = ctx_layer.effective_prefix_length();
+                if copy_rows > 0 {
+                    gen_layer.keys.borrow_mut().copy_slice(
+                        &ctx_layer.keys.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                    gen_layer.values.borrow_mut().copy_slice(
+                        &ctx_layer.values.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                }
+                gen_layer.state = ctx_layer.state.clone();
+                gen_layer.prefix_token_positions = ctx_layer.prefix_token_positions.clone();
+            }
+            drop(generator_cache);
+            
+            self.generator.tokens = ctx.tokens.clone();
+        }
+    }
+
+    fn build_context_from_generator(&self) -> Rc<SessionContext> {
+        let prefix_len = self.generator.prefix_len();
+        let kv_cache = self.generator.context.kv_cache.borrow().clone_and_slice(
+            &self.generator.context.mtl_context,
+            prefix_len,
+        );
+        let context = SessionContext::new(
+            self.generator.tokens.clone(),
+            kv_cache,
+            self.generator.config.clone(),
+        );
+        Rc::new(context)
     }
 }
 
@@ -450,7 +389,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         autoreleasepool(|_| {
-            self.generator = None;
+            // empty
         });
     }
 }
