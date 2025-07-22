@@ -110,7 +110,7 @@ impl GeneratorContext {
         let intermediate_data_type: DataType =
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
-        let kv_cache_update: Box<KVCacheUpdate> = Box::new(
+        let kv_cache_update = Box::new(
             KVCacheUpdate::new(
                 &mtl_context,
                 kernel_data_type,

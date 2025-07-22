@@ -9,4 +9,4 @@ fn test_metadata_loading() {
     let file = File::open(&path).expect("weights not found");
     let (_offset, metadata) = read_metadata(&file).expect("read metadata");
     assert!(metadata.tensors.len() > 0);
-} 
+}

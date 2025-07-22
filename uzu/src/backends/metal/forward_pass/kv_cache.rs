@@ -7,12 +7,14 @@ use super::{
     model_shape::ModelShape,
 };
 use crate::{
-    Array, DeviceContext,
+    DeviceContext,
+    array::Array,
     backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
 };
 
 type ArrayCell = RefCell<MetalArray>;
 
+#[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
     Full {
         // Prefix length so far (number of tokens in the prefix)
@@ -446,6 +448,64 @@ impl KVCache {
     ) {
         for layer in self.data.iter_mut() {
             layer.register_accepted_tokens(token_positions);
+        }
+    }
+
+    pub fn clone_with_prefix_len(
+        &self,
+        context: &MTLContext,
+        prefix_len: usize,
+    ) -> Self {
+        let new_total_len = prefix_len + self.max_suffix_length;
+        let data: Box<[KVCacheLayer]> = self
+            .data
+            .iter()
+            .map(|layer| {
+                let shape = layer.keys.borrow().shape().to_vec();
+                let num_groups = shape[0];
+                let head_dim = shape[2];
+                let dtype = layer.keys.borrow().data_type();
+                let new_shape = [num_groups, new_total_len, head_dim];
+
+                let mut new_keys = context.array(&new_shape, dtype);
+                let mut new_values = context.array(&new_shape, dtype);
+
+                let mut copy_rows = layer.effective_prefix_length();
+                if let Some(window_length) = layer.window_length() {
+                    copy_rows = std::cmp::min(copy_rows, window_length);
+                }
+
+                if copy_rows > 0 {
+                    new_keys.copy_slice(
+                        &layer.keys.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                    new_values.copy_slice(
+                        &layer.values.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                }
+
+                KVCacheLayer {
+                    state: layer.state.clone(),
+                    keys: RefCell::new(new_keys),
+                    values: RefCell::new(new_values),
+                    prefix_token_positions: layer
+                        .prefix_token_positions
+                        .clone(),
+                    max_suffix_length: layer.max_suffix_length,
+                }
+            })
+            .collect();
+
+        Self {
+            max_suffix_length: self.max_suffix_length,
+            max_prefix_length: prefix_len,
+            data,
         }
     }
 }

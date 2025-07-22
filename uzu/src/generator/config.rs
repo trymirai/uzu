@@ -73,6 +73,7 @@ pub trait GeneratorConfigProvider {
     ) -> GeneratorConfig;
 }
 
+#[derive(Clone)]
 pub struct GeneratorConfig {
     pub prefill_step_size: usize,
     pub speculator_config: SpeculatorConfig,
