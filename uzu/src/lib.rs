@@ -16,4 +16,6 @@ pub mod session;
 pub mod speculators;
 pub mod storage;
 pub mod tracer;
+pub mod version;
 pub use quant_matmul::*;
+pub use version::VERSION;
