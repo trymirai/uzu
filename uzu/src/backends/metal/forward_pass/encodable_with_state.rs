@@ -23,7 +23,10 @@ impl EncodingParameters {
         }
     }
 
-    pub fn with_projection(mut self, projection_step: usize) -> Self {
+    pub fn with_projection(
+        mut self,
+        projection_step: usize,
+    ) -> Self {
         self.projection_step = Some(projection_step);
         self
     }

@@ -89,11 +89,19 @@ pub fn handle_run(
             return true;
         };
 
-        let session_output = session.run(
+        let session_output = match session.run(
             SessionInput::Text(input.to_string()),
             SessionRunConfig::new(tokens_limit as u64),
             Some(session_progress),
-        );
+        ) {
+            Ok(output) => output,
+            Err(e) => {
+                progress_bar.finish_and_clear();
+                eprintln!("❌ Error during session run: {}", e);
+                is_model_running.store(false, Ordering::SeqCst);
+                return;
+            },
+        };
         let result = format_output(session_output);
 
         progress_bar.set_style(
