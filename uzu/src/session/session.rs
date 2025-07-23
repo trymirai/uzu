@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
