@@ -1312,7 +1312,6 @@ dependencies = [
 [[package]]
 name = "mpsgraph"
 version = "0.1.0"
-source = "git+https://github.com/getmirai/mpsgraph-rs?rev=414c0d2#414c0d23b67d65e525972b8f7486c45f30939289"
 dependencies = [
  "bindgen",
  "bitflags 2.9.1",

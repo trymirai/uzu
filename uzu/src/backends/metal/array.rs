@@ -72,10 +72,11 @@ impl MetalArray {
 
     /// Wraps the underlying MTLBuffer into MPSTensorData for use with MPSGraph.
     pub unsafe fn to_mps_tensor_data(&mut self) -> Retained<TensorData> {
-        TensorData::from_buffer(
+        TensorData::new_with_mtl_buffer_row_bytes(
             &self.buffer,
             &mps_shape(&self.shape),
             self.data_type.into(),
+            None,
         )
     }
 

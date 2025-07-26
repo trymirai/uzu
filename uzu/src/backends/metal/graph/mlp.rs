@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::{Graph, Tensor, tensor_shape_ops::*};
+use mpsgraph::{Graph, Tensor};
 use objc2::rc::Retained;
 
 use super::{
@@ -30,7 +30,8 @@ pub fn mlp_subgraph(
         &up_tree,
     )?;
 
-    let split_results = graph.split(&fused_hidden_gate, 2, 1, None);
+    let split_results =
+        graph.split_tensor_num_splits(&fused_hidden_gate, 2, 1, None);
     let up_proj = &split_results[0];
     let gate = &split_results[1];
 
@@ -40,7 +41,7 @@ pub fn mlp_subgraph(
         &*gate,
         config.linear_config.activation_precision().into(),
     );
-    let hidden = graph.multiply(&activated_gate, up_proj, None);
+    let hidden = graph.multiplication(&activated_gate, up_proj, None);
 
     let result = linear_subgraph(
         graph,
