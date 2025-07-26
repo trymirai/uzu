@@ -321,7 +321,7 @@ pub fn run_quant_matmul(
     let input_tensor_data = unsafe { input_array.to_mps_tensor_data() };
     let input_placeholder = graph.placeholder(
         Some(&mps_shape(&input_shape)),
-        Some(DataType::F16),
+        Some(DataType::F16.into()),
         Some("input_ph"),
     );
 

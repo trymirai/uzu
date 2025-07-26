@@ -13,12 +13,15 @@ use crate::{
 };
 
 pub fn mps_shape_to_isize(shape: &Shape) -> Box<[isize]> {
-    let shape_i64: Box<[i64]> = *shape.into();
+    let shape_i64: Box<[i64]> = shape.into();
     shape_i64.iter().map(|&d| d as isize).collect()
 }
 
 pub fn shape_of(tensor: &Tensor) -> Box<[isize]> {
-    mps_shape_to_isize(&tensor.shape())
+    tensor.shape().map_or_else(
+        || Vec::<isize>::new().into_boxed_slice(),
+        |s| mps_shape_to_isize(&s),
+    )
 }
 
 pub fn data_type_of(tensor: &Tensor) -> DataType {
@@ -81,19 +84,19 @@ pub fn gelu(
             &graph.constant_with_scalar(
                 0.044715 as f64,
                 None,
-                Some(data_type.into()),
+                data_type.into(),
             ),
             &input_power_3,
             None,
         );
         let input_add_input_power_3_multiply_const =
             graph.addition(input, &input_power_3_multiply_const, None);
-        let tanh = GraphActivationOps::tanh(
-            graph,
+        let tanh = graph.tanh(
             &graph.multiplication(
                 &graph.constant_with_scalar(
                     (2.0 / std::f64::consts::PI).sqrt(),
-                    Some(data_type.into()),
+                    None,
+                    data_type.into(),
                 ),
                 &input_add_input_power_3_multiply_const,
                 None,
@@ -101,7 +104,7 @@ pub fn gelu(
             None,
         );
         let tanh_add_one = graph.addition(
-            &graph.constant_with_scalar(1.0 as f64, Some(data_type.into())),
+            &graph.constant_with_scalar(1.0 as f64, None, data_type.into()),
             &tanh,
             None,
         );
@@ -109,13 +112,13 @@ pub fn gelu(
             graph.multiplication(input, &tanh_add_one, None);
         let result = graph.multiplication(
             &input_multiply_tanh_add_one,
-            &graph.constant_with_scalar(0.5 as f64, Some(data_type.into())),
+            &graph.constant_with_scalar(0.5 as f64, None, data_type.into()),
             None,
         );
         result
     } else {
         let input_negative = graph.multiplication(
-            &graph.constant_with_scalar(-1.0 as f64, Some(data_type.into())),
+            &graph.constant_with_scalar(-1.0 as f64, None, data_type.into()),
             input,
             None,
         );
@@ -123,28 +126,25 @@ pub fn gelu(
             &input_negative,
             &graph.constant_with_scalar(
                 (2.0 as f64).sqrt(),
-                Some(data_type.into()),
+                None,
+                data_type.into(),
             ),
             None,
         );
         let erf = graph.erf(&input_negative_divide_sqrt_2, None);
         let erf_negative = graph.multiplication(
-            &graph.constant_with_scalar(-1.0 as f64, data_type.into()),
+            &graph.constant_with_scalar(-1.0 as f64, None, data_type.into()),
             &erf,
             None,
         );
         let erfc = graph.addition(
-            &graph.constant_with_scalar(1.0 as f64, Some(data_type.into())),
+            &graph.constant_with_scalar(1.0 as f64, None, data_type.into()),
             &erf_negative,
             None,
         );
         let input_divide_2 = graph.division(
             &input,
-            &graph.constant_with_scalar(
-                2.0 as f64,
-                Some(data_type.into()),
-                None,
-            ),
+            &graph.constant_with_scalar(2.0 as f64, None, data_type.into()),
             None,
         );
         let result = graph.multiplication(&input_divide_2, &erfc, None);
@@ -157,9 +157,8 @@ pub fn placeholder(
     shape: &[isize],
     data_type: DataType,
 ) -> Retained<Tensor> {
-    let shape_i64: Box<[i64]> = shape.iter().map(|dim| *dim as i64).collect();
     graph.placeholder(
-        Some(&Shape::from_dimensions(&shape_i64)),
+        Some(&mps_shape(shape)),
         Some(data_type.into()),
         Some("input"),
     )
@@ -169,8 +168,10 @@ pub fn shaped_type(
     shape: &[isize],
     data_type: DataType,
 ) -> Retained<ShapedType> {
-    let shape_i64: Box<[i64]> = shape.iter().map(|dim| *dim as i64).collect();
-    ShapedType::new(&Shape::from_dimensions(&shape_i64), data_type.into())
+    ShapedType::new_with_shape_data_type(
+        Some(&mps_shape(shape)),
+        data_type.into(),
+    )
 }
 
 fn map_last_dimension<F: FnMut(usize) -> usize>(
