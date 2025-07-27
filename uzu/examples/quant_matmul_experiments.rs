@@ -21,7 +21,6 @@ use uzu::{
     backends::metal::{
         MTLContext, MetalArray,
         compilation_parameters::{BlockDevice, make_compilation_descriptor},
-        utils::mps_shape,
     },
     storage::{NSSearchPathDirectory, root_dir},
 };
@@ -190,6 +189,7 @@ fn build_quantized_matmul(
         &device,
         &feeds,
         &[&*matmul],
+        None,
         Some(compilation_descriptor),
     );
 
@@ -206,17 +206,16 @@ fn make_tensor_option(
 ) -> TensorOption {
     match load_type {
         TensorLoadType::Baked => {
-            let tensor_const = graph.constant_with_data(
-                array.buffer(),
-                &mps_shape(shape),
-                dtype.into(),
-            );
+            let tensor_const =
+                graph.constant_with_data(array.buffer(), shape, dtype.into());
             TensorOption::Constant(tensor_const)
         },
         TensorLoadType::RuntimeLoaded => {
             let td = unsafe { array.to_mps_tensor_data() };
+            let shape_isize: Vec<isize> =
+                shape.iter().map(|d| *d as isize).collect();
             let placeholder =
-                graph.placeholder(dtype.into(), &mps_shape(shape), Some(name));
+                graph.placeholder(Some(&shape_isize), dtype.into(), Some(name));
             TensorOption::Placeholder {
                 placeholder,
                 data: td,
@@ -289,8 +288,8 @@ fn run_quant_matmul(
     // --- Tensor options for quantized matmul ---
     let input_tensor_data = unsafe { input_array.to_mps_tensor_data() };
     let input_placeholder = graph.placeholder(
+        Some(&input_shape),
         DataType::F16.into(),
-        &mps_shape(&input_shape),
         Some("input_ph"),
     );
 

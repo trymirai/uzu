@@ -26,7 +26,6 @@ use crate::{
     backends::metal::{
         MTLContext, MetalArray,
         compilation_parameters::{BlockDevice, make_compilation_descriptor},
-        utils::mps_shape,
     },
     storage::{NSSearchPathDirectory, root_dir},
 };
@@ -230,20 +229,16 @@ fn make_tensor_option(
 ) -> TensorOption {
     match load_type {
         TensorLoadType::Baked => {
-            let tensor_const = graph.constant_with_data(
-                array.buffer(),
-                &mps_shape(shape),
-                dtype.into(),
-            );
+            let tensor_const =
+                graph.constant_with_data(array.buffer(), shape, dtype.into());
             TensorOption::Constant(tensor_const)
         },
         TensorLoadType::RuntimeLoaded => {
             let td = unsafe { array.to_mps_tensor_data() };
-            let placeholder = graph.placeholder(
-                Some(&mps_shape(shape)),
-                Some(dtype.into()),
-                Some(name),
-            );
+            let shape_isize: Vec<isize> =
+                shape.iter().map(|d| *d as isize).collect();
+            let placeholder =
+                graph.placeholder(Some(&shape_isize), dtype.into(), Some(name));
             TensorOption::Placeholder {
                 placeholder,
                 data: td,
@@ -282,7 +277,7 @@ pub fn run_quant_matmul(
         [input_dim / group_size, output_dim]
     };
     let zero_points_shape = scales_shape;
-    let input_shape = [-1_i64, input_dim as i64];
+    let input_shape = [-1_isize, input_dim as isize];
 
     // Concrete shapes for actual buffer allocation at runtime
     let input_tensor_shape = [suffix_length, input_dim];
@@ -320,8 +315,8 @@ pub fn run_quant_matmul(
     // --- Tensor options for quantized matmul ---
     let input_tensor_data = unsafe { input_array.to_mps_tensor_data() };
     let input_placeholder = graph.placeholder(
-        Some(&mps_shape(&input_shape)),
-        Some(DataType::F16.into()),
+        Some(&input_shape),
+        DataType::F16.into(),
         Some("input_ph"),
     );
 

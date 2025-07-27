@@ -1,28 +1,15 @@
 use std::rc::Rc;
 
-use mpsgraph::{Graph, Shape, ShapedType, Tensor};
+use mpsgraph::{Graph, ShapedType, Tensor};
 use objc2::rc::Retained;
 use thiserror::Error;
 
-use super::super::utils::mps_shape;
 use crate::{
     Array, DataType,
     backends::metal::{MTLContext, MetalArray},
     config::Activation,
     parameters::{ParameterLoaderError, ParameterTree},
 };
-
-pub fn mps_shape_to_isize(shape: &Shape) -> Box<[isize]> {
-    let shape_i64: Box<[i64]> = shape.into();
-    shape_i64.iter().map(|&d| d as isize).collect()
-}
-
-pub fn shape_of(tensor: &Tensor) -> Box<[isize]> {
-    tensor.shape().map_or_else(
-        || Vec::<isize>::new().into_boxed_slice(),
-        |s| mps_shape_to_isize(&s),
-    )
-}
 
 pub fn data_type_of(tensor: &Tensor) -> DataType {
     DataType::from(tensor.data_type())
@@ -157,21 +144,14 @@ pub fn placeholder(
     shape: &[isize],
     data_type: DataType,
 ) -> Retained<Tensor> {
-    graph.placeholder(
-        Some(&mps_shape(shape)),
-        Some(data_type.into()),
-        Some("input"),
-    )
+    graph.placeholder(Some(shape), data_type.into(), Some("input"))
 }
 
 pub fn shaped_type(
     shape: &[isize],
     data_type: DataType,
 ) -> Retained<ShapedType> {
-    ShapedType::new_with_shape_data_type(
-        Some(&mps_shape(shape)),
-        data_type.into(),
-    )
+    ShapedType::new_with_shape_data_type(Some(shape), data_type.into())
 }
 
 fn map_last_dimension<F: FnMut(usize) -> usize>(
@@ -206,7 +186,7 @@ pub fn i4_constant_from_packed_u8_array(
     assert!(data.data_type() == DataType::U8);
     graph.constant_with_data(
         data.buffer(),
-        &mps_shape(&unpacked_shape_from_packed_shape(data.shape())),
+        &unpacked_shape_from_packed_shape(data.shape()),
         DataType::I4.into(),
     )
 }
@@ -240,7 +220,7 @@ pub fn load_constant(
         };
         graph.constant_with_data(
             parameter.buffer(),
-            &mps_shape(expected_shape),
+            expected_shape,
             DataType::U4.into(),
         )
     } else {
@@ -262,7 +242,7 @@ pub fn load_constant(
         };
         graph.constant_with_data(
             parameter.buffer(),
-            &mps_shape(parameter.shape()),
+            parameter.shape(),
             parameter.data_type().into(),
         )
     };
