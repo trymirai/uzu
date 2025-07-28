@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::{
-    Graph, GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Tensor,
-};
+use mpsgraph::{DequantizationArguments, Graph, Tensor};
 use objc2::rc::Retained;
 
 use super::{super::MTLContext, GraphConstructionError, load_constant};
@@ -67,18 +65,16 @@ fn quantized_weights_subgraph<const N: usize>(
         DataType::U4,
     )?;
 
-    Ok(graph
-        .dequantize_with_scale_tensor_and_zero_point_tensor(
-            &weights,
-            &scales,
-            &zero_points,
-            <ConfigDataType as Into<DataType>>::into(
-                config.activation_precision,
-            )
-            .into(),
-            None,
-        )
-        .unwrap())
+    let result = graph.dequantize(
+        &weights,
+        DequantizationArguments::ScaleTensorZeroPointTensorDataType {
+            scale_tensor: &scales,
+            zero_point_tensor: &zero_points,
+            data_type: scales.data_type(),
+        },
+        None,
+    );
+    Ok(result)
 }
 
 fn biases_subgraph<const N: usize>(
@@ -146,7 +142,7 @@ fn full_precision_matmul_subgraph<const N: usize>(
         parameter_tree,
     )?;
     Ok(graph.transpose(
-        &graph.matmul(
+        &graph.matrix_multiplication(
             &graph.transpose(&weights, &[1, 0], None),
             &graph.transpose(input, &[1, 0], None),
             None,
@@ -171,7 +167,7 @@ fn quantized_matmul_subgraph<const N: usize>(
         output_dims,
         parameter_tree,
     )?;
-    Ok(graph.matmul(input, &weights, None))
+    Ok(graph.matrix_multiplication(input, &weights, None))
 }
 
 fn lora_subgraph<const N: usize>(
@@ -193,7 +189,7 @@ fn lora_subgraph<const N: usize>(
     )?;
 
     let lora_inner = graph.transpose(
-        &graph.matmul(
+        &graph.matrix_multiplication(
             &graph.transpose(&lora_weights.down_weights, &[1, 0], None),
             &graph.transpose(input, &[1, 0], None),
             None,
@@ -203,7 +199,7 @@ fn lora_subgraph<const N: usize>(
     );
 
     let lora_inner_splits =
-        graph.split(&lora_inner, output_dims.len(), 1, None);
+        graph.split_num_splits(&lora_inner, output_dims.len() as u64, 1, None);
     assert_eq!(lora_inner_splits.len(), lora_weights.up_weights.len());
 
     let lora_outputs = lora_inner_splits
@@ -211,7 +207,7 @@ fn lora_subgraph<const N: usize>(
         .zip(lora_weights.up_weights.iter())
         .map(|(lora_inner_split, up_weights)| {
             graph.transpose(
-                &graph.matmul(
+                &graph.matrix_multiplication(
                     &graph.transpose(&up_weights, &[1, 0], None),
                     &graph.transpose(&lora_inner_split, &[1, 0], None),
                     None,
@@ -228,6 +224,7 @@ fn lora_subgraph<const N: usize>(
             .map(|tensor| &**tensor)
             .collect::<Box<[&Tensor]>>(),
         1,
+        false,
         None,
     ))
 }
@@ -259,10 +256,11 @@ fn qlora_matmul_subgraph<const N: usize>(
         input,
         parameter_tree,
     )?;
-    let scaled_lora_result = graph.multiply(
+    let scaled_lora_result = graph.multiplication(
         &lora_result,
         &graph.constant_with_scalar(
             lora_scale as f64,
+            None,
             <ConfigDataType as Into<DataType>>::into(
                 config.activation_precision,
             )
@@ -270,7 +268,7 @@ fn qlora_matmul_subgraph<const N: usize>(
         ),
         None,
     );
-    Ok(graph.add(&quantized_matmul_result, &scaled_lora_result, None))
+    Ok(graph.addition(&quantized_matmul_result, &scaled_lora_result, None))
 }
 
 pub fn linear_subgraph<const N: usize>(
@@ -325,7 +323,7 @@ pub fn linear_subgraph<const N: usize>(
             output_dims,
             parameter_tree,
         )?;
-        Ok(graph.add(&matmul_result, &biases, None))
+        Ok(graph.addition(&matmul_result, &biases, None))
     } else {
         Ok(matmul_result)
     }

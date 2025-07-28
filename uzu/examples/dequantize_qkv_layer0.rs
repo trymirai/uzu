@@ -8,9 +8,9 @@ use std::{
 use clap::Parser;
 use metal::{CaptureDescriptor, CaptureManager, MTLCaptureDestination};
 use mpsgraph::{
-    CommandBuffer, Device as MPSDevice, ExecutableExecutionDescriptor, Graph,
-    GraphQuantizationOps, Optimization, OptimizationProfile,
-    SerializationDescriptor, Shape, ShapedType, Tensor, TensorData,
+    CommandBuffer, DequantizationArguments, Device as MPSDevice,
+    ExecutableExecutionDescriptor, ExecutableSerializationDescriptor, Graph,
+    Optimization, OptimizationProfile, ShapedType, Tensor, TensorData,
 };
 use objc2::rc::autoreleasepool;
 use thiserror::Error;
@@ -130,24 +130,25 @@ fn main() -> Result<(), ExampleError> {
         )
         .map_err(ExampleError::from)?;
 
-        let dequantized_weights = graph
-            .dequantize_with_scale_tensor_and_zero_point_tensor(
-                &weights,
-                &scales,
-                &zero_points,
-                DataType::F16.into(),
-                None,
-            )
-            .ok_or(ExampleError::Dequantization)?;
+        let dequantized_weights = graph.dequantize(
+            &weights,
+            DequantizationArguments::ScaleTensorZeroPointTensorDataType {
+                scale_tensor: &scales,
+                zero_point_tensor: &zero_points,
+                data_type: DataType::F16.into(),
+            },
+            None,
+        );
 
         let mut dequantized_weights_buffer = unsafe {
             mtl_context.array_uninitialized(&[3072 * 2, 2560], DataType::F16)
         };
         let dequantized_weights_tensor_data = unsafe {
-            TensorData::from_buffer(
+            TensorData::new_with_mtl_buffer(
                 &dequantized_weights_buffer.mtl_buffer(),
-                &Shape::from_dimensions(&[3072 * 2, 2560]),
+                &[3072 * 2, 2560],
                 DataType::F16.into(),
+                None,
             )
         };
 
@@ -184,6 +185,7 @@ fn main() -> Result<(), ExampleError> {
             &MPSDevice::with_device(&mtl_context.device),
             &feeds,
             &[&dequantized_weights],
+            None,
             Some(&compilation_descriptor),
         );
 
@@ -195,9 +197,10 @@ fn main() -> Result<(), ExampleError> {
             let package_path = root_dir(NSSearchPathDirectory::Downloads).join(
                 format!("dequantize_qkv_layer0-{timestamp}.mpsgraphpackage"),
             );
-            executable.serialize_to_url(
+            let serialization_desc = ExecutableSerializationDescriptor::new();
+            executable.serialize_to_graph_package(
                 &package_path,
-                &SerializationDescriptor::new(),
+                Some(&serialization_desc),
             );
             println!("MPSGraph package saved to: {:?}", package_path);
         }

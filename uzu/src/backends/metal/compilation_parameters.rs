@@ -1,6 +1,5 @@
 use mpsgraph::{
-    CompilationDescriptor, Optimization, OptimizationProfile,
-    device::MPSGraphComputeDevice,
+    CompilationDescriptor, ComputeDevice, Optimization, OptimizationProfile,
 };
 use objc2::rc::Retained;
 
@@ -22,14 +21,14 @@ pub fn make_compilation_descriptor(
     desc.set_print_ane_placement_analysis(preform_placement_analysis);
     match device {
         BlockDevice::Ane => {
-            desc.set_preferred_device(MPSGraphComputeDevice::ANE);
+            desc.set_preferred_device(ComputeDevice::ANE);
             desc.set_allowed_compute_devices(
-                MPSGraphComputeDevice::ANE | MPSGraphComputeDevice::GPU,
+                ComputeDevice::ANE | ComputeDevice::GPU,
             );
         },
         BlockDevice::Gpu => {
-            desc.set_preferred_device(MPSGraphComputeDevice::GPU);
-            desc.set_allowed_compute_devices(MPSGraphComputeDevice::GPU);
+            desc.set_preferred_device(ComputeDevice::GPU);
+            desc.set_allowed_compute_devices(ComputeDevice::GPU);
         },
     }
     desc

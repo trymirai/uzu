@@ -14,9 +14,9 @@ use half::f16;
 use metal::Device;
 use mpsgraph::{
     CommandBuffer, CompilationDescriptor, DataType as MPSDataType,
-    Device as MPSDevice, Executable, ExecutableExecutionDescriptor, Graph,
-    GraphMatrixOps, GraphQuantizationOps, GraphTensorShapeOps, Optimization,
-    OptimizationProfile, ShapedType, Tensor, tensor_data::TensorData,
+    DequantizationArguments, Device as MPSDevice, Executable,
+    ExecutableExecutionDescriptor, ExecutableSerializationDescriptor, Graph,
+    Optimization, OptimizationProfile, ShapedType, Tensor, TensorData,
 };
 use objc2::rc::Retained;
 use thiserror::Error;
@@ -26,7 +26,6 @@ use crate::{
     backends::metal::{
         MTLContext, MetalArray,
         compilation_parameters::{BlockDevice, make_compilation_descriptor},
-        utils::mps_shape,
     },
     storage::{NSSearchPathDirectory, root_dir},
 };
@@ -180,24 +179,24 @@ fn build_quantized_matmul(
     let s = tensor_options.scales.tensor();
     let zp = tensor_options.zeros.tensor();
 
-    let dequantized_weights = graph
-        .dequantize_with_scale_tensor_and_zero_point_tensor(
-            &w,
-            &s,
-            &zp,
-            MPSDataType::Float16,
-            None,
-        )
-        .ok_or(ExampleError::Dequantization)?;
+    let dequantized_weights = graph.dequantize(
+        &w,
+        DequantizationArguments::ScaleTensorZeroPointTensorDataType {
+            scale_tensor: &s,
+            zero_point_tensor: &zp,
+            data_type: MPSDataType::Float16,
+        },
+        None,
+    );
 
     let matmul = if transposed_shapes {
-        graph.matmul(
+        graph.matrix_multiplication(
             &i,
             &graph.transpose(&dequantized_weights, &[1, 0], None),
             None,
         )
     } else {
-        graph.matmul(
+        graph.matrix_multiplication(
             &graph.transpose(&dequantized_weights, &[1, 0], None),
             &graph.transpose(&i, &[1, 0], None),
             None,
@@ -213,7 +212,8 @@ fn build_quantized_matmul(
         &device,
         &feeds,
         &[&*matmul],
-        Some(compilation_descriptor),
+        None,
+        Some(&compilation_descriptor),
     );
 
     Ok(executable)
@@ -229,17 +229,16 @@ fn make_tensor_option(
 ) -> TensorOption {
     match load_type {
         TensorLoadType::Baked => {
-            let tensor_const = graph.constant_with_data(
-                array.buffer(),
-                &mps_shape(shape),
-                dtype.into(),
-            );
+            let tensor_const =
+                graph.constant_with_data(array.buffer(), shape, dtype.into());
             TensorOption::Constant(tensor_const)
         },
         TensorLoadType::RuntimeLoaded => {
             let td = unsafe { array.to_mps_tensor_data() };
+            let shape_isize: Vec<isize> =
+                shape.iter().map(|d| *d as isize).collect();
             let placeholder =
-                graph.placeholder(dtype.into(), &mps_shape(shape), Some(name));
+                graph.placeholder(Some(&shape_isize), dtype.into(), Some(name));
             TensorOption::Placeholder {
                 placeholder,
                 data: td,
@@ -278,7 +277,7 @@ pub fn run_quant_matmul(
         [input_dim / group_size, output_dim]
     };
     let zero_points_shape = scales_shape;
-    let input_shape = [-1_i64, input_dim as i64];
+    let input_shape = [-1_isize, input_dim as isize];
 
     // Concrete shapes for actual buffer allocation at runtime
     let input_tensor_shape = [suffix_length, input_dim];
@@ -316,8 +315,8 @@ pub fn run_quant_matmul(
     // --- Tensor options for quantized matmul ---
     let input_tensor_data = unsafe { input_array.to_mps_tensor_data() };
     let input_placeholder = graph.placeholder(
+        Some(&input_shape),
         DataType::F16.into(),
-        &mps_shape(&input_shape),
         Some("input_ph"),
     );
 
@@ -380,8 +379,11 @@ pub fn run_quant_matmul(
         let package_path = root_dir(NSSearchPathDirectory::Downloads).join(
             format!("quant_matmul_experiments-{timestamp}.mpsgraphpackage"),
         );
-        let serialization_desc = mpsgraph::SerializationDescriptor::new();
-        executable.serialize_to_url(&package_path, &serialization_desc);
+        let serialization_desc = ExecutableSerializationDescriptor::new();
+        executable.serialize_to_graph_package(
+            &package_path,
+            Some(&serialization_desc),
+        );
     }
 
     // --- Run & measure ---

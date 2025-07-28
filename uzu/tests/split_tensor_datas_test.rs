@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use metal::{Device, MTLResourceOptions};
 use mpsgraph::{
     CommandBuffer, CompilationDescriptor, DataType as MPSDataType,
-    ExecutableExecutionDescriptor, Graph, GraphMatrixOps,
-    data_types::ShapedType, device::Device as MPSDevice, shape::Shape,
-    tensor_data::TensorData,
+    Device as MPSDevice, ExecutableExecutionDescriptor, Graph, ShapedType,
+    TensorData,
 };
 use ndarray::{Array2, ArrayView2};
 use uzu::{Array, DataType, backends::metal::MetalArray};
@@ -127,10 +126,12 @@ fn test_row_split_no_copy_matmul() {
         b_buffer_size_bytes,
         MTLResourceOptions::StorageModeShared,
     );
-    let b_shape_dims =
-        Shape::from_dimensions(&[b_shape[0] as i64, b_shape[1] as i64]);
-    let b_td =
-        TensorData::from_buffer(&b_buffer, &b_shape_dims, MPSDataType::Float32);
+    let b_td = TensorData::new_with_mtl_buffer(
+        &b_buffer,
+        &b_shape,
+        MPSDataType::Float32,
+        None,
+    );
 
     let baseline =
         ndarray_matmul(a_shape[0], a_shape[1], b_shape[1], &a_data, &b_data);
@@ -159,20 +160,34 @@ fn test_row_split_no_copy_matmul() {
 
         let graph = Graph::new();
 
-        let shape_a = Shape::from_dimensions(&[rows as i64, a_shape[1] as i64]);
-        let a_ph = graph.placeholder(MPSDataType::Float32, &shape_a, Some("A"));
+        let shape_a_isize = [rows as isize, a_shape[1] as isize];
+        let a_ph = graph.placeholder(
+            Some(&shape_a_isize),
+            MPSDataType::Float32,
+            Some("A"),
+        );
 
-        let shape_b =
-            Shape::from_dimensions(&[a_shape[1] as i64, b_shape[1] as i64]);
-        let b_ph = graph.placeholder(MPSDataType::Float32, &shape_b, Some("B"));
+        let shape_b_isize = [a_shape[1] as isize, b_shape[1] as isize];
+        let b_ph = graph.placeholder(
+            Some(&shape_b_isize),
+            MPSDataType::Float32,
+            Some("B"),
+        );
 
-        let c_tensor = graph.matmul(&a_ph, &b_ph, Some("MatMul"));
+        let c_tensor =
+            graph.matrix_multiplication(&a_ph, &b_ph, Some("MatMul"));
 
         let mps_device = MPSDevice::with_device(&device);
         let compilation_descriptor = CompilationDescriptor::new();
 
-        let a_shaped_type = ShapedType::new(&shape_a, MPSDataType::Float32);
-        let b_shaped_type = ShapedType::new(&shape_b, MPSDataType::Float32);
+        let a_shaped_type = ShapedType::new_with_shape_data_type(
+            Some(&shape_a_isize),
+            MPSDataType::Float32,
+        );
+        let b_shaped_type = ShapedType::new_with_shape_data_type(
+            Some(&shape_b_isize),
+            MPSDataType::Float32,
+        );
 
         let mut compile_feeds = HashMap::new();
         compile_feeds.insert(a_ph.as_ref(), a_shaped_type.as_ref());
@@ -183,6 +198,7 @@ fn test_row_split_no_copy_matmul() {
             &mps_device,
             &compile_feeds,
             &targets,
+            None,
             Some(&compilation_descriptor),
         );
 
@@ -193,12 +209,12 @@ fn test_row_split_no_copy_matmul() {
             result_buffer_size,
             MTLResourceOptions::StorageModeShared,
         );
-        let result_shape =
-            Shape::from_dimensions(&[rows as i64, b_shape[1] as i64]);
-        let result_td = TensorData::from_buffer(
+        let result_shape_usize = [rows, b_shape[1]];
+        let result_td = TensorData::new_with_mtl_buffer(
             &result_buffer,
-            &result_shape,
+            &result_shape_usize,
             MPSDataType::Float32,
+            None,
         );
 
         let split_td = unsafe { split_array.to_mps_tensor_data() };

@@ -5,7 +5,6 @@ use metal::{Buffer as MTLBuffer, MTLResourceOptions};
 use mpsgraph::TensorData;
 use objc2::rc::Retained;
 
-use super::utils::mps_shape;
 use crate::{Array, ArrayElement, DataType, array::array_size_in_bytes};
 
 /// Represents an n-dimensional array for Metal computation
@@ -72,10 +71,11 @@ impl MetalArray {
 
     /// Wraps the underlying MTLBuffer into MPSTensorData for use with MPSGraph.
     pub unsafe fn to_mps_tensor_data(&mut self) -> Retained<TensorData> {
-        TensorData::from_buffer(
+        TensorData::new_with_mtl_buffer(
             &self.buffer,
-            &mps_shape(&self.shape),
+            &self.shape,
             self.data_type.into(),
+            None,
         )
     }
 
