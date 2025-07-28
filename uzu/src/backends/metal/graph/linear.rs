@@ -198,12 +198,8 @@ fn lora_subgraph<const N: usize>(
         None,
     );
 
-    let lora_inner_splits = graph.split_tensor_num_splits(
-        &lora_inner,
-        output_dims.len() as u64,
-        1,
-        None,
-    );
+    let lora_inner_splits =
+        graph.split_num_splits(&lora_inner, output_dims.len() as u64, 1, None);
     assert_eq!(lora_inner_splits.len(), lora_weights.up_weights.len());
 
     let lora_outputs = lora_inner_splits

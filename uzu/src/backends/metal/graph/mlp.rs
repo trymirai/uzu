@@ -30,8 +30,7 @@ pub fn mlp_subgraph(
         &up_tree,
     )?;
 
-    let split_results =
-        graph.split_tensor_num_splits(&fused_hidden_gate, 2, 1, None);
+    let split_results = graph.split_num_splits(&fused_hidden_gate, 2, 1, None);
     let up_proj = &split_results[0];
     let gate = &split_results[1];
 
