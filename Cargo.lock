@@ -1262,7 +1262,8 @@ dependencies = [
 [[package]]
 name = "mpsgraph"
 version = "0.2.0"
-source = "git+https://github.com/getmirai/mpsgraph-rs?rev=f2dfaea#f2dfaea5683393741421413889c22db3fce902c7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b3d4f4ee48894ff2d83808e8a0333f00eb7576375a5a77e8132f10ebb2a1f86"
 dependencies = [
  "bitflags 2.9.1",
  "block2",
@@ -2561,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bitflags 2.9.1",
  "bytemuck",
