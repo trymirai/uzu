@@ -9,6 +9,7 @@ pub fn get_test_model_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+        .join("..")
         .join("mirai_models")
         .join(MODEL_DIR_NAME);
     if !path.exists() {
