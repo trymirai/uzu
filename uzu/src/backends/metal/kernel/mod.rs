@@ -2,6 +2,7 @@ pub mod attention;
 mod data_type;
 pub mod kv_cache_update;
 pub mod media_kernels;
+pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
@@ -11,6 +12,7 @@ mod tensor_copy;
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
+pub use quant_matmul::QuantizedMatmulKernelEncodable;
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,
     RMSNormKernelEncodable, RMSNormKernelType,
