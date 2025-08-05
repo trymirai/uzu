@@ -42,6 +42,7 @@ fn cpu_reference(
     b_quant: &[u8], // B matrix (N x K), quantized and packed, (N * K / 2) in size
     scales: &[f32], // scales for B (N x ceil(K/group_size))
     biases: &[f32], // biases for B (N x ceil(K/group_size))
+    transpose_b: bool, // Whether B matrix weights are stored in transposed layout
 ) -> Vec<f32> {
     let group_size = 64;
     let num_groups = (k + group_size - 1) / group_size;
@@ -57,8 +58,17 @@ fn cpu_reference(
                 let mut group_acc = 0.0f64;
                 let mut group_sum = 0.0f64;
                 for l in l_start..l_end {
-                    let word_idx = (j * k + l) / 4; // 4 weights per 16-bit word
-                    let word_offset = (j * k + l) % 4; // Which nibble in the word
+                    // Weight indexing based on kernel expectations:
+                    // Non-transposed kernel expects: W[N][K] layout -> w[output_idx * k + input_idx]
+                    // Transposed kernel expects: W[K][N] layout -> w[input_idx * n + output_idx]  
+                    let weight_linear_idx = if transpose_b {
+                        l * n + j  // W[K][N]: w[k_idx * n + n_idx]
+                    } else {
+                        j * k + l  // W[N][K]: w[n_idx * k + k_idx]
+                    };
+                    
+                    let word_idx = weight_linear_idx / 4; // 4 weights per 16-bit word
+                    let word_offset = weight_linear_idx % 4; // Which nibble in the word
                     let byte_idx = word_idx * 2; // 2 bytes per word
 
                     let word = if byte_idx + 1 < b_quant.len() {
@@ -85,6 +95,10 @@ fn cpu_reference(
         }
     }
     y
+}
+
+fn is_transposed_kernel(kernel_name: &str) -> bool {
+    kernel_name.contains("transposed")
 }
 
 fn execute_quantized_matmul(
@@ -204,14 +218,19 @@ fn execute_quantized_matmul(
 
     // Validate if requested
     if validate {
+        let gpu_m = n;  // GPU sees test_n as M
+        let gpu_n = m;  // GPU sees test_m as N  
+        let gpu_k = k;  // GPU sees test_k as K
+        
         let y_expected = cpu_reference(
-            n,
-            m,
-            k,
+            gpu_m,
+            gpu_n, 
+            gpu_k,
             &x_f32,
             &weights_packed,
             &scales.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
             &biases.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
+            !is_transposed_kernel(kernel_name), // Transpose logic needs to be inverted
         );
 
         let y_ptr = y_buf.contents() as *const f16;
@@ -331,11 +350,30 @@ fn run_gemm_test(
         m,
         n,
         k,
-        "qmm_transposed_f16_g64_b4",
+        "qmm_f16_g64_b4",
         1,
         true,
     );
     println!("✅ GEMM M={}, N={}, K={} passed", m, n, k);
+}
+
+fn run_gemm_transposed_test(
+    ctx: &MTLContext,
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    println!("--- Testing GEMM Transposed M={}, N={}, K={} ---", m, n, k);
+    execute_quantized_matmul(
+        ctx,
+        m,
+        n,
+        k,
+        "qmm_transposed_f16_g64_b4",
+        1,
+        true,
+    );
+    println!("✅ GEMM Transposed M={}, N={}, K={} passed", m, n, k);
 }
 
 #[test]
@@ -358,6 +396,26 @@ fn test_quant_gemm() {
     run_gemm_test(&ctx, 31, 27, 511);
 }
 
+#[test]
+fn test_quant_gemm_transposed() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping GEMM transposed test");
+            return;
+        },
+    };
+
+    run_gemm_transposed_test(&ctx, 3, 5, 64);
+    run_gemm_transposed_test(&ctx, 1, 1, 128);
+    run_gemm_transposed_test(&ctx, 7, 13, 256);
+    run_gemm_transposed_test(&ctx, 13, 7, 511);
+    run_gemm_transposed_test(&ctx, 9, 9, 64);
+    run_gemm_transposed_test(&ctx, 8, 9, 64);
+    run_gemm_transposed_test(&ctx, 25, 17, 128);
+    run_gemm_transposed_test(&ctx, 31, 27, 511);
+}
+
 fn benchmark_quantized_gemv(
     ctx: &MTLContext,
     m: usize,
@@ -377,6 +435,24 @@ fn benchmark_quantized_qvm(
 }
 
 fn benchmark_quantized_gemm(
+    ctx: &MTLContext,
+    m: usize,
+    n: usize,
+    k: usize,
+    iterations: usize,
+) -> f64 {
+    execute_quantized_matmul(
+        ctx,
+        m,
+        n,
+        k,
+        "qmm_f16_g64_b4",
+        iterations,
+        false,
+    )
+}
+
+fn benchmark_quantized_gemm_transposed(
     ctx: &MTLContext,
     m: usize,
     n: usize,
