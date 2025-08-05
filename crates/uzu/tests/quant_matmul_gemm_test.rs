@@ -266,6 +266,16 @@ fn run_gemv_test(
     println!("✅ GEMV M={}, K={} passed", m, k);
 }
 
+fn run_qvm_test(
+    ctx: &MTLContext,
+    n: usize,
+    k: usize,
+) {
+    println!("--- Testing QVM N={}, K={} ---", n, k);
+    execute_quantized_matmul(ctx, 1, n, k, "qvm_f16_g64_b4", 1, true);
+    println!("✅ QVM N={}, K={} passed", n, k);
+}
+
 #[test]
 fn test_quant_gemv() {
     let ctx = match create_test_context() {
@@ -286,6 +296,28 @@ fn test_quant_gemv() {
     run_gemv_test(&ctx, 25, 128);
     run_gemv_test(&ctx, 31, 512);
 }
+
+#[test]
+fn test_quant_qvm() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping QVM test");
+            return;
+        },
+    };
+
+    run_qvm_test(&ctx, 3, 64);
+    run_qvm_test(&ctx, 1, 128);
+    run_qvm_test(&ctx, 7, 256);
+    run_qvm_test(&ctx, 13, 512);
+    run_qvm_test(&ctx, 13, 511);
+    run_qvm_test(&ctx, 8, 64);
+    run_qvm_test(&ctx, 9, 64);
+    run_qvm_test(&ctx, 25, 128);
+    run_qvm_test(&ctx, 31, 512);
+}
+
 
 fn run_gemm_test(
     ctx: &MTLContext,
@@ -335,6 +367,15 @@ fn benchmark_quantized_gemv(
     execute_quantized_matmul(ctx, m, 1, k, "qmv_f16_g64_b4", iterations, false)
 }
 
+fn benchmark_quantized_qvm(
+    ctx: &MTLContext,
+    n: usize,
+    k: usize,
+    iterations: usize,
+) -> f64 {
+    execute_quantized_matmul(ctx, 1, n, k, "qvm_f16_g64_b4", iterations, false)
+}
+
 fn benchmark_quantized_gemm(
     ctx: &MTLContext,
     m: usize,
@@ -373,6 +414,10 @@ fn test_quantized_matmul_performance() {
         (1024, 1, 1024, 50, "Medium GEMV (1024×1024 × 1024×1)"),
         (2048, 1, 2048, 20, "Large GEMV (2048×2048 × 2048×1)"),
         (4096, 1, 4096, 10, "XLarge GEMV (4096×4096 × 4096×1)"),
+        (1, 512, 512, 100, "Small QVM (1×512 × 512×512)"),
+        (1, 1024, 1024, 50, "Medium QVM (1×1024 × 1024×1024)"),
+        (1, 2048, 2048, 20, "Large QVM (1×2048 × 2048×2048)"),
+        (1, 4096, 4096, 10, "XLarge QVM (1×4096 × 4096×4096)"),
         (512, 16, 512, 50, "Small GEMM (512×512 × 512×16)"),
         (1024, 32, 1024, 20, "Medium GEMM (1024×1024 × 1024×32)"),
         (2048, 64, 2048, 10, "Large GEMM (2048×2048 × 2048×64)"),
@@ -385,6 +430,18 @@ fn test_quantized_matmul_performance() {
         if n == 1 {
             // GEMV
             let time = benchmark_quantized_gemv(&ctx, m, k, iterations);
+            let avg_time = time / (iterations as f64);
+            let throughput = (ops / avg_time) / 1e12; // TFLOPS
+
+            println!("{}", description);
+            println!(
+                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
+                avg_time * 1000.0,
+                throughput
+            );
+        } else if m == 1 {
+            // QVM
+            let time = benchmark_quantized_qvm(&ctx, n, k, iterations);
             let avg_time = time / (iterations as f64);
             let throughput = (ops / avg_time) / 1e12; // TFLOPS
 

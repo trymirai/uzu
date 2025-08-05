@@ -122,6 +122,15 @@ impl QuantizedMatmulKernel {
 
             encoder
                 .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        } else if self.name.starts_with("qvm") {
+            let bk = 32;
+            let bn = 64;
+            let n_tgp_y = (args.n + bn - 1) / bn; // ceiling division for columns
+            let threadgroups = MTLSize::new(args.m as u64, n_tgp_y as u64, 1);
+            let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
+
+            encoder
+                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         } else {
             let bm = 32;
             let bn = 32;
