@@ -115,9 +115,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Here are the performance metrics for various models:
 
 | `Apple M2`, `tokens/s` | Llama-3.2-1B-Instruct | Qwen2.5-1.5B-Instruct | Qwen3-0.6B | Qwen3-4B | R1-Distill-Qwen-1.5B | SmolLM2-1.7B-Instruct | Gemma-3-1B-Instruct |
-|-----------|-----------------------|-----------------------|------------|----------|----------------------|-----------------------|---------------------|
-| `uzu`       | 35.17                 | 28.32                 | 68.9       | 11.28    | 20.47                | 25.01                 | 41.50               |
-| `llama.cpp` | 32.48                 | 25.85                 | 5.37       | 1.08     | 2.81                 | 23.74                 | 37.68               |
+| ---------------------- | --------------------- | --------------------- | ---------- | -------- | -------------------- | --------------------- | ------------------- |
+| `uzu`                  | 35.17                 | 28.32                 | 68.9       | 11.28    | 20.47                | 25.01                 | 41.50               |
+| `llama.cpp`            | 32.48                 | 25.85                 | 5.37       | 1.08     | 2.81                 | 23.74                 | 37.68               |
 
 > Note that all performance comparisons were done using bf16/f16 precision. Comparing quantized models isn't entirely fair, as different engines use different quantization approaches. For running llama.cpp, we used LM Studio (v0.3.17, Metal llama.cpp runtime v1.39.0). It's also worth mentioning that using the `release` build profile is crucial for obtaining the most accurate performance metrics.
 

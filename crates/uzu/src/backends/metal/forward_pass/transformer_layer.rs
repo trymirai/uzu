@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use mpsgraph::{
     CompilationDescriptor, Device as MPSDevice, ExecutableExecutionDescriptor,
-    Graph, GraphTensorShapeOps,
+    Graph,
 };
 use objc2::rc::{Retained, autoreleasepool};
 
@@ -69,7 +69,8 @@ pub fn linear_block<const N: usize>(
             &MPSDevice::with_device(&context.device),
             &feeds,
             &[&output],
-            Some(compilation_descriptor),
+            None,
+            Some(&compilation_descriptor),
         );
 
         let arguments = IOArrays::new(
@@ -116,7 +117,8 @@ pub fn mlp_block(
             &MPSDevice::with_device(&context.device),
             &feeds,
             &[&output],
-            Some(compilation_descriptor),
+            None,
+            Some(&compilation_descriptor),
         );
 
         let arguments = IOArrays::new(
@@ -170,7 +172,8 @@ pub fn embed_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -214,7 +217,8 @@ pub fn embed_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -275,7 +279,8 @@ pub fn embed_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -341,7 +346,8 @@ pub fn readout_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -384,7 +390,8 @@ pub fn readout_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -444,7 +451,8 @@ pub fn readout_block(
                 &MPSDevice::with_device(&context.device),
                 &feeds,
                 &[&output],
-                Some(compilation_descriptor),
+                None,
+                Some(&compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(

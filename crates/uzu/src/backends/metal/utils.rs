@@ -4,15 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use mpsgraph::Shape;
-use num_traits::PrimInt;
-
-pub fn mps_shape<T: PrimInt>(shape: &[T]) -> Shape {
-    let shape_i64: Box<[i64]> =
-        shape.iter().map(|d| d.to_i64().unwrap()).collect();
-    Shape::from_dimensions(&shape_i64)
-}
-
 bitflags::bitflags! {
     pub struct CaptureOptions: u8 {
         const STDOUT = 0b00000001;

@@ -1,6 +1,4 @@
-use mpsgraph::{
-    Graph, GraphGatherOps, GraphMatrixOps, GraphQuantizationOps, Tensor,
-};
+use mpsgraph::{DequantizationArguments, Graph, Tensor};
 use objc2::rc::Retained;
 
 use super::GraphConstructionError;
@@ -11,16 +9,16 @@ pub fn embeddings_dequantize_weights_subgraph(
     weights: &Retained<Tensor>,
     scales: &Retained<Tensor>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
-    let result = graph
-        .dequantize_with_scale_tensor_zero_point_and_axis(
-            &weights,
-            &scales,
-            0.0,
-            scales.data_type(),
-            0,
-            None,
-        )
-        .unwrap();
+    let result = graph.dequantize(
+        &weights,
+        DequantizationArguments::ScaleTensorZeroPointDataTypeAxis {
+            scale_tensor: &scales,
+            zero_point: 0.0,
+            data_type: scales.data_type(),
+            axis: 0,
+        },
+        None,
+    );
     Ok(result)
 }
 
@@ -30,11 +28,11 @@ pub fn embeddings_embed_subgraph(
     input: &Retained<Tensor>,
     weights: &Retained<Tensor>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
-    let result = graph.gather(weights, input, 0, 0, None);
+    let result = graph.gather_with_updates(&weights, input, 0, 0, None);
     if let Some(scale) = config.common().input_scale {
         let scale_tensor =
-            graph.constant_with_scalar(scale as f64, result.data_type());
-        let scaled_result = graph.multiply(&result, &scale_tensor, None);
+            graph.constant_with_scalar(scale as f64, None, result.data_type());
+        let scaled_result = graph.multiplication(&result, &scale_tensor, None);
         Ok(scaled_result)
     } else {
         Ok(result)
@@ -46,6 +44,6 @@ pub fn embeddings_readout_subgraph(
     input: &Retained<Tensor>,
     weights: &Retained<Tensor>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
-    let result = graph.matmul(input, weights, None);
+    let result = graph.matrix_multiplication(input, weights, None);
     Ok(result)
 }
