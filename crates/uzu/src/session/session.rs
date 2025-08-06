@@ -1,3 +1,5 @@
+#[cfg(target_os = "ios")]
+use std::path::Path;
 use std::{path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
