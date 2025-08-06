@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "bitflags 2.9.1",
  "bytemuck",
