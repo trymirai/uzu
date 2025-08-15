@@ -296,6 +296,7 @@ void qmm_impl(
   y += y_row * static_cast<int64_t>(N) + y_col;
 
   const short num_els = min(BM, M - y_row);
+  const short num_outs = min(BN, N - y_col);
   loader_x_t loader_x(x, K, Xs, simd_gid, simd_lid);
   loader_w_t loader_w(wl, scales, biases, N, Ws, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
@@ -361,8 +362,8 @@ void qmm_impl(
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (num_els < BM) {
-    mma_op.store_result_safe(y, N, short2(BN, num_els));
+  if (num_els < BM || num_outs < BN) {
+    mma_op.store_result_safe(y, N, short2(num_outs, num_els));
   } else {
     mma_op.store_result(y, N);
   }
