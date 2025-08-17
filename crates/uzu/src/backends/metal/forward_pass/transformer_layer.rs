@@ -21,7 +21,10 @@ use crate::{
         embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
         embeddings_readout_subgraph,
     },
-    config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
+    config::{
+        DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig,
+        QuantizationConfig,
+    },
     parameters::ParameterTree,
 };
 
@@ -41,7 +44,25 @@ pub fn linear_block<const N: usize>(
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     compilation_descriptor: &CompilationDescriptor,
-) -> MPSGraphBlock {
+    _use_custom_kernel: bool,
+) -> Box<dyn super::encodable_with_state::EncodableWithState> {
+    if _use_custom_kernel {
+        if let LinearConfig::Quantized(quant_config) = config {
+            if !has_biases && N == 1 {
+                return quantized_linear_block_custom(
+                    quant_config,
+                    input_dim,
+                    output_dims[0],
+                    context,
+                    parameter_tree,
+                    input_array_id,
+                    output_array_id,
+                )
+                .unwrap();
+            }
+        }
+    }
+
     autoreleasepool(|_| {
         let graph = Graph::new();
 
@@ -78,8 +99,36 @@ pub fn linear_block<const N: usize>(
             vec![output_array_id].into_boxed_slice(),
         );
 
-        MPSGraphBlock::new(executable, make_execution_descriptor(), arguments)
+        Box::new(MPSGraphBlock::new(
+            executable,
+            make_execution_descriptor(),
+            arguments,
+        ))
     })
+}
+
+pub fn quantized_linear_block_custom(
+    config: &QuantizationConfig,
+    input_dim: usize,
+    output_dim: usize,
+    context: &MTLContext,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    input_array_id: ArrayId,
+    output_array_id: ArrayId,
+) -> Result<
+    Box<dyn super::encodable_with_state::EncodableWithState>,
+    crate::backends::metal::MTLError,
+> {
+    let block = crate::backends::metal::kernel::quant_matmul::linear_block::QuantizedLinearKernelBlock::new(
+        context,
+        config,
+        input_dim,
+        output_dim,
+        parameter_tree,
+        input_array_id,
+        output_array_id,
+    )?;
+    Ok(Box::new(block))
 }
 
 pub fn mlp_block(
@@ -89,7 +138,8 @@ pub fn mlp_block(
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     compilation_descriptor: &CompilationDescriptor,
-) -> MPSGraphBlock {
+    _use_custom_kernel: bool,
+) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     autoreleasepool(|_| {
         let graph = Graph::new();
 
@@ -126,7 +176,11 @@ pub fn mlp_block(
             vec![ArrayId::Main].into_boxed_slice(),
         );
 
-        MPSGraphBlock::new(executable, make_execution_descriptor(), arguments)
+        Box::new(MPSGraphBlock::new(
+            executable,
+            make_execution_descriptor(),
+            arguments,
+        ))
     })
 }
 
@@ -134,7 +188,7 @@ pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
     compilation_descriptor: &CompilationDescriptor,
-) -> MPSGraphBlock {
+) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     let graph = Graph::new();
 
     let input_shape = [-1 as isize];
@@ -186,7 +240,7 @@ pub fn embed_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
         EmbeddingConfig::Untied {
             precision,
@@ -231,7 +285,7 @@ pub fn embed_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
         EmbeddingConfig::QuantizedTied {
             embedding_quantization_mode,
@@ -297,7 +351,7 @@ pub fn embed_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
     }
 }
@@ -306,7 +360,7 @@ pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
     compilation_descriptor: &CompilationDescriptor,
-) -> MPSGraphBlock {
+) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     let graph = Graph::new();
 
     let input_shape = [-1 as isize, config.model_dim as isize];
@@ -360,7 +414,7 @@ pub fn readout_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
         EmbeddingConfig::Untied {
             precision,
@@ -404,7 +458,7 @@ pub fn readout_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
         EmbeddingConfig::QuantizedTied {
             embedding_quantization_mode,
@@ -469,7 +523,7 @@ pub fn readout_block(
                 ),
             );
 
-            block
+            Box::new(block)
         },
     }
 }

@@ -12,7 +12,6 @@ mod tensor_copy;
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
-pub use quant_matmul::QuantizedMatmulKernelEncodable;
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,
     RMSNormKernelEncodable, RMSNormKernelType,
@@ -23,6 +22,7 @@ pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 
 use super::{MTLContext, metal_extensions};
+pub use crate::backends::metal::kernel::quant_matmul::linear_block::QuantizedLinearKernelBlock;
 
 pub mod media {
     pub use super::media_kernels::{

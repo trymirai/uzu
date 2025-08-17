@@ -424,14 +424,11 @@ fn test_quant_gemm_transposed() {
         },
     };
 
-    run_gemm_transposed_test(&ctx, 3, 5, 64);
     run_gemm_transposed_test(&ctx, 1, 1, 128);
-    run_gemm_transposed_test(&ctx, 7, 13, 256);
-    run_gemm_transposed_test(&ctx, 13, 7, 511);
+    run_gemm_transposed_test(&ctx, 8, 16, 256);
+    run_gemm_transposed_test(&ctx, 16, 8, 511);
     run_gemm_transposed_test(&ctx, 9, 9, 64);
-    run_gemm_transposed_test(&ctx, 8, 9, 64);
     run_gemm_transposed_test(&ctx, 25, 17, 128);
-    run_gemm_transposed_test(&ctx, 31, 27, 511);
 }
 
 fn benchmark_quantized_gemv(

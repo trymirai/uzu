@@ -4,19 +4,10 @@ use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, MTLSize,
 };
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{super::MTLContext, KernelDataType};
-use crate::{
-    DataType,
-    backends::metal::{
-        MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-        },
-    },
-};
+use super::super::MTLContext;
+pub mod linear_block;
+use crate::{DataType, backends::metal::MTLError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QuantizedMatmulError {
@@ -57,7 +48,6 @@ impl QuantizedMatmulKernel {
         data_type: DataType,
         kernel_name: &str,
     ) -> Result<Self, QuantizedMatmulError> {
-        // Validate inputs
         if !matches!(data_type, DataType::F16 | DataType::F32) {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
@@ -72,6 +62,7 @@ impl QuantizedMatmulKernel {
         })
     }
 
+    #[allow(dead_code)]
     fn kernel_name_for_config(data_type: DataType) -> String {
         let type_suffix = match data_type {
             DataType::F16 => "f16",
@@ -79,7 +70,7 @@ impl QuantizedMatmulKernel {
             _ => unreachable!(),
         };
 
-        format!("qmm_{}_g64_b4", type_suffix)
+        format!("qmm_t_{}_gs_64_b_4_batch_0", type_suffix)
     }
 
     pub fn encode(
@@ -152,65 +143,38 @@ impl QuantizedMatmulKernel {
     }
 }
 
-pub struct QuantizedMatmulKernelEncodable {
-    kernel: QuantizedMatmulKernel,
-    kernel_data_type: KernelDataType,
+pub fn encode_quantized_matmul(
+    mtl_context: &MTLContext,
+    encoder: &ComputeCommandEncoderRef,
+    kernel_data_type: DataType,
     group_size: usize,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-}
+    transpose: bool,
+    args: QuantizedMatmulArguments,
+) -> Result<(), QuantizedMatmulError> {
+    let type_suffix = match kernel_data_type {
+        DataType::F16 => "f16",
+        DataType::F32 => "f32",
+        other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
+    };
 
-impl QuantizedMatmulKernelEncodable {
-    pub fn new(
-        mtl_context: &MTLContext,
-        kernel_data_type: KernelDataType,
-        group_size: usize,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-    ) -> Result<Self, QuantizedMatmulError> {
-        let data_type = match kernel_data_type {
-            KernelDataType::Float16 => DataType::F16,
-            KernelDataType::Float32 => DataType::F32,
-            _ => {
-                return Err(QuantizedMatmulError::UnsupportedDataType(
-                    kernel_data_type.into(),
-                ));
-            },
-        };
+    let kernel_name = match (type_suffix, group_size, transpose) {
+        ("f16", 64, false) => "qmm_f16_g64_b4".to_string(),
+        ("f16", 64, true) => "qmm_transposed_f16_g64_b4".to_string(),
+        ("f16", 128, false) => "qmm_f16_g128_b4".to_string(),
+        ("f16", 128, true) => "qmm_transposed_f16_g128_b4".to_string(),
+        ("f32", 64, false) => "qmm_f32_g64_b4".to_string(),
+        ("f32", 64, true) => "qmm_transposed_f32_g64_b4".to_string(),
+        ("f32", 128, false) => "qmm_f32_g128_b4".to_string(),
+        ("f32", 128, true) => "qmm_transposed_f32_g128_b4".to_string(),
+        _ => {
+            return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
+        },
+    };
 
-        let kernel = QuantizedMatmulKernel::new(
-            mtl_context,
-            data_type,
-            "qmm_f32_g64_b4",
-        )?;
-
-        Ok(Self {
-            kernel,
-            kernel_data_type,
-            group_size,
-            input_array_id,
-            output_array_id,
-        })
-    }
-}
-
-impl EncodableWithState for QuantizedMatmulKernelEncodable {
-    fn encode(
-        &self,
-        _state: &mut ForwardPassState,
-        _command_buffer: &MPSCommandBuffer,
-        _parameters: &EncodingParameters,
-    ) {
-        // For now, just a placeholder - full implementation will come with weight conversion
-        eprintln!(
-            "QuantizedMatmulKernelEncodable::encode - not yet implemented"
-        );
-
-        // TODO:
-        // 1. Get input array from state
-        // 2. Convert weights from uzu format
-        // 3. Convert zero_points to biases
-        // 4. Call kernel.encode with converted buffers
-        // 5. Handle batch dimensions properly
-    }
+    let kernel = QuantizedMatmulKernel::new(
+        mtl_context,
+        kernel_data_type,
+        &kernel_name,
+    )?;
+    kernel.encode(encoder, args)
 }

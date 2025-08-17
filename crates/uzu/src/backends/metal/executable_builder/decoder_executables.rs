@@ -9,7 +9,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState, MPSGraphBlock, RopeType,
+            ArrayId, ForwardPassState, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::{embed_block, readout_block},
         },
@@ -20,10 +20,10 @@ use crate::{
 };
 
 pub struct DecoderExecutables {
-    pub embed: MPSGraphBlock,
+    pub embed: Box<dyn EncodableWithState>,
     pub layers: Box<[LayerExecutables]>,
     pub norm: Box<dyn EncodableWithState>,
-    pub readout: MPSGraphBlock,
+    pub readout: Box<dyn EncodableWithState>,
     pub global_rope: Rc<Box<dyn EncodableWithState>>,
     pub local_rope: Option<Rc<Box<dyn EncodableWithState>>>,
 }
