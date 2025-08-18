@@ -2,6 +2,7 @@ pub mod attention;
 mod data_type;
 pub mod kv_cache_update;
 pub mod media_kernels;
+pub mod mlp;
 pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;

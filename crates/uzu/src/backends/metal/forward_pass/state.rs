@@ -227,6 +227,10 @@ struct AuxBuffers {
     qkv: ArrayCell,
     /// [suffix_length, num_heads * head_dim]
     attention_output: ArrayCell,
+    /// [suffix_length, 2 * hidden_dim]
+    mlp_fused_up: ArrayCell,
+    /// [suffix_length, hidden_dim]
+    mlp_hidden: ArrayCell,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -267,6 +271,16 @@ impl AuxBuffers {
                 attention_output: RefCell::new(MetalArray::new(
                     scratch.attention_output.clone(),
                     &model_shape.attention_output_shape(suffix_length),
+                    act_dtype,
+                )),
+                mlp_fused_up: RefCell::new(MetalArray::new(
+                    scratch.mlp_fused_up.clone(),
+                    &model_shape.mlp_fused_up_shape(suffix_length),
+                    act_dtype,
+                )),
+                mlp_hidden: RefCell::new(MetalArray::new(
+                    scratch.mlp_hidden.clone(),
+                    &model_shape.mlp_hidden_shape(suffix_length),
                     act_dtype,
                 )),
                 rotated_queries: RefCell::new(MetalArray::new(
@@ -478,6 +492,8 @@ impl ForwardPassState {
             ArrayId::AttentionOutput => {
                 self.aux_buffers.attention_output.clone()
             },
+            ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
+            ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
             ArrayId::Keys(layer_index) => {
                 self.kv_cache.borrow().data[layer_index].keys.clone()
             },
@@ -640,6 +656,8 @@ pub enum ArrayId {
     Shortcut,
     QKV,
     AttentionOutput,
+    MlpFusedUp,
+    MlpHidden,
 
     Keys(usize),
     Values(usize),

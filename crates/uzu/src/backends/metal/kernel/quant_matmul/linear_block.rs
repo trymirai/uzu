@@ -51,7 +51,7 @@ impl QuantizedLinearKernelBlock {
             )));
         }
 
-        let weights = parameter_tree.leaf("weights").map_err(|e| {
+        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
@@ -62,7 +62,7 @@ impl QuantizedLinearKernelBlock {
             )));
         }
 
-        let scales = parameter_tree.leaf("scales").map_err(|e| {
+        let mut scales = parameter_tree.leaf("scales").map_err(|e| {
             MTLError::Generic(format!("Failed to load scales: {:?}", e))
         })?;
 
@@ -95,56 +95,14 @@ impl QuantizedLinearKernelBlock {
         }
 
         let (scales_buffer, biases_buffer) = {
-            let scales_buffer = match (kernel_data_type, scales.data_type()) {
-                (DataType::F16, DataType::F16)
-                | (DataType::F32, DataType::F32) => {
-                    mtl_context.device.new_buffer_with_data(
-                        scales.buffer().as_ptr() as *const _,
-                        scales.size_in_bytes() as u64,
-                        MTLResourceOptions::StorageModeShared,
-                    )
-                },
-                (DataType::F16, DataType::F32) => {
-                    use half::f16;
-                    let num_elems = scales.shape().iter().product::<usize>();
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            scales.buffer().as_ptr() as *const f32,
-                            num_elems,
-                        )
-                    };
-                    let converted: Vec<f16> =
-                        src.iter().copied().map(f16::from_f32).collect();
-                    mtl_context.device.new_buffer_with_data(
-                        converted.as_ptr() as *const _,
-                        (converted.len() * std::mem::size_of::<f16>()) as u64,
-                        MTLResourceOptions::StorageModeShared,
-                    )
-                },
-                (DataType::F32, DataType::F16) => {
-                    use half::f16;
-                    let num_elems = scales.shape().iter().product::<usize>();
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            scales.buffer().as_ptr() as *const f16,
-                            num_elems,
-                        )
-                    };
-                    let converted: Vec<f32> =
-                        src.iter().map(|&v| v.to_f32()).collect();
-                    mtl_context.device.new_buffer_with_data(
-                        converted.as_ptr() as *const _,
-                        (converted.len() * std::mem::size_of::<f32>()) as u64,
-                        MTLResourceOptions::StorageModeShared,
-                    )
-                },
-                (target, got) => {
-                    return Err(MTLError::Generic(format!(
-                        "Unsupported scales dtype conversion: {:?} -> {:?}",
-                        got, target
-                    )));
-                },
-            };
+            if scales.data_type() != kernel_data_type {
+                return Err(MTLError::Generic(format!(
+                    "Scales dtype mismatch: got {:?}, expected {:?}",
+                    scales.data_type(),
+                    kernel_data_type
+                )));
+            }
+            let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
             let biases_buffer = Self::convert_biases_same_layout(
                 mtl_context,
                 kernel_data_type,
@@ -157,11 +115,7 @@ impl QuantizedLinearKernelBlock {
             (scales_buffer, biases_buffer)
         };
 
-        let weights_buffer = mtl_context.device.new_buffer_with_data(
-            weights.buffer().as_ptr() as *const _,
-            weights.size_in_bytes() as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let weights_buffer = unsafe { weights.mtl_buffer() }.to_owned();
 
         let type_suffix = match kernel_data_type {
             DataType::F16 => "f16",

@@ -23,6 +23,8 @@ pub struct ForwardPassBuffers {
     pub shortcut: MTLBuffer,
     pub qkv: MTLBuffer,
     pub attention_output: MTLBuffer,
+    pub mlp_fused_up: MTLBuffer,
+    pub mlp_hidden: MTLBuffer,
 
     // 3-D
     pub rotated_queries: MTLBuffer,
@@ -92,6 +94,8 @@ impl ForwardPassBuffers {
                 &model_shape.attention_output_shape(max_suffix_len),
                 act_ty,
             ),
+            mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty),
+            mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty),
 
             // 3-D
             rotated_queries: alloc(

@@ -7,6 +7,7 @@ pub struct ModelShape {
 
     vocabulary_size: usize,
     model_dim: usize,
+    hidden_dim: usize,
     context_length: usize,
 
     num_heads: usize,
@@ -30,6 +31,7 @@ impl ModelShape {
             kv_cache_type: activation_type,
             vocabulary_size: decoder_config.vocab_size,
             model_dim: decoder_config.model_dim,
+            hidden_dim: decoder_config.hidden_dim,
             context_length: decoder_config.context_length,
             num_heads: decoder_config.num_heads,
             num_groups: decoder_config.num_groups,
@@ -63,6 +65,20 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 2] {
         [suffix_length, self.model_dim]
+    }
+
+    pub fn mlp_hidden_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        [suffix_length, self.hidden_dim]
+    }
+
+    pub fn mlp_fused_up_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        [suffix_length, 2 * self.hidden_dim]
     }
 
     pub fn qkv_shape(
