@@ -49,21 +49,19 @@ pub fn linear_block<const N: usize>(
     compilation_descriptor: &CompilationDescriptor,
     _use_custom_kernel: bool,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
-    if _use_custom_kernel {
-        if let LinearConfig::Quantized(quant_config) = config {
-            if !has_biases {
-                let out_sum: usize = output_dims.iter().sum();
-                return quantized_linear_block_custom(
-                    quant_config,
-                    input_dim,
-                    out_sum,
-                    context,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )
-                .unwrap();
-            }
+    if let LinearConfig::Quantized(quant_config) = config {
+        if !has_biases {
+            let out_sum: usize = output_dims.iter().sum();
+            return quantized_linear_block_custom(
+                quant_config,
+                input_dim,
+                out_sum,
+                context,
+                parameter_tree,
+                input_array_id,
+                output_array_id,
+            )
+            .unwrap();
         }
     }
 
@@ -144,53 +142,51 @@ pub fn mlp_block(
     compilation_descriptor: &CompilationDescriptor,
     _use_custom_kernel: bool,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
-    if _use_custom_kernel {
-        if let crate::config::LinearConfig::Quantized(ref quant_config) =
-            config.linear_config
-        {
-            // Quantized MLP path: up (2H) -> act+mul -> down
-            let dtype: DataType =
-                config.linear_config.activation_precision().into();
+    if let crate::config::LinearConfig::Quantized(ref quant_config) =
+        config.linear_config
+    {
+        // Quantized MLP path: up (2H) -> act+mul -> down
+        let dtype: DataType =
+            config.linear_config.activation_precision().into();
 
-            // Up fused: Main -> MlpFusedUp
-            let up = QuantizedLinearKernelBlock::new(
-                context,
-                quant_config,
-                model_dim,
-                2 * hidden_dim,
-                &parameter_tree.subtree("up_projection").unwrap(),
-                ArrayId::Main,
-                ArrayId::MlpFusedUp,
-            )
-            .expect("Failed to build MLP up quantized block");
+        // Up fused: Main -> MlpFusedUp
+        let up = QuantizedLinearKernelBlock::new(
+            context,
+            quant_config,
+            model_dim,
+            2 * hidden_dim,
+            &parameter_tree.subtree("up_projection").unwrap(),
+            ArrayId::Main,
+            ArrayId::MlpFusedUp,
+        )
+        .expect("Failed to build MLP up quantized block");
 
-            // Activation+mul: MlpFusedUp -> MlpHidden
-            let gate_op = MlpGateActMulEncodable::new(
-                context,
-                dtype,
-                config.activation.clone(),
-                hidden_dim,
-            )
-            .expect("Failed to build MLP gate activation kernel");
+        // Activation+mul: MlpFusedUp -> MlpHidden
+        let gate_op = MlpGateActMulEncodable::new(
+            context,
+            dtype,
+            config.activation.clone(),
+            hidden_dim,
+        )
+        .expect("Failed to build MLP gate activation kernel");
 
-            // Down: MlpHidden -> Main
-            let down = QuantizedLinearKernelBlock::new(
-                context,
-                quant_config,
-                hidden_dim,
-                model_dim,
-                &parameter_tree.subtree("down_projection").unwrap(),
-                ArrayId::MlpHidden,
-                ArrayId::Main,
-            )
-            .expect("Failed to build MLP down quantized block");
+        // Down: MlpHidden -> Main
+        let down = QuantizedLinearKernelBlock::new(
+            context,
+            quant_config,
+            hidden_dim,
+            model_dim,
+            &parameter_tree.subtree("down_projection").unwrap(),
+            ArrayId::MlpHidden,
+            ArrayId::Main,
+        )
+        .expect("Failed to build MLP down quantized block");
 
-            let enc =
-                crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
-                    up, gate_op, down,
-                );
-            return Box::new(enc);
-        }
+        let enc =
+            crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
+                up, gate_op, down,
+            );
+        return Box::new(enc);
     }
     autoreleasepool(|_| {
         let graph = Graph::new();

@@ -70,27 +70,21 @@ impl QuantizedLinearKernelBlock {
             MTLError::Generic(format!("Failed to load zero_points: {:?}", e))
         })?;
 
-        // Assert expected KxN / KxN_g layout to avoid silent mismatches
-        let n_g = (output_dim + config.group_size - 1) / config.group_size;
-        if weights.shape() != [input_dim, output_dim / 2] {
+        // Only accept new layout for transposed kernels:
+        // weights: [N, K/2], scales: [N, K_g], zero_points: [N, ceil(K_g/2)]
+        let k_g = (input_dim + config.group_size - 1) / config.group_size;
+
+        let w_shape = weights.shape();
+        let s_shape = scales.shape();
+        let zp_shape = zero_points.shape();
+
+        if !(w_shape == [output_dim, input_dim / 2]
+            && s_shape == [output_dim, k_g]
+            && zp_shape == [output_dim, (k_g + 1) / 2])
+        {
             return Err(MTLError::Generic(format!(
-                "weights shape mismatch: got {:?}, expected {:?}",
-                weights.shape(),
-                [input_dim, output_dim / 2]
-            )));
-        }
-        if scales.shape() != [input_dim, n_g] {
-            return Err(MTLError::Generic(format!(
-                "scales shape mismatch: got {:?}, expected {:?}",
-                scales.shape(),
-                [input_dim, n_g]
-            )));
-        }
-        if zero_points.shape() != [input_dim, (n_g + 1) / 2] {
-            return Err(MTLError::Generic(format!(
-                "zero_points shape mismatch: got {:?}, expected {:?}",
-                zero_points.shape(),
-                [input_dim, (n_g + 1) / 2]
+                "Unexpected shapes. weights={:?}, scales={:?}, zero_points={:?}; expected [N,K/2],[N,K_g],[N,(K_g+1)/2]",
+                w_shape, s_shape, zp_shape,
             )));
         }
 
@@ -103,7 +97,7 @@ impl QuantizedLinearKernelBlock {
                 )));
             }
             let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
-            let biases_buffer = Self::convert_biases_same_layout(
+            let biases_buffer = Self::convert_biases(
                 mtl_context,
                 kernel_data_type,
                 config.group_size,
@@ -115,31 +109,27 @@ impl QuantizedLinearKernelBlock {
             (scales_buffer, biases_buffer)
         };
 
-        let weights_buffer = unsafe { weights.mtl_buffer() }.to_owned();
+        // Weights must already be [N, K/2] and packed correctly
+        let weights_buffer: MTLBuffer = unsafe { weights.mtl_buffer() }.to_owned();
 
-        let type_suffix = match kernel_data_type {
-            DataType::F16 => "f16",
-            DataType::F32 => "f32",
+        if kernel_data_type != DataType::F16 {
+            return Err(MTLError::Generic(
+                "Only F16 activation precision is supported for transposed quantized kernel".into(),
+            ));
+        }
+        let g = config.group_size;
+        let kernel_name = match g {
+            64 => "qmm_transposed_f16_g64_b4",
+            128 => "qmm_transposed_f16_g128_b4",
             other => {
                 return Err(MTLError::Generic(format!(
-                    "Unsupported data type for kernel name: {:?}",
+                    "Unsupported group size {} for transposed F16 kernel",
                     other
                 )));
             },
-        };
-        let g = config.group_size;
-        let kernel_name = match (type_suffix, g) {
-            ("f16", 64) => "qmm_f16_g64_b4".to_string(),
-            ("f16", 128) => "qmm_f16_g128_b4".to_string(),
-            ("f32", 64) => "qmm_f32_g64_b4".to_string(),
-            ("f32", 128) => "qmm_f32_g128_b4".to_string(),
-            _ => {
-                return Err(MTLError::Generic(format!(
-                    "Unsupported group size {} for kernel {}",
-                    g, type_suffix
-                )));
-            },
-        };
+        }
+        .to_string();
+
         let kernel = QuantizedMatmulKernel::new(
             mtl_context,
             kernel_data_type,
@@ -161,7 +151,7 @@ impl QuantizedLinearKernelBlock {
         })
     }
 
-    fn convert_biases_same_layout(
+    fn convert_biases(
         mtl_context: &MTLContext,
         target_dtype: DataType,
         group_size: usize,
@@ -174,28 +164,32 @@ impl QuantizedLinearKernelBlock {
         if zero_points_src.data_type() != DataType::U8 {
             return Err(MTLError::Generic("zero_points must be U8".into()));
         }
-        let n_g = (n + group_size - 1) / group_size;
-        let total = k * n_g;
-        let zp = unsafe {
-            std::slice::from_raw_parts(
-                zero_points_src.buffer().as_ptr() as *const u8,
-                k * ((n_g + 1) / 2),
-            )
-        };
+        // New layout only: scales [N, K_g], zps [N, ceil(K_g/2)]
+        let k_g = (k + group_size - 1) / group_size;
+        let total = n * k_g;
         match (target_dtype, scales_src.data_type()) {
             (DataType::F16, DataType::F16) => {
+                let s_len = n * k_g;
+                let zp_len = n * ((k_g + 1) / 2);
                 let s_src = unsafe {
                     std::slice::from_raw_parts(
                         scales_src.buffer().as_ptr() as *const f16,
-                        total,
+                        s_len,
+                    )
+                };
+                let zp = unsafe {
+                    std::slice::from_raw_parts(
+                        zero_points_src.buffer().as_ptr() as *const u8,
+                        zp_len,
                     )
                 };
                 let mut out: Vec<f16> = Vec::with_capacity(total);
-                for kk in 0..k {
-                    for ng in 0..n_g {
-                        let s = s_src[kk * n_g + ng].to_f32();
-                        let zp_b = zp[kk * ((n_g + 1) / 2) + (ng / 2)];
-                        let zp_n = if (ng & 1) == 0 {
+                let zp_row_stride_halves = (k_g + 1) / 2;
+                for n_col in 0..n {
+                    for kg in 0..k_g {
+                        let s = s_src[n_col * k_g + kg].to_f32();
+                        let zp_b = zp[n_col * zp_row_stride_halves + (kg / 2)];
+                        let zp_n = if (kg & 1) == 0 {
                             zp_b & 0x0F
                         } else {
                             (zp_b >> 4) & 0x0F
@@ -210,18 +204,27 @@ impl QuantizedLinearKernelBlock {
                 ))
             },
             (DataType::F32, DataType::F32) => {
+                let s_len = n * k_g;
+                let zp_len = n * ((k_g + 1) / 2);
                 let s_src = unsafe {
                     std::slice::from_raw_parts(
                         scales_src.buffer().as_ptr() as *const f32,
-                        total,
+                        s_len,
+                    )
+                };
+                let zp = unsafe {
+                    std::slice::from_raw_parts(
+                        zero_points_src.buffer().as_ptr() as *const u8,
+                        zp_len,
                     )
                 };
                 let mut out: Vec<f32> = Vec::with_capacity(total);
-                for kk in 0..k {
-                    for ng in 0..n_g {
-                        let s = s_src[kk * n_g + ng];
-                        let zp_b = zp[kk * ((n_g + 1) / 2) + (ng / 2)];
-                        let zp_n = if (ng & 1) == 0 {
+                let zp_row_stride_halves = (k_g + 1) / 2;
+                for n_col in 0..n {
+                    for kg in 0..k_g {
+                        let s = s_src[n_col * k_g + kg];
+                        let zp_b = zp[n_col * zp_row_stride_halves + (kg / 2)];
+                        let zp_n = if (kg & 1) == 0 {
                             zp_b & 0x0F
                         } else {
                             (zp_b >> 4) & 0x0F
