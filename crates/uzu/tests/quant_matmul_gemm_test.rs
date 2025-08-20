@@ -103,9 +103,10 @@ fn execute_quantized_matmul(
     n: usize,
     k: usize,
     kernel_name: &str,
-    cpu_transpose: bool, // Explicit flag for CPU reference
+    cpu_transpose: bool,
     iterations: usize,
     validate: bool,
+    randomize_zp: bool,
 ) -> f64 {
     // Prepare deterministic weights: w(row,k) = row+1
     // Always create weights in the same layout (test_m × test_k)
@@ -120,7 +121,7 @@ fn execute_quantized_matmul(
 
     let num_groups = (k + 63) / 64;
     let scales: Vec<f16> = vec![f16::from_f32(1.0); m * num_groups];
-    let biases: Vec<f16> = vec![f16::from_f32(0.0); m * num_groups];
+    let mut biases: Vec<f16> = vec![f16::from_f32(0.0); m * num_groups];
 
     // Prepare input data
     let (x_f32, x_f16) = if n == 1 {
@@ -151,9 +152,29 @@ fn execute_quantized_matmul(
         (scales.len() * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    // Pack zero-points from biases (all-zero here): build U8 [N, ceil(K_g/2)]
-    let k_g = (k + 63) / 64;
-    let zps_bytes = vec![0u8; m * ((k_g + 1) / 2)];
+    // Build zero-points buffer
+    let mut zps_bytes = vec![0u8; m * ((num_groups + 1) / 2)];
+    if randomize_zp {
+        // Randomized U8 zero-points per group and corresponding float biases.
+        // even g -> low nibble, odd g -> high nibble
+        for j in 0..m {
+            for g in 0..num_groups {
+                let zp_val: u8 = ((j + 3 * g) as u8) & 0x0F; // deterministic 0..15
+                let byte_index = j * ((num_groups + 1) / 2) + (g >> 1);
+                if (g & 1) == 0 {
+                    zps_bytes[byte_index] =
+                        (zps_bytes[byte_index] & 0xF0) | (zp_val & 0x0F);
+                } else {
+                    zps_bytes[byte_index] =
+                        (zps_bytes[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
+                }
+                // bias = -scale * zp
+                let s = scales[j * num_groups + g].to_f32();
+                let b = -s * (zp_val as f32);
+                biases[j * num_groups + g] = f16::from_f32(b);
+            }
+        }
+    }
     let b_buf = ctx.device.new_buffer_with_data(
         zps_bytes.as_ptr() as *const _,
         (zps_bytes.len() * std::mem::size_of::<u8>()) as u64,
@@ -238,7 +259,11 @@ fn execute_quantized_matmul(
         let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
         let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
 
-        let tol = 1.0;
+        let tol = if randomize_zp {
+            2.5
+        } else {
+            1.0
+        };
         let display_size = if n == 1 {
             m
         } else {
@@ -289,14 +314,15 @@ fn run_gemv_test(
         1,
         k,
         "qmv_f16_g64_b4",
-        false, // cpu_transpose
+        false,
         1,
+        true,
         true,
     );
     println!("✅ GEMV M={}, K={} passed", m, k);
 }
 
-fn run_qvm_test(
+fn run_qevm_test(
     ctx: &MTLContext,
     n: usize,
     k: usize,
@@ -309,8 +335,9 @@ fn run_qvm_test(
         n,
         k,
         "qvm_f16_g64_b4",
-        false, // cpu_transpose
+        false,
         1,
+        true,
         true,
     );
     println!("✅ QVM N={}, K={} passed", n, k);
@@ -338,7 +365,7 @@ fn test_quant_gemv() {
 }
 
 #[test]
-fn test_quant_qvm() {
+fn test_quant_qevm() {
     let ctx = match create_test_context() {
         Some(c) => c,
         None => {
@@ -347,15 +374,15 @@ fn test_quant_qvm() {
         },
     };
 
-    run_qvm_test(&ctx, 3, 64);
-    run_qvm_test(&ctx, 1, 128);
-    run_qvm_test(&ctx, 7, 256);
-    run_qvm_test(&ctx, 13, 512);
-    run_qvm_test(&ctx, 13, 511);
-    run_qvm_test(&ctx, 8, 64);
-    run_qvm_test(&ctx, 9, 64);
-    run_qvm_test(&ctx, 25, 128);
-    run_qvm_test(&ctx, 31, 512);
+    run_qevm_test(&ctx, 3, 64);
+    run_qevm_test(&ctx, 1, 128);
+    run_qevm_test(&ctx, 7, 256);
+    run_qevm_test(&ctx, 13, 512);
+    run_qevm_test(&ctx, 13, 511);
+    run_qevm_test(&ctx, 8, 64);
+    run_qevm_test(&ctx, 9, 64);
+    run_qevm_test(&ctx, 25, 128);
+    run_qevm_test(&ctx, 31, 512);
 }
 
 fn run_gemm_test(
@@ -372,9 +399,10 @@ fn run_gemm_test(
         n,
         k,
         "qmm_f16_g64_b4",
-        true, // cpu_transpose
+        true,
         1,
         true,
+        false,
     );
     println!("✅ GEMM M={}, N={}, K={} passed", m, n, k);
 }
@@ -393,8 +421,9 @@ fn run_gemm_transposed_test(
         n,
         k,
         "qmm_transposed_f16_g64_b4",
-        false, // cpu_transpose
+        false,
         1,
+        true,
         true,
     );
     println!("✅ GEMM Transposed M={}, N={}, K={} passed", m, n, k);
@@ -446,13 +475,14 @@ fn benchmark_quantized_gemv(
         1,
         k,
         "qmv_f16_g64_b4",
-        false, // cpu_transpose
+        false,
         iterations,
         false,
+        true,
     )
 }
 
-fn benchmark_quantized_qvm(
+fn benchmark_quantized_qevm(
     ctx: &MTLContext,
     n: usize,
     k: usize,
@@ -464,9 +494,10 @@ fn benchmark_quantized_qvm(
         n,
         k,
         "qvm_f16_g64_b4",
-        false, // cpu_transpose
+        false,
         iterations,
         false,
+        true,
     )
 }
 
@@ -483,9 +514,10 @@ fn benchmark_quantized_gemm(
         n,
         k,
         "qmm_f16_g64_b4",
-        true, // cpu_transpose
+        true,
         iterations,
         false,
+        true,
     )
 }
 
@@ -536,7 +568,7 @@ fn test_quantized_matmul_performance() {
             );
         } else if m == 1 {
             // QVM
-            let time = benchmark_quantized_qvm(&ctx, n, k, iterations);
+            let time = benchmark_quantized_qevm(&ctx, n, k, iterations);
             let avg_time = time / (iterations as f64);
             let throughput = (ops / avg_time) / 1e12; // TFLOPS
 

@@ -36,16 +36,21 @@ template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
   static_assert(bits == 4, "Only int4 supported");
 
+  const U scale_lut[4] = {
+    static_cast<U>(1.0f),
+    static_cast<U>(1.0f / 16.0f),
+    static_cast<U>(1.0f / 256.0f),
+    static_cast<U>(1.0f / 4096.0f)
+  };
+
   U sum = 0;
-  for (int i = 0; i < N; i += 4) {
-    sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
-    x_thread[i] = x[i];
-    x_thread[i + 1] = x[i + 1] / 16.0f;
-    x_thread[i + 2] = x[i + 2] / 256.0f;
-    x_thread[i + 3] = x[i + 3] / 4096.0f;
-  }
-  for (int i = N; i < values_per_thread; i++) {
+  for (int i = 0; i < values_per_thread; ++i) {
     x_thread[i] = 0;
+  }
+  for (int i = 0; i < N; ++i) {
+    U v = x[i];
+    sum += v;
+    x_thread[i] = v * scale_lut[i & 3];
   }
   return sum;
 }
@@ -191,9 +196,40 @@ struct QuantizedBlockLoader {
       return;
     }
 
-    if (reduction_dim == 1 && bi >= src_tile_dim.x) {
-      for (int i = 0; i < n_reads * pack_factor; i++) {
-        dst[i] = T(0);
+    if (reduction_dim == 1) {
+      // N-tail: zero out rows beyond valid outputs
+      if (bi >= src_tile_dim.x) {
+        for (int i = 0; i < n_reads * pack_factor; i++) {
+          dst[i] = T(0);
+        }
+        return;
+      }
+
+      // K-tail: strictly limit to valid packs and zero trailing nibbles
+      int valid_cols = src_tile_dim.y; // 0..BK
+      int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
+
+      T scale;
+      T bias;
+      current_scale_bias(scale, bias);
+      for (int i = 0; i < n_reads; i++) {
+        int pack_idx = bj + i; // global pack index across the BK packs
+        if (pack_idx < valid_packs) {
+          dequantize<T, pack_factor, bits>(
+              src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+          if (pack_idx == valid_packs - 1) {
+            int rem = valid_cols - (valid_packs - 1) * pack_factor;
+            if (rem > 0 && rem < pack_factor) {
+              for (int r = rem; r < pack_factor; ++r) {
+                dst[i * pack_factor + r] = T(0);
+              }
+            }
+          }
+        } else {
+          for (int j = 0; j < pack_factor; ++j) {
+            dst[i * pack_factor + j] = T(0);
+          }
+        }
       }
       return;
     }
@@ -568,50 +604,21 @@ void qmm_transposed_impl(
   loader_w_t loader_w(wl, scales, zps_row_start, K, K_g, Ws, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
 
-  if (num_els < BM) {
-    if (!aligned_N && num_outs < BN) {
-      for (int k = 0; k < K; k += BK) {
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        loader_x.load_safe(short2(BK, num_els));
-        loader_w.load_safe(short2(BK, num_outs));
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        mma_op.mma(Xs, Ws);
-        loader_x.next();
-        loader_w.next();
-      }
+  const int k_blocks = (K + BK - 1) / BK;
+  for (int kb = 0; kb < k_blocks; kb++) {
+    const short k_len = (kb < (K / BK)) ? BK : static_cast<short>(K - (K / BK) * BK);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (num_els < BM || k_len < BK) {
+      loader_x.load_safe(short2(k_len, num_els));
     } else {
-      for (int k = 0; k < K; k += BK) {
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        loader_x.load_safe(short2(BK, num_els));
-        loader_w.load_unsafe();
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        mma_op.mma(Xs, Ws);
-        loader_x.next();
-        loader_w.next();
-      }
+      loader_x.load_unsafe();
     }
-  } else {
-    if (!aligned_N && num_outs < BN) {
-      for (int k = 0; k < K; k += BK) {
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        loader_x.load_unsafe();
-        loader_w.load_safe(short2(BK, num_outs));
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        mma_op.mma(Xs, Ws);
-        loader_x.next();
-        loader_w.next();
-      }
-    } else {
-      for (int k = 0; k < K; k += BK) {
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        loader_x.load_unsafe();
-        loader_w.load_unsafe();
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        mma_op.mma(Xs, Ws);
-        loader_x.next();
-        loader_w.next();
-      }
+    loader_w.load_safe(short2(num_outs, k_len));
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    mma_op.mma(Xs, Ws);
+    if (kb + 1 < k_blocks) {
+      loader_x.next();
+      loader_w.next();
     }
   }
 
@@ -676,12 +683,11 @@ void qmv_impl(
         const device T* sl = scales + row * in_vec_size_g;
         const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
 
+        int g = (k + simd_lid * values_per_thread) / group_size;
         U s = sl[0];
-        int g = (simd_lid / scale_step_per_thread);
         uint8_t zp_b = zl[g >> 1];
         U b = static_cast<U>(-s * static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F)));
-        result[row] +=
-            qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
+        result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
       }
 
       ws += block_size * bytes_per_pack / pack_factor;
@@ -702,8 +708,8 @@ void qmv_impl(
             const device T* sl = scales + row * in_vec_size_g;
             const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
 
+            int g = (k + simd_lid * values_per_thread) / group_size;
             U s = sl[0];
-            int g = (simd_lid / scale_step_per_thread) + (k / group_size);
             uint8_t zp_b = zl[g >> 1];
             U b = static_cast<U>(-s * static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F)));
             result[row] +=
@@ -735,12 +741,11 @@ void qmv_impl(
         const device T* sl = scales + row * in_vec_size_g;
         const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
 
+        int g = (k + simd_lid * values_per_thread) / group_size;
         U s = sl[0];
-        int g = (simd_lid / scale_step_per_thread);
         uint8_t zp_b = zl[g >> 1];
         U b = static_cast<U>(-s * static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F)));
-        result[row] +=
-            qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
+        result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
       }
 
       ws += block_size * bytes_per_pack / pack_factor;
@@ -761,8 +766,8 @@ void qmv_impl(
             const device T* sl = scales + row * in_vec_size_g;
             const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
 
+            int g = (k + simd_lid * values_per_thread) / group_size;
             U s = sl[0];
-            int g = (simd_lid / scale_step_per_thread) + (k / group_size);
             uint8_t zp_b = zl[g >> 1];
             U b = static_cast<U>(-s * static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F)));
             result[row] += qdot_safe<U, values_per_thread, bits>(
