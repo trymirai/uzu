@@ -139,6 +139,7 @@ struct QuantizedBlockLoader {
   const int src_ld;
   const int tile_stride;
   short group_step_cnt;
+  int k_base;
   const int group_stride;
 
   const short thread_idx;
@@ -258,6 +259,7 @@ struct QuantizedBlockLoaderZp {
   const int groups_per_row;
   const int tile_stride;
   short group_step_cnt;
+  int k_base;
   const int group_stride;
 
   const short thread_idx;
@@ -285,23 +287,27 @@ struct QuantizedBlockLoaderZp {
             reduction_dim ? BCOLS_PACKED * bytes_per_pack
                           : BROWS * src_ld * bytes_per_pack / pack_factor),
         group_step_cnt(0),
+        k_base(0),
         group_stride(BROWS * groups_per_row_),
         thread_idx(simd_group_id * 32 + simd_lane_id),
         bi(n_reads * thread_idx / BCOLS_PACKED),
         bj((n_reads * thread_idx) % BCOLS_PACKED),
         dst(dst_ + bi * dst_ld + bj * pack_factor),
         src(src_ + bi * src_ld * bytes_per_pack / pack_factor + bj * bytes_per_pack),
-        scales(scales_ + bi * groups_per_row_),
-        scales_row_start(scales_ + bi * groups_per_row_),
-        zps_row_start(zero_points_row_start_ + (reduction_dim ? (bi * ((groups_per_row_ + 1) / 2)) : 0)) {}
+        scales(reduction_dim == 1 ? (scales_ + bi * groups_per_row_) : scales_),
+        scales_row_start(reduction_dim == 1 ? (scales_ + bi * groups_per_row_) : scales_),
+        zps_row_start(reduction_dim == 1 ? (zero_points_row_start_ + bi * ((groups_per_row_ + 1) / 2))
+                                          : zero_points_row_start_) {}
 
-  inline T compute_bias_for_current_group() const {
-    int g = (int)(scales - scales_row_start);
+  inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
+    int g = reduction_dim == 0 ? (k_base / group_size)
+                               : (int)(scales - scales_row_start);
     const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
     uint8_t zp_b = *zp_ptr;
     uint zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
-    T scale = *scales;
-    return static_cast<T>(-scale * static_cast<T>(zp_n));
+    T scale_val = reduction_dim == 0 ? scales_row_start[g] : *scales;
+    out_scale = scale_val;
+    out_bias = static_cast<T>(-scale_val * static_cast<T>(zp_n));
   }
 
   void load_unsafe() const {
@@ -309,8 +315,9 @@ struct QuantizedBlockLoaderZp {
       return;
     }
 
-    T scale = *scales;
-    T bias = compute_bias_for_current_group();
+    T scale;
+    T bias;
+    current_scale_bias(scale, bias);
     for (int i = 0; i < n_reads; i++) {
       dequantize<T, pack_factor, bits>(
           src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
@@ -336,8 +343,9 @@ struct QuantizedBlockLoaderZp {
       return;
     }
 
-    T scale = *scales;
-    T bias = compute_bias_for_current_group();
+    T scale;
+    T bias;
+    current_scale_bias(scale, bias);
     for (int i = 0; i < n_reads; i++) {
       dequantize<T, pack_factor, bits>(
           src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
@@ -357,7 +365,7 @@ struct QuantizedBlockLoaderZp {
         scales++;
       }
     } else {
-      scales += group_stride;
+      k_base += BROWS;
     }
   }
 };

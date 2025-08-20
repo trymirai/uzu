@@ -74,8 +74,6 @@ impl QuantizedLinearKernelBlock {
                 ))
             })?;
 
-        // Only accept new layout for transposed kernels:
-        // weights: [N, K/2], scales: [N, K_g], zero_points: [N, ceil(K_g/2)]
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
 
         let w_shape = weights.shape();
@@ -106,7 +104,6 @@ impl QuantizedLinearKernelBlock {
             (scales_buffer, zero_points_buffer)
         };
 
-        // Weights must already be [N, K/2] and packed correctly
         let weights_buffer: MTLBuffer =
             unsafe { weights.mtl_buffer() }.to_owned();
 
