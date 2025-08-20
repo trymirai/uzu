@@ -151,9 +151,12 @@ fn execute_quantized_matmul(
         (scales.len() * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
+    // Pack zero-points from biases (all-zero here): build U8 [N, ceil(K_g/2)]
+    let k_g = (k + 63) / 64;
+    let zps_bytes = vec![0u8; m * ((k_g + 1) / 2)];
     let b_buf = ctx.device.new_buffer_with_data(
-        biases.as_ptr() as *const _,
-        (biases.len() * std::mem::size_of::<f16>()) as u64,
+        zps_bytes.as_ptr() as *const _,
+        (zps_bytes.len() * std::mem::size_of::<u8>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
     let x_buf = ctx.device.new_buffer_with_data(
@@ -177,7 +180,7 @@ fn execute_quantized_matmul(
                 a_buffer: &x_buf,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
-                biases_buffer: &b_buf,
+                zero_points_buffer: &b_buf,
                 output_buffer: &y_buf,
                 m: n as i32,
                 n: m as i32,
@@ -199,7 +202,7 @@ fn execute_quantized_matmul(
             a_buffer: &x_buf,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
-            biases_buffer: &b_buf,
+            zero_points_buffer: &b_buf,
             output_buffer: &y_buf,
             m: n as i32,
             n: m as i32,

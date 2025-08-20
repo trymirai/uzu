@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, MTLResourceOptions};
+use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{QuantizedMatmulArguments, QuantizedMatmulKernel};
@@ -21,7 +21,7 @@ pub struct QuantizedLinearKernelBlock {
     kernel: QuantizedMatmulKernel,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
-    biases_buffer: MTLBuffer,
+    zero_points_buffer: MTLBuffer,
     input_dim: usize,
     output_dim: usize,
     #[allow(dead_code)]
@@ -66,9 +66,13 @@ impl QuantizedLinearKernelBlock {
             MTLError::Generic(format!("Failed to load scales: {:?}", e))
         })?;
 
-        let zero_points = parameter_tree.leaf("zero_points").map_err(|e| {
-            MTLError::Generic(format!("Failed to load zero_points: {:?}", e))
-        })?;
+        let mut zero_points =
+            parameter_tree.leaf("zero_points").map_err(|e| {
+                MTLError::Generic(format!(
+                    "Failed to load zero_points: {:?}",
+                    e
+                ))
+            })?;
 
         // Only accept new layout for transposed kernels:
         // weights: [N, K/2], scales: [N, K_g], zero_points: [N, ceil(K_g/2)]
@@ -88,7 +92,7 @@ impl QuantizedLinearKernelBlock {
             )));
         }
 
-        let (scales_buffer, biases_buffer) = {
+        let (scales_buffer, zero_points_buffer) = {
             if scales.data_type() != kernel_data_type {
                 return Err(MTLError::Generic(format!(
                     "Scales dtype mismatch: got {:?}, expected {:?}",
@@ -97,20 +101,14 @@ impl QuantizedLinearKernelBlock {
                 )));
             }
             let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
-            let biases_buffer = Self::convert_biases(
-                mtl_context,
-                kernel_data_type,
-                config.group_size,
-                input_dim,
-                output_dim,
-                &scales,
-                &zero_points,
-            )?;
-            (scales_buffer, biases_buffer)
+            let zero_points_buffer =
+                unsafe { zero_points.mtl_buffer() }.to_owned();
+            (scales_buffer, zero_points_buffer)
         };
 
         // Weights must already be [N, K/2] and packed correctly
-        let weights_buffer: MTLBuffer = unsafe { weights.mtl_buffer() }.to_owned();
+        let weights_buffer: MTLBuffer =
+            unsafe { weights.mtl_buffer() }.to_owned();
 
         if kernel_data_type != DataType::F16 {
             return Err(MTLError::Generic(
@@ -141,7 +139,7 @@ impl QuantizedLinearKernelBlock {
             kernel,
             weights_buffer,
             scales_buffer,
-            biases_buffer,
+            zero_points_buffer,
             input_dim,
             output_dim,
             group_size: config.group_size,
@@ -149,99 +147,6 @@ impl QuantizedLinearKernelBlock {
             input_array_id,
             output_array_id,
         })
-    }
-
-    fn convert_biases(
-        mtl_context: &MTLContext,
-        target_dtype: DataType,
-        group_size: usize,
-        k: usize,
-        n: usize,
-        scales_src: &crate::backends::metal::array::MetalArray,
-        zero_points_src: &crate::backends::metal::array::MetalArray,
-    ) -> Result<MTLBuffer, MTLError> {
-        use half::f16;
-        if zero_points_src.data_type() != DataType::U8 {
-            return Err(MTLError::Generic("zero_points must be U8".into()));
-        }
-        // New layout only: scales [N, K_g], zps [N, ceil(K_g/2)]
-        let k_g = (k + group_size - 1) / group_size;
-        let total = n * k_g;
-        match (target_dtype, scales_src.data_type()) {
-            (DataType::F16, DataType::F16) => {
-                let s_len = n * k_g;
-                let zp_len = n * ((k_g + 1) / 2);
-                let s_src = unsafe {
-                    std::slice::from_raw_parts(
-                        scales_src.buffer().as_ptr() as *const f16,
-                        s_len,
-                    )
-                };
-                let zp = unsafe {
-                    std::slice::from_raw_parts(
-                        zero_points_src.buffer().as_ptr() as *const u8,
-                        zp_len,
-                    )
-                };
-                let mut out: Vec<f16> = Vec::with_capacity(total);
-                let zp_row_stride_halves = (k_g + 1) / 2;
-                for n_col in 0..n {
-                    for kg in 0..k_g {
-                        let s = s_src[n_col * k_g + kg].to_f32();
-                        let zp_b = zp[n_col * zp_row_stride_halves + (kg / 2)];
-                        let zp_n = if (kg & 1) == 0 {
-                            zp_b & 0x0F
-                        } else {
-                            (zp_b >> 4) & 0x0F
-                        } as u8;
-                        out.push(f16::from_f32(-s * (zp_n as f32)));
-                    }
-                }
-                Ok(mtl_context.device.new_buffer_with_data(
-                    out.as_ptr() as *const _,
-                    (out.len() * std::mem::size_of::<f16>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                ))
-            },
-            (DataType::F32, DataType::F32) => {
-                let s_len = n * k_g;
-                let zp_len = n * ((k_g + 1) / 2);
-                let s_src = unsafe {
-                    std::slice::from_raw_parts(
-                        scales_src.buffer().as_ptr() as *const f32,
-                        s_len,
-                    )
-                };
-                let zp = unsafe {
-                    std::slice::from_raw_parts(
-                        zero_points_src.buffer().as_ptr() as *const u8,
-                        zp_len,
-                    )
-                };
-                let mut out: Vec<f32> = Vec::with_capacity(total);
-                let zp_row_stride_halves = (k_g + 1) / 2;
-                for n_col in 0..n {
-                    for kg in 0..k_g {
-                        let s = s_src[n_col * k_g + kg];
-                        let zp_b = zp[n_col * zp_row_stride_halves + (kg / 2)];
-                        let zp_n = if (kg & 1) == 0 {
-                            zp_b & 0x0F
-                        } else {
-                            (zp_b >> 4) & 0x0F
-                        } as u8;
-                        out.push(-s * (zp_n as f32));
-                    }
-                }
-                Ok(mtl_context.device.new_buffer_with_data(
-                    out.as_ptr() as *const _,
-                    (out.len() * std::mem::size_of::<f32>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                ))
-            },
-            _ => Err(MTLError::Generic(
-                "Unsupported dtype combo for biases".into(),
-            )),
-        }
     }
 }
 
@@ -276,7 +181,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
             a_buffer: input_buffer,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
-            biases_buffer: &self.biases_buffer,
+            zero_points_buffer: &self.zero_points_buffer,
             output_buffer: output_buffer,
             m: m as i32,
             n: n as i32,

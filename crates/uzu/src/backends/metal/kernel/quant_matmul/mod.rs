@@ -35,7 +35,7 @@ pub struct QuantizedMatmulArguments<'a> {
     pub a_buffer: &'a MTLBuffer, // Input A (float)
     pub b_buffer: &'a MTLBuffer, // Input B (quantized)
     pub scales_buffer: &'a MTLBuffer,
-    pub biases_buffer: &'a MTLBuffer,
+    pub zero_points_buffer: &'a MTLBuffer,
     pub output_buffer: &'a MTLBuffer,
     pub m: i32,
     pub n: i32,
@@ -83,7 +83,7 @@ impl QuantizedMatmulKernel {
         // Set buffers
         encoder.set_buffer(0, Some(args.b_buffer), 0);
         encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        encoder.set_buffer(2, Some(args.biases_buffer), 0);
+        encoder.set_buffer(2, Some(args.zero_points_buffer), 0);
         encoder.set_buffer(3, Some(args.a_buffer), 0);
         encoder.set_buffer(4, Some(args.output_buffer), 0);
 
