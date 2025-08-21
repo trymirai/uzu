@@ -37,19 +37,16 @@ pub fn make_compilation_descriptor(
 pub struct CompilationConfig {
     pub descriptor_general: Retained<CompilationDescriptor>,
     pub descriptor_mlp: Retained<CompilationDescriptor>,
-    pub use_custom_quantized_kernel: bool,
 }
 
 impl CompilationConfig {
     fn new(
         descriptor_general: Retained<CompilationDescriptor>,
         descriptor_mlp: Retained<CompilationDescriptor>,
-        use_custom_quantized_kernel: bool,
     ) -> Self {
         Self {
             descriptor_general,
             descriptor_mlp,
-            use_custom_quantized_kernel,
         }
     }
 
@@ -57,10 +54,6 @@ impl CompilationConfig {
         let optimization_level = Optimization::Level1;
         let optimization_profile = OptimizationProfile::Performance;
         let perform_placement_analysis = false;
-
-        let use_custom_kernel = std::env::var("UZU_USE_CUSTOM_QUANT_KERNEL")
-            .unwrap_or_default()
-            == "1";
 
         Self::new(
             make_compilation_descriptor(
@@ -75,7 +68,6 @@ impl CompilationConfig {
                 optimization_profile,
                 perform_placement_analysis,
             ),
-            use_custom_kernel,
         )
     }
 }

@@ -101,7 +101,6 @@ impl LayerExecutables {
                 ArrayId::Main,
                 ArrayId::QKV,
                 &compilation_config.descriptor_mlp,
-                compilation_config.use_custom_quantized_kernel,
             );
 
             let qk_norm: Option<Box<dyn EncodableWithState>> = if layer_config
@@ -143,7 +142,6 @@ impl LayerExecutables {
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
                 &compilation_config.descriptor_mlp,
-                compilation_config.use_custom_quantized_kernel,
             );
 
             let post_attention_norm: Option<Box<dyn EncodableWithState>> =
@@ -195,7 +193,6 @@ impl LayerExecutables {
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
                 &compilation_config.descriptor_mlp,
-                compilation_config.use_custom_quantized_kernel,
             );
 
             let post_mlp_norm: Option<Box<dyn EncodableWithState>> =

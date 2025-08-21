@@ -47,7 +47,6 @@ pub fn linear_block<const N: usize>(
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     compilation_descriptor: &CompilationDescriptor,
-    _use_custom_kernel: bool,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let LinearConfig::Quantized(quant_config) = config {
         if !has_biases {
@@ -140,7 +139,6 @@ pub fn mlp_block(
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     compilation_descriptor: &CompilationDescriptor,
-    _use_custom_kernel: bool,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let crate::config::LinearConfig::Quantized(ref quant_config) =
         config.linear_config
@@ -182,10 +180,9 @@ pub fn mlp_block(
         )
         .expect("Failed to build MLP down quantized block");
 
-        let enc =
-            crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
-                up, gate_op, down,
-            );
+        let enc = crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
+            up, gate_op, down,
+        );
         return Box::new(enc);
     }
     autoreleasepool(|_| {
