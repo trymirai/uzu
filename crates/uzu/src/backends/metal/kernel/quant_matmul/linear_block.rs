@@ -18,7 +18,8 @@ use crate::{
 };
 
 pub struct QuantizedLinearKernelBlock {
-    kernel: QuantizedMatmulKernel,
+    kernel_mm: QuantizedMatmulKernel,
+    kernel_mv: QuantizedMatmulKernel,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
     zero_points_buffer: MTLBuffer,
@@ -113,27 +114,33 @@ impl QuantizedLinearKernelBlock {
             ));
         }
         let g = config.group_size;
-        let kernel_name = match g {
-            64 => "qmm_transposed_f16_g64_b4",
-            128 => "qmm_transposed_f16_g128_b4",
+        let (kernel_name_mm, kernel_name_mv) = match g {
+            64 => ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4"),
+            128 => ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4"),
             other => {
                 return Err(MTLError::Generic(format!(
                     "Unsupported group size {} for transposed F16 kernel",
                     other
                 )));
             },
-        }
-        .to_string();
+        };
 
-        let kernel = QuantizedMatmulKernel::new(
+        let kernel_mm = QuantizedMatmulKernel::new(
             mtl_context,
             kernel_data_type,
-            &kernel_name,
+            kernel_name_mm,
+        )
+        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
+        let kernel_mv = QuantizedMatmulKernel::new(
+            mtl_context,
+            kernel_data_type,
+            kernel_name_mv,
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
 
         Ok(Self {
-            kernel,
+            kernel_mm,
+            kernel_mv,
             weights_buffer,
             scales_buffer,
             zero_points_buffer,
@@ -185,7 +192,14 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
             k: k as i32,
         };
 
-        self.kernel
+        let use_gemv = batch_size == 1;
+        let kernel = if use_gemv {
+            &self.kernel_mv
+        } else {
+            &self.kernel_mm
+        };
+
+        kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized matmul kernel");
 
