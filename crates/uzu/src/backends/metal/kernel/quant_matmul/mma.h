@@ -28,9 +28,6 @@ struct TransformNone {
   METAL_FUNC static U apply(U val) {
     return val;
   }
-  METAL_FUNC static U apply(U val, T other) {
-    return val;
-  }
 };
 
 template <typename T, int kFragRows_, int kFragCols_>
@@ -78,36 +75,6 @@ struct BaseMMAFrag<T, 8, 8> {
     }
   }
 
-  template <
-      typename SrcPtrType,
-      typename StrX,
-      typename StrY,
-      typename LimX,
-      typename LimY,
-      typename OffX,
-      typename OffY>
-  METAL_FUNC static constexpr void load_safe(
-      thread frag_type& dst,
-      SrcPtrType src,
-      StrX str_x,
-      StrY str_y,
-      LimX lim_x,
-      LimY lim_y,
-      OffX off_x = 0,
-      OffY off_y = 0) {
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < kElemRows; i++) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < kElemCols; j++) {
-        if ((off_x + i) < lim_x && (off_y + j) < lim_y) {
-          dst[i * kElemCols + j] =
-              static_cast<T>(src[(off_x + i) * str_x + (off_x + j) * str_y]);
-        } else {
-          dst[i * kElemCols + j] = T(0);
-        }
-      }
-    }
-  }
 
   template <typename DstPtrType, typename StrX, typename StrY>
   METAL_FUNC static constexpr void
@@ -154,41 +121,6 @@ struct BaseMMAFrag<T, 8, 8> {
     }
   }
 
-  template <
-      typename DstPtrType,
-      typename StrX,
-      typename StrY,
-      typename StartX,
-      typename StopX,
-      typename StartY,
-      typename StopY,
-      typename OffX,
-      typename OffY>
-  METAL_FUNC static constexpr void store_slice(
-      const thread frag_type& src,
-      DstPtrType dst,
-      StrX str_x,
-      StrY str_y,
-      StartX start_x,
-      StopX stop_x,
-      StartY start_y,
-      StopY stop_y,
-      OffX off_x = 0,
-      OffY off_y = 0) {
-    using U = pointer_element_t<DstPtrType>;
-
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < kElemRows; i++) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < kElemCols; j++) {
-        if ((off_x + i) < stop_x && (off_x + i) >= start_x &&
-            (off_y + j) < stop_y && (off_y + j) >= start_y) {
-          dst[(off_x + i) * str_x + (off_y + j) * str_y] =
-              static_cast<U>(src[i * kElemCols + j]);
-        }
-      }
-    }
-  }
 
   METAL_FUNC static constexpr void mma(
       thread frag_type& D,
@@ -263,14 +195,6 @@ struct MMATile {
     return val_frags[i * kTileCols + j];
   }
 
-  METAL_FUNC mat_type mat_at(const short i, const short j) {
-    mat_type val_mat;
-    UZU_PRAGMA_UNROLL
-    for (short ii = 0; ii < kElemsPerFrag; ++ii) {
-      val_mat.thread_elements()[ii] = frag_at(i, j)[ii];
-    }
-    return val_mat;
-  }
 
   METAL_FUNC thread elem_type* elems() {
     return reinterpret_cast<thread elem_type*>(val_frags);
@@ -297,37 +221,6 @@ struct MMATile {
     }
   }
 
-  template <typename U, int w_x, int w_y, int str_x, int str_y>
-  METAL_FUNC void store(threadgroup U* dst) const {
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < kTileCols; ++j) {
-        MMAFrag_t::store(
-            frag_at(i, j),
-            &(
-                dst[(i * kFragRows) * w_x * str_x +
-                    (j * kFragCols) * w_y * str_y]),
-            str_x,
-            str_y);
-      }
-    }
-  }
-
-  template <typename U, int w_x, int w_y>
-  METAL_FUNC void load(const device U* src, const int ld) {
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < kTileCols; ++j) {
-        MMAFrag_t::load(
-            frag_at(i, j),
-            &(src[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
-            ld,
-            1);
-      }
-    }
-  }
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void store(device U* dst, const int ld) const {
@@ -344,25 +237,6 @@ struct MMATile {
     }
   }
 
-  template <typename U, int w_x, int w_y>
-  METAL_FUNC void
-  load_safe(const device U* src, const int ld, const short2 src_tile_dims) {
-    UZU_PRAGMA_UNROLL
-    for (int i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
-      for (int j = 0; j < kTileCols; ++j) {
-        MMAFrag_t::load_safe(
-            frag_at(i, j),
-            src,
-            ld,
-            1,
-            src_tile_dims.y,
-            src_tile_dims.x,
-            (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
-      }
-    }
-  }
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void
@@ -384,30 +258,6 @@ struct MMATile {
     }
   }
 
-  template <typename U, int w_x, int w_y>
-  METAL_FUNC void store_slice(
-      device U* dst,
-      const int ld,
-      const short2 start,
-      const short2 stop) const {
-    UZU_PRAGMA_UNROLL
-    for (int i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
-      for (int j = 0; j < kTileCols; ++j) {
-        MMAFrag_t::store_slice(
-            frag_at(i, j),
-            dst,
-            ld,
-            1,
-            start.y,
-            stop.y,
-            start.x,
-            stop.x,
-            (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
-      }
-    }
-  }
 };
 
 template <typename T, typename U, int M, int N, int K>
@@ -547,25 +397,6 @@ struct BlockMMA {
     Ctile.template store<U, WM, WN>(D, ldd);
   }
 
-  METAL_FUNC void
-  store_result_slice(device U* D, const int ldd, short2 start, short2 stop) {
-    // Apply epilogue
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
-      Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
-    }
-
-    D += sm * ldd + sn;
-    start -= short2(sn, sm);
-    stop -= short2(sn, sm);
-
-    // TODO: Check the start as well
-    if (stop.y <= 0 || stop.x <= 0) {
-      return;
-    }
-
-    Ctile.template store_slice<U, WM, WN>(D, ldd, start, stop);
-  }
 
   METAL_FUNC void
   store_result_safe(device U* D, const int ldd, short2 dst_tile_dims) {
@@ -585,162 +416,6 @@ struct BlockMMA {
     Ctile.template store_safe<U, WM, WN>(D, ldd, dst_tile_dims);
   }
 
-  /* Apply epilogue */
-  template <typename UnaryEpilogue>
-  METAL_FUNC void apply_epilogue(thread const UnaryEpilogue& epilogue_op) {
-    // Loop over all simdgroup tiles
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
-      Ctile.elems()[i] = epilogue_op.apply(Ctile.elems()[i]);
-    }
-  }
-
-  /* Apply epilogue */
-  template <typename BinaryEpilogue>
-  METAL_FUNC void apply_epilogue(
-      const device U* C,
-      const int ldc,
-      const int fdc,
-      thread const BinaryEpilogue& epilogue_op) {
-    // Adjust for simdgroup and thread location
-    C += (sm)*ldc + (sn)*fdc;
-
-    // Loop over all simdgroup tiles
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < TM; i++) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < TN; j++) {
-        // Get accumulated result and associated offset in C
-        thread auto& accum = Ctile.frag_at(i, j);
-        int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
-
-        // Apply epilogue
-        UZU_PRAGMA_UNROLL
-        for (short k = 0; k < decltype(Ctile)::kElemsPerFrag; k++) {
-          accum[k] = epilogue_op.apply(accum[k], C[offset_c + k * fdc]);
-        }
-      }
-    }
-  }
-
-  /* Apply epilogue */
-  template <typename BinaryEpilogue>
-  METAL_FUNC void apply_epilogue_safe(
-      const device U* C,
-      const int ldc,
-      const int fdc,
-      short2 dst_tile_dims,
-      thread const BinaryEpilogue& epilogue_op) {
-    // Adjust for simdgroup and thread location
-    C += (sm)*ldc + (sn)*fdc;
-    dst_tile_dims -= short2(sn, sm);
-
-    if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0)
-      return;
-
-    // Loop over all simdgroup tiles
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < TM; i++) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < TN; j++) {
-        // Get accumulated result and associated offset in C
-        thread auto& accum = Ctile.frag_at(i, j);
-        int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
-
-        constexpr short kelems = decltype(Ctile)::kElemsPerFrag;
-
-        // Read C
-        U c_elems[kelems] = {0};
-
-        UZU_PRAGMA_UNROLL
-        for (short k = 0; k < kelems; k++) {
-          if ((j * TN_stride + k) < dst_tile_dims.x) {
-            c_elems[k] = C[offset_c + k * fdc];
-          }
-        }
-
-        // Apply epilogue
-        UZU_PRAGMA_UNROLL
-        for (short k = 0; k < kelems; k++) {
-          accum[k] = epilogue_op.apply(accum[k], c_elems[k]);
-        }
-      }
-    }
-  }
-
-  /* Store results from simdgroup_matrix results into device memory */
-  METAL_FUNC void store_result(
-      device U* D,
-      const int ldd,
-      const device U* C,
-      const int ldc,
-      const int fdc,
-      thread const Epilogue& epilogue_op) const {
-    // Adjust for simdgroup and thread location
-    C += (sm)*ldc + (sn)*fdc;
-    D += (sm)*ldd + sn;
-
-    constexpr short kelems = decltype(Ctile)::kElemsPerFrag;
-
-    // Loop over all simdgroup tiles
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < TM; i++) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < TN; j++) {
-        // Get accumulated result and associated offset in C
-        thread const auto& accum = Ctile.frag_at(i, j);
-        int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
-        int offset_d = (i * TM_stride) * ldd + (j * TN_stride);
-
-        // Apply epilogue
-        UZU_PRAGMA_UNROLL
-        for (short k = 0; k < kelems; k++) {
-          D[offset_d + k] = epilogue_op.apply(accum[k], C[offset_c + k * fdc]);
-        }
-      }
-    }
-  }
-
-  METAL_FUNC void store_result_safe(
-      device U* D,
-      const int ldd,
-      const device U* C,
-      const int ldc,
-      const int fdc,
-      short2 dst_tile_dims,
-      thread const Epilogue& epilogue_op) const {
-    // Adjust for simdgroup and thread location
-    C += (sm)*ldc + (sn)*fdc;
-    D += (sm)*ldd + sn;
-    dst_tile_dims -= short2(sn, sm);
-
-    if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0)
-      return;
-
-    constexpr short kelems = decltype(Ctile)::kElemsPerFrag;
-
-    UZU_PRAGMA_UNROLL
-    for (int i = 0; i < TM; i++) {
-      if (i * TM_stride < dst_tile_dims.y) {
-        UZU_PRAGMA_UNROLL
-        for (int j = 0; j < TN; j++) {
-          // Get accumulated result and associated offset in C
-          thread const auto& accum = Ctile.frag_at(i, j);
-          int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
-          int offset_d = (i * TM_stride) * ldd + (j * TN_stride);
-
-          // Apply epilogue
-          UZU_PRAGMA_UNROLL
-          for (short k = 0; k < kelems; k++) {
-            if ((j * TN_stride + k) < dst_tile_dims.x) {
-              D[offset_d + k] =
-                  epilogue_op.apply(accum[k], C[offset_c + k * fdc]);
-            }
-          }
-        }
-      }
-    }
-  }
 };
 
 template <
