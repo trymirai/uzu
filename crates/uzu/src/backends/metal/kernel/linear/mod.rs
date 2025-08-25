@@ -3,7 +3,7 @@ use std::rc::Rc;
 use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{QuantizedMatmulArguments, QuantizedMatmulKernel};
+use super::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulKernel};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -45,7 +45,10 @@ impl QuantizedLinearKernelBlock {
     ) -> Result<Self, MTLError> {
         let kernel_data_type: DataType = config.activation_precision.into();
 
-        if !matches!(kernel_data_type, DataType::F16 | DataType::F32) {
+        if !matches!(
+            kernel_data_type,
+            DataType::F16 | DataType::F32 | DataType::BF16
+        ) {
             return Err(MTLError::Generic(format!(
                 "Unsupported data type for quantized kernel: {:?}",
                 kernel_data_type
@@ -108,19 +111,24 @@ impl QuantizedLinearKernelBlock {
         let weights_buffer: MTLBuffer =
             unsafe { weights.mtl_buffer() }.to_owned();
 
-        if kernel_data_type != DataType::F16 {
-            return Err(MTLError::Generic(
-                "Only F16 activation precision is supported for transposed quantized kernel".into(),
-            ));
-        }
         let g = config.group_size;
-        let (kernel_name_mm, kernel_name_mv) = match g {
-            64 => ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4"),
-            128 => ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4"),
-            other => {
+        let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
+            (DataType::F16, 64) => {
+                ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4")
+            },
+            (DataType::F16, 128) => {
+                ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4")
+            },
+            (DataType::BF16, 64) => {
+                ("qmm_transposed_bf16_g64_b4", "qmv_bf16_g64_b4")
+            },
+            (DataType::BF16, 128) => {
+                ("qmm_transposed_bf16_g128_b4", "qmv_bf16_g128_b4")
+            },
+            (dtype, other) => {
                 return Err(MTLError::Generic(format!(
-                    "Unsupported group size {} for transposed F16 kernel",
-                    other
+                    "Unsupported group size {} for transposed {:?} kernel",
+                    other, dtype
                 )));
             },
         };

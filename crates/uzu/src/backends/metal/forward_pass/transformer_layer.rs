@@ -120,7 +120,7 @@ pub fn quantized_linear_block_custom(
     Box<dyn super::encodable_with_state::EncodableWithState>,
     crate::backends::metal::MTLError,
 > {
-    let block = crate::backends::metal::kernel::quant_matmul::linear_block::QuantizedLinearKernelBlock::new(
+    let block = crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock::new(
         context,
         config,
         input_dim,

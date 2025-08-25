@@ -1,6 +1,7 @@
 pub mod attention;
 mod data_type;
 pub mod kv_cache_update;
+pub mod linear;
 pub mod media_kernels;
 pub mod mlp;
 pub mod quant_matmul;
@@ -23,7 +24,7 @@ pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 
 use super::{MTLContext, metal_extensions};
-pub use crate::backends::metal::kernel::quant_matmul::linear_block::QuantizedLinearKernelBlock;
+pub use crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock;
 
 pub mod media {
     pub use super::media_kernels::{

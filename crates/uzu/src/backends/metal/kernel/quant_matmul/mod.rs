@@ -6,7 +6,6 @@ use metal::{
 };
 
 use super::super::MTLContext;
-pub mod linear_block;
 use crate::{DataType, backends::metal::MTLError};
 
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +47,8 @@ impl QuantizedMatmulKernel {
         data_type: DataType,
         kernel_name: &str,
     ) -> Result<Self, QuantizedMatmulError> {
-        if !matches!(data_type, DataType::F16 | DataType::F32) {
+        if !matches!(data_type, DataType::F16 | DataType::F32 | DataType::BF16)
+        {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
@@ -67,6 +67,7 @@ impl QuantizedMatmulKernel {
         let type_suffix = match data_type {
             DataType::F16 => "f16",
             DataType::F32 => "f32",
+            DataType::BF16 => "bf16",
             _ => unreachable!(),
         };
 
@@ -154,6 +155,7 @@ pub fn encode_quantized_matmul(
     let type_suffix = match kernel_data_type {
         DataType::F16 => "f16",
         DataType::F32 => "f32",
+        DataType::BF16 => "bf16",
         other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
     };
 
@@ -166,6 +168,10 @@ pub fn encode_quantized_matmul(
         ("f32", 64, true) => "qmm_transposed_f32_g64_b4".to_string(),
         ("f32", 128, false) => "qmm_f32_g128_b4".to_string(),
         ("f32", 128, true) => "qmm_transposed_f32_g128_b4".to_string(),
+        ("bf16", 64, false) => "qmm_bf16_g64_b4".to_string(),
+        ("bf16", 64, true) => "qmm_transposed_bf16_g64_b4".to_string(),
+        ("bf16", 128, false) => "qmm_bf16_g128_b4".to_string(),
+        ("bf16", 128, true) => "qmm_transposed_bf16_g128_b4".to_string(),
         _ => {
             return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
         },
