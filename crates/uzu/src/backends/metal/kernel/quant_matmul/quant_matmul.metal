@@ -17,11 +17,6 @@ inline constexpr short get_bytes_per_pack() {
   return power_of_2_bits ? (wsize / 8) : (bits == 5 ? 5 : 3);
 }
 
-// We apply a simple nibble-aligned scaling to precondition x so that
-// each successive element in a 4-wide group is divided by 16^i.
-// This lets us multiply packed int4 weights (nibbles) directly by
-// the correspondingly scaled x entries using bit masks, avoiding
-// per-nibble shifts on the hot path.
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector(const device T* x, thread U* x_thread) {
   static_assert(bits == 4, "Only int4 supported");
@@ -37,7 +32,6 @@ inline U load_vector(const device T* x, thread U* x_thread) {
   return sum;
 }
 
-// Safe variant for tails where fewer than values_per_thread elements remain.
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
   static_assert(bits == 4, "Only int4 supported");
@@ -859,7 +853,6 @@ void qvm_impl(
   }
 }
 
-// KERNEL DEFINITIONS
 
 template <
     typename T,

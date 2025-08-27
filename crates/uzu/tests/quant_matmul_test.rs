@@ -553,13 +553,13 @@ fn test_quantized_matmul_performance() {
     ];
 
     for (m, n, k, iterations, description) in test_configs {
-        let ops = 2.0 * (m as f64) * (n as f64) * (k as f64); // FLOPs
+        let ops = 2.0 * (m as f64) * (n as f64) * (k as f64);
 
         if n == 1 {
             // GEMV
             let time = benchmark_quantized_gemv(&ctx, m, k, iterations);
             let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12; // TFLOPS
+            let throughput = (ops / avg_time) / 1e12;
 
             println!("{}", description);
             println!(
@@ -571,7 +571,7 @@ fn test_quantized_matmul_performance() {
             // QVM
             let time = benchmark_quantized_qevm(&ctx, n, k, iterations);
             let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12; // TFLOPS
+            let throughput = (ops / avg_time) / 1e12;
 
             println!("{}", description);
             println!(
@@ -583,7 +583,7 @@ fn test_quantized_matmul_performance() {
             // GEMM
             let time = benchmark_quantized_gemm(&ctx, m, n, k, iterations);
             let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12; // TFLOPS
+            let throughput = (ops / avg_time) / 1e12;
 
             println!("{}", description);
             println!(
