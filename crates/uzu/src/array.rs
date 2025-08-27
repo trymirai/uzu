@@ -118,7 +118,7 @@ pub trait Array {
     /// Returns an error if the requested type does not match the array's data type.
     fn as_view<T: ArrayElement>(
         &self
-    ) -> Result<ArrayView<T, IxDyn>, ArrayConversionError> {
+    ) -> Result<ArrayView<'_, T, IxDyn>, ArrayConversionError> {
         Ok(ArrayView::from_shape(self.shape(), self.as_slice()?).unwrap())
     }
 
@@ -126,7 +126,7 @@ pub trait Array {
     /// Returns an error if the requested type does not match the array's data type.
     fn as_view_mut<T: ArrayElement>(
         &mut self
-    ) -> Result<ArrayViewMut<T, IxDyn>, ArrayConversionError> {
+    ) -> Result<ArrayViewMut<'_, T, IxDyn>, ArrayConversionError> {
         Ok(ArrayViewMut::from_shape(
             self.shape().to_owned(),
             self.as_slice_mut()?,

@@ -87,7 +87,7 @@ where
         })
     }
 
-    pub fn keys(&self) -> Keys<String, ParameterMetadata> {
+    pub fn keys(&self) -> Keys<'_, String, ParameterMetadata> {
         self.index.keys()
     }
 

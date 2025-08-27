@@ -26,7 +26,7 @@ pub enum QuantizedMatmulError {
 
 pub struct QuantizedMatmulKernel {
     pipeline: MTLComputePipelineState,
-    name: String,
+    kind: KernelKind,
 }
 
 #[derive(Debug)]
@@ -47,8 +47,7 @@ impl QuantizedMatmulKernel {
         data_type: DataType,
         kernel_name: &str,
     ) -> Result<Self, QuantizedMatmulError> {
-        if !matches!(data_type, DataType::F16 | DataType::F32 | DataType::BF16)
-        {
+        if !matches!(data_type, DataType::F16 | DataType::BF16) {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
@@ -56,9 +55,17 @@ impl QuantizedMatmulKernel {
             .compute_pipeline_state(kernel_name, None)
             .map_err(QuantizedMatmulError::MetalError)?;
 
+        let kind = if kernel_name.starts_with("qmv") {
+            KernelKind::Qmv
+        } else if kernel_name.starts_with("qvm") {
+            KernelKind::Qvm
+        } else {
+            KernelKind::Qmm
+        };
+
         Ok(Self {
             pipeline,
-            name: kernel_name.to_string(),
+            kind,
         })
     }
 
@@ -66,7 +73,6 @@ impl QuantizedMatmulKernel {
     fn kernel_name_for_config(data_type: DataType) -> String {
         let type_suffix = match data_type {
             DataType::F16 => "f16",
-            DataType::F32 => "f32",
             DataType::BF16 => "bf16",
             _ => unreachable!(),
         };
@@ -105,43 +111,58 @@ impl QuantizedMatmulKernel {
             &args.m as *const i32 as *const _,
         );
 
-        if self.name.starts_with("qmv") {
-            let bk = 32;
-            let bn = 8;
-            let n_tgp_y = (args.n + bn - 1) / bn; // ceiling division
-            let threadgroups = MTLSize::new(args.m as u64, n_tgp_y as u64, 1);
-            let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
-
-            encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
-        } else if self.name.starts_with("qvm") {
-            let bk = 32;
-            let bn = 64;
-            let n_tgp_y = (args.n + bn - 1) / bn; // ceiling division for columns
-            let threadgroups = MTLSize::new(args.m as u64, n_tgp_y as u64, 1);
-            let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
-
-            encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
-        } else {
-            let bm = 32;
-            let bn = 32;
-            let wm = 2;
-            let wn = 2;
-
-            let threads_per_threadgroup = MTLSize::new(32, wn, wm);
-            let threadgroups = MTLSize::new(
-                (args.n as u64 + bn - 1) / bn,
-                (args.m as u64 + bm - 1) / bm,
-                1,
-            );
-
-            encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        match self.kind {
+            KernelKind::Qmv => {
+                let bk = 32;
+                let bn = 8;
+                let n_tgp_y = (args.n + bn - 1) / bn; // ceiling division
+                let threadgroups =
+                    MTLSize::new(args.m as u64, n_tgp_y as u64, 1);
+                let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
+                encoder.dispatch_thread_groups(
+                    threadgroups,
+                    threads_per_threadgroup,
+                );
+            },
+            KernelKind::Qvm => {
+                let bk = 32;
+                let bn = 64;
+                let n_tgp_y = (args.n + bn - 1) / bn; // ceiling division for columns
+                let threadgroups =
+                    MTLSize::new(args.m as u64, n_tgp_y as u64, 1);
+                let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
+                encoder.dispatch_thread_groups(
+                    threadgroups,
+                    threads_per_threadgroup,
+                );
+            },
+            KernelKind::Qmm => {
+                let bm = 32;
+                let bn = 32;
+                let wm = 2;
+                let wn = 2;
+                let threads_per_threadgroup = MTLSize::new(32, wn, wm);
+                let threadgroups = MTLSize::new(
+                    (args.n as u64 + bn - 1) / bn,
+                    (args.m as u64 + bm - 1) / bm,
+                    1,
+                );
+                encoder.dispatch_thread_groups(
+                    threadgroups,
+                    threads_per_threadgroup,
+                );
+            },
         }
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KernelKind {
+    Qmm,
+    Qmv,
+    Qvm,
 }
 
 pub fn encode_quantized_matmul(
@@ -154,7 +175,6 @@ pub fn encode_quantized_matmul(
 ) -> Result<(), QuantizedMatmulError> {
     let type_suffix = match kernel_data_type {
         DataType::F16 => "f16",
-        DataType::F32 => "f32",
         DataType::BF16 => "bf16",
         other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
     };
@@ -164,10 +184,6 @@ pub fn encode_quantized_matmul(
         ("f16", 64, true) => "qmm_transposed_f16_g64_b4".to_string(),
         ("f16", 128, false) => "qmm_f16_g128_b4".to_string(),
         ("f16", 128, true) => "qmm_transposed_f16_g128_b4".to_string(),
-        ("f32", 64, false) => "qmm_f32_g64_b4".to_string(),
-        ("f32", 64, true) => "qmm_transposed_f32_g64_b4".to_string(),
-        ("f32", 128, false) => "qmm_f32_g128_b4".to_string(),
-        ("f32", 128, true) => "qmm_transposed_f32_g128_b4".to_string(),
         ("bf16", 64, false) => "qmm_bf16_g64_b4".to_string(),
         ("bf16", 64, true) => "qmm_transposed_bf16_g64_b4".to_string(),
         ("bf16", 128, false) => "qmm_bf16_g128_b4".to_string(),

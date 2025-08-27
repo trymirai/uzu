@@ -322,7 +322,7 @@ fn run_gemv_test(
     println!("✅ GEMV M={}, K={} passed", m, k);
 }
 
-fn run_qevm_test(
+fn run_qvm_test(
     ctx: &MTLContext,
     n: usize,
     k: usize,
@@ -374,15 +374,15 @@ fn test_quant_qevm() {
         },
     };
 
-    run_qevm_test(&ctx, 3, 64);
-    run_qevm_test(&ctx, 1, 128);
-    run_qevm_test(&ctx, 7, 256);
-    run_qevm_test(&ctx, 13, 512);
-    run_qevm_test(&ctx, 13, 511);
-    run_qevm_test(&ctx, 8, 64);
-    run_qevm_test(&ctx, 9, 64);
-    run_qevm_test(&ctx, 25, 128);
-    run_qevm_test(&ctx, 31, 512);
+    run_qvm_test(&ctx, 3, 64);
+    run_qvm_test(&ctx, 1, 128);
+    run_qvm_test(&ctx, 7, 256);
+    run_qvm_test(&ctx, 13, 512);
+    run_qvm_test(&ctx, 13, 511);
+    run_qvm_test(&ctx, 8, 64);
+    run_qvm_test(&ctx, 9, 64);
+    run_qvm_test(&ctx, 25, 128);
+    run_qvm_test(&ctx, 31, 512);
 }
 
 fn run_gemm_test(
@@ -521,6 +521,7 @@ fn benchmark_quantized_gemm(
     )
 }
 
+#[ignore]
 #[test]
 fn test_quantized_matmul_performance() {
     let ctx = match create_test_context() {

@@ -121,10 +121,10 @@ impl LayerExecutables {
                     head_dim,
                 ) {
                     Ok(qk_norm) => Some(Box::new(qk_norm)),
-                    Err(e) => {
-                        eprintln!("Failed to create QK norm kernel: {:?}", e);
-                        None
-                    },
+                    Err(e) => panic!(
+                        "Failed to create QK norm kernel for layer {}: {:?}",
+                        layer_index, e
+                    ),
                 }
             } else {
                 None

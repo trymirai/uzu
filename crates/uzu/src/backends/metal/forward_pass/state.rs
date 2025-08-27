@@ -556,7 +556,7 @@ impl ForwardPassState {
                     .borrow()
                     .local_rope
                     .as_ref()
-                    .unwrap()
+                    .expect("Local rope requested but local_rope buffers are not initialized")
                     .cosines
                     .clone(),
             },
@@ -569,7 +569,7 @@ impl ForwardPassState {
                     .borrow()
                     .local_rope
                     .as_ref()
-                    .unwrap()
+                    .expect("Local rope requested but local_rope buffers are not initialized")
                     .sines
                     .clone(),
             },

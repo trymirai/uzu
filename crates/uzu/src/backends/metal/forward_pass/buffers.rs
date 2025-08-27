@@ -56,16 +56,9 @@ impl ForwardPassBuffers {
 
         let act_ty = model_shape.activation_data_type();
 
-        let total_blocks_count = 32;
-        let num_heads = model_shape.num_heads();
-        let head_dim = model_shape.head_dim();
-
-        // Partials buffer: [num_heads, max_suffix_len, total_blocks_count, head_dim]
         let partials_shape =
-            [num_heads * max_suffix_len * total_blocks_count * head_dim];
-
-        // Sums and maxs buffers: [num_heads, max_suffix_len, total_blocks_count]
-        let sums_maxs_shape = [num_heads * max_suffix_len * total_blocks_count];
+            model_shape.attention_partials_shape(max_suffix_len);
+        let sums_maxs_shape = model_shape.attention_sums_shape(max_suffix_len);
 
         Self {
             // 1-D
@@ -94,8 +87,14 @@ impl ForwardPassBuffers {
                 &model_shape.attention_output_shape(max_suffix_len),
                 act_ty,
             ),
-            mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty),
-            mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty),
+            mlp_fused_up: alloc(
+                &model_shape.mlp_fused_up_shape(max_suffix_len),
+                act_ty,
+            ),
+            mlp_hidden: alloc(
+                &model_shape.mlp_hidden_shape(max_suffix_len),
+                act_ty,
+            ),
 
             // 3-D
             rotated_queries: alloc(
