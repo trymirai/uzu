@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{
-    DeviceContext,
-    backends::metal::{MTLContext, MetalArray, ModelShape},
+use crate::backends::{
+    Context,
+    metal::{MTLContext, MetalArray, ModelShape},
 };
 
 type ArrayCell = RefCell<MetalArray>;

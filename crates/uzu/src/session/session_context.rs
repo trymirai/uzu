@@ -1,23 +1,20 @@
-use crate::{
-    backends::metal::forward_pass::kv_cache::KVCache,
-    generator::config::GeneratorConfig,
-};
+use crate::{backends::Backend, generator::config::GeneratorConfig};
 
-pub struct SessionContext {
+pub struct SessionContext<B: Backend> {
     pub tokens: Vec<u64>,
-    pub kv_cache: KVCache,
-    pub config: GeneratorConfig,
+    pub backend_state: B::State,
+    pub config: GeneratorConfig, // TODO: shall we do anything about it?
 }
 
-impl SessionContext {
+impl<B: Backend> SessionContext<B> {
     pub fn new(
         tokens: Vec<u64>,
-        kv_cache: KVCache,
+        backend_state: B::State,
         config: GeneratorConfig,
     ) -> Self {
         Self {
             tokens,
-            kv_cache,
+            backend_state,
             config,
         }
     }

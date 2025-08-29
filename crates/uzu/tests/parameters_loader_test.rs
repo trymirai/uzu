@@ -3,7 +3,11 @@ mod common;
 // New integration test for ParameterLoader
 use half::f16;
 use is_close::is_close;
-use uzu::{Array, backends::cpu::CPUContext, parameters::ParameterLoader};
+use uzu::{
+    Array,
+    backends::cpu::{CPUBackend, CPUContext},
+    parameters::ParameterLoader,
+};
 
 #[test]
 fn test_parameter_loader_basic() {
@@ -12,7 +16,8 @@ fn test_parameter_loader_basic() {
     let file = std::fs::File::open(&weights_path)
         .expect("Weights file not found; run download script");
 
-    let loader = ParameterLoader::new(&file, &context).expect("create loader");
+    let loader = ParameterLoader::<CPUBackend>::new(&file, &context)
+        .expect("create loader");
     let embeddings =
         loader.get("embedding.weights").expect("weights embeddings");
     let view = embeddings.as_view::<f16>().unwrap();

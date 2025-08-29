@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     fs::File,
-    rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,12 +14,17 @@ use mpsgraph::{
 use objc2::rc::autoreleasepool;
 use thiserror::Error;
 use uzu::{
-    Array, DataType, DeviceContext,
-    backends::metal::{
-        MTLContext,
-        compilation_parameters::{BlockDevice, make_compilation_descriptor},
-        error::MTLError,
-        graph::common::{GraphConstructionError, load_constant},
+    Array, DataType,
+    backends::{
+        Context,
+        metal::{
+            MTLContext,
+            compilation_parameters::{
+                BlockDevice, make_compilation_descriptor,
+            },
+            error::MTLError,
+            graph::common::{GraphConstructionError, load_constant},
+        },
     },
     parameters::{ParameterLoader, ParameterLoaderError},
     storage::{NSSearchPathDirectory, root_dir},
@@ -95,7 +99,7 @@ fn main() -> Result<(), ExampleError> {
         let device =
             metal::Device::system_default().ok_or(ExampleError::Capture)?;
         let command_queue = device.new_command_queue();
-        let mtl_context = Rc::new(MTLContext::new(device, command_queue)?);
+        let mtl_context = MTLContext::new(device, command_queue)?;
 
         let loader = ParameterLoader::new(&safetensors, &mtl_context)
             .map_err(|_| ExampleError::Header)?;

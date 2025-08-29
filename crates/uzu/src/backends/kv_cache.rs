@@ -1,18 +1,13 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use half::{bf16, f16};
+use num_traits::Zero;
 
-use super::{
-    super::{MTLContext, MetalArray},
-    model_shape::ModelShape,
-};
 use crate::{
-    DeviceContext,
+    DataType,
     array::Array,
-    backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
+    backends::{Backend, Context, metal::ModelShape},
 };
-
-type ArrayCell = RefCell<MetalArray>;
 
 #[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
@@ -31,18 +26,18 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-pub struct KVCacheLayer {
+pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: ArrayCell,
+    pub keys: RefCell<B::Array>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: ArrayCell,
+    pub values: RefCell<B::Array>,
 
     pub prefix_token_positions: Vec<usize>,
     pub max_suffix_length: usize,
 }
 
-impl KVCacheLayer {
+impl<B: Backend> KVCacheLayer<B> {
     pub fn effective_prefix_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
@@ -89,31 +84,83 @@ impl KVCacheLayer {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut MetalArray,
+        dst: &mut B::Array,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
-        let effective_prefix_len = self.effective_prefix_length();
+        let prefix_length = self.effective_prefix_length();
 
-        context.fill_attention_bias(
-            dst,
-            suffix_length,
-            effective_prefix_len,
-            |row_index, column_index| {
-                if let Some(bias_fn) = external_bias_fn {
-                    bias_fn(row_index, column_index)
-                } else {
-                    let result = self.bias_should_be_neg_inf(
-                        row_index,
-                        column_index,
-                        suffix_token_positions,
-                    );
-                    result
+        let should_be_neg_inf = |row_index, column_index| {
+            if let Some(bias_fn) = external_bias_fn {
+                bias_fn(row_index, column_index)
+            } else {
+                let result = self.bias_should_be_neg_inf(
+                    row_index,
+                    column_index,
+                    suffix_token_positions,
+                );
+                result
+            }
+        };
+
+        let total_elems = suffix_length * (suffix_length + prefix_length);
+        match dst.data_type() {
+            DataType::F16 => {
+                // TODO: Use lambda to avoid crimes
+                let mut buf = Vec::<f16>::with_capacity(total_elems);
+                for row in 0..suffix_length {
+                    for col in 0..suffix_length + prefix_length {
+                        buf.push(if should_be_neg_inf(row, col) {
+                            f16::NEG_INFINITY
+                        } else {
+                            f16::zero()
+                        });
+                    }
                 }
+                dst.copy_from_view(ndarray::ArrayView1::from(&buf));
             },
-        );
+            DataType::BF16 => {
+                let mut buf = Vec::<bf16>::with_capacity(total_elems);
+                for row in 0..suffix_length {
+                    for col in 0..suffix_length + prefix_length {
+                        buf.push(if should_be_neg_inf(row, col) {
+                            bf16::NEG_INFINITY
+                        } else {
+                            bf16::zero()
+                        });
+                    }
+                }
+                dst.copy_from_view(ndarray::ArrayView1::from(&buf));
+            },
+            DataType::F32 => {
+                let mut buf = Vec::<f32>::with_capacity(total_elems);
+                for row in 0..suffix_length {
+                    for col in 0..suffix_length + prefix_length {
+                        buf.push(if should_be_neg_inf(row, col) {
+                            f32::NEG_INFINITY
+                        } else {
+                            0.0
+                        });
+                    }
+                }
+                dst.copy_from_view(ndarray::ArrayView1::from(&buf));
+            },
+            DataType::F64 => {
+                let mut buf = Vec::<f64>::with_capacity(total_elems);
+                for row in 0..suffix_length {
+                    for col in 0..suffix_length + prefix_length {
+                        buf.push(if should_be_neg_inf(row, col) {
+                            f64::NEG_INFINITY
+                        } else {
+                            0.0
+                        });
+                    }
+                }
+                dst.copy_from_view(ndarray::ArrayView1::from(&buf));
+            },
+            _ => panic!("Unsupported data type for attention bias fill"),
+        }
     }
 
     pub fn bias_should_be_neg_inf(
@@ -164,12 +211,13 @@ impl KVCacheLayer {
         }
     }
 
-    pub fn update_after_acceptance(
+    fn update_after_acceptance<F>(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
+        scatter_fn: &mut F,
+    ) where
+        F: FnMut(&mut B::Array, &mut B::Array, &[usize], &[usize]),
+    {
         let effective_prefix_length = self.effective_prefix_length();
         let effective_indices: Vec<usize> = if accepted_suffix_indices
             .is_empty()
@@ -178,6 +226,17 @@ impl KVCacheLayer {
             vec![0] // This represents the single new token at suffix position 0
         } else {
             accepted_suffix_indices.to_vec()
+        };
+
+        let mut scatter_if_required = |source_indices, destination_indices| {
+            if source_indices != destination_indices {
+                scatter_fn(
+                    &mut self.keys.borrow_mut(),
+                    &mut self.values.borrow_mut(),
+                    source_indices,
+                    destination_indices,
+                );
+            }
         };
 
         match &mut self.state {
@@ -195,12 +254,7 @@ impl KVCacheLayer {
                     ..*prefix_len + effective_indices.len())
                     .collect();
 
-                self.scatter_if_required(
-                    &source_indices,
-                    &destination_indices,
-                    command_buffer,
-                    kv_cache_update,
-                );
+                scatter_if_required(&source_indices, &destination_indices);
             },
 
             KVCacheLayerState::Windowed {
@@ -225,53 +279,9 @@ impl KVCacheLayer {
                         .push((*ring_offset + i) % *window_length);
                 }
 
-                self.scatter_if_required(
-                    &source_indices,
-                    &destination_indices,
-                    command_buffer,
-                    kv_cache_update,
-                );
+                scatter_if_required(&source_indices, &destination_indices);
             },
         }
-    }
-
-    fn scatter_if_required(
-        &self,
-        source_indices: &[usize],
-        destination_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
-        if source_indices == destination_indices {
-            return;
-        }
-
-        let root_cb = command_buffer.root_command_buffer().to_owned();
-        let key_buffer = {
-            let mut k = self.keys.borrow_mut();
-            unsafe { k.mtl_buffer() }.clone()
-        };
-        let value_buffer = {
-            let mut v = self.values.borrow_mut();
-            unsafe { v.mtl_buffer() }.clone()
-        };
-
-        let k_shape = self.keys.borrow().shape().to_vec();
-        let v_shape = self.values.borrow().shape().to_vec();
-
-        let layer_data = KVLayerData {
-            key_buffer,
-            key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer,
-            value_shape: [v_shape[0], v_shape[1], v_shape[2]],
-        };
-
-        let _ = kv_cache_update.encode(
-            &[layer_data],
-            source_indices,
-            destination_indices,
-            &root_cb,
-        );
     }
 
     pub fn register_accepted_tokens(
@@ -310,21 +320,21 @@ impl KVCacheLayer {
     }
 }
 
-pub struct KVCache {
+pub struct KVCache<B: Backend> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[KVCacheLayer]>,
+    pub data: Box<[KVCacheLayer<B>]>,
 }
 
-impl KVCache {
+impl<B: Backend> KVCache<B> {
     pub fn new(
-        context: &MTLContext,
+        context: &B::Context,
         model_shape: &ModelShape,
         max_prefix_length: usize,
         max_suffix_length: usize,
     ) -> Self {
         let total_context_length = max_prefix_length + max_suffix_length;
-        let data: Box<[KVCacheLayer]> = model_shape
+        let data: Box<[KVCacheLayer<B>]> = model_shape
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .enumerate()
             .map(|(layer_idx, shape)| {
@@ -398,10 +408,9 @@ impl KVCache {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut HashMap<Option<usize>, MetalArray>,
+        dst: &mut HashMap<Option<usize>, B::Array>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         for layer in self.data.iter() {
@@ -420,25 +429,22 @@ impl KVCache {
                     array,
                     suffix_token_positions,
                     suffix_length,
-                    context,
                     external_bias_fn,
                 );
             }
         }
     }
 
-    pub fn update_after_acceptance(
+    // scatter_fn arguments are: keys, values, source_indices, destination_indices.
+    pub fn update_after_acceptance<F>(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
+        scatter_fn: &mut F,
+    ) where
+        F: FnMut(&mut B::Array, &mut B::Array, &[usize], &[usize]),
+    {
         for layer in self.data.iter_mut() {
-            layer.update_after_acceptance(
-                accepted_suffix_indices,
-                command_buffer,
-                kv_cache_update,
-            );
+            layer.update_after_acceptance(accepted_suffix_indices, scatter_fn);
         }
     }
 
@@ -453,11 +459,11 @@ impl KVCache {
 
     pub fn clone_with_prefix_len(
         &self,
-        context: &MTLContext,
+        context: &B::Context,
         prefix_len: usize,
     ) -> Self {
         let new_total_len = prefix_len + self.max_suffix_length;
-        let data: Box<[KVCacheLayer]> = self
+        let data: Box<[KVCacheLayer<B>]> = self
             .data
             .iter()
             .map(|layer| {

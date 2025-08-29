@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc};
 
 use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::{Backend, MetalBackend, SamplingConfig},
     session::{
         session::Session, session_config::SessionConfig,
         session_context::SessionContext, session_input::SessionInput,
@@ -17,7 +17,7 @@ fn model_path() -> PathBuf {
 
 #[test]
 fn test_context_reuse() {
-    let mut session = create_session();
+    let mut session = create_session::<MetalBackend>();
 
     let system_prompt = "Name: Alice. Age: 30. Occupation: Engineer.";
     let context = build_context(&mut session, system_prompt);
@@ -34,7 +34,7 @@ fn test_context_reuse() {
 
 #[test]
 fn test_multiple_contexts() {
-    let mut session = create_session();
+    let mut session = create_session::<MetalBackend>();
 
     let ctx1 =
         build_context(&mut session, "Name: Alice. Occupation: Engineer.");
@@ -60,7 +60,7 @@ fn test_multiple_contexts() {
 
 #[test]
 fn test_context_extension() {
-    let mut session = create_session();
+    let mut session = create_session::<MetalBackend>();
     let initial_context =
         build_context(&mut session, "Name: Dave. Occupation: Nurse.");
 
@@ -94,7 +94,7 @@ fn test_context_extension() {
 
 #[test]
 fn test_deep_copy_isolated() {
-    let mut session = create_session();
+    let mut session = create_session::<MetalBackend>();
 
     let context =
         build_context(&mut session, "Name: Alice. Occupation: Singer.");
@@ -121,7 +121,7 @@ fn test_deep_copy_isolated() {
 
 #[test]
 fn test_performance_cached_vs_plain() {
-    let mut session = create_session();
+    let mut session = create_session::<MetalBackend>();
     let system_prompt = "
     Eve Smith is a talented 25-year-old professional dancer who lives in New York City. 
     She was born on March 15th, 1999, in a small town called Middlebury in Vermont to parents Robert and Sarah Smith. 
@@ -220,7 +220,7 @@ fn test_performance_cached_vs_plain() {
     assert!(duration_cached <= duration_plain);
 }
 
-fn create_session() -> Session {
+fn create_session<B: Backend>() -> Session<B> {
     let mut session = Session::new(model_path()).unwrap();
     session
         .load_with_session_config(SessionConfig::default())
@@ -229,10 +229,10 @@ fn create_session() -> Session {
     session
 }
 
-fn build_context(
-    session: &mut Session,
+fn build_context<B: Backend>(
+    session: &mut Session<B>,
     prompt: &str,
-) -> Rc<SessionContext> {
+) -> Rc<SessionContext<B>> {
     // Run the prompt once to build the context.
     let (_, context) = session
         .extend(
@@ -244,9 +244,9 @@ fn build_context(
     Rc::new(context)
 }
 
-fn ask_with_context(
-    session: &mut Session,
-    context: Option<Rc<SessionContext>>,
+fn ask_with_context<B: Backend>(
+    session: &mut Session<B>,
+    context: Option<Rc<SessionContext<B>>>,
     question: &str,
 ) -> String {
     session
@@ -262,8 +262,8 @@ fn ask_with_context(
         .text
 }
 
-fn ask_without_context(
-    session: &mut Session,
+fn ask_without_context<B: Backend>(
+    session: &mut Session<B>,
     question: &str,
 ) -> String {
     session

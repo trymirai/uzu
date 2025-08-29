@@ -7,28 +7,37 @@ use std::{
 };
 
 use half::{bf16, f16};
+use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
+use objc2::rc::Retained;
 
 use crate::{
     Array, ArrayElement, DataType,
-    backends::metal::{
-        ForwardPassState, MTLContext, MetalArray,
-        forward_pass::{
-            ArrayId,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            traces::DecoderActivationTrace,
+    backends::{
+        Context, KVCache, MetalBackend,
+        metal::{
+            DecoderExecutables, ForwardPassState, MTLContext, MetalArray,
+            ModelShape,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{
+                ArrayId, ForwardPassBuffers, SharedBuffers,
+                encodable_with_state::{
+                    EncodableWithState, EncodingParameters,
+                },
+                traces::DecoderActivationTrace,
+            },
         },
     },
     generator::{
         config::{
             ContextLength, GeneratorConfig, SamplingSeed, SpeculatorConfig,
         },
-        context::GeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
     parameters::{ParameterLoader, ParameterTree},
     speculators::empty_speculator::EmptySpeculator,
+    utils::{load_decoder_config, open_weights_file},
 };
 
 enum Transform {
@@ -136,28 +145,23 @@ impl TracerValidationResults {
 
 pub struct Tracer {
     model_path: PathBuf,
-    generator_context: GeneratorContext,
+
+    mtl_context: MTLContext,
+    command_buffer: Retained<MPSCommandBuffer>,
+    model_shape: ModelShape,
+    shared_buffers: Rc<RefCell<SharedBuffers>>,
+    scratch_buffers: ForwardPassBuffers,
+    kv_cache: KVCache<MetalBackend>,
+    executables: DecoderExecutables,
 }
 
 impl Tracer {
     pub fn new(model_path: &Path) -> Self {
-        let generator_config = GeneratorConfig::new(
-            1024,
-            SpeculatorConfig {
-                number_of_speculated_tokens: 0,
-                speculator: Arc::new(EmptySpeculator {}),
-            },
-            false,
+        Self::new_with_config(
+            model_path,
             SamplingSeed::Default,
             ContextLength::Default,
-        );
-        let generator_context =
-            GeneratorContext::new(model_path, &generator_config).unwrap();
-
-        Self {
-            model_path: model_path.to_path_buf(),
-            generator_context,
-        }
+        )
     }
 
     pub fn new_with_config(
@@ -175,27 +179,86 @@ impl Tracer {
             sampling_seed,
             max_prefix_length,
         );
-        let generator_context =
-            GeneratorContext::new(model_path, &generator_config).unwrap();
+
+        let mtl_context =
+            MTLContext::default().expect("Could not create Metal context");
+
+        let decoder_config = load_decoder_config(model_path)
+            .expect("Could not load decoder config");
+
+        let weights_file =
+            open_weights_file(model_path).expect("Could not load weights");
+        let weights_loader = ParameterLoader::new(&weights_file, &mtl_context)
+            .expect("Could not load weights");
+        let weights = weights_loader.tree();
+
+        let command_buffer =
+            MPSCommandBuffer::from_command_queue(&mtl_context.command_queue);
+
+        let model_shape = ModelShape::from_decoder_config(&decoder_config);
+
+        let compilation_config = Rc::new(CompilationConfig::default());
+
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
+            &mtl_context,
+            &decoder_config,
+            &model_shape,
+        )));
+        shared_buffers.borrow_mut().update_data(&weights);
+
+        let generate_suffix_length = generator_config.generate_suffix_length();
+        let max_prefix_length: usize = std::cmp::min(
+            generator_config.context_length,
+            decoder_config.context_length,
+        );
+        let max_suffix_length: usize = std::cmp::max(
+            generator_config.prefill_step_size,
+            generate_suffix_length,
+        );
+
+        let kv_cache = KVCache::new(
+            &mtl_context,
+            &model_shape,
+            max_prefix_length,
+            max_suffix_length,
+        );
+
+        let scratch_buffers = ForwardPassBuffers::new(
+            &mtl_context,
+            &model_shape,
+            max_prefix_length,
+            max_suffix_length,
+        );
+
+        let executables = DecoderExecutables::new(
+            &mtl_context,
+            &decoder_config,
+            &weights,
+            compilation_config.clone(),
+        );
 
         Self {
             model_path: model_path.to_path_buf(),
-            generator_context,
+            mtl_context,
+            command_buffer,
+            model_shape,
+            shared_buffers,
+            scratch_buffers,
+            kv_cache,
+            executables,
         }
     }
 
-    pub fn run(&self) -> TracerValidationResults {
+    pub fn run(&mut self) -> TracerValidationResults {
         let traces_path = self.model_path.join("traces.safetensors");
         if !traces_path.exists() {
             panic!("Traces file not found at {:?}", traces_path);
         }
         let traces_file =
             File::open(&traces_path).expect("Failed to open traces file");
-        let traces_loader = ParameterLoader::new(
-            &traces_file,
-            &self.generator_context.mtl_context,
-        )
-        .expect("Failed to create ParameterLoader for traces");
+        let traces_loader =
+            ParameterLoader::new(&traces_file, &self.mtl_context)
+                .expect("Failed to create ParameterLoader for traces");
         let traces_view = traces_loader.tree();
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(
@@ -221,49 +284,52 @@ impl Tracer {
             |row: usize, col: usize| -> bool { !mask[row][col] };
 
         let mut state = ForwardPassState::new(
-            self.generator_context.mtl_context.clone(),
-            &self.generator_context.model_shape,
-            &self.generator_context.scratch_buffers,
-            self.generator_context.kv_cache.clone(),
-            self.generator_context.shared_buffers.clone(),
+            &self.mtl_context,
+            &self.model_shape,
+            &self.scratch_buffers,
+            &mut self.kv_cache,
+            self.shared_buffers.clone(),
             &token_ids,
             &token_positions,
             true,
             Some(&external_bias_fn),
         );
 
-        let root_command_buffer = self
-            .generator_context
-            .command_buffer
-            .root_command_buffer()
-            .to_owned();
-        self.generator_context.executables.encode(
+        let root_command_buffer =
+            self.command_buffer.root_command_buffer().to_owned();
+        self.executables.encode(
             &mut state,
-            &self.generator_context.command_buffer,
+            &self.command_buffer,
             &EncodingParameters::new(false, false, true),
         );
-        self.generator_context.command_buffer.commit();
+        self.command_buffer.commit();
         root_command_buffer.wait_until_completed();
 
         let traces = state.traces.clone().unwrap();
-        let results =
-            self.validate_traces(token_ids.len(), &state, &traces_view, traces);
+        let results = Self::validate_traces(
+            &self.model_shape,
+            &self.executables,
+            token_ids.len(),
+            &state,
+            &traces_view,
+            traces,
+        );
         return results;
     }
 }
 
 impl Tracer {
     fn validate_traces(
-        &self,
+        model_shape: &ModelShape,
+        executables: &DecoderExecutables,
         suffix_length: usize,
         state: &ForwardPassState,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MetalBackend>,
         traces: Rc<RefCell<DecoderActivationTrace>>,
     ) -> TracerValidationResults {
         let mut results: Vec<TracerValidationResult> = Vec::new();
 
-        let data_type =
-            self.generator_context.model_shape.activation_data_type();
+        let data_type = model_shape.activation_data_type();
         let mut validate =
             |expected_array_path: &str,
              produced_array: &Ref<MetalArray>,
@@ -307,10 +373,7 @@ impl Tracer {
                 &layer_traces.borrow().attention.borrow(),
                 None,
             );
-            if self.generator_context.executables.layers[index]
-                .post_attention_norm
-                .is_some()
-            {
+            if executables.layers[index].post_attention_norm.is_some() {
                 validate(
                     path("post_attention_norm").as_str(),
                     &layer_traces.borrow().post_attention_norm.borrow(),
@@ -332,10 +395,7 @@ impl Tracer {
                 &layer_traces.borrow().mlp.borrow(),
                 None,
             );
-            if self.generator_context.executables.layers[index]
-                .post_mlp_norm
-                .is_some()
-            {
+            if executables.layers[index].post_mlp_norm.is_some() {
                 validate(
                     path("post_mlp_norm").as_str(),
                     &layer_traces.borrow().post_mlp_norm.borrow(),
@@ -360,7 +420,7 @@ impl Tracer {
         );
         validate("logits", &traces.borrow().logits.borrow(), None);
 
-        for index in 0..state.kv_cache.borrow().data.len() {
+        for index in 0..state.kv_cache.data.len() {
             let arrays =
                 state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
 
@@ -405,7 +465,7 @@ impl Tracer {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MetalBackend>,
         expected_array_path: String,
         produced_array: &Ref<MetalArray>,
         produced_transform: Option<Transform>,
@@ -612,7 +672,7 @@ impl Tracer {
         SourcePrecision: ArrayElement,
         TargetPrecision: NumCast,
     >(
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MetalBackend>,
         name: String,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name.as_str()).unwrap();

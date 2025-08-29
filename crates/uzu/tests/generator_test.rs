@@ -2,7 +2,7 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::{MetalBackend, SamplingConfig},
     generator::config::{ContextLength, SamplingSeed, SpeculatorConfig},
     session::{
         session::Session, session_config::SessionConfig,
@@ -33,7 +33,7 @@ fn run(
     config: SessionConfig,
     tokens_limit: u64,
 ) {
-    let mut session = Session::new(build_model_path()).unwrap();
+    let mut session = Session::<MetalBackend>::new(build_model_path()).unwrap();
     session.load_with_session_config(config).unwrap();
 
     let input = SessionInput::Text(text);

@@ -17,10 +17,15 @@ use mpsgraph::{
 use objc2::rc::{Retained, autoreleasepool};
 use thiserror::Error;
 use uzu::{
-    Array, DataType, DeviceContext,
-    backends::metal::{
-        MTLContext, MetalArray,
-        compilation_parameters::{BlockDevice, make_compilation_descriptor},
+    Array, DataType,
+    backends::{
+        Context,
+        metal::{
+            MTLContext, MetalArray,
+            compilation_parameters::{
+                BlockDevice, make_compilation_descriptor,
+            },
+        },
     },
     storage::{NSSearchPathDirectory, root_dir},
 };

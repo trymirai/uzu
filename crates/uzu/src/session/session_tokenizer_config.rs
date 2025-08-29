@@ -1,7 +1,7 @@
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::SamplingConfig,
     config::{GenerationConfig, LanguageModelConfig},
 };
 

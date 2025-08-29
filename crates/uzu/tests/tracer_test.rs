@@ -1,4 +1,5 @@
 mod common;
+
 use std::path::PathBuf;
 
 use uzu::tracer::Tracer;
@@ -20,7 +21,7 @@ fn test_tracer() {
         return;
     }
 
-    let tracer = Tracer::new(&model_path);
+    let mut tracer = Tracer::new(&model_path);
 
     let colored_text = |text: &str, valid: bool| {
         if valid {

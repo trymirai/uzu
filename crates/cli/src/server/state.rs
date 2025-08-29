@@ -7,13 +7,16 @@ use std::{
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::session::{
-    session::Session, session_config::SessionConfig,
-    session_context::SessionContext,
+use uzu::{
+    backends::MetalBackend,
+    session::{
+        session::Session, session_config::SessionConfig,
+        session_context::SessionContext,
+    },
 };
 
 pub struct ContextCache {
-    pub map: HashMap<String, Rc<SessionContext>>,
+    pub map: HashMap<String, Rc<SessionContext<MetalBackend>>>,
     pub order: VecDeque<String>,
     pub capacity: usize,
 }
@@ -30,8 +33,8 @@ impl ContextCache {
     pub fn insert(
         &mut self,
         key: String,
-        context: Rc<SessionContext>,
-    ) -> Option<(String, Rc<SessionContext>)> {
+        context: Rc<SessionContext<MetalBackend>>,
+    ) -> Option<(String, Rc<SessionContext<MetalBackend>>)> {
         if self.map.contains_key(&key) {
             return None;
         }
@@ -51,20 +54,20 @@ impl ContextCache {
     pub fn get(
         &self,
         key: &str,
-    ) -> Option<Rc<SessionContext>> {
+    ) -> Option<Rc<SessionContext<MetalBackend>>> {
         self.map.get(key).cloned()
     }
 }
 
-pub struct SessionWrapper(Mutex<Session>);
+pub struct SessionWrapper(Mutex<Session<MetalBackend>>);
 unsafe impl Send for SessionWrapper {}
 unsafe impl Sync for SessionWrapper {}
 impl SessionWrapper {
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: Session<MetalBackend>) -> Self {
         Self(Mutex::new(session))
     }
 
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, Session<MetalBackend>> {
         self.0.lock().unwrap()
     }
 }
@@ -78,7 +81,7 @@ pub struct SessionState {
 unsafe impl Send for SessionState {}
 unsafe impl Sync for SessionState {}
 
-pub fn load_session(model_path: String) -> Session {
+pub fn load_session(model_path: String) -> Session<MetalBackend> {
     let style_bold = Style::new().bold();
 
     let model_path_buf = PathBuf::from(model_path);

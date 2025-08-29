@@ -1,11 +1,3 @@
-use super::context::GeneratorContext;
-use crate::backends::metal::{
-    ForwardPassState,
-    forward_pass::encodable_with_state::{
-        EncodableWithState, EncodingParameters,
-    },
-};
-
 pub struct GeneratorEncodedTask {
     pub key: String,
 }
@@ -34,38 +26,5 @@ impl GeneratorRunTask {
             "tokens:{}_suffix:{}",
             tokens_count, self.expected_amount_of_new_tokens
         )
-    }
-
-    pub fn create_state(
-        &self,
-        context: &mut GeneratorContext,
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-    ) -> ForwardPassState {
-        let state = ForwardPassState::new(
-            context.mtl_context.clone(),
-            &context.model_shape,
-            &context.scratch_buffers,
-            context.kv_cache.clone(),
-            context.shared_buffers.clone(),
-            &self.token_ids,
-            &self.token_positions,
-            false,
-            external_bias_fn,
-        );
-
-        return state;
-    }
-
-    pub fn build_encoded_task(
-        &self,
-        context: &GeneratorContext,
-        state: &mut ForwardPassState,
-        parameters: &EncodingParameters,
-        key: String,
-    ) -> GeneratorEncodedTask {
-        context.executables.encode(state, &context.command_buffer, parameters);
-        GeneratorEncodedTask {
-            key,
-        }
     }
 }

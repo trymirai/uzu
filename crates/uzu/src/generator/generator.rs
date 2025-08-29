@@ -1,62 +1,64 @@
-use std::{collections::HashMap, path::Path, time::Instant};
-
-use mpsgraph::CommandBuffer;
+use std::{path::Path, rc::Rc};
 
 use super::{
     config::GeneratorConfig,
-    context::GeneratorContext,
     result::{GenerateResult, PrefillResult},
-    tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
 use crate::{
     Array,
-    backends::metal::{
-        forward_pass::{
-            ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            kv_cache::INVALID_POSITION,
-        },
-        sampling_config::SamplingConfig,
+    backends::{
+        Backend, Context, RunResult, SamplingConfig, kv_cache::INVALID_POSITION,
     },
-    env_utils::MetalEnvVar,
     generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
+    parameters::ParameterLoader,
+    utils::{load_decoder_config, open_weights_file},
 };
 
-pub struct Generator {
+pub struct Generator<B: Backend> {
     pub config: GeneratorConfig,
     pub tokens: Vec<u64>,
-
-    pub context: GeneratorContext,
-    encoded_tasks: HashMap<String, GeneratorEncodedTask>,
-    registered_prefix_len: usize,
+    backend: B,
 }
 
-impl Generator {
+impl<B: Backend> Generator<B> {
     pub fn new(
         model_path: &Path,
         config: GeneratorConfig,
     ) -> Result<Self, GeneratorError> {
-        let context = GeneratorContext::new(model_path, &config)?;
+        let context = Rc::new(
+            B::Context::default()
+                .ok_or(GeneratorError::UnableToCreateMetalContext)?,
+        );
 
-        let prefill_step_size = config.prefill_step_size;
-        let generate_suffix_length = config.generate_suffix_length();
+        let decoder_config = load_decoder_config(model_path)
+            .map_err(|_| GeneratorError::UnableToLoadConfig)?;
+
+        let weights_file = open_weights_file(model_path)
+            .map_err(|_| GeneratorError::UnableToLoadWeights)?;
+        let weights_loader =
+            ParameterLoader::new(&weights_file, context.as_ref())
+                .map_err(|_| GeneratorError::UnableToLoadWeights)?;
+        let weights = weights_loader.tree();
+
+        let backend =
+            B::new(context.clone(), &config, &decoder_config, &weights)?;
 
         let mut generator = Self {
-            config: config,
+            config,
             tokens: Vec::new(),
-            context,
-            encoded_tasks: HashMap::new(),
-            registered_prefix_len: 0,
+            backend,
         };
 
         //Warmup
-        generator.warmup(prefill_step_size);
-        generator.warmup(generate_suffix_length);
+        generator.warmup(generator.config.prefill_step_size);
+        generator.warmup(generator.config.generate_suffix_length());
 
         return Ok(generator);
     }
+}
 
+impl<B: Backend> Generator<B> {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
@@ -103,7 +105,7 @@ impl Generator {
         padded_positions
             .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
 
-        let mut last_state: Option<ForwardPassState> = None;
+        let mut last_sampling_output: Option<B::Array> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -116,21 +118,18 @@ impl Generator {
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
 
-            objc2::rc::autoreleasepool(|_pool| {
-                let _ = last_state.take();
-            });
+            // We need to release the reference to sampling output, because will write into the same buffer.
+            let _ = last_sampling_output.take();
 
-            let task = GeneratorRunTask {
-                token_ids: tokens_for_step.to_vec(),
-                token_positions: positions_for_step.to_vec(),
-                expected_amount_of_new_tokens: self.config.prefill_step_size,
-            };
-
-            let (state, run_time) = self.run_model(
-                task,
-                false,
-                self.allow_pre_encode(),
+            let RunResult {
+                sampling_output,
+                duration,
+            } = self.backend.run(
+                tokens_for_step,
+                positions_for_step,
+                self.config.prefill_step_size,
                 Some(sampling_config.clone()),
+                false,
             );
 
             // Register the *accepted* real tokens from this step (exclude the
@@ -151,22 +150,15 @@ impl Generator {
                 }
 
                 if !positions_for_step.is_empty() {
-                    self.context
-                        .kv_cache
-                        .borrow_mut()
-                        .register_accepted_tokens(&positions_for_step);
-                    if let Some(&last_idx) = positions_for_step.last() {
-                        self.registered_prefix_len = last_idx + 1;
-                    }
+                    self.backend.accept_tokens(&positions_for_step.as_slice());
                 }
             }
 
-            last_state = Some(state);
-            run_times.push(run_time);
+            last_sampling_output = sampling_output;
+            run_times.push(duration);
         }
 
-        let mut final_state = last_state.unwrap();
-        let argmax_tokens = self.gpu_sample(&mut final_state);
+        let argmax_tokens = sampling_output_into_vec(&last_sampling_output);
 
         let mut accepted_token_indices: Vec<usize> = Vec::new();
         let mut accepted_tokens: Vec<u64> = Vec::new();
@@ -193,11 +185,9 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut final_state, &accepted_token_indices);
+        self.backend.accept_tokens(accepted_token_indices.as_slice());
 
         self.tokens.extend(accepted_tokens.clone());
-
-        self.sync_prefix();
 
         PrefillResult {
             tokens: accepted_tokens,
@@ -242,20 +232,19 @@ impl Generator {
             )
             .collect();
 
-        let task = GeneratorRunTask {
-            token_ids: padded_tokens,
-            token_positions: padded_positions,
-            expected_amount_of_new_tokens: 1,
-        };
-
-        let (mut state, run_time) = self.run_model(
-            task,
-            false,
-            self.allow_pre_encode(),
+        let RunResult {
+            sampling_output,
+            duration,
+        } = self.backend.run(
+            padded_tokens.as_slice(),
+            padded_positions.as_slice(),
+            1,
             Some(sampling_config),
+            false,
         );
 
-        let argmax_tokens = self.gpu_sample(&mut state);
+        let argmax_tokens = sampling_output_into_vec(&sampling_output);
+        drop(sampling_output);
 
         let mut accepted_token_indices = Vec::new();
         let mut accepted_tokens = Vec::new();
@@ -277,172 +266,62 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut state, &accepted_token_indices);
+        self.backend.accept_tokens(accepted_token_indices.as_slice());
 
         self.tokens.extend(accepted_tokens.clone());
-        self.sync_prefix();
 
         GenerateResult {
             tokens: accepted_tokens,
-            forwardpass_duration: run_time,
+            forwardpass_duration: duration,
         }
     }
 
-    pub fn clear_cache(&mut self) {
-        objc2::rc::autoreleasepool(|_pool| {
-            self.encoded_tasks.clear();
-        });
+    pub fn prefix_length(&self) -> usize {
+        self.backend.prefix_length()
+    }
+
+    pub fn backend_state(&self) -> B::State {
+        self.backend.clone_state()
+    }
+
+    pub fn set_backend_state(
+        &mut self,
+        state: &B::State,
+    ) {
+        self.backend.restore_state(state);
     }
 
     pub fn reset_state(&mut self) {
-        self.context.kv_cache.borrow_mut().clear();
+        self.backend.reset_state();
         self.tokens.clear();
-        self.registered_prefix_len = 0;
-        self.encoded_tasks.clear();
-    }
-
-    pub fn prefix_len(&self) -> usize {
-        self.registered_prefix_len
     }
 
     fn warmup(
         &mut self,
         suffix_length: usize,
     ) {
-        let task = GeneratorRunTask {
-            token_ids: vec![0; suffix_length],
-            token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            expected_amount_of_new_tokens: suffix_length,
-        };
-
-        let (_, _) = self.run_model(task, true, false, None);
-    }
-
-    fn run_model(
-        &mut self,
-        task: GeneratorRunTask,
-        warmup: bool,
-        allow_pre_encode: bool,
-        sampling_config: Option<SamplingConfig>,
-    ) -> (ForwardPassState, f64) {
-        objc2::rc::autoreleasepool(|_pool| {
-            let run_start = Instant::now();
-
-            let mut state = task.create_state(&mut self.context, None);
-            state.sampling_config = sampling_config;
-
-            let encoded_task_key = task.encoded_task_key(self.tokens.len());
-
-            if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                //Nothing
-            } else {
-                self.context.reset_command_buffer();
-
-                _ = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, true, false),
-                    encoded_task_key.clone(),
-                );
-            }
-
-            let root_command_buffer =
-                self.context.command_buffer.root_command_buffer().to_owned();
-
-            if !warmup {
-                self.context.gpu_sampler.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &EncodingParameters::new(warmup, true, false),
-                );
-            }
-
-            self.context.command_buffer.commit_and_continue();
-
-            if allow_pre_encode {
-                let next_task_key: String =
-                    task.encoded_task_key(self.tokens.len() + 1);
-
-                let next_encoded_task = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, false, false)
-                        .with_projection(1),
-                    next_task_key.clone(),
-                );
-
-                self.encoded_tasks
-                    .insert(next_task_key.clone(), next_encoded_task);
-            }
-
-            root_command_buffer.wait_until_completed();
-            let run_time = run_start.elapsed().as_secs_f64();
-
-            (state, run_time)
-        })
-    }
-
-    fn gpu_sample(
-        &mut self,
-        state: &mut ForwardPassState,
-    ) -> Vec<u64> {
-        let sampling_output = state.sampling_output.as_ref()
-            .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
-
-        let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer.as_view::<u32>().unwrap();
-        let batch_size = output_buffer.shape()[0];
-
-        let mut result = Vec::with_capacity(batch_size);
-        for i in 0..batch_size {
-            result.push(output_view[[i]] as u64);
-        }
-
-        result
-    }
-
-    fn update_kv_cache(
-        &mut self,
-        _state: &mut ForwardPassState,
-        accepted_token_indices: &[usize],
-    ) {
-        let command_buffer = CommandBuffer::from_command_queue(
-            &self.context.mtl_context.command_queue,
+        let _ = self.backend.run(
+            vec![0; suffix_length].as_slice(),
+            (0..suffix_length).collect::<Vec<usize>>().as_slice(),
+            suffix_length,
+            None,
+            true,
         );
+    }
+}
 
-        self.context.kv_cache.borrow_mut().update_after_acceptance(
-            accepted_token_indices,
-            &command_buffer,
-            &self.context.kv_cache_update,
-        );
+fn sampling_output_into_vec<A: Array>(sampling_output: &Option<A>) -> Vec<u64> {
+    let buffer = sampling_output
+        .as_ref()
+        .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
-        command_buffer.commit();
+    let view = buffer.as_view::<u32>().unwrap();
+    let batch_size = buffer.shape()[0];
+
+    let mut result = Vec::with_capacity(batch_size);
+    for i in 0..batch_size {
+        result.push(view[[i]] as u64);
     }
 
-    fn allow_pre_encode(&self) -> bool {
-        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
-
-        let result = self.config.allow_pre_encode && !metal_debug_active;
-
-        result
-    }
-
-    fn sync_prefix(&mut self) {
-        if self.tokens.is_empty() {
-            return;
-        }
-
-        let desired_prefix_len = self.tokens.len() - 1;
-        if desired_prefix_len > self.registered_prefix_len {
-            let positions: Vec<usize> =
-                (self.registered_prefix_len..desired_prefix_len).collect();
-            if !positions.is_empty() {
-                self.context
-                    .kv_cache
-                    .borrow_mut()
-                    .register_accepted_tokens(&positions);
-            }
-            self.registered_prefix_len = desired_prefix_len;
-        }
-    }
+    result
 }

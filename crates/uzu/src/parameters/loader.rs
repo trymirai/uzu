@@ -10,7 +10,10 @@ use super::safetensors_metadata::{
     HashMetadata as STMetadata, HeaderLoadingError,
     read_metadata as read_st_metadata,
 };
-use crate::{Array, DataType, DeviceContext};
+use crate::{
+    Array, DataType,
+    backends::{Backend, Context},
+};
 
 pub struct ParameterMetadata {
     shape: Box<[usize]>,
@@ -61,22 +64,22 @@ pub enum ParameterLoaderError {
     ArrayLoadingError(#[from] std::io::Error),
 }
 
-pub struct ParameterLoader<'context, 'file, C: DeviceContext>
+pub struct ParameterLoader<'context, 'file, B: Backend + ?Sized>
 where
     'file: 'context,
 {
-    context: &'context C,
+    context: &'context B::Context,
     index: HashMap<String, ParameterMetadata>,
     file: &'file File,
 }
 
-impl<'file, 'context, C: DeviceContext> ParameterLoader<'file, 'context, C>
+impl<'file, 'context, B: Backend + ?Sized> ParameterLoader<'file, 'context, B>
 where
     'file: 'context,
 {
     pub fn new(
         file: &'file File,
-        context: &'context C,
+        context: &'context B::Context,
     ) -> Result<Self, HeaderLoadingError> {
         let (global_offset, st_metadata) = read_st_metadata(file)?;
         let index = st_metadata_into_index(global_offset, st_metadata);
@@ -94,7 +97,7 @@ where
     pub fn get(
         &self,
         key: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
+    ) -> Result<B::Array, ParameterLoaderError> {
         let metadata_entry = self
             .index
             .get(key)
@@ -132,7 +135,7 @@ where
         Ok(())
     }
 
-    pub fn tree<'loader>(&'loader self) -> ParameterTree<'loader, C> {
+    pub fn tree<'loader>(&'loader self) -> ParameterTree<'loader, B> {
         ParameterTree {
             loader: self,
             prefix: None,
@@ -140,13 +143,13 @@ where
     }
 }
 
-pub struct ParameterTree<'loader, C: DeviceContext> {
-    loader: &'loader ParameterLoader<'loader, 'loader, C>,
+pub struct ParameterTree<'loader, B: Backend + ?Sized> {
+    loader: &'loader ParameterLoader<'loader, 'loader, B>,
     prefix: Option<String>,
 }
 
-impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
-    pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, C>) -> Self {
+impl<'loader, B: Backend + ?Sized> ParameterTree<'loader, B> {
+    pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, B>) -> Self {
         Self {
             loader,
             prefix: None,
@@ -189,7 +192,7 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
     pub fn leaf(
         &self,
         name: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
+    ) -> Result<B::Array, ParameterLoaderError> {
         self.loader.get(&self.join_prefix(name))
     }
 

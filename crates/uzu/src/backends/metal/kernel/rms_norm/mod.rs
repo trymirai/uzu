@@ -1,4 +1,4 @@
-use std::{mem::size_of, rc::Rc};
+use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
@@ -8,11 +8,16 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
+    backends::{
+        MetalBackend,
+        metal::{
+            MTLContext, MTLError,
+            forward_pass::{
+                ArrayId, ForwardPassState,
+                encodable_with_state::{
+                    EncodableWithState, EncodingParameters,
+                },
+            },
         },
     },
     config::{RMSNormConfig, UpcastMode},
@@ -370,7 +375,7 @@ impl RMSNormKernelEncodable {
         config: RMSNormConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
     ) -> Result<Self, RMSNormError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
@@ -497,7 +502,7 @@ impl QKNormKernelEncodable {
         query_config: Option<RMSNormConfig>,
         key_config: Option<RMSNormConfig>,
         qkv_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
         num_q_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,

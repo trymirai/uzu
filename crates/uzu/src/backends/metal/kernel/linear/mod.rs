@@ -1,17 +1,22 @@
-use std::rc::Rc;
-
 use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulKernel};
-use super::{KernelDataType, TensorAddBias};
+use super::{
+    KernelDataType, TensorAddBias,
+    quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulKernel},
+};
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
+    backends::{
+        MetalBackend,
+        metal::{
+            MTLContext, MTLError,
+            forward_pass::{
+                ArrayId, ForwardPassState,
+                encodable_with_state::{
+                    EncodableWithState, EncodingParameters,
+                },
+            },
         },
     },
     config::QuantizationConfig,
@@ -42,7 +47,7 @@ impl QuantizedLinearKernelBlock {
         config: &QuantizationConfig,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
@@ -112,29 +117,33 @@ impl QuantizedLinearKernelBlock {
             unsafe { weights.mtl_buffer() }.to_owned();
 
         // Optional trainable bias support
-        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf("biases") {
-            Ok(mut biases) => {
-                if biases.shape() != [output_dim] {
-                    return Err(MTLError::Generic(format!(
-                        "Bias shape mismatch: got {:?}, expected [{:?}]",
-                        biases.shape(), output_dim
-                    )));
-                }
-                if biases.data_type() != kernel_data_type {
-                    return Err(MTLError::Generic(format!(
-                        "Bias dtype mismatch: got {:?}, expected {:?}",
-                        biases.data_type(), kernel_data_type
-                    )));
-                }
-                let bias_add_kernel = Some(TensorAddBias::new(
-                    mtl_context,
-                    KernelDataType::from(kernel_data_type),
-                )?);
-                let biases_buffer: MTLBuffer = unsafe { biases.mtl_buffer() }.to_owned();
-                (bias_add_kernel, Some(biases_buffer))
-            },
-            Err(_) => (None, None),
-        };
+        let (bias_add_kernel, biases_buffer) =
+            match parameter_tree.leaf("biases") {
+                Ok(mut biases) => {
+                    if biases.shape() != [output_dim] {
+                        return Err(MTLError::Generic(format!(
+                            "Bias shape mismatch: got {:?}, expected [{:?}]",
+                            biases.shape(),
+                            output_dim
+                        )));
+                    }
+                    if biases.data_type() != kernel_data_type {
+                        return Err(MTLError::Generic(format!(
+                            "Bias dtype mismatch: got {:?}, expected {:?}",
+                            biases.data_type(),
+                            kernel_data_type
+                        )));
+                    }
+                    let bias_add_kernel = Some(TensorAddBias::new(
+                        mtl_context,
+                        KernelDataType::from(kernel_data_type),
+                    )?);
+                    let biases_buffer: MTLBuffer =
+                        unsafe { biases.mtl_buffer() }.to_owned();
+                    (bias_add_kernel, Some(biases_buffer))
+                },
+                Err(_) => (None, None),
+            };
 
         let g = config.group_size;
         let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
@@ -246,7 +255,9 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
 
         encoder.end_encoding();
 
-        if let (Some(bias_add), Some(bias_buf)) = (&self.bias_add_kernel, &self.biases_buffer) {
+        if let (Some(bias_add), Some(bias_buf)) =
+            (&self.bias_add_kernel, &self.biases_buffer)
+        {
             let total_len = batch_size * self.output_dim;
             let retained_cb = root_command_buffer.to_owned();
             bias_add.encode_into_command_buffer(

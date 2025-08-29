@@ -1,11 +1,10 @@
-use std::rc::Rc;
-
 use mpsgraph::{DequantizationArguments, Graph, Tensor};
 use objc2::rc::Retained;
 
-use super::{super::MTLContext, GraphConstructionError, load_constant};
+use super::{GraphConstructionError, load_constant};
 use crate::{
     DataType,
+    backends::MetalBackend,
     config::{
         ConfigDataType, LinearConfig, QuantizationConfig, QuantizationMode,
     },
@@ -17,7 +16,7 @@ fn full_precision_weights_subgraph<const N: usize>(
     precision: DataType,
     input_dim: usize,
     output_dims: [usize; N],
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let output_dim_sum: usize = output_dims.iter().sum();
     load_constant(
@@ -34,7 +33,7 @@ fn quantized_weights_subgraph<const N: usize>(
     config: &QuantizationConfig,
     input_dim: usize,
     output_dims: [usize; N],
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     if config.weight_quantization_mode != QuantizationMode::UInt4 {
         return Err(GraphConstructionError::IncompatibleDataTypes {
@@ -86,7 +85,7 @@ fn biases_subgraph<const N: usize>(
     graph: &Graph,
     precision: DataType,
     output_dims: [usize; N],
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let output_dim_sum: usize = output_dims.iter().sum();
     load_constant(graph, parameter_tree, "biases", &[output_dim_sum], precision)
@@ -103,7 +102,7 @@ fn lora_weights_subgraph<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     lora_rank: usize,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<LoraWeights, GraphConstructionError> {
     let down_weights = load_constant(
         graph,
@@ -137,7 +136,7 @@ fn full_precision_matmul_subgraph<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let weights = full_precision_weights_subgraph::<N>(
         graph,
@@ -163,7 +162,7 @@ fn quantized_matmul_subgraph<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let weights = quantized_weights_subgraph::<N>(
         graph,
@@ -182,7 +181,7 @@ fn lora_subgraph<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let lora_weights = lora_weights_subgraph(
         graph,
@@ -242,7 +241,7 @@ fn qlora_matmul_subgraph<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let quantized_matmul_result = quantized_matmul_subgraph::<N>(
         graph,
@@ -283,7 +282,7 @@ pub fn linear_subgraph<const N: usize>(
     output_dims: [usize; N],
     has_biases: bool,
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let matmul_result = match config {
         LinearConfig::FullPrecision {

@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use bytemuck;
-use ndarray::{ArrayView, ArrayViewMut, IxDyn};
+use ndarray::{ArrayView, ArrayViewMut, Dimension, IxDyn};
 use thiserror::Error;
 
 use crate::{ArrayElement, DataType};
@@ -48,6 +50,14 @@ pub trait Array {
 
     /// Returns a mutable reference to the device buffer containing the array's data.
     fn buffer_mut(&mut self) -> &mut [u8];
+
+    fn copy_slice(
+        &mut self,
+        source: &Self,
+        axis: usize,
+        src_range: Range<usize>,
+        dst_offset: usize,
+    );
 
     /// Returns the size of the array in memory.
     fn size_in_bytes(&self) -> usize {
@@ -132,5 +142,29 @@ pub trait Array {
             self.as_slice_mut()?,
         )
         .unwrap())
+    }
+
+    /// Copy data from the given ndarray view into an already allocated device array.
+    /// The destination buffer must have enough capacity to hold the view element count.
+    fn copy_from_view<T: ArrayElement, D: Dimension>(
+        &mut self,
+        view: ArrayView<T, D>,
+    ) {
+        // Ensure data types match
+        assert_eq!(self.data_type(), T::data_type());
+
+        let dst_slice =
+            self.as_slice_mut::<T>().expect("Destination slice not accessible");
+
+        if let Some(src_slice) = view.as_slice_memory_order() {
+            assert!(src_slice.len() <= dst_slice.len());
+            dst_slice[..src_slice.len()].copy_from_slice(src_slice);
+        } else {
+            // Fallback: iterate element-wise
+            assert!(view.len() <= dst_slice.len());
+            for (d, s) in dst_slice.iter_mut().zip(view.iter()) {
+                *d = *s;
+            }
+        }
     }
 }

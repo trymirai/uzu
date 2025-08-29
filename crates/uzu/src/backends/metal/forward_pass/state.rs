@@ -6,14 +6,13 @@ use serde::{Deserialize, Serialize};
 use super::{
     super::{MTLContext, MetalArray},
     buffers::ForwardPassBuffers,
-    kv_cache::KVCache,
     model_shape::ModelShape,
 };
 use crate::{
-    DataType, DeviceContext,
-    backends::metal::{
-        forward_pass::traces::DecoderActivationTrace,
-        sampling_config::SamplingConfig,
+    Array, DataType,
+    backends::{
+        Context, KVCache, MetalBackend, SamplingConfig,
+        metal::forward_pass::traces::DecoderActivationTrace,
     },
     config::{DecoderConfig, EmbeddingConfig},
     parameters::ParameterTree,
@@ -89,7 +88,7 @@ impl EmbeddingsBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
     ) {
         let embeddings_tree = parameter_tree.subtree("embedding").unwrap();
         match self {
@@ -158,7 +157,7 @@ impl RopeBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
         rope_name: String,
     ) {
         let rope_tree = parameter_tree.subtree(rope_name.as_str()).unwrap();
@@ -206,7 +205,7 @@ impl SharedBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MetalBackend>,
     ) {
         self.embeddings.update_data(parameter_tree);
         self.global_rope
@@ -317,8 +316,8 @@ impl AuxBuffers {
     }
 }
 
-pub struct ForwardPassState {
-    context: Rc<MTLContext>,
+pub struct ForwardPassState<'a> {
+    context: &'a MTLContext,
     /// [suffix_length] - u64
     token_ids: ArrayCell,
     /// [suffix_length] - i32
@@ -327,7 +326,7 @@ pub struct ForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
     logits: ArrayCell,
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub kv_cache: &'a mut KVCache<MetalBackend>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
     /// [suffix_length] - u32 sampling output buffer
@@ -337,12 +336,12 @@ pub struct ForwardPassState {
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
 }
 
-impl ForwardPassState {
+impl<'a> ForwardPassState<'a> {
     pub fn new(
-        context: Rc<MTLContext>,
+        context: &'a MTLContext,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
-        kv_cache: Rc<RefCell<KVCache>>,
+        kv_cache: &'a mut KVCache<MetalBackend>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
@@ -358,9 +357,9 @@ impl ForwardPassState {
             token_positions.len()
         );
         assert!(
-            suffix_length <= kv_cache.borrow().max_suffix_length(),
+            suffix_length <= kv_cache.max_suffix_length(),
             "KV cache size can only accomodate a suffix of length up to {}, but tried to use a suffix of length {}",
-            kv_cache.borrow().max_suffix_length(),
+            kv_cache.max_suffix_length(),
             suffix_length
         );
         let aux_buffers = AuxBuffers::new(scratch, model_shape, suffix_length);
@@ -375,7 +374,7 @@ impl ForwardPassState {
                 DataType::U64,
             )
         };
-        context.copy_from_view(&mut token_ids_array, token_ids.into());
+        token_ids_array.copy_from_view(token_ids.into());
         let token_ids_refcell = RefCell::new(token_ids_array);
 
         // --------------------
@@ -390,16 +389,14 @@ impl ForwardPassState {
         };
         let token_positions_i32: Box<[i32]> =
             token_positions.iter().map(|p| *p as i32).collect();
-        context.copy_from_view(
-            &mut token_positions_array,
-            token_positions_i32.as_ref().into(),
-        );
+        token_positions_array
+            .copy_from_view(token_positions_i32.as_ref().into());
         let token_positions_refcell = RefCell::new(token_positions_array);
 
         // --------------------
         // Attention Bias
         // --------------------
-        let prefix_length = kv_cache.borrow().max_prefix_length();
+        let prefix_length = kv_cache.max_prefix_length();
         let attention_bias_shape =
             [suffix_length, suffix_length + prefix_length];
         let act_dtype = model_shape.activation_data_type();
@@ -420,11 +417,10 @@ impl ForwardPassState {
                 })
                 .collect();
 
-        kv_cache.borrow().fill_attention_bias(
+        kv_cache.fill_attention_bias(
             &mut attention_bias_map,
             token_positions,
             suffix_length,
-            &context,
             external_bias_fn,
         );
 
@@ -495,10 +491,10 @@ impl ForwardPassState {
             ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
             ArrayId::Keys(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].keys.clone()
+                self.kv_cache.data[layer_index].keys.clone()
             },
             ArrayId::Values(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].values.clone()
+                self.kv_cache.data[layer_index].values.clone()
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
@@ -609,12 +605,6 @@ impl ForwardPassState {
         destination_array
             .borrow_mut()
             .copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
-    }
-}
-
-impl Drop for ForwardPassState {
-    fn drop(&mut self) {
-        // Nothing extra to clean up now that heap is removed.
     }
 }
 

@@ -1,23 +1,27 @@
 #![allow(dead_code)]
-use std::{
-    cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc, time::Instant,
-};
+use std::{cell::RefCell, fs::File, path::Path, rc::Rc, time::Instant};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::metal::{
-        DecoderExecutables, ForwardPassState, KVCache, MTLContext, ModelShape,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{
-            ForwardPassBuffers, SharedBuffers,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
+    backends::{
+        KVCache, MetalBackend,
+        metal::{
+            DecoderExecutables, ForwardPassState, MTLContext, ModelShape,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{
+                ForwardPassBuffers, SharedBuffers,
+                encodable_with_state::{
+                    EncodableWithState, EncodingParameters,
+                },
+            },
+            utils::{CaptureOptions, StdoutCapture},
         },
-        utils::{CaptureOptions, StdoutCapture},
     },
-    config::{ModelMetadata, decoder::DecoderConfig},
+    config::decoder::DecoderConfig,
     parameters::ParameterLoader,
+    utils::{load_decoder_config, open_weights_file},
 };
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecoderTestResult {
@@ -29,74 +33,37 @@ pub struct DecoderTestResult {
     pub error: Option<String>,
 }
 
-struct DecoderTestContext {
-    mtl_context: Rc<MTLContext>,
-    mtl_command_queue: metal::CommandQueue,
-    state: ForwardPassState,
+struct DecoderTestContext<'c> {
+    context: &'c MTLContext,
+    state: ForwardPassState<'c>,
     executables: DecoderExecutables,
     suffix_length: usize,
     _scratch: ForwardPassBuffers,
 }
 
-impl DecoderTestContext {
-    fn new(model_dir: &str) -> Result<(Self, Rc<DecoderConfig>), String> {
-        let model_path = Path::new(model_dir);
-        let config_path = model_path.join("config.json");
-        if !config_path.exists() {
-            return Err(format!(
-                "Decoder config file not found at {:?}",
-                config_path
-            ));
-        }
-        let config_file = File::open(&config_path)
-            .map_err(|e| format!("Failed to open config: {}", e))?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|e| format!("Failed to parse config: {}", e))?;
-        let decoder_config =
-            Rc::new(model_metadata.model_config.decoder_config.clone());
-        let mtl_device = metal::Device::system_default()
-            .ok_or("No Metal device available".to_string())?;
-        let mtl_command_queue = mtl_device.new_command_queue();
+// ----------------------------------------------------------------
+// Determine the heap size we need for the worst-case forward pass
+// *and* all parameters that will be loaded from the safetensors file.
+// -----------------------------------------------------------------
+const MAX_PREFIX_LENGTH: usize = 8192; // Example value, can be passed dynamically
+const MAX_SUFFIX_LENGTH: usize = 1; // Example value, can be passed dynamically
 
+impl<'c> DecoderTestContext<'c> {
+    fn new(
+        mtl_context: &'c MTLContext,
+        decoder_config: &DecoderConfig,
+        weights_file: &File,
+        kv_cache: &'c mut KVCache<MetalBackend>,
+    ) -> Result<Self, String> {
         let compilation_config = Rc::new(CompilationConfig::default());
-
-        // -----------------------------------------------------------------
-        // Determine the heap size we need for the worst-case forward pass
-        // *and* all parameters that will be loaded from the safetensors file.
-        // -----------------------------------------------------------------
-        let max_prefix_length = 8192; // Example value, can be passed dynamically
-        let max_suffix_length = 1; // Example value, can be passed dynamically
-
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         // Read safetensors header to know the total size of all tensors
         // so we can make the heap large enough to store them.
-        let weights_path = model_path.join("model.safetensors");
-        if !weights_path.exists() {
-            return Err(format!(
-                "Decoder weights file not found at {:?}",
-                weights_path
-            ));
-        }
-
-        let mtl_context = Rc::new(
-            MTLContext::new(mtl_device.clone(), mtl_command_queue.clone())
-                .map_err(|e| format!("Failed to create MetalContext: {}", e))?,
-        );
-
-        let weights_file = File::open(&weights_path)
-            .map_err(|e| format!("Failed to open weights: {}", e))?;
-        let loader = ParameterLoader::new(&weights_file, &mtl_context)
+        let loader = ParameterLoader::new(&weights_file, mtl_context)
             .map_err(|e| format!("Failed to create ParameterLoader: {}", e))?;
         let root_loader_view = loader.tree();
 
-        let kv_cache = Rc::new(RefCell::new(KVCache::new(
-            &mtl_context,
-            &model_shape,
-            max_prefix_length,
-            max_suffix_length,
-        )));
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
             &mtl_context,
             &decoder_config,
@@ -104,22 +71,22 @@ impl DecoderTestContext {
         )));
         shared_buffers.borrow_mut().update_data(&root_loader_view);
         let token_ids: Vec<u64> =
-            (0..max_suffix_length).map(|i| (i % 1000) as u64).collect();
-        let token_positions: Vec<usize> = (0..max_suffix_length).collect();
+            (0..MAX_SUFFIX_LENGTH).map(|i| (i % 1000) as u64).collect();
+        let token_positions: Vec<usize> = (0..MAX_SUFFIX_LENGTH).collect();
 
         // Scratch buffers sized for the maximum prefix/suffix lengths in this test
         let scratch_buffers = ForwardPassBuffers::new(
             &mtl_context,
             &model_shape,
-            max_prefix_length,
-            max_suffix_length,
+            MAX_PREFIX_LENGTH,
+            MAX_SUFFIX_LENGTH,
         );
 
         let state = ForwardPassState::new(
-            mtl_context.clone(),
+            mtl_context,
             &model_shape,
             &scratch_buffers,
-            kv_cache.clone(),
+            kv_cache,
             shared_buffers.clone(),
             &token_ids,
             &token_positions,
@@ -128,29 +95,25 @@ impl DecoderTestContext {
         );
 
         let executables = DecoderExecutables::new(
-            mtl_context.clone(),
-            decoder_config.clone(),
+            mtl_context,
+            &decoder_config,
             &root_loader_view,
             compilation_config.clone(),
         );
-        Ok((
-            Self {
-                mtl_context,
-                mtl_command_queue,
-                state,
-                executables,
-                suffix_length: max_suffix_length,
-                _scratch: scratch_buffers,
-            },
-            decoder_config,
-        ))
+        Ok(Self {
+            context: mtl_context,
+            state,
+            executables,
+            suffix_length: MAX_SUFFIX_LENGTH,
+            _scratch: scratch_buffers,
+        })
     }
 
     fn run_warmup_with_placement_analysis(&mut self) -> String {
         let mut capture = StdoutCapture::new(CaptureOptions::STDERR);
         capture.start();
         let command_buffer =
-            MPSCommandBuffer::from_command_queue(&self.mtl_command_queue);
+            MPSCommandBuffer::from_command_queue(&self.context.command_queue);
         self.executables.encode(
             &mut self.state,
             &command_buffer,
@@ -167,7 +130,7 @@ impl DecoderTestContext {
     ) -> Result<std::time::Duration, String> {
         // Warmup run (not measured)
         let command_buffer =
-            MPSCommandBuffer::from_command_queue(&self.mtl_command_queue);
+            MPSCommandBuffer::from_command_queue(&self.context.command_queue);
         self.executables.encode(
             &mut self.state,
             &command_buffer,
@@ -178,8 +141,9 @@ impl DecoderTestContext {
         // Measured runs
         let start = Instant::now();
         for _ in 0..iterations {
-            let command_buffer =
-                MPSCommandBuffer::from_command_queue(&self.mtl_command_queue);
+            let command_buffer = MPSCommandBuffer::from_command_queue(
+                &self.context.command_queue,
+            );
             self.executables.encode(
                 &mut self.state,
                 &command_buffer,
@@ -192,6 +156,10 @@ impl DecoderTestContext {
     }
 }
 
+fn load_model(model_path: &Path) -> Result<(DecoderConfig, File), String> {
+    Ok((load_decoder_config(model_path)?, open_weights_file(model_path)?))
+}
+
 pub fn run_decoder_with_results(model_dir: &str) -> DecoderTestResult {
     let mut result = DecoderTestResult {
         placement_log: String::new(),
@@ -201,14 +169,46 @@ pub fn run_decoder_with_results(model_dir: &str) -> DecoderTestResult {
         success: false,
         error: None,
     };
-    // Setup context for both placement analysis and timing
-    let (mut ctx, _decoder_config) = match DecoderTestContext::new(model_dir) {
+
+    let mtl_device =
+        metal::Device::system_default().expect("No Metal device available");
+    let mtl_command_queue = mtl_device.new_command_queue();
+
+    let mtl_context =
+        MTLContext::new(mtl_device.clone(), mtl_command_queue.clone())
+            .expect("Metal context creation failed");
+
+    let model_path = Path::new(model_dir);
+
+    let (decoder_config, weigths_file) = match load_model(model_path) {
         Ok(pair) => pair,
         Err(e) => {
             result.error = Some(e);
             return result;
         },
     };
+
+    let mut kv_cache = Box::new(KVCache::new(
+        &mtl_context,
+        &ModelShape::from_decoder_config(&decoder_config),
+        MAX_PREFIX_LENGTH,
+        MAX_SUFFIX_LENGTH,
+    ));
+
+    // Setup context for both placement analysis and timing
+    let mut ctx = match DecoderTestContext::new(
+        &mtl_context,
+        &decoder_config,
+        &weigths_file,
+        &mut kv_cache,
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            result.error = Some(e);
+            return result;
+        },
+    };
+
     // Warmup run with placement analysis
     let placement_log = ctx.run_warmup_with_placement_analysis();
     result.placement_log = placement_log;

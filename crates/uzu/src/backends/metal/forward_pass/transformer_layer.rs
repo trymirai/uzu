@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use mpsgraph::{
     CompilationDescriptor, Device as MPSDevice, ExecutableExecutionDescriptor,
@@ -17,12 +17,15 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{
-        graph::{
-            embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
-            embeddings_readout_subgraph,
+    backends::{
+        MetalBackend,
+        metal::{
+            graph::{
+                embeddings_dequantize_weights_subgraph,
+                embeddings_embed_subgraph, embeddings_readout_subgraph,
+            },
+            kernel::{QuantizedLinearKernelBlock, mlp::MlpGateActMulEncodable},
         },
-        kernel::{QuantizedLinearKernelBlock, mlp::MlpGateActMulEncodable},
     },
     config::{
         DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig,
@@ -43,7 +46,7 @@ pub fn linear_block<const N: usize>(
     input_dim: usize,
     output_dims: [usize; N],
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     compilation_descriptor: &CompilationDescriptor,
@@ -111,7 +114,7 @@ pub fn quantized_linear_block_custom(
     input_dim: usize,
     output_dim: usize,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 ) -> Result<
@@ -135,7 +138,7 @@ pub fn mlp_block(
     model_dim: usize,
     hidden_dim: usize,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let crate::config::LinearConfig::Quantized(ref quant_config) =

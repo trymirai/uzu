@@ -1,4 +1,5 @@
-use crate::{Array, DataType, DeviceContext, array::array_size_in_bytes};
+use super::CPUBackend;
+use crate::{Array, DataType, array::array_size_in_bytes, backends::Context};
 
 #[derive(Debug, Clone)]
 pub struct CPUArray {
@@ -22,6 +23,16 @@ impl Array for CPUArray {
 
     fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer
+    }
+
+    fn copy_slice(
+        &mut self,
+        _source: &Self,
+        _axis: usize,
+        _src_range: std::ops::Range<usize>,
+        _dst_offset: usize,
+    ) {
+        panic!("not implemented") // TODO: implement it :)
     }
 }
 
@@ -50,9 +61,10 @@ impl CPUContext {
     }
 }
 
-impl DeviceContext for CPUContext {
-    type DeviceArray = CPUArray;
-
+impl Context<CPUBackend> for CPUContext {
+    fn default() -> Option<Self> {
+        Some(Self {})
+    }
     unsafe fn array_uninitialized(
         &self,
         shape: &[usize],

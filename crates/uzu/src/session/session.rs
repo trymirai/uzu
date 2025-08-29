@@ -18,6 +18,7 @@ use super::{
     session_run_config::SessionRunConfig,
 };
 use crate::{
+    backends::Backend,
     config::ModelMetadata,
     generator::{
         config::GeneratorConfigProvider,
@@ -30,15 +31,15 @@ use crate::{
     },
 };
 
-pub struct Session {
+pub struct Session<B: Backend> {
     model_path: PathBuf,
     tokenizer: Tokenizer,
     tokenizer_config: SessionTokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
-    generator: Option<Generator>,
+    generator: Option<Generator<B>>,
 }
 
-impl Session {
+impl<B: Backend> Session<B> {
     #[cfg(target_os = "ios")]
     fn directory_size(path: &Path) -> std::io::Result<u64> {
         let mut size = 0u64;
@@ -131,9 +132,9 @@ impl Session {
     pub fn extend(
         &mut self,
         input: SessionInput,
-        context: Option<&SessionContext>,
+        context: Option<&SessionContext<B>>,
         config: SessionRunConfig,
-    ) -> Result<(SessionOutput, SessionContext), SessionError> {
+    ) -> Result<(SessionOutput, SessionContext<B>), SessionError> {
         self.reconfigure_generator(context)?;
         let output = self.run_internal(
             input,
@@ -169,7 +170,7 @@ impl Session {
     pub fn run_with_context(
         &mut self,
         input: SessionInput,
-        context: Option<&SessionContext>,
+        context: Option<&SessionContext<B>>,
         config: SessionRunConfig,
     ) -> Result<SessionOutput, SessionError> {
         self.reconfigure_generator(context)?;
@@ -207,7 +208,7 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
-        let prefix_len_before = generator.prefix_len();
+        let prefix_len_before = generator.prefix_length();
 
         let eos_tokens = self
             .tokenizer_config
@@ -218,7 +219,7 @@ impl Session {
             })
             .collect::<Vec<_>>();
 
-        let finish_reason = |generator: &Generator,
+        let finish_reason = |generator: &Generator<B>,
                              tokens_new: Vec<u64>|
          -> Option<SessionOutputFinishReason> {
             let start_idx = prefix_len_before + tokens.len();
@@ -236,7 +237,7 @@ impl Session {
         };
 
         let build_generated_text =
-            |generator: &Generator, tokenizer: &Tokenizer| -> String {
+            |generator: &Generator<B>, tokenizer: &Tokenizer| -> String {
                 let start_idx = prefix_len_before + tokens.len();
                 let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
                     .to_vec()
@@ -257,7 +258,6 @@ impl Session {
             generator.prefill(tokens.clone(), sampling_config, prefix_offset);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
-        generator.clear_cache();
 
         let prefill_finish_reason =
             finish_reason(generator, prefill_tokens.clone());
@@ -344,70 +344,39 @@ impl Session {
             }
         };
 
-        generator.clear_cache();
         Ok(generate_output
             .clone_with_duration(run_start.elapsed().as_secs_f64()))
     }
 
     fn reconfigure_generator(
         &mut self,
-        context: Option<&SessionContext>,
+        context: Option<&SessionContext<B>>,
     ) -> Result<(), SessionError> {
         let generator =
             self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
         generator.reset_state();
         if let Some(ctx) = context {
-            let mut generator_cache = generator.context.kv_cache.borrow_mut();
-            for (ctx_layer, gen_layer) in
-                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
-            {
-                let copy_rows = ctx_layer.effective_prefix_length();
-                if copy_rows > 0 {
-                    gen_layer.keys.borrow_mut().copy_slice(
-                        &ctx_layer.keys.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                    gen_layer.values.borrow_mut().copy_slice(
-                        &ctx_layer.values.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                }
-                gen_layer.state = ctx_layer.state.clone();
-                gen_layer.prefix_token_positions =
-                    ctx_layer.prefix_token_positions.clone();
-            }
-            drop(generator_cache);
-
             generator.tokens = ctx.tokens.clone();
+            generator.set_backend_state(&ctx.backend_state);
         }
         Ok(())
     }
 
     fn build_context_from_generator(
         &self
-    ) -> Result<SessionContext, SessionError> {
+    ) -> Result<SessionContext<B>, SessionError> {
         let generator =
             self.generator.as_ref().ok_or(SessionError::GeneratorNotLoaded)?;
-        let prefix_len = generator.prefix_len();
-        let kv_cache = generator
-            .context
-            .kv_cache
-            .borrow()
-            .clone_with_prefix_len(&generator.context.mtl_context, prefix_len);
         let context = SessionContext::new(
             generator.tokens.clone(),
-            kv_cache,
+            generator.backend_state(),
             generator.config.clone(),
         );
         Ok(context)
     }
 }
 
-impl Session {
+impl<B: Backend> Session<B> {
     fn build_stats(
         prefill_result: PrefillResult,
         prefill_duration: f64,
@@ -496,7 +465,7 @@ impl Session {
     }
 }
 
-impl Drop for Session {
+impl<B: Backend> Drop for Session<B> {
     fn drop(&mut self) {
         autoreleasepool(|_| {
             self.generator = None;

@@ -1,12 +1,10 @@
-use std::rc::Rc;
-
 use mpsgraph::{Graph, ShapedType, Tensor};
 use objc2::rc::Retained;
 use thiserror::Error;
 
 use crate::{
     Array, DataType,
-    backends::metal::{MTLContext, MetalArray},
+    backends::{MetalBackend, metal::MetalArray},
     config::Activation,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -193,7 +191,7 @@ pub fn i4_constant_from_packed_u8_array(
 
 pub fn load_constant(
     graph: &Graph,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
     name: &str,
     expected_shape: &[usize],
     expected_data_type: DataType,

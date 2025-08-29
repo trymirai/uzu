@@ -6,7 +6,7 @@ use super::layer_executables::LayerExecutables;
 use crate::{
     DataType,
     backends::metal::{
-        KernelDataType, MTLContext, ModelShape,
+        KernelDataType, MTLContext, MetalBackend, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ArrayId, ForwardPassState, RopeType,
@@ -30,9 +30,9 @@ pub struct DecoderExecutables {
 
 impl DecoderExecutables {
     pub fn new(
-        mtl_context: Rc<MTLContext>,
-        decoder_config: Rc<DecoderConfig>,
-        decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
+        mtl_context: &MTLContext,
+        decoder_config: &DecoderConfig,
+        decoder_weight_loader: &ParameterTree<MetalBackend>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
         let embed = embed_block(

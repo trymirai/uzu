@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem::size_of, rc::Rc};
+use std::{collections::HashMap, mem::size_of};
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
@@ -8,13 +8,15 @@ use metal::{
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
-use crate::backends::metal::{
-    KernelDataType, MTLContext, MTLError,
-    forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
+use crate::backends::{
+    SamplingConfig,
+    metal::{
+        KernelDataType, MTLContext, MTLError,
+        forward_pass::{
+            ForwardPassState,
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+        },
     },
-    sampling_config::SamplingConfig,
 };
 
 const BLOCK_SIZE: usize = 1024;
@@ -731,7 +733,7 @@ pub struct SamplingKernelEncodable {
 
 impl SamplingKernelEncodable {
     pub fn new(
-        context: &Rc<MTLContext>,
+        context: &MTLContext,
         data_type: KernelDataType,
         max_batch_size: usize,
         max_vocab_size: usize,
@@ -750,7 +752,7 @@ impl SamplingKernelEncodable {
     }
 
     pub fn new_with_strategy(
-        context: &Rc<MTLContext>,
+        context: &MTLContext,
         data_type: KernelDataType,
         max_batch_size: usize,
         max_vocab_size: usize,
@@ -771,7 +773,7 @@ impl SamplingKernelEncodable {
     }
 
     pub fn new_with_strategies(
-        context: &Rc<MTLContext>,
+        context: &MTLContext,
         data_type: KernelDataType,
         max_batch_size: usize,
         max_vocab_size: usize,

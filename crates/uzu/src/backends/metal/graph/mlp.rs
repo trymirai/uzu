@@ -1,13 +1,12 @@
-use std::rc::Rc;
-
 use mpsgraph::{Graph, Tensor};
 use objc2::rc::Retained;
 
 use super::{
-    super::MTLContext, GraphConstructionError, common::activation,
-    linear::linear_subgraph,
+    GraphConstructionError, common::activation, linear::linear_subgraph,
 };
-use crate::{config::MLPConfig, parameters::ParameterTree};
+use crate::{
+    backends::MetalBackend, config::MLPConfig, parameters::ParameterTree,
+};
 
 pub fn mlp_subgraph(
     graph: &Graph,
@@ -15,7 +14,7 @@ pub fn mlp_subgraph(
     model_dim: usize,
     hidden_dim: usize,
     input: &Tensor,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MetalBackend>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let up_tree = parameter_tree.subtree("up_projection")?;
     let down_tree = parameter_tree.subtree("down_projection")?;

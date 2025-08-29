@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
 
-use std::rc::Rc;
-
 use metal::{
     CommandQueue as MTLCommandQueue,
     ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
@@ -10,9 +8,13 @@ use metal::{
 };
 
 use super::{
-    MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
+    MetalArray, MetalBackend, error::MTLError,
+    metal_extensions::LibraryPipelineExtensions,
 };
-use crate::{DataType, DeviceContext, array::array_size_in_bytes};
+use crate::{
+    DataType, array::array_size_in_bytes, backends::Context,
+    env_utils::MetalEnvVar,
+};
 
 pub struct MTLContext {
     pub device: MTLDevice,
@@ -58,10 +60,18 @@ impl MTLContext {
         self.library
             .compute_pipeline_state_with_reflection(function_name, constants)
     }
+
+    pub fn debug_active(&self) -> bool {
+        MetalEnvVar::DeviceWrapperType.is_enabled()
+    }
 }
 
-impl DeviceContext for MTLContext {
-    type DeviceArray = MetalArray;
+impl Context<MetalBackend> for MTLContext {
+    fn default() -> Option<Self> {
+        let mtl_device = metal::Device::system_default()?;
+        let mtl_command_queue = mtl_device.new_command_queue();
+        MTLContext::new(mtl_device, mtl_command_queue).ok()
+    }
 
     unsafe fn array_uninitialized(
         &self,
@@ -77,17 +87,5 @@ impl DeviceContext for MTLContext {
             );
             MetalArray::new(buffer, shape, data_type)
         }
-    }
-}
-
-impl DeviceContext for Rc<MTLContext> {
-    type DeviceArray = MetalArray;
-
-    unsafe fn array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-    ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type) }
     }
 }

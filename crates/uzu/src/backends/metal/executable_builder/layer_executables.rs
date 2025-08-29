@@ -5,23 +5,28 @@ use objc2::rc::autoreleasepool;
 
 use crate::{
     DataType,
-    backends::metal::{
-        MTLContext,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            transformer_layer,
-        },
-        kernel::{
-            AttentionKernelEncodable, KernelDataType, QKNormKernelEncodable,
-            RMSNormKernelEncodable, TensorAddSwap, TensorCopy,
+    backends::{
+        MetalBackend,
+        metal::{
+            MTLContext,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{
+                ArrayId, ForwardPassState,
+                encodable_with_state::{
+                    EncodableWithState, EncodingParameters,
+                },
+                transformer_layer,
+            },
+            kernel::{
+                AttentionKernelEncodable, KernelDataType,
+                QKNormKernelEncodable, RMSNormKernelEncodable, TensorAddSwap,
+                TensorCopy,
+            },
         },
     },
     config::decoder_layer::DecoderLayerConfig,
     parameters::ParameterTree,
 };
-
 pub struct LayerExecutables {
     pub layer_index: usize,
     pub copy_main_to_shortcut: Box<dyn EncodableWithState>,
@@ -50,7 +55,7 @@ impl LayerExecutables {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MetalBackend>,
         rope: Rc<Box<dyn EncodableWithState>>,
     ) -> Self {
         autoreleasepool(|_| {
