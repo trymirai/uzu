@@ -21,6 +21,7 @@ fn slice_index_to_array_index<const D: usize>(
 
 pub trait DeviceContext {
     type DeviceArray: Array;
+    type CommandBuffer;
 
     /// Allocate a new array with the given shape and data type, but doesn't initialize it.
     unsafe fn array_uninitialized(

@@ -6,16 +6,15 @@ use serde::{Deserialize, Serialize};
 use super::{
     super::{MTLContext, MetalArray},
     buffers::ForwardPassBuffers,
-    kv_cache::KVCache,
     model_shape::ModelShape,
 };
 use crate::{
     DataType, DeviceContext,
-    backends::metal::{
-        forward_pass::traces::DecoderActivationTrace,
-        sampling_config::SamplingConfig,
+    backends::{
+        SamplingConfig, metal::forward_pass::traces::DecoderActivationTrace,
     },
     config::{DecoderConfig, EmbeddingConfig},
+    generator::KVCache,
     parameters::ParameterTree,
 };
 
@@ -313,7 +312,7 @@ pub struct ForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
     logits: ArrayCell,
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub kv_cache: Rc<RefCell<KVCache<MTLContext>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
     /// [suffix_length] - u32 sampling output buffer
@@ -328,7 +327,7 @@ impl ForwardPassState {
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
-        kv_cache: Rc<RefCell<KVCache>>,
+        kv_cache: Rc<RefCell<KVCache<MTLContext>>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],

@@ -17,7 +17,7 @@ pub use buffer_allocator::BufferAllocator;
 pub use context::MTLContext;
 pub use error::MTLError;
 pub use executable_builder::DecoderExecutables;
-pub use forward_pass::{ForwardPassState, KVCache, ModelShape};
+pub use forward_pass::{ForwardPassState, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 // pub use kernel::{
 //     DataType as KernelDataType, Encoder as KernelEncoder,
@@ -28,4 +28,3 @@ pub use media_utils::{
     MetalImagePreprocessor,
 };
 pub use placement_analysis::PlacementAnalysis;
-pub mod sampling_config;

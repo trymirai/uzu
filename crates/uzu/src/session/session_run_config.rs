@@ -1,4 +1,4 @@
-use crate::backends::metal::sampling_config::SamplingConfig;
+use crate::backends::SamplingConfig;
 
 #[derive(Debug)]
 pub struct SessionRunConfig {

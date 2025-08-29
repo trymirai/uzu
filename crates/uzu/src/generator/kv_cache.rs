@@ -1,18 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
-
-use super::{
-    super::{MTLContext, MetalArray},
-    model_shape::ModelShape,
-};
-use crate::{
-    DeviceContext,
-    array::Array,
-    backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
-};
-
-type ArrayCell = RefCell<MetalArray>;
+use crate::{DeviceContext, array::Array, backends::metal::ModelShape};
 
 #[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
@@ -31,18 +19,29 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-pub struct KVCacheLayer {
+pub trait KVUpdater<Context: DeviceContext> {
+    fn scatter(
+        &self,
+        keys: &mut Context::DeviceArray,
+        values: &mut Context::DeviceArray,
+        source_indices: &[usize],
+        destination_indices: &[usize],
+        command_buffer: &Context::CommandBuffer,
+    );
+}
+
+pub struct KVCacheLayer<Context: DeviceContext> {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: ArrayCell,
+    pub keys: RefCell<Context::DeviceArray>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: ArrayCell,
+    pub values: RefCell<Context::DeviceArray>,
 
     pub prefix_token_positions: Vec<usize>,
     pub max_suffix_length: usize,
 }
 
-impl KVCacheLayer {
+impl<Context: DeviceContext> KVCacheLayer<Context> {
     pub fn effective_prefix_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
@@ -89,10 +88,10 @@ impl KVCacheLayer {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut MetalArray,
+        dst: &mut Context::DeviceArray,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
+        context: &Context,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let effective_prefix_len = self.effective_prefix_length();
@@ -167,8 +166,8 @@ impl KVCacheLayer {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &Context::CommandBuffer,
+        kv_cache_update: &impl KVUpdater<Context>,
     ) {
         let effective_prefix_length = self.effective_prefix_length();
         let effective_indices: Vec<usize> = if accepted_suffix_indices
@@ -239,38 +238,19 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &Context::CommandBuffer,
+        kv_cache_update: &impl KVUpdater<Context>,
     ) {
         if source_indices == destination_indices {
             return;
         }
 
-        let root_cb = command_buffer.root_command_buffer().to_owned();
-        let key_buffer = {
-            let mut k = self.keys.borrow_mut();
-            unsafe { k.mtl_buffer() }.clone()
-        };
-        let value_buffer = {
-            let mut v = self.values.borrow_mut();
-            unsafe { v.mtl_buffer() }.clone()
-        };
-
-        let k_shape = self.keys.borrow().shape().to_vec();
-        let v_shape = self.values.borrow().shape().to_vec();
-
-        let layer_data = KVLayerData {
-            key_buffer,
-            key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer,
-            value_shape: [v_shape[0], v_shape[1], v_shape[2]],
-        };
-
-        let _ = kv_cache_update.encode(
-            &[layer_data],
+        kv_cache_update.scatter(
+            &mut self.keys.borrow_mut(),
+            &mut self.values.borrow_mut(),
             source_indices,
             destination_indices,
-            &root_cb,
+            command_buffer,
         );
     }
 
@@ -310,21 +290,21 @@ impl KVCacheLayer {
     }
 }
 
-pub struct KVCache {
+pub struct KVCache<Context: DeviceContext> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[KVCacheLayer]>,
+    pub data: Box<[KVCacheLayer<Context>]>,
 }
 
-impl KVCache {
+impl<Context: DeviceContext> KVCache<Context> {
     pub fn new(
-        context: &MTLContext,
+        context: &Context,
         model_shape: &ModelShape,
         max_prefix_length: usize,
         max_suffix_length: usize,
     ) -> Self {
         let total_context_length = max_prefix_length + max_suffix_length;
-        let data: Box<[KVCacheLayer]> = model_shape
+        let data: Box<[KVCacheLayer<Context>]> = model_shape
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .enumerate()
             .map(|(layer_idx, shape)| {
@@ -398,10 +378,10 @@ impl KVCache {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut HashMap<Option<usize>, MetalArray>,
+        dst: &mut HashMap<Option<usize>, Context::DeviceArray>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
+        context: &Context,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         for layer in self.data.iter() {
@@ -430,8 +410,8 @@ impl KVCache {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &Context::CommandBuffer,
+        kv_cache_update: &impl KVUpdater<Context>,
     ) {
         for layer in self.data.iter_mut() {
             layer.update_after_acceptance(
@@ -453,11 +433,11 @@ impl KVCache {
 
     pub fn clone_with_prefix_len(
         &self,
-        context: &MTLContext,
+        context: &Context,
         prefix_len: usize,
     ) -> Self {
         let new_total_len = prefix_len + self.max_suffix_length;
-        let data: Box<[KVCacheLayer]> = self
+        let data: Box<[KVCacheLayer<Context>]> = self
             .data
             .iter()
             .map(|layer| {

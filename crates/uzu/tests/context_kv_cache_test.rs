@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc};
 
 use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::SamplingConfig,
     session::{
         session::Session, session_config::SessionConfig,
         session_context::SessionContext, session_input::SessionInput,

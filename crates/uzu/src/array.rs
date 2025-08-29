@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use bytemuck;
 use ndarray::{ArrayView, ArrayViewMut, IxDyn};
 use thiserror::Error;
@@ -48,6 +50,14 @@ pub trait Array {
 
     /// Returns a mutable reference to the device buffer containing the array's data.
     fn buffer_mut(&mut self) -> &mut [u8];
+
+    fn copy_slice(
+        &mut self,
+        source: &Self,
+        axis: usize,
+        src_range: Range<usize>,
+        dst_offset: usize,
+    );
 
     /// Returns the size of the array in memory.
     fn size_in_bytes(&self) -> usize {

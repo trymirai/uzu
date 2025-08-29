@@ -5,18 +5,18 @@ use mpsgraph::CommandBuffer;
 use super::{
     config::GeneratorConfig,
     context::GeneratorContext,
+    kv_cache::INVALID_POSITION,
     result::{GenerateResult, PrefillResult},
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
 use crate::{
     Array,
-    backends::metal::{
-        forward_pass::{
+    backends::{
+        SamplingConfig,
+        metal::forward_pass::{
             ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
-            kv_cache::INVALID_POSITION,
         },
-        sampling_config::SamplingConfig,
     },
     env_utils::MetalEnvVar,
     generator::error::GeneratorError,
@@ -413,7 +413,7 @@ impl Generator {
         self.context.kv_cache.borrow_mut().update_after_acceptance(
             accepted_token_indices,
             &command_buffer,
-            &self.context.kv_cache_update,
+            &*self.context.kv_cache_update,
         );
 
         command_buffer.commit();

@@ -8,13 +8,15 @@ use metal::{
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
-use crate::backends::metal::{
+use crate::backends::{
+    SamplingConfig,
+    metal::{
     KernelDataType, MTLContext, MTLError,
     forward_pass::{
         ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
-    sampling_config::SamplingConfig,
+    },
 };
 
 const BLOCK_SIZE: usize = 1024;

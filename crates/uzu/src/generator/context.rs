@@ -3,11 +3,11 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
-use super::{config::GeneratorConfig, error::GeneratorError};
+use super::{KVCache, config::GeneratorConfig, error::GeneratorError};
 use crate::{
     DataType,
     backends::metal::{
-        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
+        DecoderExecutables, KVCacheUpdate, KernelDataType, MTLContext,
         ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
@@ -21,7 +21,7 @@ pub struct GeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub kv_cache: Rc<RefCell<KVCache<MTLContext>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ForwardPassBuffers,
 
@@ -100,7 +100,7 @@ impl GeneratorContext {
             compilation_config.clone(),
         );
 
-        let kv_cache = Rc::new(RefCell::new(KVCache::new(
+        let kv_cache = Rc::new(RefCell::new(KVCache::<MTLContext>::new(
             &mtl_context,
             &model_shape,
             max_prefix_length,

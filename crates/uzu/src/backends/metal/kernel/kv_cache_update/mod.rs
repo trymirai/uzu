@@ -6,12 +6,15 @@ use metal::{
     ComputePipelineState as MTLComputePipelineState, MTLResourceOptions,
     MTLSize,
 };
+use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
 use super::{
-    super::MTLError, KernelDataType, MTLContext,
+    super::{MTLError, MetalArray},
+    KernelDataType, MTLContext,
     metal_extensions::ComputeEncoderDispatch,
 };
+use crate::{array::Array, generator::kv_cache::KVUpdater};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -169,6 +172,39 @@ impl KVCacheUpdate {
         }
 
         Ok(())
+    }
+}
+
+impl KVUpdater<MTLContext> for KVCacheUpdate {
+    fn scatter(
+        &self,
+        keys: &mut MetalArray,
+        values: &mut MetalArray,
+        source_indices: &[usize],
+        destination_indices: &[usize],
+        command_buffer: &MPSCommandBuffer,
+    ) {
+        let root_cb = command_buffer.root_command_buffer().to_owned();
+
+        let key_buffer = unsafe { keys.mtl_buffer() }.clone();
+        let value_buffer = unsafe { values.mtl_buffer() }.clone();
+
+        let k_shape = keys.shape().to_vec();
+        let v_shape = values.shape().to_vec();
+
+        let layer_data = KVLayerData {
+            key_buffer,
+            key_shape: [k_shape[0], k_shape[1], k_shape[2]],
+            value_buffer,
+            value_shape: [v_shape[0], v_shape[1], v_shape[2]],
+        };
+
+        let _ = self.encode(
+            &[layer_data],
+            source_indices,
+            destination_indices,
+            &root_cb,
+        );
     }
 }
 

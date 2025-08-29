@@ -18,6 +18,7 @@ use super::{
     session_run_config::SessionRunConfig,
 };
 use crate::{
+    Array,
     generator::{
         config::GeneratorConfigProvider,
         generator::Generator,

@@ -1,3 +1,5 @@
+// TODO: move to crate::config
+
 use crate::{DataType, config::DecoderConfig};
 
 #[derive(Debug)]

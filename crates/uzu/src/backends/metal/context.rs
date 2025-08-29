@@ -8,6 +8,7 @@ use metal::{
     ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
     FunctionConstantValues, Library as MTLLibrary,
 };
+use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
@@ -62,6 +63,7 @@ impl MTLContext {
 
 impl DeviceContext for MTLContext {
     type DeviceArray = MetalArray;
+    type CommandBuffer = MPSCommandBuffer;
 
     unsafe fn array_uninitialized(
         &self,
@@ -82,6 +84,7 @@ impl DeviceContext for MTLContext {
 
 impl DeviceContext for Rc<MTLContext> {
     type DeviceArray = MetalArray;
+    type CommandBuffer = MPSCommandBuffer;
 
     unsafe fn array_uninitialized(
         &self,

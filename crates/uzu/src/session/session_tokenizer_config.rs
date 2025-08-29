@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use tokenizers::{AddedToken, Tokenizer};
 
 use crate::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::SamplingConfig,
     session::config::generation_metadata::GenerationMetadata,
 };
 

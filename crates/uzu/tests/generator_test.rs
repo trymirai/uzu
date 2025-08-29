@@ -2,7 +2,7 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
+    backends::SamplingConfig,
     generator::config::{ContextLength, SamplingSeed, SpeculatorConfig},
     session::{
         session::Session, session_config::SessionConfig,

@@ -23,6 +23,16 @@ impl Array for CPUArray {
     fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer
     }
+
+    fn copy_slice(
+        &mut self,
+        _source: &Self,
+        _axis: usize,
+        _src_range: std::ops::Range<usize>,
+        _dst_offset: usize,
+    ) {
+        panic!("not implemented") // TODO: implement it :)
+    }
 }
 
 impl CPUArray {
@@ -52,6 +62,7 @@ impl CPUContext {
 
 impl DeviceContext for CPUContext {
     type DeviceArray = CPUArray;
+    type CommandBuffer = ();
 
     unsafe fn array_uninitialized(
         &self,

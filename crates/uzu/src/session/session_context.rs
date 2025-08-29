@@ -1,18 +1,18 @@
 use crate::{
-    backends::metal::forward_pass::kv_cache::KVCache,
-    generator::config::GeneratorConfig,
+    backends::metal::MTLContext,
+    generator::{KVCache, config::GeneratorConfig},
 };
 
 pub struct SessionContext {
     pub tokens: Vec<u64>,
-    pub kv_cache: KVCache,
+    pub kv_cache: KVCache<MTLContext>,
     pub config: GeneratorConfig,
 }
 
 impl SessionContext {
     pub fn new(
         tokens: Vec<u64>,
-        kv_cache: KVCache,
+        kv_cache: KVCache<MTLContext>,
         config: GeneratorConfig,
     ) -> Self {
         Self {
