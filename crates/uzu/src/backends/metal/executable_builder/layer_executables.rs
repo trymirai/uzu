@@ -9,7 +9,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState, MPSGraphBlock,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -26,15 +26,15 @@ pub struct LayerExecutables {
     pub layer_index: usize,
     pub copy_main_to_shortcut: Box<dyn EncodableWithState>,
     pub pre_attention_norm: Box<dyn EncodableWithState>,
-    pub qkv_projection: MPSGraphBlock,
+    pub qkv_projection: Box<dyn EncodableWithState>,
     pub qk_norm: Option<Box<dyn EncodableWithState>>,
     pub rope: Rc<Box<dyn EncodableWithState>>,
     pub attention: Box<dyn EncodableWithState>,
-    pub out_projection: MPSGraphBlock,
+    pub out_projection: Box<dyn EncodableWithState>,
     pub post_attention_norm: Option<Box<dyn EncodableWithState>>,
     pub main_shortcut_add_swap: Box<dyn EncodableWithState>,
     pub pre_mlp_norm: Box<dyn EncodableWithState>,
-    pub mlp: MPSGraphBlock,
+    pub mlp: Box<dyn EncodableWithState>,
     pub post_mlp_norm: Option<Box<dyn EncodableWithState>>,
 }
 
@@ -121,10 +121,10 @@ impl LayerExecutables {
                     head_dim,
                 ) {
                     Ok(qk_norm) => Some(Box::new(qk_norm)),
-                    Err(e) => {
-                        eprintln!("Failed to create QK norm kernel: {:?}", e);
-                        None
-                    },
+                    Err(e) => panic!(
+                        "Failed to create QK norm kernel for layer {}: {:?}",
+                        layer_index, e
+                    ),
                 }
             } else {
                 None
