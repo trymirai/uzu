@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::path::PathBuf;
 
-pub const MODEL_DIR_NAME: &str = "Meta-Llama-3.2-1B-Instruct-float16";
+pub const MODEL_DIR_NAME: &str = "Qwen3-4B-AWQ";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
