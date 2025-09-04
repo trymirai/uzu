@@ -3,7 +3,7 @@ use std::{cell::RefCell, mem::size_of};
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
-    MTLResourceOptions, MTLSize,
+    FunctionConstantValues, MTLDataType, MTLResourceOptions, MTLSize,
 };
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
@@ -133,7 +133,7 @@ pub enum MoeExpertsError {
 }
 
 pub struct MoeExpertsKernel {
-    pipeline_f16: MTLComputePipelineState,
+    pipelines_f16: Vec<MTLComputePipelineState>, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
 }
 
 #[derive(Debug)]
@@ -155,10 +155,23 @@ pub struct MoeExpertsArguments<'a> {
 
 impl MoeExpertsKernel {
     pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let pipeline_f16 =
-            ctx.compute_pipeline_state("moe_fused_expert_mlp_f16", None)?;
+        // Build four specialized pipelines by gating selection function constant (index=30)
+        let mut pipelines_f16 = Vec::with_capacity(4);
+        for gate in 0u32..4u32 {
+            let fcv = FunctionConstantValues::new();
+            fcv.set_constant_value_at_index(
+                &gate as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                30,
+            );
+            let pipeline = ctx.compute_pipeline_state(
+                "moe_fused_expert_mlp_f16",
+                Some(&fcv),
+            )?;
+            pipelines_f16.push(pipeline);
+        }
         Ok(Self {
-            pipeline_f16,
+            pipelines_f16,
         })
     }
 
@@ -167,7 +180,9 @@ impl MoeExpertsKernel {
         encoder: &ComputeCommandEncoderRef,
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
-        encoder.set_compute_pipeline_state(&self.pipeline_f16);
+        // Select specialized pipeline by gating code
+        let gate_idx = (args.gating_code.min(3)) as usize;
+        encoder.set_compute_pipeline_state(&self.pipelines_f16[gate_idx]);
         encoder.set_buffer(0, Some(args.x_buffer), 0);
         encoder.set_buffer(1, Some(args.bucketed_token_ids), 0);
         encoder.set_buffer(2, Some(args.expert_offsets), 0);
@@ -206,17 +221,42 @@ impl MoeExpertsKernel {
             &gate as *const u32 as *const _,
         );
         // No debug/fault buffers in clean encoder
-        // Launch over sum_k threads
-        let sum_k = {
-            (unsafe {
-                *(args.expert_offsets.contents() as *const u32).add(args.e)
-            }) as usize
+        // Launch tiled 3D grid over (N tiles, M tiles, experts)
+        const BM: usize = 32; // must match experts_fused.metal
+        const BN: usize = 64; // must match experts_fused.metal
+
+        // Compute N tile count
+        let num_tiles_n = (args.d_model + BN - 1) / BN;
+
+        // Compute max M tiles across experts (scan offsets)
+        let offsets_ptr = args.expert_offsets.contents() as *const u32;
+        let offsets =
+            unsafe { std::slice::from_raw_parts(offsets_ptr, args.e + 1) };
+        let mut max_seg_len: usize = 0;
+        for e_idx in 0..args.e {
+            let start = offsets[e_idx] as usize;
+            let end = offsets[e_idx + 1] as usize;
+            let len = end.saturating_sub(start);
+            if len > max_seg_len {
+                max_seg_len = len;
+            }
+        }
+        let num_tiles_m = if max_seg_len == 0 {
+            0
+        } else {
+            (max_seg_len + BM - 1) / BM
         };
-        // Deterministic single-thread per row (correctness-first)
-        let tpt = MTLSize::new(1, 1, 1);
-        let tg = MTLSize::new(sum_k as u64, 1, 1);
-        if sum_k > 0 {
-            encoder.dispatch_thread_groups(tg, tpt);
+
+        // Threadgroup: 4 simdgroups (WM*WN*32 = 128)
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        if num_tiles_m > 0 && num_tiles_n > 0 && args.e > 0 {
+            let threadgroups = MTLSize::new(
+                num_tiles_n as u64,
+                num_tiles_m as u64,
+                args.e as u64,
+            );
+            encoder
+                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }
         Ok(())
     }

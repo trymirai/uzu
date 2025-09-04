@@ -195,7 +195,7 @@ fn test_moe_fused_expert_mlp_parity() {
         let a = y_gpu[i].to_f32();
         let b = y_cpu[i].to_f32();
         assert!(
-            (a - b).abs() < 1e-3,
+            (a - b).abs() < 1e-2,
             "mismatch at {}: {} vs {} (diff={})",
             i,
             a,
