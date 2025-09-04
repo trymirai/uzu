@@ -17,7 +17,8 @@ pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use moe::{
     MoeBlockBasesArguments, MoeBucketCountsArguments, MoeBucketCountsError,
-    MoeBucketCountsKernel, MoeOffsetsScanArguments, MoeOffsetsScanError,
+    MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsError,
+    MoeExpertsKernel, MoeOffsetsScanArguments, MoeOffsetsScanError,
     MoeOffsetsScanKernel, MoeScatterArguments, MoeScatterError,
     MoeScatterKernels, MoeTopKArguments, MoeTopKError, MoeTopKKernel,
 };

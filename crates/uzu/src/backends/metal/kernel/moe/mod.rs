@@ -126,6 +126,101 @@ pub enum MoeScatterError {
     #[error("Metal error: {0}")]
     MetalError(#[from] MTLError),
 }
+#[derive(Debug, thiserror::Error)]
+pub enum MoeExpertsError {
+    #[error("Metal error: {0}")]
+    MetalError(#[from] MTLError),
+}
+
+pub struct MoeExpertsKernel {
+    pipeline_f16: MTLComputePipelineState,
+}
+
+#[derive(Debug)]
+pub struct MoeExpertsArguments<'a> {
+    pub x_buffer: &'a MTLBuffer,           // [T,d_model]
+    pub bucketed_token_ids: &'a MTLBuffer, // [sum_k]
+    pub expert_offsets: &'a MTLBuffer,     // [E+1]
+    pub w1_all: &'a MTLBuffer,             // [E*d_ff*d_model]
+    pub w3_all: &'a MTLBuffer,             // [E*d_ff*d_model] or empty
+    pub w2_all: &'a MTLBuffer,             // [E*d_model*d_ff]
+    pub y_partial: &'a MTLBuffer,          // [sum_k,d_model]
+    pub t: usize,
+    pub d_model: usize,
+    pub d_ff: usize,
+    pub e: usize,
+    pub gating_code: u32, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
+                          // No debug/fault buffers in clean encoder
+}
+
+impl MoeExpertsKernel {
+    pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
+        let pipeline_f16 =
+            ctx.compute_pipeline_state("moe_fused_expert_mlp_f16", None)?;
+        Ok(Self {
+            pipeline_f16,
+        })
+    }
+
+    pub fn encode(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        args: MoeExpertsArguments,
+    ) -> Result<(), MoeExpertsError> {
+        encoder.set_compute_pipeline_state(&self.pipeline_f16);
+        encoder.set_buffer(0, Some(args.x_buffer), 0);
+        encoder.set_buffer(1, Some(args.bucketed_token_ids), 0);
+        encoder.set_buffer(2, Some(args.expert_offsets), 0);
+        encoder.set_buffer(3, Some(args.w1_all), 0);
+        encoder.set_buffer(4, Some(args.w3_all), 0);
+        encoder.set_buffer(5, Some(args.w2_all), 0);
+        encoder.set_buffer(6, Some(args.y_partial), 0);
+        let t_u = args.t as u32;
+        let dm_u = args.d_model as u32;
+        let dff_u = args.d_ff as u32;
+        let e_u = args.e as u32;
+        let gate = args.gating_code as u32;
+        encoder.set_bytes(
+            7,
+            size_of::<u32>() as u64,
+            &t_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            8,
+            size_of::<u32>() as u64,
+            &dm_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            9,
+            size_of::<u32>() as u64,
+            &dff_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            10,
+            size_of::<u32>() as u64,
+            &e_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            11,
+            size_of::<u32>() as u64,
+            &gate as *const u32 as *const _,
+        );
+        // No debug/fault buffers in clean encoder
+        // Launch over sum_k threads
+        let sum_k = {
+            (unsafe {
+                *(args.expert_offsets.contents() as *const u32).add(args.e)
+            }) as usize
+        };
+        // Deterministic single-thread per row (correctness-first)
+        let tpt = MTLSize::new(1, 1, 1);
+        let tg = MTLSize::new(sum_k as u64, 1, 1);
+        if sum_k > 0 {
+            encoder.dispatch_thread_groups(tg, tpt);
+        }
+        Ok(())
+    }
+}
 
 pub struct MoeScatterKernels {
     pipeline_bases: MTLComputePipelineState,
