@@ -21,6 +21,10 @@ struct pointer_element_t_impl<device T*> {
     using type = T;
 };
 template<typename T>
+struct pointer_element_t_impl<threadgroup T*> {
+    using type = T;
+};
+template<typename T>
 using pointer_element_t = typename pointer_element_t_impl<T>::type;
 
 template <typename T, typename U = T>
@@ -237,6 +241,22 @@ struct MMATile {
     }
   }
 
+  // Store results into threadgroup memory (same layout as device variant)
+  template <typename U, int w_x, int w_y>
+  METAL_FUNC void store_tg(threadgroup U* dst, const int ld) const {
+    UZU_PRAGMA_UNROLL
+    for (short i = 0; i < kTileRows; ++i) {
+      UZU_PRAGMA_UNROLL
+      for (short j = 0; j < kTileCols; ++j) {
+        MMAFrag_t::store(
+            frag_at(i, j),
+            &(dst[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
+            ld,
+            1);
+      }
+    }
+  }
+
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void
@@ -395,6 +415,20 @@ struct BlockMMA {
     D += sm * ldd + sn;
 
     Ctile.template store<U, WM, WN>(D, ldd);
+  }
+
+  /* Store results into threadgroup memory */
+  METAL_FUNC void store_result_tg(threadgroup U* D, const int ldd) {
+    // Apply epilogue
+    UZU_PRAGMA_UNROLL
+    for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
+      Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
+    }
+
+    // Adjust for simdgroup and thread location
+    D += sm * ldd + sn;
+
+    Ctile.template store_tg<U, WM, WN>(D, ldd);
   }
 
 

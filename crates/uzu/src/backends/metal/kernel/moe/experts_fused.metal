@@ -93,10 +93,8 @@ kernel void moe_fused_expert_mlp_f16(
     // Threadgroup scratch
     // FC1 staging over Kx (d_model) and ff-chunk (BK)
     threadgroup half Xs[BM * BK];      // X chunk (BM x BK)
-    threadgroup half W1s[BK * BK];     // W1 chunk (BKxBK) for current ff-chunk
-    threadgroup half W3s[BK * BK];     // W3 chunk (BKxBK) (GLU only)
-    threadgroup float Up[BM * BK];     // accumulators for FC1 (BM x BK)
-    threadgroup float Vp[BM * BK];     // accumulators for GLU second branch
+    threadgroup half Wk[BK * BK];      // Weight chunk (BKxBK) for W1/W3
+    threadgroup float Htile[BM * BK];  // FC1 temporary accumulators (BM x BK)
 
     // FC2 staging for W2
     threadgroup float W2sf[BK * BN];   // W2 chunk as float (BK x BN)
@@ -125,20 +123,17 @@ kernel void moe_fused_expert_mlp_f16(
     for (uint ff0 = 0; ff0 < d_ff; ff0 += BK) {
         const uint ff_chunk = min((uint)BK, d_ff - ff0);
 
-        // Zero-initialize FC1 accumulators
+        // FC1 using MMA: compute U (and V for GLU) tiles of size (BM x ff_chunk)
+        // U tile accumulation
         for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
-            Up[idx] = 0.0f;
-            if (GATING_SEL > 1u) {
-                Vp[idx] = 0.0f;
-            }
+            Htile[idx] = 0.0f;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Loop over K dimension (d_model) in BK chunks to build FC1 outputs
+        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1(simd_gid, simd_lid);
         for (uint k0 = 0; k0 < d_model; k0 += BK) {
             const uint k_chunk = min((uint)BK, d_model - k0);
-
-            // Cooperative load Xs (BM x k_chunk)
+            // Load X tile
             for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
                 const uint mi = idx / BK;
                 const uint kk = idx % BK;
@@ -152,47 +147,66 @@ kernel void moe_fused_expert_mlp_f16(
                 }
                 Xs[mi * BK + kk] = val;
             }
-
-            // Cooperative load W1s (k_chunk x ff_chunk) packed as [kk, r]
+            // Load W1 panel (K x ff_chunk -> BK x BK)
             for (uint idx = lid; idx < (uint)(BK * BK); idx += 128u) {
                 const uint kk = idx / BK;
                 const uint r = idx % BK;
-                half val1 = (half)0.0h;
-                half val3 = (half)0.0h;
+                half v = (half)0.0h;
                 if (kk < k_chunk && r < ff_chunk) {
                     const ulong w1g = W1_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(k0 + kk);
-                    val1 = W1_all[w1g];
-                    if (GATING_SEL > 1u) {
-                        const ulong w3g = W3_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(k0 + kk);
-                        val3 = W3_all[w3g];
-                    }
+                    v = W1_all[w1g];
                 }
-                W1s[kk * BK + r] = val1;
-                if (GATING_SEL > 1u) {
-                    W3s[kk * BK + r] = val3;
-                }
+                Wk[kk * BK + r] = v;
             }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            mma_fc1.mma(Xs, Wk);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        // Store U tile to threadgroup Htile (float)
+        mma_fc1.store_result_tg(Htile, (int)BK);
+
+        if (GATING_SEL > 1u) {
+            // V tile accumulation for GLU
+            for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
+                Hs[idx] = 0.0f; // reuse Hs as temp zero if needed
+            }
+            // No-op loop removed: we zero Hs above and overwrite it with V tile below
             threadgroup_barrier(mem_flags::mem_threadgroup);
 
-            // Accumulate Up (and Vp) for this k_chunk cooperatively over (mi, r)
-            for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
-                const uint mi = idx / BK;
-                const uint r = idx % BK;
-                float s1 = 0.0f;
-                float s3 = 0.0f;
-                for (uint kk = 0; kk < k_chunk; ++kk) {
-                    const float xv = (float)Xs[mi * BK + kk];
-                    s1 += xv * (float)W1s[kk * BK + r];
-                    if (GATING_SEL > 1u) {
-                        s3 += xv * (float)W3s[kk * BK + r];
+            matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_v(simd_gid, simd_lid);
+            for (uint k0 = 0; k0 < d_model; k0 += BK) {
+                const uint k_chunk = min((uint)BK, d_model - k0);
+                // Load X tile
+                for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
+                    const uint mi = idx / BK;
+                    const uint kk = idx % BK;
+                    half val = (half)0.0h;
+                    if (mi < m_rows && kk < k_chunk) {
+                        const int token_id = tok[mi];
+                        if (token_id >= 0) {
+                            const ulong xg = (ulong)(uint)token_id * (ulong)d_model + (ulong)(k0 + kk);
+                            val = X[xg];
+                        }
                     }
+                    Xs[mi * BK + kk] = val;
                 }
-                Up[mi * BK + r] += s1;
-                if (GATING_SEL > 1u) {
-                    Vp[mi * BK + r] += s3;
+                // Load W3 panel (K x ff_chunk)
+                for (uint idx = lid; idx < (uint)(BK * BK); idx += 128u) {
+                    const uint kk = idx / BK;
+                    const uint r = idx % BK;
+                    half v = (half)0.0h;
+                    if (kk < k_chunk && r < ff_chunk) {
+                        const ulong w3g = W3_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(k0 + kk);
+                        v = W3_all[w3g];
+                    }
+                    Wk[kk * BK + r] = v;
                 }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                mma_fc1_v.mma(Xs, Wk);
+                threadgroup_barrier(mem_flags::mem_threadgroup);
             }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
+            // Store V tile to Hs temporarily
+            mma_fc1_v.store_result_tg(Hs, (int)BK);
         }
 
         // Apply activation/gating to produce Hs (BM x ff_chunk)
@@ -200,15 +214,13 @@ kernel void moe_fused_expert_mlp_f16(
             const uint mi = idx / BK;
             const uint r = idx % BK;
             if (mi < m_rows && r < ff_chunk) {
-                const float up = Up[idx];
-                float h;
+                const float up = Htile[idx];
                 if (GATING_SEL <= 1u) {
-                    h = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up);
+                    Hs[idx] = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up);
                 } else {
                     const float g = (GATING_SEL == 2u) ? silu(up) : gelu_approx(up);
-                    h = g * Vp[idx];
+                    Hs[idx] = g * Hs[idx]; // Hs holds V tile here
                 }
-                Hs[idx] = h;
             } else {
                 Hs[idx] = 0.0f;
             }
