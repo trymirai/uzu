@@ -9,6 +9,7 @@ pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
 mod tensor_add_swap;
+mod tensor_add_bias;
 mod tensor_copy;
 
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
@@ -21,6 +22,7 @@ pub use rms_norm::{
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub use tensor_add_swap::TensorAddSwap;
+pub use tensor_add_bias::TensorAddBias;
 pub use tensor_copy::TensorCopy;
 
 use super::{MTLContext, metal_extensions};
