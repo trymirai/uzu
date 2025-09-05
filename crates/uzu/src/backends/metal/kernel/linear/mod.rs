@@ -4,6 +4,7 @@ use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulKernel};
+use super::{KernelDataType, TensorAddBias};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -20,6 +21,8 @@ use crate::{
 pub struct QuantizedLinearKernelBlock {
     kernel_mm: QuantizedMatmulKernel,
     kernel_mv: QuantizedMatmulKernel,
+    bias_add_kernel: Option<TensorAddBias>,
+    biases_buffer: Option<MTLBuffer>,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
     zero_points_buffer: MTLBuffer,
@@ -108,13 +111,44 @@ impl QuantizedLinearKernelBlock {
         let weights_buffer: MTLBuffer =
             unsafe { weights.mtl_buffer() }.to_owned();
 
+        // Optional trainable bias support
+        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf("biases") {
+            Ok(mut biases) => {
+                if biases.shape() != [output_dim] {
+                    return Err(MTLError::Generic(format!(
+                        "Bias shape mismatch: got {:?}, expected [{:?}]",
+                        biases.shape(), output_dim
+                    )));
+                }
+                if biases.data_type() != kernel_data_type {
+                    return Err(MTLError::Generic(format!(
+                        "Bias dtype mismatch: got {:?}, expected {:?}",
+                        biases.data_type(), kernel_data_type
+                    )));
+                }
+                let bias_add_kernel = Some(TensorAddBias::new(
+                    mtl_context,
+                    KernelDataType::from(kernel_data_type),
+                )?);
+                let biases_buffer: MTLBuffer = unsafe { biases.mtl_buffer() }.to_owned();
+                (bias_add_kernel, Some(biases_buffer))
+            },
+            Err(_) => (None, None),
+        };
+
         let g = config.group_size;
         let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
+            (DataType::F16, 32) => {
+                ("qmm_transposed_f16_g32_b4", "qmv_f16_g32_b4")
+            },
             (DataType::F16, 64) => {
                 ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4")
             },
             (DataType::F16, 128) => {
                 ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4")
+            },
+            (DataType::BF16, 32) => {
+                ("qmm_transposed_bf16_g32_b4", "qmv_bf16_g32_b4")
             },
             (DataType::BF16, 64) => {
                 ("qmm_transposed_bf16_g64_b4", "qmv_bf16_g64_b4")
@@ -146,6 +180,8 @@ impl QuantizedLinearKernelBlock {
         Ok(Self {
             kernel_mm,
             kernel_mv,
+            bias_add_kernel,
+            biases_buffer,
             weights_buffer,
             scales_buffer,
             zero_points_buffer,
@@ -209,5 +245,18 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
             .expect("Failed to encode quantized matmul kernel");
 
         encoder.end_encoding();
+
+        if let (Some(bias_add), Some(bias_buf)) = (&self.bias_add_kernel, &self.biases_buffer) {
+            let total_len = batch_size * self.output_dim;
+            let retained_cb = root_command_buffer.to_owned();
+            bias_add.encode_into_command_buffer(
+                &output_buffer,
+                bias_buf,
+                &output_buffer,
+                self.output_dim,
+                total_len,
+                &retained_cb,
+            );
+        }
     }
 }

@@ -180,10 +180,14 @@ pub fn encode_quantized_matmul(
     };
 
     let kernel_name = match (type_suffix, group_size, transpose) {
+        ("f16", 32, false) => "qmm_f16_g32_b4".to_string(),
+        ("f16", 32, true) => "qmm_transposed_f16_g32_b4".to_string(),
         ("f16", 64, false) => "qmm_f16_g64_b4".to_string(),
         ("f16", 64, true) => "qmm_transposed_f16_g64_b4".to_string(),
         ("f16", 128, false) => "qmm_f16_g128_b4".to_string(),
         ("f16", 128, true) => "qmm_transposed_f16_g128_b4".to_string(),
+        ("bf16", 32, false) => "qmm_bf16_g32_b4".to_string(),
+        ("bf16", 32, true) => "qmm_transposed_bf16_g32_b4".to_string(),
         ("bf16", 64, false) => "qmm_bf16_g64_b4".to_string(),
         ("bf16", 64, true) => "qmm_transposed_bf16_g64_b4".to_string(),
         ("bf16", 128, false) => "qmm_bf16_g128_b4".to_string(),
