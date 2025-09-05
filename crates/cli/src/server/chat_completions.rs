@@ -27,8 +27,7 @@ pub struct ChatMessage {
 #[derive(Serialize, Deserialize)]
 pub struct ChatCompletionRequest {
     pub messages: Vec<ChatMessage>,
-    pub model: String,
-    pub max_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
     pub system_prompt_key: Option<String>,
 }
 
@@ -59,7 +58,10 @@ pub fn handle_chat_completions(
 
     println!("📨 [{}] Incoming chat completion request:", id);
     println!("   Messages: {} message(s)", request.messages.len());
-    println!("   Max tokens: {}", request.max_tokens.unwrap_or(2048));
+    println!(
+        "   Max tokens: {}",
+        request.max_completion_tokens.unwrap_or(2048)
+    );
     println!("   System prompt key: {:?}", request.system_prompt_key);
 
     for (i, msg) in request.messages.iter().enumerate() {
@@ -73,7 +75,7 @@ pub fn handle_chat_completions(
 
     let model_name = state.model_name.clone();
     let system_prompt_key = request.system_prompt_key;
-    let tokens_limit = request.max_tokens.unwrap_or(2048);
+    let tokens_limit = request.max_completion_tokens.unwrap_or(2048);
     let messages: Vec<SessionMessage> = request
         .messages
         .into_iter()
