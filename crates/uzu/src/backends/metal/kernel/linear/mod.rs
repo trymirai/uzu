@@ -110,11 +110,17 @@ impl QuantizedLinearKernelBlock {
 
         let g = config.group_size;
         let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
+            (DataType::F16, 32) => {
+                ("qmm_transposed_f16_g32_b4", "qmv_f16_g32_b4")
+            },
             (DataType::F16, 64) => {
                 ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4")
             },
             (DataType::F16, 128) => {
                 ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4")
+            },
+            (DataType::BF16, 32) => {
+                ("qmm_transposed_bf16_g32_b4", "qmv_bf16_g32_b4")
             },
             (DataType::BF16, 64) => {
                 ("qmm_transposed_bf16_g64_b4", "qmv_bf16_g64_b4")
