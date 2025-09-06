@@ -18,3 +18,5 @@ pub mod rope;
 pub use rope::*;
 pub mod model;
 pub use model::*;
+pub mod metadata;
+pub use metadata::*;
