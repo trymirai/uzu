@@ -13,7 +13,7 @@ use crate::{
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
     },
-    config::ModelConfig,
+    config::ModelMetadata,
     parameters::ParameterLoader,
 };
 
@@ -50,10 +50,11 @@ impl GeneratorContext {
         }
         let config_file = File::open(&config_path)
             .map_err(|_| GeneratorError::UnableToLoadConfig)?;
-        let model_config: ModelConfig =
+        let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
                 .map_err(|_| GeneratorError::UnableToLoadConfig)?;
-        let decoder_config = Rc::new(model_config.model_config.clone());
+        let decoder_config =
+            Rc::new(model_metadata.model_config.decoder_config.clone());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let prefill_step_size = config.prefill_step_size;

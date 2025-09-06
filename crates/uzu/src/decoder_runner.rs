@@ -16,7 +16,7 @@ use crate::{
         },
         utils::{CaptureOptions, StdoutCapture},
     },
-    config::{ModelConfig, decoder::DecoderConfig},
+    config::{ModelMetadata, decoder::DecoderConfig},
     parameters::ParameterLoader,
 };
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,10 +50,11 @@ impl DecoderTestContext {
         }
         let config_file = File::open(&config_path)
             .map_err(|e| format!("Failed to open config: {}", e))?;
-        let model_config: ModelConfig =
+        let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
-        let decoder_config = Rc::new(model_config.model_config.clone());
+        let decoder_config =
+            Rc::new(model_metadata.model_config.decoder_config.clone());
         let mtl_device = metal::Device::system_default()
             .ok_or("No Metal device available".to_string())?;
         let mtl_command_queue = mtl_device.new_command_queue();

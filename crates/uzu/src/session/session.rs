@@ -1,6 +1,6 @@
 #[cfg(target_os = "ios")]
 use std::path::Path;
-use std::{path::PathBuf, time::Instant};
+use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -18,6 +18,7 @@ use super::{
     session_run_config::SessionRunConfig,
 };
 use crate::{
+    config::ModelMetadata,
     generator::{
         config::GeneratorConfigProvider,
         generator::Generator,
@@ -75,16 +76,25 @@ impl Session {
         #[cfg(target_os = "ios")]
         Self::assert_model_fits_ram(&model_path)?;
 
+        let config_path = model_path.join("config.json");
+        if !config_path.exists() {
+            return Err(SessionError::UnableToLoadConfig);
+        }
+        let config_file = File::open(&config_path)
+            .map_err(|_| SessionError::UnableToLoadConfig)?;
+        let model_metadata: ModelMetadata =
+            serde_json::from_reader(BufReader::new(config_file))
+                .map_err(|_| SessionError::UnableToLoadConfig)?;
+
         let tokenizer_path = model_path.join("tokenizer.json");
-        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
-        let tokenizer_config =
-            SessionTokenizerConfig::load_and_add_special_tokens_to_tokenizer(
-                model_path.clone(),
-                &mut tokenizer,
-            )
-            .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
+        let tokenizer_config = SessionTokenizerConfig::load(
+            &model_metadata.model_config,
+            &tokenizer,
+        )
+        .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
 
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());

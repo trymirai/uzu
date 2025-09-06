@@ -1,4 +1,3 @@
-mod config;
 pub mod session;
 pub mod session_classification_feature;
 pub mod session_config;
