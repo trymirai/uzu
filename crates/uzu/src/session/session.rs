@@ -1,6 +1,6 @@
 #[cfg(target_os = "ios")]
 use std::path::Path;
-use std::{path::PathBuf, time::Instant};
+use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -95,7 +95,6 @@ impl Session {
             &tokenizer,
         )
         .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
-        println!("tokenizer_config: {:?}", tokenizer_config);
 
         let input_processor =
             SessionInputProcessorDefault::new(tokenizer_config.clone());

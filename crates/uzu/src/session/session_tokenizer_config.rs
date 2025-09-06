@@ -1,6 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
-
-use tokenizers::{AddedToken, Tokenizer};
+use tokenizers::Tokenizer;
 
 use crate::{
     backends::metal::sampling_config::SamplingConfig,
