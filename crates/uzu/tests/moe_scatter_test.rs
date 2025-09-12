@@ -237,6 +237,7 @@ fn test_scatter_buckets_parity() {
                     num_blocks,
                     num_tiles,
                 },
+                KernelDataType::Float16,
             )
             .expect("encode scatter");
         enc.end_encoding();

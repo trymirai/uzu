@@ -18,9 +18,11 @@ pub use kv_cache_update::KVCacheUpdate;
 pub use moe::{
     MoeBlockBasesArguments, MoeBucketCountsArguments, MoeBucketCountsError,
     MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsError,
-    MoeExpertsKernel, MoeOffsetsScanArguments, MoeOffsetsScanError,
+    MoeExpertsKernel, MoeFinalizeArguments, MoeFinalizeError,
+    MoeFinalizeKernel, MoeOffsetsScanArguments, MoeOffsetsScanError,
     MoeOffsetsScanKernel, MoeScatterArguments, MoeScatterError,
-    MoeScatterKernels, MoeTopKArguments, MoeTopKError, MoeTopKKernel,
+    MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+    MoeTopKError, MoeTopKKernel,
 };
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,

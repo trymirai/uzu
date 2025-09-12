@@ -267,6 +267,10 @@ pub struct MoeScatterKernels {
     pipeline_scatter_f16: MTLComputePipelineState,
     pipeline_scatter_f32: MTLComputePipelineState,
     pipeline_scatter_bf16: MTLComputePipelineState,
+    // map variants
+    pipeline_scatter_map_f16: MTLComputePipelineState,
+    pipeline_scatter_map_f32: MTLComputePipelineState,
+    pipeline_scatter_map_bf16: MTLComputePipelineState,
     device: MTLDevice,
     last_block_alloc: RefCell<Option<MTLBuffer>>,
 }
@@ -295,6 +299,12 @@ pub struct MoeScatterArguments<'a> {
     pub num_tiles: usize,
 }
 
+#[derive(Debug)]
+pub struct MoeScatterWithMapArguments<'a> {
+    pub base: MoeScatterArguments<'a>,
+    pub tok2row_buffer: &'a MTLBuffer, // [T*K] int32, initialized to -1
+}
+
 impl MoeScatterKernels {
     pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeScatterError> {
         let pipeline_bases = mtl_context
@@ -305,11 +315,20 @@ impl MoeScatterKernels {
             .compute_pipeline_state("moe_scatter_buckets_f32", None)?;
         let pipeline_scatter_bf16 = mtl_context
             .compute_pipeline_state("moe_scatter_buckets_bf16", None)?;
+        let pipeline_scatter_map_f16 = mtl_context
+            .compute_pipeline_state("moe_scatter_buckets_map_f16", None)?;
+        let pipeline_scatter_map_f32 = mtl_context
+            .compute_pipeline_state("moe_scatter_buckets_map_f32", None)?;
+        let pipeline_scatter_map_bf16 = mtl_context
+            .compute_pipeline_state("moe_scatter_buckets_map_bf16", None)?;
         Ok(Self {
             pipeline_bases,
             pipeline_scatter_f16,
             pipeline_scatter_f32,
             pipeline_scatter_bf16,
+            pipeline_scatter_map_f16,
+            pipeline_scatter_map_f32,
+            pipeline_scatter_map_bf16,
             device: mtl_context.device.clone(),
             last_block_alloc: RefCell::new(None),
         })
@@ -370,9 +389,23 @@ impl MoeScatterKernels {
         &self,
         compute_encoder: &ComputeCommandEncoderRef,
         args: MoeScatterArguments,
+        dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        // For now default to f16 probabilities
-        compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_f16);
+        // Select pipeline based on dtype
+        match dtype {
+            KernelDataType::Float16 => {
+                compute_encoder
+                    .set_compute_pipeline_state(&self.pipeline_scatter_f16);
+            },
+            KernelDataType::Float32 => {
+                compute_encoder
+                    .set_compute_pipeline_state(&self.pipeline_scatter_f32);
+            },
+            KernelDataType::BFloat16 => {
+                compute_encoder
+                    .set_compute_pipeline_state(&self.pipeline_scatter_bf16);
+            },
+        }
         compute_encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.topk_probs_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.offsets_buffer), 0);
@@ -426,7 +459,76 @@ impl MoeScatterKernels {
         }
         Ok(())
     }
+
+    pub fn encode_scatter_with_map(
+        &self,
+        compute_encoder: &ComputeCommandEncoderRef,
+        args: MoeScatterWithMapArguments,
+        dtype: KernelDataType,
+    ) -> Result<(), MoeScatterError> {
+        let pipeline = match dtype {
+            KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
+            KernelDataType::Float32 => &self.pipeline_scatter_map_f32,
+            KernelDataType::BFloat16 => &self.pipeline_scatter_map_bf16,
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
+        let base = &args.base;
+        compute_encoder.set_buffer(0, Some(base.topk_ids_buffer), 0);
+        compute_encoder.set_buffer(1, Some(base.topk_probs_buffer), 0);
+        compute_encoder.set_buffer(2, Some(base.offsets_buffer), 0);
+        compute_encoder.set_buffer(3, Some(base.block_bases_buffer), 0);
+        // Use the last computed block_alloc
+        let block_alloc_opt = self.last_block_alloc.borrow();
+        let block_alloc_buf = block_alloc_opt.as_ref().ok_or_else(|| {
+            MoeScatterError::MetalError(MTLError::Generic(
+                "block_alloc buffer missing; call encode_block_bases first"
+                    .to_string(),
+            ))
+        })?;
+        compute_encoder.set_buffer(4, Some(block_alloc_buf), 0);
+        compute_encoder.set_buffer(5, Some(base.out_ids_buffer), 0);
+        compute_encoder.set_buffer(6, Some(base.out_probs_buffer), 0);
+        let t_u32 = base.t as u32;
+        let e_u32 = base.e as u32;
+        let k_u32 = base.k as u32;
+        let nb_u32 = base.num_blocks as u32;
+        let nt_u32 = base.num_tiles as u32;
+        compute_encoder.set_bytes(
+            7,
+            size_of::<u32>() as u64,
+            &t_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            8,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            9,
+            size_of::<u32>() as u64,
+            &k_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            10,
+            size_of::<u32>() as u64,
+            &nb_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            11,
+            size_of::<u32>() as u64,
+            &nt_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_buffer(12, Some(args.tok2row_buffer), 0);
+
+        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
+        let tg = MTLSize::new(base.num_blocks as u64, 1, 1);
+        if base.num_blocks > 0 {
+            compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
+        }
+        Ok(())
+    }
 }
+
 impl MoeBucketCountsKernel {
     pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeBucketCountsError> {
         let pipeline_partials =
@@ -567,7 +669,7 @@ impl MoeTopKKernel {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f32)
             },
             KernelDataType::BFloat16 => {
-                // Not supported in v1
+                // Not supported in v1; fallback to f32 logits path
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f32)
             },
         }
@@ -619,6 +721,98 @@ impl MoeTopKKernel {
                 .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }
 
+        Ok(())
+    }
+}
+
+// ---- Finalize Kernel ----
+#[derive(Debug, thiserror::Error)]
+pub enum MoeFinalizeError {
+    #[error("Metal error: {0}")]
+    MetalError(#[from] MTLError),
+}
+
+pub struct MoeFinalizeKernel {
+    pipeline_f16: MTLComputePipelineState,
+    pipeline_bf16: MTLComputePipelineState,
+}
+
+#[derive(Debug)]
+pub struct MoeFinalizeArguments<'a> {
+    pub tok2row_buffer: &'a MTLBuffer, // [T*K] i32
+    pub probs_buffer: &'a MTLBuffer,   // [T*K] f16/bf16
+    pub y_partial_buffer: &'a MTLBuffer, // [sum_k, d_model] f16
+    pub y_out_buffer: &'a MTLBuffer,   // [T, d_model] f16
+    pub t: usize,
+    pub d_model: usize,
+    pub k: usize,
+}
+
+impl MoeFinalizeKernel {
+    pub fn new(ctx: &MTLContext) -> Result<Self, MoeFinalizeError> {
+        let pipeline_f16 =
+            ctx.compute_pipeline_state("moe_finalize_f16", None)?;
+        let pipeline_bf16 =
+            ctx.compute_pipeline_state("moe_finalize_bf16", None)?;
+        Ok(Self {
+            pipeline_f16,
+            pipeline_bf16,
+        })
+    }
+
+    pub fn encode(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        args: MoeFinalizeArguments,
+        dtype: KernelDataType,
+    ) -> Result<(), MoeFinalizeError> {
+        match dtype {
+            KernelDataType::Float16 => {
+                encoder.set_compute_pipeline_state(&self.pipeline_f16);
+            },
+            KernelDataType::BFloat16 => {
+                encoder.set_compute_pipeline_state(&self.pipeline_bf16);
+            },
+            KernelDataType::Float32 => {
+                // Not used for finalize in v1
+                encoder.set_compute_pipeline_state(&self.pipeline_f16);
+            },
+        }
+        encoder.set_buffer(0, Some(args.tok2row_buffer), 0);
+        encoder.set_buffer(1, Some(args.probs_buffer), 0);
+        encoder.set_buffer(2, Some(args.y_partial_buffer), 0);
+        encoder.set_buffer(3, Some(args.y_out_buffer), 0);
+        let t_u = args.t as u32;
+        let dm_u = args.d_model as u32;
+        let k_u = args.k as u32;
+        encoder.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &t_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &dm_u as *const u32 as *const _,
+        );
+        encoder.set_bytes(
+            6,
+            size_of::<u32>() as u64,
+            &k_u as *const u32 as *const _,
+        );
+
+        // Launch tiles over (N tiles, M tiles)
+        const BM: usize = 32;
+        const BN: usize = 64;
+        let num_tiles_n = (args.d_model + BN - 1) / BN;
+        let num_tiles_m = (args.t + BM - 1) / BM;
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        if num_tiles_m > 0 && num_tiles_n > 0 {
+            let threadgroups =
+                MTLSize::new(num_tiles_n as u64, num_tiles_m as u64, 1);
+            encoder
+                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        }
         Ok(())
     }
 }
