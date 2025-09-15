@@ -7,7 +7,7 @@
 <a href="https://artifacts.trymirai.com/social/about_us.mp3"><img src="https://img.shields.io/badge/Listen-Podcast-red" alt="Listen to our podcast"></a>
 <a href="https://docsend.com/v/76bpr/mirai2025"><img src="https://img.shields.io/badge/View-Deck-red" alt="View our deck"></a>
 <a href="mailto:alexey@getmirai.co,dima@getmirai.co,aleksei@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-green" alt="Contact us"></a>
-<a href="https://docs.trymirai.com/components/inference-engine"><img src="https://img.shields.io/badge/Read-Docs-blue" alt="Read docs"></a>
+<a href="https://docs.trymirai.com/overview/uzu"><img src="https://img.shields.io/badge/Read-Docs-blue" alt="Read docs"></a>
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 # uzu
@@ -15,14 +15,14 @@
 A high-performance inference engine for AI models on Apple Silicon. Key features:
 
 - Simple, high-level API
-- [Hybrid architecture](https://docs.trymirai.com/components/inference-engine#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML with [ANE](https://trymirai.com/blog/iphone-hardware) access)
+- [Hybrid architecture](https://docs.trymirai.com/overview/uzu#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML with [ANE](https://trymirai.com/blog/iphone-hardware) access)
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
 
 ## Overview
 
-For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/components/inference-engine).
+For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/overview/uzu).
 
 ### [Models](https://trymirai.com/models)
 
@@ -51,7 +51,7 @@ Alternatively, you can download a prepared model using the sample script:
 
 ### CLI
 
-You can run `uzu` in a [CLI](https://docs.trymirai.com/components/cli) mode:
+You can run `uzu` in a [CLI](https://docs.trymirai.com/overview/cli) mode:
 
 ```bash
 cargo run --release -p cli -- help
