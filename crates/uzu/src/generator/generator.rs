@@ -30,6 +30,8 @@ pub struct Generator {
     pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
+    #[cfg(feature = "structured")]
+    structured: Option<crate::structured::xgrammar_support::StructuredState>,
 }
 
 impl Generator {
@@ -48,6 +50,8 @@ impl Generator {
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
+            #[cfg(feature = "structured")]
+            structured: None,
         };
 
         //Warmup
@@ -55,6 +59,22 @@ impl Generator {
         generator.warmup(generate_suffix_length);
 
         return Ok(generator);
+    }
+
+    #[cfg(feature = "structured")]
+    pub fn enable_structured_from_json(
+        &mut self,
+        tokenizer_info_json: &str,
+        compiled_grammar_json: &str,
+    ) {
+        let vocab = self.context.model_shape.embeddings_output_shape()[1];
+        self.structured =
+            Some(crate::structured::xgrammar_support::init_structured_state(
+                tokenizer_info_json,
+                compiled_grammar_json,
+                1,
+                vocab,
+            ));
     }
 
     pub fn prefill(
@@ -66,6 +86,14 @@ impl Generator {
         assert!(!tokens.is_empty());
 
         self.tokens.extend(tokens.clone());
+        #[cfg(feature = "structured")]
+        if let Some(st) = &mut self.structured {
+            for &tid in &tokens {
+                crate::structured::xgrammar_support::accept_next_token(
+                    st, tid as i32,
+                );
+            }
+        }
 
         let tokens_length = tokens.len();
         let number_of_prefill_steps = (tokens_length as f32
@@ -196,6 +224,14 @@ impl Generator {
         self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
+        #[cfg(feature = "structured")]
+        if let Some(st) = &mut self.structured {
+            for &tid in &accepted_tokens {
+                crate::structured::xgrammar_support::accept_next_token(
+                    st, tid as i32,
+                );
+            }
+        }
 
         self.sync_prefix();
 
@@ -280,6 +316,15 @@ impl Generator {
         self.update_kv_cache(&mut state, &accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
+        #[cfg(feature = "structured")]
+        if let Some(st) = &mut self.structured {
+            if let Some(&tid0) = accepted_tokens.first() {
+                crate::structured::xgrammar_support::accept_next_token(
+                    st,
+                    tid0 as i32,
+                );
+            }
+        }
         self.sync_prefix();
 
         GenerateResult {
@@ -350,6 +395,27 @@ impl Generator {
                 self.context.command_buffer.root_command_buffer().to_owned();
 
             if !warmup {
+                #[cfg(feature = "structured")]
+                if let Some(st) = &mut self.structured {
+                    // Fill mask for next token (row 0) and apply it to logits row 0
+                    let logits_binding = state.arrays(&[
+                        crate::backends::metal::forward_pass::ArrayId::Logits,
+                    ]);
+                    let mut logits = logits_binding[0].borrow_mut();
+                    let vocab = {
+                        use crate::Array;
+                        logits.shape()[1]
+                    };
+                    crate::structured::xgrammar_support::fill_mask_row0(st);
+                    let row0_mask = &st.bitmask_words[0..st.nwords32];
+                    crate::structured::xgrammar_support::apply_mask_row0_to_metal_array(
+                        &mut *logits,
+                        vocab,
+                        row0_mask,
+                        st.nwords32,
+                    );
+                    drop(logits);
+                }
                 self.context.gpu_sampler.encode(
                     &mut state,
                     &self.context.command_buffer,

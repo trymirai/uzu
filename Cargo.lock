@@ -332,6 +332,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2664,6 +2673,14 @@ dependencies = [
  "sysinfo",
  "thiserror",
  "tokenizers",
+ "uzu-xgrammar",
+]
+
+[[package]]
+name = "uzu-xgrammar"
+version = "0.1.0"
+dependencies = [
+ "xgrammar-ffi-sys",
 ]
 
 [[package]]
@@ -3150,6 +3167,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
  "bitflags 2.9.4",
+]
+
+[[package]]
+name = "xgrammar-ffi-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "cmake",
 ]
 
 [[package]]

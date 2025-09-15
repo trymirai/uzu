@@ -19,3 +19,6 @@ pub mod tracer;
 pub mod version;
 pub use quant_matmul::*;
 pub use version::VERSION;
+
+#[cfg(feature = "structured")]
+pub mod structured;

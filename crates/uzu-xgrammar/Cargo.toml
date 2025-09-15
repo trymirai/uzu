@@ -1,0 +1,7 @@
+[package]
+name = "uzu-xgrammar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xgrammar-ffi-sys = { path = "../xgrammar-ffi-sys" }
