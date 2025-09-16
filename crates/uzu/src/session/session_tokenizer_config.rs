@@ -8,6 +8,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct SessionTokenizerConfig {
     pub eos_tokens: Vec<String>,
+    pub bos_token: Option<String>,
     pub chat_template: String,
     pub sampling_config: SamplingConfig,
 }
@@ -27,6 +28,8 @@ impl SessionTokenizerConfig {
             return None;
         }
 
+        let bos_token = model_config.message_processor_config.bos_token.clone();
+
         let chat_template =
             model_config.message_processor_config.prompt_template.clone();
 
@@ -35,6 +38,7 @@ impl SessionTokenizerConfig {
 
         Some(Self {
             eos_tokens,
+            bos_token,
             chat_template,
             sampling_config,
         })
