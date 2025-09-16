@@ -48,6 +48,7 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
     ) -> String {
         let messages = input.get_messages();
         let template = self.tokenizer_config.chat_template.clone();
+        let bos_token = self.tokenizer_config.bos_token.clone();
 
         let template_name = "chat_template";
         let mut environment = Environment::new();
@@ -55,9 +56,11 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
         environment.add_template(template_name, template.as_str()).unwrap();
         let template = environment.get_template(template_name).unwrap();
         let result = template
-            .render(
-                context!(messages => messages, add_generation_prompt => true),
-            )
+            .render(context!(
+                messages => messages,
+                add_generation_prompt => true,
+                bos_token => bos_token
+            ))
             .unwrap();
         result
     }
