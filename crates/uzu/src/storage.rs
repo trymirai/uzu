@@ -92,9 +92,9 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
 
 /// Platform-specific directory the SDK uses for persistent storage.
 ///
-/// * macOS:   `~/Library/Caches/<STORAGE_DIR_NAME>`
-/// * iOS:     `~/Documents/<STORAGE_DIR_NAME>`
-/// * other:   `$HOME/.cache/<STORAGE_DIR_NAME>`
+/// * macOS:   `~/Library/Caches/<STORAGE_DIR_NAME>/<VERSION>/`
+/// * iOS:     `~/Documents/<STORAGE_DIR_NAME>/<VERSION>/`
+/// * other:   `$HOME/.cache/<STORAGE_DIR_NAME>/<VERSION>/`
 pub fn storage_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = {
@@ -119,7 +119,7 @@ pub fn storage_path() -> PathBuf {
         PathBuf::from(home).join(".cache")
     };
 
-    let full = base.join(STORAGE_DIR_NAME);
+    let full = base.join(STORAGE_DIR_NAME).join(crate::VERSION);
     let _ = std::fs::create_dir_all(&full);
     full
 }
