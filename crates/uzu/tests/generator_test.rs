@@ -5,8 +5,11 @@ use uzu::{
     backends::metal::sampling_config::SamplingConfig,
     generator::config::{ContextLength, SamplingSeed, SpeculatorConfig},
     session::{
-        session::Session, session_config::SessionConfig,
-        session_input::SessionInput, session_output::SessionOutput,
+        session::Session,
+        session_config::SessionConfig,
+        session_input::SessionInput,
+        session_message::{SessionMessage, SessionMessageRole},
+        session_output::SessionOutput,
         session_run_config::SessionRunConfig,
     },
 };
@@ -57,4 +60,62 @@ fn run(
     println!("-------------------------");
     println!("Finish reason: {:?}", output.finish_reason);
     println!("-------------------------");
+}
+
+#[test]
+fn test_generation_scenario() {
+    let system_prompt = String::from("You are a helpful assistant.");
+    let messages = vec![
+        String::from("Tell about London"),
+        String::from("Compare with New York"),
+    ];
+    run_scenario(Some(system_prompt), messages);
+}
+
+fn run_scenario(
+    system_prompt: Option<String>,
+    user_prompts: Vec<String>,
+) {
+    let config = SessionConfig::new(
+        64,
+        SpeculatorConfig::default(),
+        true,
+        SamplingSeed::Custom(42),
+        ContextLength::Default,
+    );
+    let mut session = Session::new(build_model_path()).unwrap();
+    session.load_with_session_config(config).unwrap();
+
+    let mut messages: Vec<SessionMessage> = vec![];
+    if let Some(system_prompt) = system_prompt {
+        messages.push(SessionMessage {
+            role: SessionMessageRole::System,
+            content: system_prompt.clone(),
+        });
+        println!("System > {}", system_prompt.clone());
+    }
+
+    for user_prompt in user_prompts {
+        messages.push(SessionMessage {
+            role: SessionMessageRole::User,
+            content: user_prompt.clone(),
+        });
+        println!("User > {}", user_prompt.clone());
+
+        let input = SessionInput::Messages(messages.clone());
+        let output = session
+            .run(
+                input,
+                SessionRunConfig::new_with_sampling_config(2048, None),
+                Some(|_: SessionOutput| {
+                    return true;
+                }),
+            )
+            .unwrap();
+        messages.push(SessionMessage {
+            role: SessionMessageRole::Assistant,
+            content: output.text.clone(),
+        });
+        println!("Assistant > {}", output.text.clone());
+    }
 }
