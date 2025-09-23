@@ -24,9 +24,7 @@ impl Default for SpeculatorConfig {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ContextLength {
-    // 8192 is the default max prefix length
     Default,
-    // Custom max prefix length
     Custom(u64),
 }
 
