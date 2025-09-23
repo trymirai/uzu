@@ -259,7 +259,7 @@ impl Session {
                 .collect();
             let generated_text = tokenizer
                 .decode(&generated_tokens, true)
-                .map_err(|e| SessionError::UnableToDecodeText)?;
+                .map_err(|_| SessionError::UnableToDecodeText)?;
             Ok(generated_text)
         };
 
