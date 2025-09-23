@@ -44,8 +44,15 @@ impl SessionConfig {
 
 impl Default for SessionConfig {
     fn default() -> Self {
+        let prefill_step_size: usize;
+        if cfg!(target_os = "ios") {
+            prefill_step_size = 64;
+        } else {
+            prefill_step_size = 256;
+        }
+
         Self::new(
-            8,
+            prefill_step_size,
             SpeculatorConfig::default(),
             true,
             SamplingSeed::default(),

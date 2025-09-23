@@ -19,8 +19,10 @@ impl SessionRunConfig {
             custom_sampling_config: custom_sampling_config,
         }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for SessionRunConfig {
+    fn default() -> Self {
         Self::new(1024, true, None)
     }
 }
