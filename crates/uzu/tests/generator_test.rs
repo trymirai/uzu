@@ -43,8 +43,9 @@ fn run(
     let output = session
         .run(
             input,
-            SessionRunConfig::new_with_sampling_config(
+            SessionRunConfig::new(
                 tokens_limit,
+                true,
                 Some(SamplingConfig::Argmax),
             ),
             Some(|_: SessionOutput| {
@@ -106,7 +107,7 @@ fn run_scenario(
         let output = session
             .run(
                 input,
-                SessionRunConfig::new_with_sampling_config(2048, None),
+                SessionRunConfig::default(),
                 Some(|_: SessionOutput| {
                     return true;
                 }),

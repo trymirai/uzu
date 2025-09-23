@@ -26,6 +26,7 @@ pub trait SessionInputProcessor: Send + Sync {
     fn process(
         &self,
         input: &SessionInput,
+        enable_thinking: bool,
     ) -> String;
 }
 
@@ -45,6 +46,7 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
     fn process(
         &self,
         input: &SessionInput,
+        enable_thinking: bool,
     ) -> String {
         let messages = input.get_messages();
         let template = self.tokenizer_config.chat_template.clone();
@@ -59,7 +61,8 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
             .render(context!(
                 messages => messages,
                 add_generation_prompt => true,
-                bos_token => bos_token
+                bos_token => bos_token,
+                enable_thinking => enable_thinking
             ))
             .unwrap();
         result
