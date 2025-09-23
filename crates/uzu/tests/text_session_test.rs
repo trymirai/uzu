@@ -19,16 +19,26 @@ fn build_model_path() -> PathBuf {
 }
 
 #[test]
-fn test_generation_base() {
+fn test_text_session_base() {
     let text = String::from("Tell about London");
     let config = SessionConfig::new(
-        8,
+        64,
         SpeculatorConfig::default(),
         true,
         SamplingSeed::Custom(42),
         ContextLength::Default,
     );
     run(text, config, 128);
+}
+
+#[test]
+fn test_text_session_scenario() {
+    let system_prompt = String::from("You are a helpful assistant.");
+    let user_prompts = vec![
+        String::from("Tell about London"),
+        String::from("Compare with New York"),
+    ];
+    run_scenario(Some(system_prompt), user_prompts);
 }
 
 fn run(
@@ -61,16 +71,6 @@ fn run(
     println!("-------------------------");
     println!("Finish reason: {:?}", output.finish_reason);
     println!("-------------------------");
-}
-
-#[test]
-fn test_generation_scenario() {
-    let system_prompt = String::from("You are a helpful assistant.");
-    let messages = vec![
-        String::from("Tell about London"),
-        String::from("Compare with New York"),
-    ];
-    run_scenario(Some(system_prompt), messages);
 }
 
 fn run_scenario(
