@@ -8,26 +8,26 @@ use crate::generator::config::{
 #[derive(Clone)]
 pub struct SessionConfig {
     pub prefill_step_size: usize,
-    pub speculator_config: SpeculatorConfig,
-    pub allow_pre_encode: bool,
-    pub sampling_seed: SamplingSeed,
     pub context_length: ContextLength,
+    pub speculator_config: SpeculatorConfig,
+    pub sampling_seed: SamplingSeed,
+    pub allow_pre_encode: bool,
 }
 
 impl SessionConfig {
     pub fn new(
         prefill_step_size: usize,
-        speculator_config: SpeculatorConfig,
-        allow_pre_encode: bool,
-        sampling_seed: SamplingSeed,
         context_length: ContextLength,
+        speculator_config: SpeculatorConfig,
+        sampling_seed: SamplingSeed,
+        allow_pre_encode: bool,
     ) -> Self {
         Self {
             prefill_step_size,
-            speculator_config,
-            allow_pre_encode,
-            sampling_seed,
             context_length,
+            speculator_config,
+            sampling_seed,
+            allow_pre_encode,
         }
     }
 
@@ -53,10 +53,10 @@ impl Default for SessionConfig {
 
         Self::new(
             prefill_step_size,
-            SpeculatorConfig::default(),
-            true,
-            SamplingSeed::default(),
             ContextLength::default(),
+            SpeculatorConfig::default(),
+            SamplingSeed::default(),
+            true,
         )
     }
 }
