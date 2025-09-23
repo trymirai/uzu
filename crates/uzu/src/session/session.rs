@@ -18,22 +18,20 @@ use super::{
     session_run_config::SessionRunConfig,
 };
 use crate::{
-    config::ModelMetadata,
+    backends::metal::sampling_config::SamplingConfig,
+    config::{GenerationConfig, ModelMetadata},
     generator::{
         config::GeneratorConfigProvider,
         generator::Generator,
         result::{GenerateResult, PrefillResult},
     },
-    session::{
-        session_error::SessionError,
-        session_tokenizer_config::SessionTokenizerConfig,
-    },
+    session::session_error::SessionError,
 };
 
 pub struct Session {
     model_path: PathBuf,
+    model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    tokenizer_config: SessionTokenizerConfig,
     input_processor: Box<dyn SessionInputProcessor>,
     generator: Option<Generator>,
 }
@@ -90,19 +88,14 @@ impl Session {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| SessionError::UnableToLoadTokenizer)?;
 
-        let tokenizer_config = SessionTokenizerConfig::load(
-            &model_metadata.model_config,
-            &tokenizer,
-        )
-        .ok_or(SessionError::UnableToLoadTokenizerConfig)?;
-
-        let input_processor =
-            SessionInputProcessorDefault::new(tokenizer_config.clone());
+        let input_processor = SessionInputProcessorDefault::new(
+            model_metadata.model_config.message_processor_config.clone(),
+        );
 
         Ok(Self {
             model_path,
+            model_metadata,
             tokenizer,
-            tokenizer_config,
             input_processor: Box::new(input_processor),
             generator: None,
         })
@@ -184,6 +177,22 @@ impl Session {
         Ok(output)
     }
 
+    fn build_sampling_config(
+        generation_config: GenerationConfig
+    ) -> SamplingConfig {
+        if let Some(top_p) = generation_config.top_p {
+            return SamplingConfig::TopP {
+                top_p: top_p,
+            };
+        }
+        if let Some(temperature) = generation_config.temperature {
+            return SamplingConfig::Categorical {
+                temperature: temperature,
+            };
+        }
+        return SamplingConfig::Argmax;
+    }
+
     fn run_internal<F>(
         &mut self,
         input: SessionInput,
@@ -209,14 +218,14 @@ impl Session {
 
         let prefix_len_before = generator.prefix_len();
 
-        let eos_tokens = self
-            .tokenizer_config
-            .eos_tokens
+        let eos_tokens: Vec<u64> = self
+            .model_metadata
+            .model_config
+            .generation_config
+            .stop_token_ids
             .iter()
-            .map(|token| {
-                self.tokenizer.token_to_id(token.as_str()).unwrap() as u64
-            })
-            .collect::<Vec<_>>();
+            .map(|&x| x as u64)
+            .collect();
 
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
@@ -246,9 +255,11 @@ impl Session {
                 tokenizer.decode(&generated_tokens, true).unwrap()
             };
 
-        let sampling_config = config
-            .custom_sampling_config
-            .unwrap_or(self.tokenizer_config.sampling_config);
+        let sampling_config = config.custom_sampling_config.unwrap_or(
+            Self::build_sampling_config(
+                self.model_metadata.model_config.generation_config.clone(),
+            ),
+        );
 
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();

@@ -10,8 +10,6 @@ pub enum SessionError {
     UnableToLoadWeights,
     #[error("Unable to load tokenizer")]
     UnableToLoadTokenizer,
-    #[error("Unable to load tokenizer configuration")]
-    UnableToLoadTokenizerConfig,
     #[error("Model is too large to fit into available RAM")]
     UnsupportedModel,
     #[error("Generator not loaded. Call load() first")]

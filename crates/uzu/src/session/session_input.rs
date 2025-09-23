@@ -2,7 +2,7 @@ use minijinja::{Environment, context};
 use minijinja_contrib::pycompat::unknown_method_callback;
 
 use super::session_message::{SessionMessage, SessionMessageRole};
-use crate::session::session_tokenizer_config::SessionTokenizerConfig;
+use crate::config::MessageProcessorConfig;
 
 #[derive(Debug)]
 pub enum SessionInput {
@@ -31,13 +31,13 @@ pub trait SessionInputProcessor: Send + Sync {
 }
 
 pub struct SessionInputProcessorDefault {
-    tokenizer_config: SessionTokenizerConfig,
+    message_processing_config: MessageProcessorConfig,
 }
 
 impl SessionInputProcessorDefault {
-    pub fn new(tokenizer_config: SessionTokenizerConfig) -> Self {
+    pub fn new(message_processing_config: MessageProcessorConfig) -> Self {
         Self {
-            tokenizer_config,
+            message_processing_config,
         }
     }
 }
@@ -49,8 +49,8 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
         enable_thinking: bool,
     ) -> String {
         let messages = input.get_messages();
-        let template = self.tokenizer_config.chat_template.clone();
-        let bos_token = self.tokenizer_config.bos_token.clone();
+        let template = self.message_processing_config.prompt_template.clone();
+        let bos_token = self.message_processing_config.bos_token.clone();
 
         let template_name = "chat_template";
         let mut environment = Environment::new();

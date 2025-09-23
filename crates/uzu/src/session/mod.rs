@@ -5,7 +5,6 @@ pub mod session_input;
 pub mod session_message;
 pub mod session_output;
 pub mod session_run_config;
-pub mod session_tokenizer_config;
 pub use session_context::*;
 
 pub mod session_context;
