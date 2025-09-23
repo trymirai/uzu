@@ -317,7 +317,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "console 0.16.0",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitflags 2.9.4",
  "bytemuck",
