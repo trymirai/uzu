@@ -2,7 +2,9 @@ use minijinja::{Environment, context};
 use minijinja_contrib::pycompat::unknown_method_callback;
 
 use super::session_message::{SessionMessage, SessionMessageRole};
-use crate::config::MessageProcessorConfig;
+use crate::{
+    config::MessageProcessorConfig, session::session_error::SessionError,
+};
 
 #[derive(Debug)]
 pub enum SessionInput {
@@ -27,7 +29,7 @@ pub trait SessionInputProcessor: Send + Sync {
         &self,
         input: &SessionInput,
         enable_thinking: bool,
-    ) -> String;
+    ) -> Result<String, SessionError>;
 }
 
 pub struct SessionInputProcessorDefault {
@@ -47,7 +49,7 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
         &self,
         input: &SessionInput,
         enable_thinking: bool,
-    ) -> String {
+    ) -> Result<String, SessionError> {
         let messages = input.get_messages();
         let template = self.message_processing_config.prompt_template.clone();
         let bos_token = self.message_processing_config.bos_token.clone();
@@ -55,8 +57,12 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
         let template_name = "chat_template";
         let mut environment = Environment::new();
         environment.set_unknown_method_callback(unknown_method_callback);
-        environment.add_template(template_name, template.as_str()).unwrap();
-        let template = environment.get_template(template_name).unwrap();
+        environment
+            .add_template(template_name, template.as_str())
+            .map_err(|_| SessionError::UnableToLoadPromptTemplate)?;
+        let template = environment
+            .get_template(template_name)
+            .map_err(|_| SessionError::UnableToLoadPromptTemplate)?;
         let result = template
             .render(context!(
                 messages => messages,
@@ -64,7 +70,7 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
                 bos_token => bos_token,
                 enable_thinking => enable_thinking
             ))
-            .unwrap();
-        result
+            .map_err(|_| SessionError::UnableToRenderPromptTemplate)?;
+        Ok(result)
     }
 }

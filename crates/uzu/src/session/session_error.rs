@@ -14,6 +14,10 @@ pub enum SessionError {
     NotEnoughMemory,
     #[error("Generator not loaded. Call load() first")]
     GeneratorNotLoaded,
+    #[error("Unable to load promot template")]
+    UnableToLoadPromptTemplate,
+    #[error("Unable to render prompt template")]
+    UnableToRenderPromptTemplate,
 }
 
 impl From<GeneratorError> for SessionError {

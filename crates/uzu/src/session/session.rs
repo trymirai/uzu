@@ -209,7 +209,8 @@ impl Session {
             self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
 
         let run_start = Instant::now();
-        let text = self.input_processor.process(&input, config.enable_thinking);
+        let text =
+            self.input_processor.process(&input, config.enable_thinking)?;
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
