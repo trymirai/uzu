@@ -18,6 +18,10 @@ pub enum SessionError {
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]
     UnableToRenderPromptTemplate,
+    #[error("Unable to encode text")]
+    UnableToEncodeText,
+    #[error("Unable to decode text")]
+    UnableToDecodeText,
 }
 
 impl From<GeneratorError> for SessionError {

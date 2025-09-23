@@ -214,7 +214,7 @@ impl Session {
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
-            .unwrap()
+            .map_err(|_| SessionError::UnableToEncodeText)?
             .get_ids()
             .iter()
             .map(|&id| id as u64)
@@ -248,16 +248,20 @@ impl Session {
             }
         };
 
-        let build_generated_text =
-            |generator: &Generator, tokenizer: &Tokenizer| -> String {
-                let start_idx = prefix_len_before + tokens.len();
-                let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
-                    .to_vec()
-                    .iter()
-                    .map(|value| *value as u32)
-                    .collect();
-                tokenizer.decode(&generated_tokens, true).unwrap()
-            };
+        let build_generated_text = |generator: &Generator,
+                                    tokenizer: &Tokenizer|
+         -> Result<String, SessionError> {
+            let start_idx = prefix_len_before + tokens.len();
+            let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
+                .to_vec()
+                .iter()
+                .map(|value| *value as u32)
+                .collect();
+            let generated_text = tokenizer
+                .decode(&generated_tokens, true)
+                .map_err(|e| SessionError::UnableToDecodeText)?;
+            Ok(generated_text)
+        };
 
         let sampling_config = config.custom_sampling_config.unwrap_or(
             Self::build_sampling_config(
@@ -277,7 +281,7 @@ impl Session {
         let prefill_finish_reason =
             finish_reason(generator, prefill_tokens.clone());
         let prefill_generated_text =
-            build_generated_text(generator, &self.tokenizer);
+            build_generated_text(generator, &self.tokenizer)?;
 
         let prefill_output = SessionOutput {
             text: prefill_generated_text,
@@ -324,7 +328,7 @@ impl Session {
             let generate_finish_reason =
                 finish_reason(generator, generate_tokens);
             let generate_generated_text =
-                build_generated_text(generator, &self.tokenizer);
+                build_generated_text(generator, &self.tokenizer)?;
 
             let generate_output = SessionOutput {
                 text: generate_generated_text,
