@@ -11,7 +11,7 @@ pub enum SessionError {
     #[error("Unable to load tokenizer")]
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
-    UnsupportedModel,
+    NotEnoughMemory,
     #[error("Generator not loaded. Call load() first")]
     GeneratorNotLoaded,
 }

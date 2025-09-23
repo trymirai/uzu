@@ -1,6 +1,9 @@
-#[cfg(target_os = "ios")]
-use std::path::Path;
-use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -37,7 +40,6 @@ pub struct Session {
 }
 
 impl Session {
-    #[cfg(target_os = "ios")]
     fn directory_size(path: &Path) -> std::io::Result<u64> {
         let mut size = 0u64;
         for entry_result in std::fs::read_dir(path)? {
@@ -52,7 +54,6 @@ impl Session {
         Ok(size)
     }
 
-    #[cfg(target_os = "ios")]
     fn assert_model_fits_ram(model_path: &Path) -> Result<(), SessionError> {
         use sysinfo::System;
 
@@ -64,14 +65,13 @@ impl Session {
         let allowed_bytes = sys.total_memory() * 60 / 100;
 
         if model_size_bytes > allowed_bytes {
-            Err(SessionError::UnsupportedModel)
+            Err(SessionError::NotEnoughMemory)
         } else {
             Ok(())
         }
     }
 
     pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
-        #[cfg(target_os = "ios")]
         Self::assert_model_fits_ram(&model_path)?;
 
         let config_path = model_path.join("config.json");
