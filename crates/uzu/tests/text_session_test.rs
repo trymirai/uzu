@@ -18,17 +18,20 @@ fn build_model_path() -> PathBuf {
     common::get_test_model_path()
 }
 
-#[test]
-fn test_text_session_base() {
-    let text = String::from("Tell about London");
-    let config = SessionConfig::new(
+fn build_session_config() -> SessionConfig {
+    SessionConfig::new(
         64,
         SpeculatorConfig::default(),
         true,
         SamplingSeed::Custom(42),
         ContextLength::Default,
-    );
-    run(text, config, 128);
+    )
+}
+
+#[test]
+fn test_text_session_base() {
+    let text = String::from("Tell about London");
+    run(text, build_session_config(), 128);
 }
 
 #[test]
@@ -77,13 +80,7 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
-    let config = SessionConfig::new(
-        64,
-        SpeculatorConfig::default(),
-        true,
-        SamplingSeed::Custom(42),
-        ContextLength::Default,
-    );
+    let config = build_session_config();
     let mut session = Session::new(build_model_path()).unwrap();
     session.load_with_session_config(config).unwrap();
 
