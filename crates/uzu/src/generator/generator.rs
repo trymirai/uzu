@@ -123,7 +123,7 @@ impl Generator {
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
-                expected_amount_of_new_tokens: self.config.prefill_step_size,
+                expected_number_of_new_tokens: self.config.prefill_step_size,
             };
 
             let (state, run_time) = self.run_model(
@@ -245,7 +245,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
             token_positions: padded_positions,
-            expected_amount_of_new_tokens: 1,
+            expected_number_of_new_tokens: 1,
         };
 
         let (mut state, run_time) = self.run_model(
@@ -312,7 +312,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            expected_amount_of_new_tokens: suffix_length,
+            expected_number_of_new_tokens: suffix_length,
         };
 
         let (_, _) = self.run_model(task, true, false, None);

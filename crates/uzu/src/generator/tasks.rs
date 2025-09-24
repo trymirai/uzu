@@ -14,7 +14,7 @@ pub struct GeneratorEncodedTask {
 pub struct GeneratorRunTask {
     pub token_ids: Vec<u64>,
     pub token_positions: Vec<usize>,
-    pub expected_amount_of_new_tokens: usize,
+    pub expected_number_of_new_tokens: usize,
 }
 
 impl GeneratorRunTask {
@@ -22,7 +22,7 @@ impl GeneratorRunTask {
         GeneratorRunTask {
             token_ids: self.token_ids.clone(),
             token_positions: self.token_positions.clone(),
-            expected_amount_of_new_tokens: self.expected_amount_of_new_tokens,
+            expected_number_of_new_tokens: self.expected_number_of_new_tokens,
         }
     }
 
@@ -32,7 +32,7 @@ impl GeneratorRunTask {
     ) -> String {
         format!(
             "tokens:{}_suffix:{}",
-            tokens_count, self.expected_amount_of_new_tokens
+            tokens_count, self.expected_number_of_new_tokens
         )
     }
 

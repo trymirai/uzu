@@ -21,10 +21,10 @@ fn build_model_path() -> PathBuf {
 fn build_session_config() -> SessionConfig {
     SessionConfig::new(
         64,
-        SpeculatorConfig::default(),
-        true,
-        SamplingSeed::Custom(42),
         ContextLength::Default,
+        SpeculatorConfig::default(),
+        SamplingSeed::Custom(42),
+        true,
     )
 }
 
