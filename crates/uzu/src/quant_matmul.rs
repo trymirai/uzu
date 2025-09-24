@@ -27,7 +27,7 @@ use crate::{
         MTLContext, MetalArray,
         compilation_parameters::{BlockDevice, make_compilation_descriptor},
     },
-    storage::{NSSearchPathDirectory, root_dir},
+    utils::storage::{NSSearchPathDirectory, root_dir},
 };
 
 // ================== Public error type =====================
