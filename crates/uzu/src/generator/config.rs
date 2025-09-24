@@ -25,21 +25,13 @@ impl Default for SpeculatorConfig {
 #[derive(Debug, Clone, Copy)]
 pub enum ContextLength {
     Default,
+    Maximal,
     Custom(u64),
 }
 
 impl Default for ContextLength {
     fn default() -> Self {
         ContextLength::Default
-    }
-}
-
-impl ContextLength {
-    pub fn get_value(&self) -> u64 {
-        match self {
-            ContextLength::Default => 8192,
-            ContextLength::Custom(length) => *length,
-        }
     }
 }
 
@@ -77,7 +69,7 @@ pub struct GeneratorConfig {
     pub speculator_config: SpeculatorConfig,
     pub allow_pre_encode: bool,
     pub sampling_seed: u64,
-    pub context_length: usize,
+    pub context_length: ContextLength,
 }
 
 impl GeneratorConfig {
@@ -93,7 +85,7 @@ impl GeneratorConfig {
             speculator_config,
             allow_pre_encode,
             sampling_seed: sampling_seed.get_value(),
-            context_length: context_length.get_value() as usize,
+            context_length: context_length,
         }
     }
 

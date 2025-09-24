@@ -13,7 +13,8 @@ use crate::{
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
     },
-    config::ModelMetadata,
+    config::{DecoderConfig, ModelMetadata},
+    generator::config::ContextLength,
     parameters::ParameterLoader,
 };
 
@@ -59,8 +60,10 @@ impl GeneratorContext {
 
         let prefill_step_size = config.prefill_step_size;
         let generate_suffix_length = config.generate_suffix_length();
-        let max_prefix_length: usize =
-            std::cmp::min(config.context_length, decoder_config.context_length);
+        let max_prefix_length: usize = Self::resolve_context_length_value(
+            config.context_length,
+            &decoder_config,
+        );
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
@@ -150,5 +153,25 @@ impl GeneratorContext {
                 &self.mtl_context.command_queue,
             );
         });
+    }
+
+    fn resolve_context_length_value(
+        context_length: ContextLength,
+        decoder_config: &DecoderConfig,
+    ) -> usize {
+        let model_context_length = decoder_config.context_length;
+        match context_length {
+            ContextLength::Default => {
+                if cfg!(target_os = "ios") {
+                    return 8192;
+                } else {
+                    return 16384;
+                }
+            },
+            ContextLength::Maximal => model_context_length,
+            ContextLength::Custom(value) => {
+                std::cmp::min(value as usize, model_context_length)
+            },
+        }
     }
 }
