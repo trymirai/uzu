@@ -18,9 +18,9 @@ use crate::{
         },
         sampling_config::SamplingConfig,
     },
-    env_utils::MetalEnvVar,
     generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
+    utils::env_utils::MetalEnvVar,
 };
 
 pub struct Generator {

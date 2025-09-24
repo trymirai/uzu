@@ -1,7 +1,6 @@
 pub mod backends;
 pub mod config;
 pub mod decoder_runner;
-pub mod env_utils;
 pub mod generator;
 pub mod linearizer;
 pub mod parameters;
