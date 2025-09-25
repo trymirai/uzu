@@ -8,12 +8,11 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::session::{
-    session::Session, session_config::SessionConfig,
-    session_context::SessionContext,
+    config::DecodingConfig, helpers::Context, session::Session,
 };
 
 pub struct ContextCache {
-    pub map: HashMap<String, Rc<SessionContext>>,
+    pub map: HashMap<String, Rc<Context>>,
     pub order: VecDeque<String>,
     pub capacity: usize,
 }
@@ -30,8 +29,8 @@ impl ContextCache {
     pub fn insert(
         &mut self,
         key: String,
-        context: Rc<SessionContext>,
-    ) -> Option<(String, Rc<SessionContext>)> {
+        context: Rc<Context>,
+    ) -> Option<(String, Rc<Context>)> {
         if self.map.contains_key(&key) {
             return None;
         }
@@ -51,7 +50,7 @@ impl ContextCache {
     pub fn get(
         &self,
         key: &str,
-    ) -> Option<Rc<SessionContext>> {
+    ) -> Option<Rc<Context>> {
         self.map.get(key).cloned()
     }
 }
@@ -97,10 +96,8 @@ pub fn load_session(model_path: String) -> Session {
     );
     progress_bar.set_message(model_name.clone());
 
-    let mut session =
-        Session::new(model_path_buf).expect("Failed to create session");
-
-    session.load(SessionConfig::default()).expect("Failed to load session");
+    let session = Session::new(model_path_buf, DecodingConfig::default())
+        .expect("Failed to create session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),

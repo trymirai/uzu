@@ -7,13 +7,14 @@ use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Text;
 use uzu::session::{
-    session_input::SessionInput, session_output::SessionOutput,
-    session_run_config::SessionRunConfig,
+    config::RunConfig,
+    parameter::SamplingPolicy,
+    types::{Input, Output},
 };
 
 use crate::server::load_session;
 
-fn format_output(output: SessionOutput) -> String {
+fn format_output(output: Output) -> String {
     let stats = &output.stats;
     let tokens_per_second = if let Some(generate_stats) = &stats.generate_stats
     {
@@ -72,7 +73,7 @@ pub fn handle_run(
 
         let progress_bar_for_progress = progress_bar.clone();
         let is_model_running_for_progress = is_model_running.clone();
-        let session_progress = move |output: SessionOutput| {
+        let session_progress = move |output: Output| {
             if !is_model_running_for_progress.load(Ordering::SeqCst) {
                 return false;
             }
@@ -90,8 +91,8 @@ pub fn handle_run(
         };
 
         let session_output = match session.run(
-            SessionInput::Text(input.to_string()),
-            SessionRunConfig::new(tokens_limit as u64),
+            Input::Text(input.to_string()),
+            RunConfig::new(tokens_limit as u64, true, SamplingPolicy::Default),
             Some(session_progress),
         ) {
             Ok(output) => output,
