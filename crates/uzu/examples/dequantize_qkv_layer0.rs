@@ -23,7 +23,7 @@ use uzu::{
         graph::common::{GraphConstructionError, load_constant},
     },
     parameters::{ParameterLoader, ParameterLoaderError},
-    storage::{NSSearchPathDirectory, root_dir},
+    utils::{NSSearchPathDirectory, root_dir},
 };
 
 #[derive(Debug, Error)]

@@ -7,7 +7,7 @@ pub mod session;
 pub mod speculators;
 pub mod tracer;
 pub mod utils;
-pub use utils::VERSION;
+pub use utils::*;
 pub mod device;
 pub use device::*;
 pub mod runners;
