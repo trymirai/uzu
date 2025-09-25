@@ -28,6 +28,10 @@ impl DecodingConfig {
             allow_pre_encode,
         }
     }
+
+    pub fn generate_suffix_length(&self) -> usize {
+        self.speculator_config.number_of_speculated_tokens + 1
+    }
 }
 
 impl Default for DecodingConfig {

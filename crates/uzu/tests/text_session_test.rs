@@ -1,27 +1,26 @@
 mod common;
 use std::path::PathBuf;
 
-use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
-    generator::config::{ContextLength, SamplingSeed, SpeculatorConfig},
-    session::{
-        session::Session,
-        session_config::SessionConfig,
-        session_input::SessionInput,
-        session_message::{SessionMessage, SessionMessageRole},
-        session_output::SessionOutput,
-        session_run_config::SessionRunConfig,
+use uzu::session::{
+    config::{DecodingConfig, RunConfig, SpeculatorConfig},
+    parameter::{
+        ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
+        SamplingSeed,
     },
+    session::Session,
+    session_input::SessionInput,
+    session_message::{SessionMessage, SessionMessageRole},
+    session_output::SessionOutput,
 };
 
 fn build_model_path() -> PathBuf {
     common::get_test_model_path()
 }
 
-fn build_session_config() -> SessionConfig {
-    SessionConfig::new(
-        64,
-        ContextLength::Default,
+fn build_decoding_config() -> DecodingConfig {
+    DecodingConfig::new(
+        PrefillStepSize::default(),
+        ContextLength::default(),
         SpeculatorConfig::default(),
         SamplingSeed::Custom(42),
         true,
@@ -31,7 +30,7 @@ fn build_session_config() -> SessionConfig {
 #[test]
 fn test_text_session_base() {
     let text = String::from("Tell about London");
-    run(text, build_session_config(), 128);
+    run(text, build_decoding_config(), 128);
 }
 
 #[test]
@@ -46,20 +45,22 @@ fn test_text_session_scenario() {
 
 fn run(
     text: String,
-    config: SessionConfig,
+    decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
     let mut session = Session::new(build_model_path()).unwrap();
-    session.load_with_session_config(config).unwrap();
+    session.load_with_session_config(decoding_config).unwrap();
 
     let input = SessionInput::Text(text);
     let output = session
         .run(
             input,
-            SessionRunConfig::new(
+            RunConfig::new(
                 tokens_limit,
                 true,
-                Some(SamplingConfig::Argmax),
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
             ),
             Some(|_: SessionOutput| {
                 return true;
@@ -80,9 +81,9 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
-    let config = build_session_config();
+    let decoding_config = build_decoding_config();
     let mut session = Session::new(build_model_path()).unwrap();
-    session.load_with_session_config(config).unwrap();
+    session.load_with_session_config(decoding_config).unwrap();
 
     let mut messages: Vec<SessionMessage> = vec![];
     if let Some(system_prompt) = system_prompt {
@@ -104,7 +105,7 @@ fn run_scenario(
         let output = session
             .run(
                 input,
-                SessionRunConfig::default(),
+                RunConfig::default(),
                 Some(|_: SessionOutput| {
                     return true;
                 }),

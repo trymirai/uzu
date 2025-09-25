@@ -9,7 +9,6 @@ use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
 use super::{
-    session_config::SessionConfig,
     session_context::SessionContext,
     session_input::{
         SessionInput, SessionInputProcessor, SessionInputProcessorDefault,
@@ -18,17 +17,18 @@ use super::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
     },
-    session_run_config::SessionRunConfig,
 };
 use crate::{
-    backends::metal::sampling_config::SamplingConfig,
-    config::{GenerationConfig, ModelMetadata},
+    config::ModelMetadata,
     generator::{
-        config::GeneratorConfigProvider,
         generator::Generator,
         result::{GenerateResult, PrefillResult},
     },
-    session::session_error::SessionError,
+    session::{
+        config::{DecodingConfig, RunConfig},
+        parameter::ConfigResolvableValue,
+        session_error::SessionError,
+    },
 };
 
 pub struct Session {
@@ -106,29 +106,26 @@ impl Session {
 
     pub fn load(
         &mut self,
-        generator_config_provider: Box<dyn GeneratorConfigProvider>,
+        decoding_config: DecodingConfig,
     ) -> Result<(), SessionError> {
-        let generator_config =
-            generator_config_provider.generator_config(&self.tokenizer);
-        let generator = Generator::new(&self.model_path, generator_config)
+        let generator = Generator::new(&self.model_path, decoding_config)
             .map_err(SessionError::from)?;
-
         self.generator = Some(generator);
         Ok(())
     }
 
     pub fn load_with_session_config(
         &mut self,
-        config: SessionConfig,
+        config: DecodingConfig,
     ) -> Result<(), SessionError> {
-        self.load(Box::new(config))
+        self.load(config)
     }
 
     pub fn extend(
         &mut self,
         input: SessionInput,
         context: Option<&SessionContext>,
-        config: SessionRunConfig,
+        config: RunConfig,
     ) -> Result<(SessionOutput, SessionContext), SessionError> {
         self.reconfigure_generator(context)?;
         let output = self.run_internal(
@@ -146,7 +143,7 @@ impl Session {
     pub fn run<F>(
         &mut self,
         input: SessionInput,
-        config: SessionRunConfig,
+        config: RunConfig,
         progress: Option<F>,
     ) -> Result<SessionOutput, SessionError>
     where
@@ -166,7 +163,7 @@ impl Session {
         &mut self,
         input: SessionInput,
         context: Option<&SessionContext>,
-        config: SessionRunConfig,
+        config: RunConfig,
     ) -> Result<SessionOutput, SessionError> {
         self.reconfigure_generator(context)?;
         let output = self.run_internal(
@@ -180,26 +177,10 @@ impl Session {
         Ok(output)
     }
 
-    fn build_sampling_config(
-        generation_config: GenerationConfig
-    ) -> SamplingConfig {
-        if let Some(top_p) = generation_config.top_p {
-            return SamplingConfig::TopP {
-                top_p: top_p,
-            };
-        }
-        if let Some(temperature) = generation_config.temperature {
-            return SamplingConfig::Categorical {
-                temperature: temperature,
-            };
-        }
-        return SamplingConfig::Argmax;
-    }
-
     fn run_internal<F>(
         &mut self,
         input: SessionInput,
-        config: SessionRunConfig,
+        config: RunConfig,
         progress: Option<F>,
     ) -> Result<SessionOutput, SessionError>
     where
@@ -263,17 +244,14 @@ impl Session {
             Ok(generated_text)
         };
 
-        let sampling_config = config.custom_sampling_config.unwrap_or(
-            Self::build_sampling_config(
-                self.model_metadata.model_config.generation_config.clone(),
-            ),
-        );
+        let sampling_method =
+            config.sampling_policy.resolve(&self.model_metadata.model_config);
 
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();
 
         let prefill_result =
-            generator.prefill(tokens.clone(), sampling_config, prefix_offset);
+            generator.prefill(tokens.clone(), sampling_method, prefix_offset);
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
@@ -283,15 +261,19 @@ impl Session {
         let prefill_generated_text =
             build_generated_text(generator, &self.tokenizer)?;
 
+        let prefill_suffix_length = generator
+            .decoding_config
+            .prefill_step_size
+            .resolve(&self.model_metadata.model_config);
         let prefill_output = SessionOutput {
             text: prefill_generated_text,
             stats: Self::build_stats(
                 prefill_result.clone(),
                 prefill_duration,
-                generator.config.prefill_step_size,
+                prefill_suffix_length,
                 Vec::new(),
                 Vec::new(),
-                generator.config.generate_suffix_length(),
+                generator.decoding_config.generate_suffix_length(),
                 run_start.elapsed().as_secs_f64(),
                 tokens.len(),
                 generator.tokens[prefix_len_before + tokens.len()..].len(),
@@ -319,7 +301,7 @@ impl Session {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_config);
+            let generate_result = generator.generate(sampling_method);
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
@@ -335,10 +317,10 @@ impl Session {
                 stats: Self::build_stats(
                     prefill_result.clone(),
                     prefill_duration,
-                    generator.config.prefill_step_size,
+                    prefill_suffix_length,
                     generate_results.clone(),
                     generate_durations.clone(),
-                    generator.config.generate_suffix_length(),
+                    generator.decoding_config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
                     generator.tokens[prefix_len_before + tokens.len()..].len(),
@@ -420,7 +402,7 @@ impl Session {
         let context = SessionContext::new(
             generator.tokens.clone(),
             kv_cache,
-            generator.config.clone(),
+            generator.decoding_config.clone(),
         );
         Ok(context)
     }

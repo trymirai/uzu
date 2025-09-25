@@ -4,7 +4,7 @@ use metal::SharedEvent;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
-use super::{config::GeneratorConfig, error::GeneratorError};
+use super::error::GeneratorError;
 use crate::{
     DataType,
     backends::metal::{
@@ -14,9 +14,12 @@ use crate::{
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
     },
-    config::{DecoderConfig, ModelMetadata},
-    generator::config::ContextLength,
+    config::{LanguageModelConfig, ModelMetadata},
     parameters::ParameterLoader,
+    session::{
+        config::DecodingConfig,
+        parameter::{ConfigResolvableValue, ResolvableValue},
+    },
 };
 
 pub struct GeneratorContext {
@@ -29,6 +32,7 @@ pub struct GeneratorContext {
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ForwardPassBuffers,
 
+    pub model_config: LanguageModelConfig,
     pub model_shape: ModelShape,
     pub executables: DecoderExecutables,
     pub kv_cache_update: Box<KVCacheUpdate>,
@@ -38,7 +42,7 @@ pub struct GeneratorContext {
 impl GeneratorContext {
     pub fn new(
         model_path: &Path,
-        config: &GeneratorConfig,
+        decoding_config: &DecodingConfig,
     ) -> Result<Self, GeneratorError> {
         let mtl_device = metal::Device::system_default()
             .ok_or(GeneratorError::UnableToCreateMetalContext)?;
@@ -61,12 +65,13 @@ impl GeneratorContext {
             Rc::new(model_metadata.model_config.decoder_config.clone());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let prefill_step_size = config.prefill_step_size;
-        let generate_suffix_length = config.generate_suffix_length();
-        let max_prefix_length: usize = Self::resolve_context_length_value(
-            config.context_length,
-            &decoder_config,
-        );
+        let prefill_step_size = decoding_config
+            .prefill_step_size
+            .resolve(&model_metadata.model_config);
+        let generate_suffix_length = decoding_config.generate_suffix_length();
+        let max_prefix_length: usize = decoding_config
+            .context_length
+            .resolve(&model_metadata.model_config);
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
@@ -131,7 +136,7 @@ impl GeneratorContext {
             kernel_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
-            config.sampling_seed,
+            decoding_config.sampling_seed.resolve(),
         )
         .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
 
@@ -146,6 +151,7 @@ impl GeneratorContext {
             kv_cache,
             shared_buffers,
             scratch_buffers,
+            model_config: model_metadata.model_config.clone(),
             model_shape,
             executables,
             kv_cache_update,
@@ -161,25 +167,5 @@ impl GeneratorContext {
                 &self.mtl_context.command_queue,
             );
         });
-    }
-
-    fn resolve_context_length_value(
-        context_length: ContextLength,
-        decoder_config: &DecoderConfig,
-    ) -> usize {
-        let model_context_length = decoder_config.context_length;
-        match context_length {
-            ContextLength::Default => {
-                if cfg!(target_os = "ios") {
-                    return 8192;
-                } else {
-                    return 16384;
-                }
-            },
-            ContextLength::Maximal => model_context_length,
-            ContextLength::Custom(value) => {
-                std::cmp::min(value as usize, model_context_length)
-            },
-        }
     }
 }
