@@ -1,42 +1,24 @@
 use minijinja::{Environment, context};
 use minijinja_contrib::pycompat::unknown_method_callback;
 
-use super::session_message::{SessionMessage, SessionMessageRole};
 use crate::{
-    config::MessageProcessorConfig, session::session_error::SessionError,
+    config::MessageProcessorConfig,
+    session::types::{Error, Input},
 };
 
-#[derive(Debug)]
-pub enum SessionInput {
-    Text(String),
-    Messages(Vec<SessionMessage>),
-}
-
-impl SessionInput {
-    fn get_messages(&self) -> Vec<SessionMessage> {
-        match self {
-            SessionInput::Text(content) => vec![SessionMessage {
-                role: SessionMessageRole::User,
-                content: content.clone(),
-            }],
-            SessionInput::Messages(messages) => messages.clone(),
-        }
-    }
-}
-
-pub trait SessionInputProcessor: Send + Sync {
+pub trait InputProcessor: Send + Sync {
     fn process(
         &self,
-        input: &SessionInput,
+        input: &Input,
         enable_thinking: bool,
-    ) -> Result<String, SessionError>;
+    ) -> Result<String, Error>;
 }
 
-pub struct SessionInputProcessorDefault {
+pub struct InputProcessorDefault {
     message_processing_config: MessageProcessorConfig,
 }
 
-impl SessionInputProcessorDefault {
+impl InputProcessorDefault {
     pub fn new(message_processing_config: MessageProcessorConfig) -> Self {
         Self {
             message_processing_config,
@@ -44,12 +26,12 @@ impl SessionInputProcessorDefault {
     }
 }
 
-impl SessionInputProcessor for SessionInputProcessorDefault {
+impl InputProcessor for InputProcessorDefault {
     fn process(
         &self,
-        input: &SessionInput,
+        input: &Input,
         enable_thinking: bool,
-    ) -> Result<String, SessionError> {
+    ) -> Result<String, Error> {
         let messages = input.get_messages();
         let template = self.message_processing_config.prompt_template.clone();
         let bos_token = self.message_processing_config.bos_token.clone();
@@ -59,10 +41,10 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
         environment.set_unknown_method_callback(unknown_method_callback);
         environment
             .add_template(template_name, template.as_str())
-            .map_err(|_| SessionError::UnableToLoadPromptTemplate)?;
+            .map_err(|_| Error::UnableToLoadPromptTemplate)?;
         let template = environment
             .get_template(template_name)
-            .map_err(|_| SessionError::UnableToLoadPromptTemplate)?;
+            .map_err(|_| Error::UnableToLoadPromptTemplate)?;
         let result = template
             .render(context!(
                 messages => messages,
@@ -70,7 +52,7 @@ impl SessionInputProcessor for SessionInputProcessorDefault {
                 bos_token => bos_token,
                 enable_thinking => enable_thinking
             ))
-            .map_err(|_| SessionError::UnableToRenderPromptTemplate)?;
+            .map_err(|_| Error::UnableToRenderPromptTemplate)?;
         Ok(result)
     }
 }

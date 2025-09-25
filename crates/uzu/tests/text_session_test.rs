@@ -8,9 +8,8 @@ use uzu::session::{
         SamplingSeed,
     },
     session::Session,
-    session_input::SessionInput,
-    session_message::{SessionMessage, SessionMessageRole},
     session_output::SessionOutput,
+    types::{Input, Message, Role},
 };
 
 fn build_model_path() -> PathBuf {
@@ -51,7 +50,7 @@ fn run(
     let mut session = Session::new(build_model_path()).unwrap();
     session.load_with_session_config(decoding_config).unwrap();
 
-    let input = SessionInput::Text(text);
+    let input = Input::Text(text);
     let output = session
         .run(
             input,
@@ -85,23 +84,23 @@ fn run_scenario(
     let mut session = Session::new(build_model_path()).unwrap();
     session.load_with_session_config(decoding_config).unwrap();
 
-    let mut messages: Vec<SessionMessage> = vec![];
+    let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {
-        messages.push(SessionMessage {
-            role: SessionMessageRole::System,
+        messages.push(Message {
+            role: Role::System,
             content: system_prompt.clone(),
         });
         println!("System > {}", system_prompt.clone());
     }
 
     for user_prompt in user_prompts {
-        messages.push(SessionMessage {
-            role: SessionMessageRole::User,
+        messages.push(Message {
+            role: Role::User,
             content: user_prompt.clone(),
         });
         println!("User > {}", user_prompt.clone());
 
-        let input = SessionInput::Messages(messages.clone());
+        let input = Input::Messages(messages.clone());
         let output = session
             .run(
                 input,
@@ -111,8 +110,8 @@ fn run_scenario(
                 }),
             )
             .unwrap();
-        messages.push(SessionMessage {
-            role: SessionMessageRole::Assistant,
+        messages.push(Message {
+            role: Role::Assistant,
             content: output.text.clone(),
         });
         println!("Assistant > {}", output.text.clone());

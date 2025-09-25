@@ -1,7 +1,7 @@
 use crate::generator::error::GeneratorError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum SessionError {
+pub enum Error {
     #[error("Unable to create Metal context")]
     UnableToCreateMetalContext,
     #[error("Unable to load model configuration")]
@@ -24,7 +24,7 @@ pub enum SessionError {
     UnableToDecodeText,
 }
 
-impl From<GeneratorError> for SessionError {
+impl From<GeneratorError> for Error {
     fn from(value: GeneratorError) -> Self {
         match value {
             GeneratorError::UnableToCreateMetalContext => {

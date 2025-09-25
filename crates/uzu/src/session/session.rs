@@ -10,9 +10,6 @@ use tokenizers::Tokenizer;
 
 use super::{
     session_context::SessionContext,
-    session_input::{
-        SessionInput, SessionInputProcessor, SessionInputProcessorDefault,
-    },
     session_output::{
         SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
         SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
@@ -26,8 +23,9 @@ use crate::{
     },
     session::{
         config::{DecodingConfig, RunConfig},
+        helpers::{InputProcessor, InputProcessorDefault},
         parameter::ConfigResolvableValue,
-        session_error::SessionError,
+        types::{Error, Input},
     },
 };
 
@@ -35,7 +33,7 @@ pub struct Session {
     model_path: PathBuf,
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    input_processor: Box<dyn SessionInputProcessor>,
+    input_processor: Box<dyn InputProcessor>,
     generator: Option<Generator>,
 }
 
@@ -54,7 +52,7 @@ impl Session {
         Ok(size)
     }
 
-    fn assert_model_fits_ram(model_path: &Path) -> Result<(), SessionError> {
+    fn assert_model_fits_ram(model_path: &Path) -> Result<(), Error> {
         use sysinfo::System;
 
         let model_size_bytes = Self::directory_size(model_path).unwrap_or(0);
@@ -65,33 +63,33 @@ impl Session {
         let allowed_bytes = sys.total_memory() * 60 / 100;
 
         if model_size_bytes > allowed_bytes {
-            Err(SessionError::NotEnoughMemory)
+            Err(Error::NotEnoughMemory)
         } else {
             Ok(())
         }
     }
 
-    pub fn new(model_path: PathBuf) -> Result<Self, SessionError> {
+    pub fn new(model_path: PathBuf) -> Result<Self, Error> {
         Self::assert_model_fits_ram(&model_path)?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
-            return Err(SessionError::UnableToLoadConfig);
+            return Err(Error::UnableToLoadConfig);
         }
-        let config_file = File::open(&config_path)
-            .map_err(|_| SessionError::UnableToLoadConfig)?;
+        let config_file =
+            File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
         let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|_| SessionError::UnableToLoadConfig)?;
+                .map_err(|_| Error::UnableToLoadConfig)?;
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
-            return Err(SessionError::UnableToLoadTokenizer);
+            return Err(Error::UnableToLoadTokenizer);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|_| SessionError::UnableToLoadTokenizer)?;
+            .map_err(|_| Error::UnableToLoadTokenizer)?;
 
-        let input_processor = SessionInputProcessorDefault::new(
+        let input_processor = InputProcessorDefault::new(
             model_metadata.model_config.message_processor_config.clone(),
         );
 
@@ -107,9 +105,9 @@ impl Session {
     pub fn load(
         &mut self,
         decoding_config: DecodingConfig,
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error> {
         let generator = Generator::new(&self.model_path, decoding_config)
-            .map_err(SessionError::from)?;
+            .map_err(Error::from)?;
         self.generator = Some(generator);
         Ok(())
     }
@@ -117,16 +115,16 @@ impl Session {
     pub fn load_with_session_config(
         &mut self,
         config: DecodingConfig,
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error> {
         self.load(config)
     }
 
     pub fn extend(
         &mut self,
-        input: SessionInput,
+        input: Input,
         context: Option<&SessionContext>,
         config: RunConfig,
-    ) -> Result<(SessionOutput, SessionContext), SessionError> {
+    ) -> Result<(SessionOutput, SessionContext), Error> {
         self.reconfigure_generator(context)?;
         let output = self.run_internal(
             input,
@@ -135,36 +133,36 @@ impl Session {
         )?;
         let new_context = self.build_context_from_generator()?;
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         Ok((output, new_context))
     }
 
     pub fn run<F>(
         &mut self,
-        input: SessionInput,
+        input: Input,
         config: RunConfig,
         progress: Option<F>,
-    ) -> Result<SessionOutput, SessionError>
+    ) -> Result<SessionOutput, Error>
     where
         F: Fn(SessionOutput) -> bool,
     {
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         let output = self.run_internal(input, config, progress)?;
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         Ok(output)
     }
 
     pub fn run_with_context(
         &mut self,
-        input: SessionInput,
+        input: Input,
         context: Option<&SessionContext>,
         config: RunConfig,
-    ) -> Result<SessionOutput, SessionError> {
+    ) -> Result<SessionOutput, Error> {
         self.reconfigure_generator(context)?;
         let output = self.run_internal(
             input,
@@ -172,22 +170,22 @@ impl Session {
             None::<fn(SessionOutput) -> bool>,
         )?;
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         Ok(output)
     }
 
     fn run_internal<F>(
         &mut self,
-        input: SessionInput,
+        input: Input,
         config: RunConfig,
         progress: Option<F>,
-    ) -> Result<SessionOutput, SessionError>
+    ) -> Result<SessionOutput, Error>
     where
         F: Fn(SessionOutput) -> bool,
     {
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
 
         let run_start = Instant::now();
         let text =
@@ -195,7 +193,7 @@ impl Session {
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
-            .map_err(|_| SessionError::UnableToEncodeText)?
+            .map_err(|_| Error::UnableToEncodeText)?
             .get_ids()
             .iter()
             .map(|&id| id as u64)
@@ -231,7 +229,7 @@ impl Session {
 
         let build_generated_text = |generator: &Generator,
                                     tokenizer: &Tokenizer|
-         -> Result<String, SessionError> {
+         -> Result<String, Error> {
             let start_idx = prefix_len_before + tokens.len();
             let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
                 .to_vec()
@@ -240,7 +238,7 @@ impl Session {
                 .collect();
             let generated_text = tokenizer
                 .decode(&generated_tokens, true)
-                .map_err(|_| SessionError::UnableToDecodeText)?;
+                .map_err(|_| Error::UnableToDecodeText)?;
             Ok(generated_text)
         };
 
@@ -353,9 +351,9 @@ impl Session {
     fn reconfigure_generator(
         &mut self,
         context: Option<&SessionContext>,
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error> {
         let generator =
-            self.generator.as_mut().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         if let Some(ctx) = context {
             let mut generator_cache = generator.context.kv_cache.borrow_mut();
@@ -388,11 +386,9 @@ impl Session {
         Ok(())
     }
 
-    fn build_context_from_generator(
-        &self
-    ) -> Result<SessionContext, SessionError> {
+    fn build_context_from_generator(&self) -> Result<SessionContext, Error> {
         let generator =
-            self.generator.as_ref().ok_or(SessionError::GeneratorNotLoaded)?;
+            self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
         let prefix_len = generator.prefix_len();
         let kv_cache = generator
             .context
