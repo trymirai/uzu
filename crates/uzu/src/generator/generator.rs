@@ -9,13 +9,10 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::{
-        forward_pass::{
-            ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            kv_cache::INVALID_POSITION,
-        },
-        sampling_config::SamplingConfig,
+    backends::metal::forward_pass::{
+        ForwardPassState,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
+        kv_cache::INVALID_POSITION,
     },
     generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
@@ -347,19 +344,7 @@ impl Generator {
             let run_start = Instant::now();
 
             let mut state = task.create_state(&mut self.context, None);
-            state.sampling_config = Some(match sampling_method {
-                SamplingMethod::Greedy => SamplingConfig::Argmax,
-                SamplingMethod::TopP {
-                    top_p,
-                } => SamplingConfig::TopP {
-                    top_p,
-                },
-                SamplingMethod::Temperature {
-                    temperature,
-                } => SamplingConfig::Categorical {
-                    temperature,
-                },
-            });
+            state.sampling_method = Some(sampling_method);
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 

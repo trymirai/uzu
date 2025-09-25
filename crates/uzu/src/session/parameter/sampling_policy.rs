@@ -13,6 +13,12 @@ pub enum SamplingMethod {
     },
 }
 
+impl Default for SamplingMethod {
+    fn default() -> Self {
+        SamplingMethod::Greedy
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SamplingPolicy {
     Default,

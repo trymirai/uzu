@@ -1,12 +1,12 @@
 use std::{path::PathBuf, rc::Rc};
 
-use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
-    session::{
-        session::Session, session_config::SessionConfig,
-        session_context::SessionContext, session_input::SessionInput,
-        session_output::SessionOutput, session_run_config::SessionRunConfig,
-    },
+use uzu::session::{
+    config::{DecodingConfig, RunConfig},
+    parameter::{SamplingMethod, SamplingPolicy},
+    session::Session,
+    session_context::SessionContext,
+    session_input::SessionInput,
+    session_output::SessionOutput,
 };
 
 mod common;
@@ -79,7 +79,13 @@ fn test_context_extension() {
                 "Update: Name: Dave. Occupation: Doctor.".to_string(),
             ),
             Some(initial_context.as_ref()),
-            SessionRunConfig::new(1),
+            RunConfig::new(
+                1,
+                true,
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
+            ),
         )
         .unwrap();
 
@@ -223,7 +229,7 @@ fn test_performance_cached_vs_plain() {
 fn create_session() -> Session {
     let mut session = Session::new(model_path()).unwrap();
     session
-        .load_with_session_config(SessionConfig::default())
+        .load_with_session_config(DecodingConfig::default())
         .expect("Failed to load session");
 
     session
@@ -238,7 +244,13 @@ fn build_context(
         .extend(
             SessionInput::Text(prompt.to_string()),
             None,
-            SessionRunConfig::new(1),
+            RunConfig::new(
+                1,
+                true,
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
+            ),
         )
         .unwrap();
     Rc::new(context)
@@ -253,9 +265,12 @@ fn ask_with_context(
         .run_with_context(
             SessionInput::Text(format!("{} /no_think", question)),
             context.as_deref(),
-            SessionRunConfig::new_with_sampling_config(
+            RunConfig::new(
                 96,
-                Some(SamplingConfig::Argmax),
+                true,
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
             ),
         )
         .unwrap()
@@ -269,9 +284,12 @@ fn ask_without_context(
     session
         .run(
             SessionInput::Text(format!("{} /no_think", question)),
-            SessionRunConfig::new_with_sampling_config(
+            RunConfig::new(
                 96,
-                Some(SamplingConfig::Argmax),
+                true,
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
             ),
             None::<fn(SessionOutput) -> bool>,
         )
