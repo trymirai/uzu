@@ -8,13 +8,7 @@ use std::{
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
-use super::{
-    session_context::SessionContext,
-    session_output::{
-        SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
-        SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
-    },
-};
+use super::session_context::SessionContext;
 use crate::{
     config::ModelMetadata,
     generator::{
@@ -25,7 +19,10 @@ use crate::{
         config::{DecodingConfig, RunConfig},
         helpers::{InputProcessor, InputProcessorDefault},
         parameter::ConfigResolvableValue,
-        types::{Error, Input},
+        types::{
+            Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
+            TotalStats,
+        },
     },
 };
 
@@ -124,13 +121,10 @@ impl Session {
         input: Input,
         context: Option<&SessionContext>,
         config: RunConfig,
-    ) -> Result<(SessionOutput, SessionContext), Error> {
+    ) -> Result<(Output, SessionContext), Error> {
         self.reconfigure_generator(context)?;
-        let output = self.run_internal(
-            input,
-            config,
-            None::<fn(SessionOutput) -> bool>,
-        )?;
+        let output =
+            self.run_internal(input, config, None::<fn(Output) -> bool>)?;
         let new_context = self.build_context_from_generator()?;
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
@@ -143,9 +137,9 @@ impl Session {
         input: Input,
         config: RunConfig,
         progress: Option<F>,
-    ) -> Result<SessionOutput, Error>
+    ) -> Result<Output, Error>
     where
-        F: Fn(SessionOutput) -> bool,
+        F: Fn(Output) -> bool,
     {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
@@ -162,13 +156,10 @@ impl Session {
         input: Input,
         context: Option<&SessionContext>,
         config: RunConfig,
-    ) -> Result<SessionOutput, Error> {
+    ) -> Result<Output, Error> {
         self.reconfigure_generator(context)?;
-        let output = self.run_internal(
-            input,
-            config,
-            None::<fn(SessionOutput) -> bool>,
-        )?;
+        let output =
+            self.run_internal(input, config, None::<fn(Output) -> bool>)?;
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
@@ -180,9 +171,9 @@ impl Session {
         input: Input,
         config: RunConfig,
         progress: Option<F>,
-    ) -> Result<SessionOutput, Error>
+    ) -> Result<Output, Error>
     where
-        F: Fn(SessionOutput) -> bool,
+        F: Fn(Output) -> bool,
     {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
@@ -212,16 +203,16 @@ impl Session {
 
         let finish_reason = |generator: &Generator,
                              tokens_new: Vec<u64>|
-         -> Option<SessionOutputFinishReason> {
+         -> Option<FinishReason> {
             let start_idx = prefix_len_before + tokens.len();
             let total_new_tokens = generator.tokens[start_idx..].len();
             let has_eos_token =
                 tokens_new.iter().any(|token| eos_tokens.contains(token));
 
             if has_eos_token {
-                Some(SessionOutputFinishReason::Stop)
+                Some(FinishReason::Stop)
             } else if total_new_tokens >= config.tokens_limit as usize {
-                Some(SessionOutputFinishReason::Length)
+                Some(FinishReason::Length)
             } else {
                 None
             }
@@ -263,7 +254,7 @@ impl Session {
             .decoding_config
             .prefill_step_size
             .resolve(&self.model_metadata.model_config);
-        let prefill_output = SessionOutput {
+        let prefill_output = Output {
             text: prefill_generated_text,
             stats: Self::build_stats(
                 prefill_result.clone(),
@@ -289,9 +280,8 @@ impl Session {
             if prefill_should_continue {
                 return Ok(prefill_output);
             } else {
-                return Ok(prefill_output.clone_with_finish_reason(Some(
-                    SessionOutputFinishReason::Cancelled,
-                )));
+                return Ok(prefill_output
+                    .clone_with_finish_reason(Some(FinishReason::Cancelled)));
             }
         }
 
@@ -310,7 +300,7 @@ impl Session {
             let generate_generated_text =
                 build_generated_text(generator, &self.tokenizer)?;
 
-            let generate_output = SessionOutput {
+            let generate_output = Output {
                 text: generate_generated_text,
                 stats: Self::build_stats(
                     prefill_result.clone(),
@@ -337,7 +327,7 @@ impl Session {
                     break generate_output;
                 } else {
                     break generate_output.clone_with_finish_reason(Some(
-                        SessionOutputFinishReason::Cancelled,
+                        FinishReason::Cancelled,
                     ));
                 }
             }
@@ -415,7 +405,7 @@ impl Session {
         total_duration: f64,
         tokens_count_input: usize,
         tokens_count_output: usize,
-    ) -> SessionOutputStats {
+    ) -> Stats {
         let prefill_stats = {
             let tokens_count = prefill_result.tokens.len();
             let tokens_per_second = tokens_count as f64 / prefill_duration;
@@ -425,12 +415,12 @@ impl Session {
                 prefill_result.forwardpass_durations.iter().sum::<f64>()
                     / model_run_count as f64;
 
-            SessionOutputStepStats {
+            StepStats {
                 duration: prefill_duration,
                 suffix_length: prefill_suffix_length as u64,
                 tokens_count: tokens_count as u64,
                 tokens_per_second,
-                model_run: SessionOutputRunStats {
+                model_run: RunStats {
                     count: model_run_count as u64,
                     average_duration: model_run_average_duration,
                 },
@@ -438,7 +428,7 @@ impl Session {
             }
         };
 
-        let generate_stats: Option<SessionOutputStepStats>;
+        let generate_stats: Option<StepStats>;
         if generate_results.len() != 0 {
             let duration = generate_durations.iter().sum::<f64>();
             let tokens_count = generate_results
@@ -459,16 +449,16 @@ impl Session {
             let run_average_duration =
                 generate_durations.iter().sum::<f64>() / run_count as f64;
 
-            generate_stats = Some(SessionOutputStepStats {
+            generate_stats = Some(StepStats {
                 duration,
                 suffix_length: generate_suffix_length as u64,
                 tokens_count: tokens_count as u64,
                 tokens_per_second,
-                model_run: SessionOutputRunStats {
+                model_run: RunStats {
                     count: model_run_count as u64,
                     average_duration: model_run_average_duration,
                 },
-                run: Some(SessionOutputRunStats {
+                run: Some(RunStats {
                     count: run_count as u64,
                     average_duration: run_average_duration,
                 }),
@@ -477,13 +467,13 @@ impl Session {
             generate_stats = None;
         }
 
-        let total_stats = SessionOutputTotalStats {
+        let total_stats = TotalStats {
             duration: total_duration,
             tokens_count_input: tokens_count_input as u64,
             tokens_count_output: tokens_count_output as u64,
         };
 
-        let stats = SessionOutputStats {
+        let stats = Stats {
             prefill_stats,
             generate_stats,
             total_stats,
