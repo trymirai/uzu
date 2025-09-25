@@ -3,13 +3,13 @@ use crate::{
     session::config::DecodingConfig,
 };
 
-pub struct SessionContext {
+pub struct Context {
     pub tokens: Vec<u64>,
     pub kv_cache: KVCache,
     pub decoding_config: DecodingConfig,
 }
 
-impl SessionContext {
+impl Context {
     pub fn new(
         tokens: Vec<u64>,
         kv_cache: KVCache,

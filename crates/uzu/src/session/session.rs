@@ -1,14 +1,8 @@
-use std::{
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
-use super::session_context::SessionContext;
 use crate::{
     config::ModelMetadata,
     generator::{
@@ -18,7 +12,8 @@ use crate::{
     session::{
         config::{DecodingConfig, RunConfig},
         helpers::{
-            InputProcessor, InputProcessorDefault, is_directory_fits_ram,
+            Context, InputProcessor, InputProcessorDefault,
+            is_directory_fits_ram,
         },
         parameter::ConfigResolvableValue,
         types::{
@@ -29,15 +24,19 @@ use crate::{
 };
 
 pub struct Session {
-    model_path: PathBuf,
-    model_metadata: ModelMetadata,
+    pub model_path: PathBuf,
+    pub model_metadata: ModelMetadata,
+
     tokenizer: Tokenizer,
     input_processor: Box<dyn InputProcessor>,
     generator: Option<Generator>,
 }
 
 impl Session {
-    pub fn new(model_path: PathBuf) -> Result<Self, Error> {
+    pub fn new(
+        model_path: PathBuf,
+        decoding_config: DecodingConfig,
+    ) -> Result<Self, Error> {
         if !is_directory_fits_ram(&model_path) {
             return Err(Error::NotEnoughMemory);
         }
@@ -63,39 +62,16 @@ impl Session {
             model_metadata.model_config.message_processor_config.clone(),
         );
 
+        let generator = Generator::new(&model_path, decoding_config)
+            .map_err(Error::from)?;
+
         Ok(Self {
             model_path,
             model_metadata,
             tokenizer,
             input_processor: Box::new(input_processor),
-            generator: None,
+            generator: Some(generator),
         })
-    }
-
-    pub fn load(
-        &mut self,
-        decoding_config: DecodingConfig,
-    ) -> Result<(), Error> {
-        let generator = Generator::new(&self.model_path, decoding_config)
-            .map_err(Error::from)?;
-        self.generator = Some(generator);
-        Ok(())
-    }
-
-    pub fn extend(
-        &mut self,
-        input: Input,
-        context: Option<&SessionContext>,
-        config: RunConfig,
-    ) -> Result<(Output, SessionContext), Error> {
-        self.reconfigure_generator(context)?;
-        let output =
-            self.run_internal(input, config, None::<fn(Output) -> bool>)?;
-        let new_context = self.build_context_from_generator()?;
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
-        Ok((output, new_context))
     }
 
     pub fn run<F>(
@@ -117,10 +93,26 @@ impl Session {
         Ok(output)
     }
 
+    pub fn extend(
+        &mut self,
+        input: Input,
+        context: Option<&Context>,
+        config: RunConfig,
+    ) -> Result<(Output, Context), Error> {
+        self.reconfigure_generator(context)?;
+        let output =
+            self.run_internal(input, config, None::<fn(Output) -> bool>)?;
+        let new_context = self.build_context_from_generator()?;
+        let generator =
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+        generator.reset_state();
+        Ok((output, new_context))
+    }
+
     pub fn run_with_context(
         &mut self,
         input: Input,
-        context: Option<&SessionContext>,
+        context: Option<&Context>,
         config: RunConfig,
     ) -> Result<Output, Error> {
         self.reconfigure_generator(context)?;
@@ -306,7 +298,7 @@ impl Session {
 
     fn reconfigure_generator(
         &mut self,
-        context: Option<&SessionContext>,
+        context: Option<&Context>,
     ) -> Result<(), Error> {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
@@ -342,7 +334,7 @@ impl Session {
         Ok(())
     }
 
-    fn build_context_from_generator(&self) -> Result<SessionContext, Error> {
+    fn build_context_from_generator(&self) -> Result<Context, Error> {
         let generator =
             self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
         let prefix_len = generator.prefix_len();
@@ -351,7 +343,7 @@ impl Session {
             .kv_cache
             .borrow()
             .clone_with_prefix_len(&generator.context.mtl_context, prefix_len);
-        let context = SessionContext::new(
+        let context = Context::new(
             generator.tokens.clone(),
             kv_cache,
             generator.decoding_config.clone(),
