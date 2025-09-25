@@ -30,6 +30,7 @@ pub struct Generator {
     pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
+    pending_kv_update: Option<u64>,
 }
 
 impl Generator {
@@ -48,6 +49,7 @@ impl Generator {
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
+            pending_kv_update: None,
         };
 
         //Warmup
@@ -126,7 +128,7 @@ impl Generator {
                 expected_number_of_new_tokens: self.config.prefill_step_size,
             };
 
-            let (state, run_time) = self.run_model(
+            let (mut state, run_time) = self.run_model(
                 task,
                 false,
                 self.allow_pre_encode(),
@@ -155,6 +157,14 @@ impl Generator {
                         .kv_cache
                         .borrow_mut()
                         .register_accepted_tokens(&positions_for_step);
+                    let accept_indices_for_step: Vec<usize> =
+                        (0..positions_for_step.len()).collect();
+                    if !accept_indices_for_step.is_empty() {
+                        self.update_kv_cache(
+                            &mut state,
+                            &accept_indices_for_step,
+                        );
+                    }
                     if let Some(&last_idx) = positions_for_step.last() {
                         self.registered_prefix_len = last_idx + 1;
                     }
@@ -299,6 +309,7 @@ impl Generator {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
+        self.pending_kv_update = None;
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -348,6 +359,13 @@ impl Generator {
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
+
+            if let Some(signal_value) = self.pending_kv_update.take() {
+                root_command_buffer.encode_wait_for_event(
+                    &self.context.kv_update_event,
+                    signal_value,
+                );
+            }
 
             if !warmup {
                 self.context.gpu_sampler.encode(
@@ -409,12 +427,22 @@ impl Generator {
         let command_buffer = CommandBuffer::from_command_queue(
             &self.context.mtl_context.command_queue,
         );
+        let root_command_buffer = command_buffer.command_buffer().to_owned();
 
-        self.context.kv_cache.borrow_mut().update_after_acceptance(
-            accepted_token_indices,
-            &command_buffer,
-            &self.context.kv_cache_update,
-        );
+        {
+            let mut kv_cache = self.context.kv_cache.borrow_mut();
+            kv_cache.update_after_acceptance(
+                accepted_token_indices,
+                &command_buffer,
+                &self.context.kv_cache_update,
+            );
+        }
+
+        let signal_value = self.context.kv_update_signal;
+        root_command_buffer
+            .encode_signal_event(&self.context.kv_update_event, signal_value);
+        self.context.kv_update_signal += 1;
+        self.pending_kv_update = Some(signal_value);
 
         command_buffer.commit();
     }
