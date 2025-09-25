@@ -199,19 +199,6 @@ impl Tracer {
             &traces_view,
             "activation_trace.token_positions".to_string(),
         );
-        let mask: Vec<Vec<bool>> = Self::load_array_as_vec::<i8, i8>(
-            &traces_view,
-            "activation_trace.mask".to_string(),
-        )
-        .iter()
-        .map(|x| *x != 0)
-        .collect::<Vec<bool>>()
-        .chunks(token_ids.len())
-        .map(|chunk| chunk.to_vec())
-        .collect();
-
-        let external_bias_fn =
-            |row: usize, col: usize| -> bool { !mask[row][col] };
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
@@ -222,7 +209,7 @@ impl Tracer {
             &token_ids,
             &token_positions,
             true,
-            Some(&external_bias_fn),
+            None,
         );
 
         let root_command_buffer = self
