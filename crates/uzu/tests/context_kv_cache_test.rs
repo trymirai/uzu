@@ -2,11 +2,10 @@ use std::{path::PathBuf, rc::Rc};
 
 use uzu::session::{
     config::{DecodingConfig, RunConfig},
+    helpers::Context,
     parameter::{SamplingMethod, SamplingPolicy},
     session::Session,
-    session_context::SessionContext,
-    session_input::SessionInput,
-    session_output::SessionOutput,
+    types::{Input, Output},
 };
 
 mod common;
@@ -75,9 +74,7 @@ fn test_context_extension() {
     // Extend the context with new information
     let (_, extended_context) = session
         .extend(
-            SessionInput::Text(
-                "Update: Name: Dave. Occupation: Doctor.".to_string(),
-            ),
+            Input::Text("Update: Name: Dave. Occupation: Doctor.".to_string()),
             Some(initial_context.as_ref()),
             RunConfig::new(
                 1,
@@ -227,20 +224,19 @@ fn test_performance_cached_vs_plain() {
 }
 
 fn create_session() -> Session {
-    let mut session = Session::new(model_path()).unwrap();
-    session.load(DecodingConfig::default()).expect("Failed to load session");
-
+    let session = Session::new(model_path(), DecodingConfig::default())
+        .expect("Failed to load session");
     session
 }
 
 fn build_context(
     session: &mut Session,
     prompt: &str,
-) -> Rc<SessionContext> {
+) -> Rc<Context> {
     // Run the prompt once to build the context.
     let (_, context) = session
         .extend(
-            SessionInput::Text(prompt.to_string()),
+            Input::Text(prompt.to_string()),
             None,
             RunConfig::new(
                 1,
@@ -256,12 +252,12 @@ fn build_context(
 
 fn ask_with_context(
     session: &mut Session,
-    context: Option<Rc<SessionContext>>,
+    context: Option<Rc<Context>>,
     question: &str,
 ) -> String {
     session
         .run_with_context(
-            SessionInput::Text(format!("{} /no_think", question)),
+            Input::Text(format!("{} /no_think", question)),
             context.as_deref(),
             RunConfig::new(
                 96,
@@ -281,7 +277,7 @@ fn ask_without_context(
 ) -> String {
     session
         .run(
-            SessionInput::Text(format!("{} /no_think", question)),
+            Input::Text(format!("{} /no_think", question)),
             RunConfig::new(
                 96,
                 true,
@@ -289,7 +285,7 @@ fn ask_without_context(
                     value: SamplingMethod::Greedy,
                 },
             ),
-            None::<fn(SessionOutput) -> bool>,
+            None::<fn(Output) -> bool>,
         )
         .unwrap()
         .text

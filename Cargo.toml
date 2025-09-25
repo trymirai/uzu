@@ -11,3 +11,6 @@ repository = "https://github.com/trymirai/uzu"
 
 [profile.release]
 lto = true
+
+[profile.test]
+inherits = "release"
