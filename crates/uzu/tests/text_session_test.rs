@@ -46,9 +46,8 @@ fn run(
     decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
-    let mut session = Session::new(build_model_path()).unwrap();
-    session.load(decoding_config).unwrap();
-
+    let mut session =
+        Session::new(build_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(
@@ -79,9 +78,8 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
-    let decoding_config = build_decoding_config();
-    let mut session = Session::new(build_model_path()).unwrap();
-    session.load(decoding_config).unwrap();
+    let mut session =
+        Session::new(build_model_path(), build_decoding_config()).unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {
