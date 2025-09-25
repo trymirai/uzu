@@ -17,7 +17,9 @@ use crate::{
     },
     session::{
         config::{DecodingConfig, RunConfig},
-        helpers::{InputProcessor, InputProcessorDefault},
+        helpers::{
+            InputProcessor, InputProcessorDefault, is_directory_fits_ram,
+        },
         parameter::ConfigResolvableValue,
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
@@ -35,39 +37,10 @@ pub struct Session {
 }
 
 impl Session {
-    fn directory_size(path: &Path) -> std::io::Result<u64> {
-        let mut size = 0u64;
-        for entry_result in std::fs::read_dir(path)? {
-            let entry = entry_result?;
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                size += Self::directory_size(&entry.path())?;
-            } else {
-                size += metadata.len();
-            }
-        }
-        Ok(size)
-    }
-
-    fn assert_model_fits_ram(model_path: &Path) -> Result<(), Error> {
-        use sysinfo::System;
-
-        let model_size_bytes = Self::directory_size(model_path).unwrap_or(0);
-
-        let mut sys = System::new();
-        sys.refresh_memory();
-
-        let allowed_bytes = sys.total_memory() * 60 / 100;
-
-        if model_size_bytes > allowed_bytes {
-            Err(Error::NotEnoughMemory)
-        } else {
-            Ok(())
-        }
-    }
-
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
-        Self::assert_model_fits_ram(&model_path)?;
+        if !is_directory_fits_ram(&model_path) {
+            return Err(Error::NotEnoughMemory);
+        }
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
