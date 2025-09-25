@@ -22,6 +22,8 @@ pub enum Error {
     UnableToEncodeText,
     #[error("Unable to decode text")]
     UnableToDecodeText,
+    #[error("Context length exceeded")]
+    ContextLengthExceeded,
 }
 
 impl From<GeneratorError> for Error {

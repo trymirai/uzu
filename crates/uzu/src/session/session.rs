@@ -148,6 +148,14 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
+        let context_length = generator
+            .decoding_config
+            .context_length
+            .resolve(&self.model_metadata.model_config);
+        if tokens.len() >= context_length {
+            return Err(Error::ContextLengthExceeded);
+        }
+
         let prefix_len_before = generator.prefix_len();
 
         let eos_tokens: Vec<u64> = self
@@ -163,14 +171,18 @@ impl Session {
                              tokens_new: Vec<u64>|
          -> Option<FinishReason> {
             let start_idx = prefix_len_before + tokens.len();
+            let total_tokens = generator.tokens.len();
             let total_new_tokens = generator.tokens[start_idx..].len();
             let has_eos_token =
                 tokens_new.iter().any(|token| eos_tokens.contains(token));
+            let context_limit_reached = total_tokens >= context_length;
 
             if has_eos_token {
                 Some(FinishReason::Stop)
             } else if total_new_tokens >= config.tokens_limit as usize {
                 Some(FinishReason::Length)
+            } else if context_limit_reached {
+                Some(FinishReason::ContextLimitReached)
             } else {
                 None
             }

@@ -8,6 +8,7 @@ pub enum FinishReason {
     Stop,
     Length,
     Cancelled,
+    ContextLimitReached,
 }
 
 #[derive(Debug, Clone)]
