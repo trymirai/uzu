@@ -37,6 +37,10 @@ impl Session {
         model_path: PathBuf,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
+        if !model_path.exists() {
+            return Err(Error::ModelFolderNotFound);
+        }
+
         if !is_directory_fits_ram(&model_path) {
             return Err(Error::NotEnoughMemory);
         }
