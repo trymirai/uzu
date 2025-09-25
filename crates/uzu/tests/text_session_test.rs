@@ -8,8 +8,7 @@ use uzu::session::{
         SamplingSeed,
     },
     session::Session,
-    session_output::SessionOutput,
-    types::{Input, Message, Role},
+    types::{Input, Message, Output, Role},
 };
 
 fn build_model_path() -> PathBuf {
@@ -48,7 +47,7 @@ fn run(
     tokens_limit: u64,
 ) {
     let mut session = Session::new(build_model_path()).unwrap();
-    session.load_with_session_config(decoding_config).unwrap();
+    session.load(decoding_config).unwrap();
 
     let input = Input::Text(text);
     let output = session
@@ -61,7 +60,7 @@ fn run(
                     value: SamplingMethod::Greedy,
                 },
             ),
-            Some(|_: SessionOutput| {
+            Some(|_: Output| {
                 return true;
             }),
         )
@@ -82,7 +81,7 @@ fn run_scenario(
 ) {
     let decoding_config = build_decoding_config();
     let mut session = Session::new(build_model_path()).unwrap();
-    session.load_with_session_config(decoding_config).unwrap();
+    session.load(decoding_config).unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {
@@ -105,7 +104,7 @@ fn run_scenario(
             .run(
                 input,
                 RunConfig::default(),
-                Some(|_: SessionOutput| {
+                Some(|_: Output| {
                     return true;
                 }),
             )

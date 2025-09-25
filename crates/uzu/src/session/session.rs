@@ -109,13 +109,6 @@ impl Session {
         Ok(())
     }
 
-    pub fn load_with_session_config(
-        &mut self,
-        config: DecodingConfig,
-    ) -> Result<(), Error> {
-        self.load(config)
-    }
-
     pub fn extend(
         &mut self,
         input: Input,

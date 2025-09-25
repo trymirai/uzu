@@ -100,9 +100,7 @@ pub fn load_session(model_path: String) -> Session {
     let mut session =
         Session::new(model_path_buf).expect("Failed to create session");
 
-    session
-        .load_with_session_config(SessionConfig::default())
-        .expect("Failed to load session");
+    session.load(SessionConfig::default()).expect("Failed to load session");
 
     progress_bar.set_style(
         ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),
