@@ -7,9 +7,7 @@ use std::{
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::session::{
-    config::DecodingConfig, helpers::Context, session::Session,
-};
+use uzu::session::{Session, config::DecodingConfig, helpers::Context};
 
 pub struct ContextCache {
     pub map: HashMap<String, Rc<Context>>,

@@ -82,8 +82,8 @@ Then, create an inference `Session` with a specific model and configuration:
 use std::path::PathBuf;
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig},
-    session::Session,
     types::{Input, Output},
 };
 

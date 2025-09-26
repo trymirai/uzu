@@ -1,10 +1,10 @@
 use std::{path::PathBuf, rc::Rc};
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig},
     helpers::Context,
     parameter::{SamplingMethod, SamplingPolicy},
-    session::Session,
     types::{Input, Output},
 };
 

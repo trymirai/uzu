@@ -2,12 +2,12 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
         ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
         SamplingSeed,
     },
-    session::Session,
     types::{Input, Message, Output, Role},
 };
 

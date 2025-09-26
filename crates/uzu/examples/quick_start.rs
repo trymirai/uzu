@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig},
-    session::Session,
     types::{Input, Output},
 };
 

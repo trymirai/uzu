@@ -1,5 +1,6 @@
 pub mod config;
 pub mod helpers;
 pub mod parameter;
-pub mod session;
+mod session;
 pub mod types;
+pub use session::Session;
