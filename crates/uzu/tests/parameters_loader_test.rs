@@ -1,7 +1,7 @@
 mod common;
 
 // New integration test for ParameterLoader
-use half::f16;
+use half::bf16;
 use is_close::is_close;
 use uzu::{Array, backends::cpu::CPUContext, parameters::ParameterLoader};
 
@@ -15,11 +15,11 @@ fn test_parameter_loader_basic() {
     let loader = ParameterLoader::new(&file, &context).expect("create loader");
     let embeddings =
         loader.get("embedding.weights").expect("weights embeddings");
-    let view = embeddings.as_view::<f16>().unwrap();
-    assert!(is_close!(view[[5usize, 3usize]], f16::from_f32(-0.01819)));
+    let view = embeddings.as_view::<bf16>().unwrap();
+    assert!(is_close!(view[[5usize, 3usize]], bf16::from_f32(-0.01819)));
 
     // tree API check
     let subtree = loader.tree().subtree("embedding").unwrap();
     let same = subtree.leaf("weights").unwrap();
-    assert_eq!(view, same.as_view::<f16>().unwrap());
+    assert_eq!(view, same.as_view::<bf16>().unwrap());
 }

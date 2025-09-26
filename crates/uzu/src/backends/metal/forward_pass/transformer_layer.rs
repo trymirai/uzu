@@ -49,19 +49,17 @@ pub fn linear_block<const N: usize>(
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let LinearConfig::Quantized(quant_config) = config {
-        if !has_biases {
-            let out_sum: usize = output_dims.iter().sum();
-            return quantized_linear_block_custom(
-                quant_config,
-                input_dim,
-                out_sum,
-                context,
-                parameter_tree,
-                input_array_id,
-                output_array_id,
-            )
-            .unwrap();
-        }
+        let out_sum: usize = output_dims.iter().sum();
+        return quantized_linear_block_custom(
+            quant_config,
+            input_dim,
+            out_sum,
+            context,
+            parameter_tree,
+            input_array_id,
+            output_array_id,
+        )
+        .unwrap();
     }
 
     autoreleasepool(|_| {

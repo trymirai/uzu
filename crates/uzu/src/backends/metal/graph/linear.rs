@@ -37,7 +37,12 @@ fn quantized_weights_subgraph<const N: usize>(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     if config.weight_quantization_mode != QuantizationMode::UInt4 {
-        unimplemented!("8-bit quantization is not yet implemented.");
+        return Err(GraphConstructionError::IncompatibleDataTypes {
+            node_path: parameter_tree.path_prefix().map(str::to_string),
+            node_name: "weights".to_string(),
+            expected: DataType::U4,
+            actual: DataType::U8,
+        });
     }
     let output_dim_sum: usize = output_dims.iter().sum();
 

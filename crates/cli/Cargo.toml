@@ -1,6 +1,6 @@
 [package]
 name = "cli"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2024"
 
 [[bin]]
@@ -11,9 +11,9 @@ path = "src/main.rs"
 clap = { version = "4.5.39", features = ["derive"] }
 uzu = { path = "../uzu" }
 ctrlc = "3.4.1"
-indicatif = "0.17.7"
+indicatif = "0.18.0"
 inquire = "0.7.5"
-console = "0.15.11"
+console = "0.16.0"
 rocket = { version = "0.5.1", features = ["json"] }
 tokio = { version = "1.45.1", features = ["full"] }
 serde = { version = "1.0.219", features = ["derive"] }

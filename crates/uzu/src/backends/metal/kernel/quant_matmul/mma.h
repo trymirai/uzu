@@ -25,6 +25,7 @@ struct pointer_element_t_impl<threadgroup T*> {
     using type = T;
 };
 template<typename T>
+
 using pointer_element_t = typename pointer_element_t_impl<T>::type;
 
 template <typename T, typename U = T>
@@ -256,7 +257,6 @@ struct MMATile {
       }
     }
   }
-
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void

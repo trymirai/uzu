@@ -7,7 +7,7 @@
 <a href="https://artifacts.trymirai.com/social/about_us.mp3"><img src="https://img.shields.io/badge/Listen-Podcast-red" alt="Listen to our podcast"></a>
 <a href="https://docsend.com/v/76bpr/mirai2025"><img src="https://img.shields.io/badge/View-Deck-red" alt="View our deck"></a>
 <a href="mailto:alexey@getmirai.co,dima@getmirai.co,aleksei@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-green" alt="Contact us"></a>
-<a href="https://docs.trymirai.com/components/inference-engine"><img src="https://img.shields.io/badge/Read-Docs-blue" alt="Read docs"></a>
+<a href="https://docs.trymirai.com/overview/uzu"><img src="https://img.shields.io/badge/Read-Docs-blue" alt="Read docs"></a>
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 # uzu
@@ -15,14 +15,14 @@
 A high-performance inference engine for AI models on Apple Silicon. Key features:
 
 - Simple, high-level API
-- [Hybrid architecture](https://docs.trymirai.com/components/inference-engine#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML with [ANE](https://trymirai.com/blog/iphone-hardware) access)
+- [Hybrid architecture](https://docs.trymirai.com/overview/uzu#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML with [ANE](https://trymirai.com/blog/iphone-hardware) access)
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
 
 ## Overview
 
-For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/components/inference-engine).
+For a detailed explanation of the architecture, please refer to the [documentation](https://docs.trymirai.com/overview/uzu).
 
 ### [Models](https://trymirai.com/models)
 
@@ -35,22 +35,23 @@ uv run lalamo list-models
 Then, export the specific one:
 
 ```bash
-uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct --precision float16
+uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 ```
 
 Alternatively, you can download a prepared model using the sample script:
 
 ```bash
-./scripts/download_test_model.sh $MODEL_PATH
+./scripts/download_test_model.sh
 ```
 
 ### Bindings
 
 - [uzu-swift](https://github.com/trymirai/uzu-swift) - a prebuilt Swift framework, ready to use with SPM
+- [uzu-ts](https://github.com/trymirai/uzu-ts) - a prebuilt TypeScript framework made for Node.js ecosystem
 
 ### CLI
 
-You can run `uzu` in a [CLI](https://docs.trymirai.com/components/cli) mode:
+You can run `uzu` in a [CLI](https://docs.trymirai.com/overview/cli) mode:
 
 ```bash
 cargo run --release -p cli -- help
@@ -79,32 +80,25 @@ Then, create an inference `Session` with a specific model and configuration:
 
 ```rust
 use std::path::PathBuf;
-use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
-    session::{
-        session::Session, session_config::SessionConfig,
-        session_input::SessionInput, session_output::SessionOutput,
-        session_run_config::SessionRunConfig,
-    },
+
+use uzu::session::{
+    config::{DecodingConfig, RunConfig},
+    session::Session,
+    types::{Input, Output},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = PathBuf::from("MODEL_PATH");
-    
-    let mut session = Session::new(model_path.clone())?;
-    session.load_with_session_config(SessionConfig::default())?;
+    let mut session = Session::new(model_path, DecodingConfig::default())?;
 
-    let input = SessionInput::Text("Tell about London".to_string());
-
-    let tokens_limit = 128;
-    let run_config = SessionRunConfig::new_with_sampling_config(
-        tokens_limit,
-        Some(SamplingConfig::default())
-    );
-
-    let output = session.run(input, run_config, Some(|_: SessionOutput| {
-        return true;
-    }))?;
+    let input = Input::Text(String::from("Tell about London"));
+    let output = session.run(
+        input,
+        RunConfig::default().tokens_limit(128),
+        Some(|_: Output| {
+            return true;
+        }),
+    )?;
     println!("{}", output.text);
     Ok(())
 }

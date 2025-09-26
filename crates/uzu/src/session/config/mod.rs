@@ -1,4 +1,6 @@
-pub mod common;
-pub mod generation_config;
-pub mod generation_metadata;
-pub mod tokenizer_config;
+mod decoding_config;
+mod run_config;
+mod speculator_config;
+pub use decoding_config::DecodingConfig;
+pub use run_config::RunConfig;
+pub use speculator_config::SpeculatorConfig;

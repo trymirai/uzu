@@ -1,9 +1,9 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
+use metal::SharedEvent;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
-use super::{config::GeneratorConfig, error::GeneratorError};
 use crate::{
     DataType,
     backends::metal::{
@@ -13,18 +13,26 @@ use crate::{
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
     },
-    config::ModelConfig,
+    config::{LanguageModelConfig, ModelMetadata},
     parameters::ParameterLoader,
+    session::{
+        config::DecodingConfig,
+        parameter::{ConfigResolvableValue, ResolvableValue},
+        types::Error,
+    },
 };
 
 pub struct GeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
+    pub kv_update_event: SharedEvent,
+    pub kv_update_signal: u64,
 
     pub kv_cache: Rc<RefCell<KVCache>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ForwardPassBuffers,
 
+    pub model_config: LanguageModelConfig,
     pub model_shape: ModelShape,
     pub executables: DecoderExecutables,
     pub kv_cache_update: Box<KVCacheUpdate>,
@@ -34,10 +42,10 @@ pub struct GeneratorContext {
 impl GeneratorContext {
     pub fn new(
         model_path: &Path,
-        config: &GeneratorConfig,
-    ) -> Result<Self, GeneratorError> {
+        decoding_config: &DecodingConfig,
+    ) -> Result<Self, Error> {
         let mtl_device = metal::Device::system_default()
-            .ok_or(GeneratorError::UnableToCreateMetalContext)?;
+            .ok_or(Error::UnableToCreateMetalContext)?;
         let mtl_command_queue =
             mtl_device.new_command_queue_with_max_command_buffer_count(1024);
 
@@ -46,37 +54,41 @@ impl GeneratorContext {
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
-            return Err(GeneratorError::UnableToLoadConfig);
+            return Err(Error::UnableToLoadConfig);
         }
-        let config_file = File::open(&config_path)
-            .map_err(|_| GeneratorError::UnableToLoadConfig)?;
-        let model_config: ModelConfig =
+        let config_file =
+            File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
+        let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|_| GeneratorError::UnableToLoadConfig)?;
-        let decoder_config = Rc::new(model_config.model_config.clone());
+                .map_err(|_| Error::UnableToLoadConfig)?;
+        let decoder_config =
+            Rc::new(model_metadata.model_config.decoder_config.clone());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let prefill_step_size = config.prefill_step_size;
-        let generate_suffix_length = config.generate_suffix_length();
-        let max_prefix_length: usize =
-            std::cmp::min(config.context_length, decoder_config.context_length);
+        let prefill_step_size = decoding_config
+            .prefill_step_size
+            .resolve(&model_metadata.model_config);
+        let generate_suffix_length = decoding_config.generate_suffix_length();
+        let max_prefix_length: usize = decoding_config
+            .context_length
+            .resolve(&model_metadata.model_config);
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
         let mtl_context = Rc::new(
             MTLContext::new(mtl_device, mtl_command_queue)
-                .map_err(|_| GeneratorError::UnableToCreateMetalContext)?,
+                .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
-            return Err(GeneratorError::UnableToLoadWeights);
+            return Err(Error::UnableToLoadWeights);
         }
         let weights_file = File::open(&weights_path)
-            .map_err(|_| GeneratorError::UnableToLoadWeights)?;
+            .map_err(|_| Error::UnableToLoadWeights)?;
         let loader = ParameterLoader::new(&weights_file, &mtl_context)
-            .map_err(|_| GeneratorError::UnableToLoadWeights)?;
+            .map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
@@ -116,7 +128,7 @@ impl GeneratorContext {
                 kernel_data_type,
                 max_prefix_length,
             )
-            .unwrap(),
+            .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let gpu_sampler = SamplingKernelEncodable::new(
@@ -124,16 +136,22 @@ impl GeneratorContext {
             kernel_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
-            config.sampling_seed,
+            decoding_config.sampling_seed.resolve(),
         )
-        .map_err(|_| GeneratorError::UnableToCreateMetalContext)?;
+        .map_err(|_| Error::UnableToCreateMetalContext)?;
+
+        let kv_update_event = mtl_context.device.new_shared_event();
+        let kv_update_signal = 1;
 
         let context = Self {
             mtl_context,
             command_buffer,
+            kv_update_event,
+            kv_update_signal,
             kv_cache,
             shared_buffers,
             scratch_buffers,
+            model_config: model_metadata.model_config.clone(),
             model_shape,
             executables,
             kv_cache_update,

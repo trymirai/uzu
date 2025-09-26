@@ -8,13 +8,15 @@ use metal::{
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
-use crate::backends::metal::{
-    KernelDataType, MTLContext, MTLError,
-    forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
+use crate::{
+    backends::metal::{
+        KernelDataType, MTLContext, MTLError,
+        forward_pass::{
+            ForwardPassState,
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+        },
     },
-    sampling_config::SamplingConfig,
+    session::parameter::SamplingMethod,
 };
 
 const BLOCK_SIZE: usize = 1024;
@@ -270,7 +272,7 @@ impl SamplingKernel {
 
     pub fn encode(
         &self,
-        sampling_config: &SamplingConfig,
+        sampling_method: &SamplingMethod,
         logits_buffer: &MTLBuffer,
         sampled_tokens_buffer: &MTLBuffer,
         batch_size: usize,
@@ -279,7 +281,7 @@ impl SamplingKernel {
     ) -> Result<(), SamplingError> {
         let compute_encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_encoder(
-            sampling_config,
+            sampling_method,
             logits_buffer,
             sampled_tokens_buffer,
             batch_size,
@@ -292,7 +294,7 @@ impl SamplingKernel {
 
     pub fn encode_with_encoder(
         &self,
-        sampling_config: &SamplingConfig,
+        sampling_method: &SamplingMethod,
         logits_buffer: &MTLBuffer,
         sampled_tokens_buffer: &MTLBuffer,
         batch_size: usize,
@@ -321,8 +323,8 @@ impl SamplingKernel {
 
         let threads_per_threadgroup = MTLSize::new(BLOCK_SIZE as u64, 1, 1);
 
-        match sampling_config {
-            SamplingConfig::Argmax => self.encode_argmax(
+        match sampling_method {
+            SamplingMethod::Greedy => self.encode_argmax(
                 logits_buffer,
                 sampled_tokens_buffer,
                 batch_size_u32,
@@ -331,7 +333,7 @@ impl SamplingKernel {
                 threads_per_threadgroup,
                 compute_encoder,
             ),
-            SamplingConfig::TopP {
+            SamplingMethod::TopP {
                 top_p,
             } => self.encode_top_p(
                 *top_p,
@@ -343,7 +345,7 @@ impl SamplingKernel {
                 threads_per_threadgroup,
                 compute_encoder,
             ),
-            SamplingConfig::Categorical {
+            SamplingMethod::Temperature {
                 temperature,
             } => self.encode_categorical(
                 *temperature,
@@ -801,7 +803,7 @@ impl EncodableWithState for SamplingKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let sampling_config = state.sampling_config.unwrap_or_default();
+        let sampling_method = state.sampling_method.unwrap_or_default();
 
         let logits_binding = state
             .arrays(&[crate::backends::metal::forward_pass::ArrayId::Logits]);
@@ -829,7 +831,7 @@ impl EncodableWithState for SamplingKernelEncodable {
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         if let Err(e) = self.kernel.encode(
-            &sampling_config,
+            &sampling_method,
             unsafe { &logits.mtl_buffer() },
             unsafe { &output_buffer_ref.mtl_buffer() },
             batch_size,

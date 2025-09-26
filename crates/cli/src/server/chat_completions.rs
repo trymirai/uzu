@@ -7,13 +7,12 @@ use rocket::{State, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use uzu::session::{
-    session_input::SessionInput,
-    session_message::{SessionMessage, SessionMessageRole},
-    session_output::{
-        SessionOutput, SessionOutputFinishReason, SessionOutputRunStats,
-        SessionOutputStats, SessionOutputStepStats, SessionOutputTotalStats,
+    config::RunConfig,
+    parameter::SamplingPolicy,
+    types::{
+        FinishReason, Input, Message, Output, Role, RunStats, Stats, StepStats,
+        TotalStats,
     },
-    session_run_config::SessionRunConfig,
 };
 
 use crate::server::SessionState;
@@ -21,14 +20,13 @@ use crate::server::SessionState;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     pub content: String,
-    pub role: SessionMessageRole,
+    pub role: Role,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatCompletionRequest {
     pub messages: Vec<ChatMessage>,
-    pub model: String,
-    pub max_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
     pub system_prompt_key: Option<String>,
 }
 
@@ -46,7 +44,7 @@ pub struct ChatCompletionResponse {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChatCompletionChoice>,
-    pub stats: SessionOutputStats,
+    pub stats: Stats,
 }
 
 #[post("/chat/completions", format = "json", data = "<request>")]
@@ -59,7 +57,10 @@ pub fn handle_chat_completions(
 
     println!("📨 [{}] Incoming chat completion request:", id);
     println!("   Messages: {} message(s)", request.messages.len());
-    println!("   Max tokens: {}", request.max_tokens.unwrap_or(2048));
+    println!(
+        "   Max tokens: {}",
+        request.max_completion_tokens.unwrap_or(2048)
+    );
     println!("   System prompt key: {:?}", request.system_prompt_key);
 
     for (i, msg) in request.messages.iter().enumerate() {
@@ -73,17 +74,18 @@ pub fn handle_chat_completions(
 
     let model_name = state.model_name.clone();
     let system_prompt_key = request.system_prompt_key;
-    let tokens_limit = request.max_tokens.unwrap_or(2048);
-    let messages: Vec<SessionMessage> = request
+    let tokens_limit = request.max_completion_tokens.unwrap_or(2048);
+    let messages: Vec<Message> = request
         .messages
         .into_iter()
-        .map(|m| SessionMessage {
+        .map(|m| Message {
             content: m.content,
             role: m.role,
         })
         .collect();
-    let input = SessionInput::Messages(messages);
-    let run_config = SessionRunConfig::new(tokens_limit);
+    let input = Input::Messages(messages);
+    let run_config =
+        RunConfig::new(tokens_limit, true, SamplingPolicy::Default);
 
     let start_time = std::time::Instant::now();
     let mut session = state.session_wrapper.lock();
@@ -114,24 +116,24 @@ pub fn handle_chat_completions(
                         index: 0,
                         message: ChatMessage {
                             content: format!("Error: {}", e),
-                            role: SessionMessageRole::Assistant,
+                            role: Role::Assistant,
                         },
                         finish_reason: "error".to_string(),
                     }],
-                    stats: SessionOutputStats {
-                        prefill_stats: SessionOutputStepStats {
+                    stats: Stats {
+                        prefill_stats: StepStats {
                             duration: 0.0,
                             suffix_length: 0,
                             tokens_count: 0,
                             tokens_per_second: 0.0,
-                            model_run: SessionOutputRunStats {
+                            model_run: RunStats {
                                 count: 0,
                                 average_duration: 0.0,
                             },
                             run: None,
                         },
                         generate_stats: None,
-                        total_stats: SessionOutputTotalStats {
+                        total_stats: TotalStats {
                             duration: 0.0,
                             tokens_count_input: 0,
                             tokens_count_output: 0,
@@ -159,24 +161,24 @@ pub fn handle_chat_completions(
                         index: 0,
                         message: ChatMessage {
                             content: format!("Error: {}", e),
-                            role: SessionMessageRole::Assistant,
+                            role: Role::Assistant,
                         },
                         finish_reason: "error".to_string(),
                     }],
-                    stats: SessionOutputStats {
-                        prefill_stats: SessionOutputStepStats {
+                    stats: Stats {
+                        prefill_stats: StepStats {
                             duration: 0.0,
                             suffix_length: 0,
                             tokens_count: 0,
                             tokens_per_second: 0.0,
-                            model_run: SessionOutputRunStats {
+                            model_run: RunStats {
                                 count: 0,
                                 average_duration: 0.0,
                             },
                             run: None,
                         },
                         generate_stats: None,
-                        total_stats: SessionOutputTotalStats {
+                        total_stats: TotalStats {
                             duration: 0.0,
                             tokens_count_input: 0,
                             tokens_count_output: 0,
@@ -192,15 +194,14 @@ pub fn handle_chat_completions(
 
     println!("output: {:?}", &output);
 
-    let SessionOutput {
+    let Output {
         text,
         stats,
         finish_reason,
         ..
     } = output;
 
-    let finish_reason_val =
-        finish_reason.unwrap_or(SessionOutputFinishReason::Cancelled);
+    let finish_reason_val = finish_reason.unwrap_or(FinishReason::Cancelled);
 
     println!("📤 [{}] Sending response:", id);
     println!("   Response length: {} chars", text.len());
@@ -234,7 +235,7 @@ pub fn handle_chat_completions(
             index: 0,
             message: ChatMessage {
                 content: text,
-                role: SessionMessageRole::Assistant,
+                role: Role::Assistant,
             },
             finish_reason: format!("{:?}", finish_reason_val).to_lowercase(),
         }],

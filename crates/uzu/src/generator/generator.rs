@@ -3,51 +3,54 @@ use std::{collections::HashMap, path::Path, time::Instant};
 use mpsgraph::CommandBuffer;
 
 use super::{
-    config::GeneratorConfig,
     context::GeneratorContext,
     result::{GenerateResult, PrefillResult},
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
 use crate::{
     Array,
-    backends::metal::{
-        forward_pass::{
-            ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            kv_cache::INVALID_POSITION,
-        },
-        sampling_config::SamplingConfig,
+    backends::metal::forward_pass::{
+        ForwardPassState,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
+        kv_cache::INVALID_POSITION,
     },
-    env_utils::MetalEnvVar,
-    generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
+    session::{
+        config::DecodingConfig,
+        parameter::{ConfigResolvableValue, SamplingMethod},
+        types::Error,
+    },
+    utils::env_utils::MetalEnvVar,
 };
 
 pub struct Generator {
-    pub config: GeneratorConfig,
+    pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
     pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
+    pending_kv_update: Option<u64>,
 }
 
 impl Generator {
     pub fn new(
         model_path: &Path,
-        config: GeneratorConfig,
-    ) -> Result<Self, GeneratorError> {
-        let context = GeneratorContext::new(model_path, &config)?;
+        decoding_config: DecodingConfig,
+    ) -> Result<Self, Error> {
+        let context = GeneratorContext::new(model_path, &decoding_config)?;
 
-        let prefill_step_size = config.prefill_step_size;
-        let generate_suffix_length = config.generate_suffix_length();
+        let prefill_step_size =
+            decoding_config.prefill_step_size.resolve(&context.model_config);
+        let generate_suffix_length = decoding_config.generate_suffix_length();
 
         let mut generator = Self {
-            config: config,
+            decoding_config: decoding_config,
             tokens: Vec::new(),
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
+            pending_kv_update: None,
         };
 
         //Warmup
@@ -60,22 +63,26 @@ impl Generator {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        sampling_config: SamplingConfig,
+        sampling_method: SamplingMethod,
         prefix_offset: usize,
-    ) -> PrefillResult {
+    ) -> Result<PrefillResult, Error> {
         assert!(!tokens.is_empty());
 
         self.tokens.extend(tokens.clone());
 
+        let prefill_step_size = self
+            .decoding_config
+            .prefill_step_size
+            .resolve(&self.context.model_config);
+
         let tokens_length = tokens.len();
-        let number_of_prefill_steps = (tokens_length as f32
-            / self.config.prefill_step_size as f32)
-            .ceil() as usize;
+        let number_of_prefill_steps =
+            (tokens_length as f32 / prefill_step_size as f32).ceil() as usize;
         let total_prefill_tokens_count =
-            number_of_prefill_steps * self.config.prefill_step_size;
+            number_of_prefill_steps * prefill_step_size;
         let unused_tokens_count = total_prefill_tokens_count - tokens_length;
 
-        let speculator = &self.config.speculator_config.speculator;
+        let speculator = &self.decoding_config.speculator_config.speculator;
         let proposals = speculator.generate_proposals(&tokens);
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
             .linearize(0, unused_tokens_count);
@@ -108,9 +115,8 @@ impl Generator {
 
         // Process each prefill step and update the KV cache.
         for step in 0..number_of_prefill_steps {
-            let tokens_start_index = step * self.config.prefill_step_size;
-            let tokens_end_index =
-                tokens_start_index + self.config.prefill_step_size;
+            let tokens_start_index = step * prefill_step_size;
+            let tokens_end_index = tokens_start_index + prefill_step_size;
             let tokens_for_step =
                 &padded_tokens[tokens_start_index..tokens_end_index];
             let positions_for_step =
@@ -123,14 +129,14 @@ impl Generator {
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
-                expected_amount_of_new_tokens: self.config.prefill_step_size,
+                expected_number_of_new_tokens: prefill_step_size,
             };
 
-            let (state, run_time) = self.run_model(
+            let (mut state, run_time) = self.run_model(
                 task,
                 false,
                 self.allow_pre_encode(),
-                Some(sampling_config.clone()),
+                sampling_method,
             );
 
             // Register the *accepted* real tokens from this step (exclude the
@@ -155,6 +161,14 @@ impl Generator {
                         .kv_cache
                         .borrow_mut()
                         .register_accepted_tokens(&positions_for_step);
+                    let accept_indices_for_step: Vec<usize> =
+                        (0..positions_for_step.len()).collect();
+                    if !accept_indices_for_step.is_empty() {
+                        self.update_kv_cache(
+                            &mut state,
+                            &accept_indices_for_step,
+                        );
+                    }
                     if let Some(&last_idx) = positions_for_step.last() {
                         self.registered_prefix_len = last_idx + 1;
                     }
@@ -165,18 +179,17 @@ impl Generator {
             run_times.push(run_time);
         }
 
-        let mut final_state = last_state.unwrap();
-        let argmax_tokens = self.gpu_sample(&mut final_state);
+        let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
+        let sampled_tokens = self.sample(&mut final_state)?;
 
         let mut accepted_token_indices: Vec<usize> = Vec::new();
         let mut accepted_tokens: Vec<u64> = Vec::new();
         let mut current_token_index: isize = -1;
         loop {
-            let current_index_in_window = ((current_token_index
-                + tokens_length as isize)
-                % self.config.prefill_step_size as isize)
-                as usize;
-            let new_token = argmax_tokens[current_index_in_window];
+            let current_index_in_window =
+                ((current_token_index + tokens_length as isize)
+                    % prefill_step_size as isize) as usize;
+            let new_token = sampled_tokens[current_index_in_window];
             accepted_tokens.push(new_token);
 
             if let Some(map) =
@@ -199,19 +212,19 @@ impl Generator {
 
         self.sync_prefix();
 
-        PrefillResult {
+        Ok(PrefillResult {
             tokens: accepted_tokens,
             forwardpass_durations: run_times,
-        }
+        })
     }
 
     pub fn generate(
         &mut self,
-        sampling_config: SamplingConfig,
-    ) -> GenerateResult {
-        let last_token = self.tokens.last().unwrap();
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error> {
+        let last_token = self.tokens.last().ok_or(Error::GenerateFailed)?;
 
-        let speculator = &self.config.speculator_config.speculator;
+        let speculator = &self.decoding_config.speculator_config.speculator;
         let mut proposals: Vec<Vec<u64>> = speculator
             .generate_proposals(&self.tokens)
             .into_iter()
@@ -222,9 +235,10 @@ impl Generator {
         }
 
         let speculated_suffix = TokenTrie::from_sequences(&proposals)
-            .linearize(0, self.config.generate_suffix_length());
+            .linearize(0, self.decoding_config.generate_suffix_length());
 
-        let expected_suffix_length = self.config.generate_suffix_length();
+        let expected_suffix_length =
+            self.decoding_config.generate_suffix_length();
         let unused_tokens_count =
             expected_suffix_length - speculated_suffix.tokens.len();
         let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
@@ -245,23 +259,23 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
             token_positions: padded_positions,
-            expected_amount_of_new_tokens: 1,
+            expected_number_of_new_tokens: 1,
         };
 
         let (mut state, run_time) = self.run_model(
             task,
             false,
             self.allow_pre_encode(),
-            Some(sampling_config),
+            sampling_method,
         );
 
-        let argmax_tokens = self.gpu_sample(&mut state);
+        let sampled_tokens = self.sample(&mut state)?;
 
         let mut accepted_token_indices = Vec::new();
         let mut accepted_tokens = Vec::new();
         let mut current_token_index: isize = 0;
         loop {
-            let new_token = argmax_tokens[current_token_index as usize];
+            let new_token = sampled_tokens[current_token_index as usize];
             accepted_tokens.push(new_token);
             if let Some(map) =
                 speculated_suffix.transition_map.get(&(current_token_index))
@@ -282,10 +296,10 @@ impl Generator {
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
 
-        GenerateResult {
+        Ok(GenerateResult {
             tokens: accepted_tokens,
             forwardpass_duration: run_time,
-        }
+        })
     }
 
     pub fn clear_cache(&mut self) {
@@ -299,6 +313,7 @@ impl Generator {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
+        self.pending_kv_update = None;
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -312,10 +327,10 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            expected_amount_of_new_tokens: suffix_length,
+            expected_number_of_new_tokens: suffix_length,
         };
 
-        let (_, _) = self.run_model(task, true, false, None);
+        let (_, _) = self.run_model(task, true, false, SamplingMethod::Greedy);
     }
 
     fn run_model(
@@ -323,13 +338,13 @@ impl Generator {
         task: GeneratorRunTask,
         warmup: bool,
         allow_pre_encode: bool,
-        sampling_config: Option<SamplingConfig>,
+        sampling_method: SamplingMethod,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
             let mut state = task.create_state(&mut self.context, None);
-            state.sampling_config = sampling_config;
+            state.sampling_method = Some(sampling_method);
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
@@ -348,6 +363,13 @@ impl Generator {
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
+
+            if let Some(signal_value) = self.pending_kv_update.take() {
+                root_command_buffer.encode_wait_for_event(
+                    &self.context.kv_update_event,
+                    signal_value,
+                );
+            }
 
             if !warmup {
                 self.context.gpu_sampler.encode(
@@ -382,15 +404,17 @@ impl Generator {
         })
     }
 
-    fn gpu_sample(
+    fn sample(
         &mut self,
         state: &mut ForwardPassState,
-    ) -> Vec<u64> {
+    ) -> Result<Vec<u64>, Error> {
         let sampling_output = state.sampling_output.as_ref()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer.as_view::<u32>().unwrap();
+        let output_view = output_buffer
+            .as_view::<u32>()
+            .map_err(|_| Error::SamplingFailed)?;
         let batch_size = output_buffer.shape()[0];
 
         let mut result = Vec::with_capacity(batch_size);
@@ -398,7 +422,7 @@ impl Generator {
             result.push(output_view[[i]] as u64);
         }
 
-        result
+        Ok(result)
     }
 
     fn update_kv_cache(
@@ -409,12 +433,22 @@ impl Generator {
         let command_buffer = CommandBuffer::from_command_queue(
             &self.context.mtl_context.command_queue,
         );
+        let root_command_buffer = command_buffer.command_buffer().to_owned();
 
-        self.context.kv_cache.borrow_mut().update_after_acceptance(
-            accepted_token_indices,
-            &command_buffer,
-            &self.context.kv_cache_update,
-        );
+        {
+            let mut kv_cache = self.context.kv_cache.borrow_mut();
+            kv_cache.update_after_acceptance(
+                accepted_token_indices,
+                &command_buffer,
+                &self.context.kv_cache_update,
+            );
+        }
+
+        let signal_value = self.context.kv_update_signal;
+        root_command_buffer
+            .encode_signal_event(&self.context.kv_update_event, signal_value);
+        self.context.kv_update_signal += 1;
+        self.pending_kv_update = Some(signal_value);
 
         command_buffer.commit();
     }
@@ -422,7 +456,8 @@ impl Generator {
     fn allow_pre_encode(&self) -> bool {
         let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
 
-        let result = self.config.allow_pre_encode && !metal_debug_active;
+        let result =
+            self.decoding_config.allow_pre_encode && !metal_debug_active;
 
         result
     }
