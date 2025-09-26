@@ -19,6 +19,30 @@ impl RunConfig {
             sampling_policy,
         }
     }
+
+    pub fn tokens_limit(
+        mut self,
+        tokens_limit: u64,
+    ) -> Self {
+        self.tokens_limit = tokens_limit;
+        self
+    }
+
+    pub fn enable_thinking(
+        mut self,
+        enable_thinking: bool,
+    ) -> Self {
+        self.enable_thinking = enable_thinking;
+        self
+    }
+
+    pub fn sampling_policy(
+        mut self,
+        sampling_policy: SamplingPolicy,
+    ) -> Self {
+        self.sampling_policy = sampling_policy;
+        self
+    }
 }
 
 impl Default for RunConfig {
