@@ -213,8 +213,11 @@ impl Session {
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();
 
-        let prefill_result =
-            generator.prefill(tokens.clone(), sampling_method, prefix_offset);
+        let prefill_result = generator.prefill(
+            tokens.clone(),
+            sampling_method,
+            prefix_offset,
+        )?;
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
@@ -263,7 +266,7 @@ impl Session {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_method);
+            let generate_result = generator.generate(sampling_method)?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);

@@ -1,5 +1,3 @@
-use crate::generator::error::GeneratorError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Model folder not found")]
@@ -14,9 +12,9 @@ pub enum Error {
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
     NotEnoughMemory,
-    #[error("Generator not loaded. Call load() first")]
+    #[error("Generator not loaded")]
     GeneratorNotLoaded,
-    #[error("Unable to load promot template")]
+    #[error("Unable to load prompt template")]
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]
     UnableToRenderPromptTemplate,
@@ -26,16 +24,10 @@ pub enum Error {
     UnableToDecodeText,
     #[error("Context length exceeded")]
     ContextLengthExceeded,
-}
-
-impl From<GeneratorError> for Error {
-    fn from(value: GeneratorError) -> Self {
-        match value {
-            GeneratorError::UnableToCreateMetalContext => {
-                Self::UnableToCreateMetalContext
-            },
-            GeneratorError::UnableToLoadConfig => Self::UnableToLoadConfig,
-            GeneratorError::UnableToLoadWeights => Self::UnableToLoadWeights,
-        }
-    }
+    #[error("Prefill failed")]
+    PrefillFailed,
+    #[error("Generate failed")]
+    GenerateFailed,
+    #[error("Sampling failed")]
+    SamplingFailed,
 }

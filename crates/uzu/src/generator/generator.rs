@@ -14,11 +14,11 @@ use crate::{
         encodable_with_state::{EncodableWithState, EncodingParameters},
         kv_cache::INVALID_POSITION,
     },
-    generator::error::GeneratorError,
     linearizer::trie::TokenTrie,
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
+        types::Error,
     },
     utils::env_utils::MetalEnvVar,
 };
@@ -37,7 +37,7 @@ impl Generator {
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
-    ) -> Result<Self, GeneratorError> {
+    ) -> Result<Self, Error> {
         let context = GeneratorContext::new(model_path, &decoding_config)?;
 
         let prefill_step_size =
@@ -65,7 +65,7 @@ impl Generator {
         tokens: Vec<u64>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
-    ) -> PrefillResult {
+    ) -> Result<PrefillResult, Error> {
         assert!(!tokens.is_empty());
 
         self.tokens.extend(tokens.clone());
@@ -179,8 +179,8 @@ impl Generator {
             run_times.push(run_time);
         }
 
-        let mut final_state = last_state.unwrap();
-        let sampled_tokens = self.gpu_sample(&mut final_state);
+        let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
+        let sampled_tokens = self.sample(&mut final_state)?;
 
         let mut accepted_token_indices: Vec<usize> = Vec::new();
         let mut accepted_tokens: Vec<u64> = Vec::new();
@@ -212,17 +212,17 @@ impl Generator {
 
         self.sync_prefix();
 
-        PrefillResult {
+        Ok(PrefillResult {
             tokens: accepted_tokens,
             forwardpass_durations: run_times,
-        }
+        })
     }
 
     pub fn generate(
         &mut self,
         sampling_method: SamplingMethod,
-    ) -> GenerateResult {
-        let last_token = self.tokens.last().unwrap();
+    ) -> Result<GenerateResult, Error> {
+        let last_token = self.tokens.last().ok_or(Error::GenerateFailed)?;
 
         let speculator = &self.decoding_config.speculator_config.speculator;
         let mut proposals: Vec<Vec<u64>> = speculator
@@ -269,7 +269,7 @@ impl Generator {
             sampling_method,
         );
 
-        let sampled_tokens = self.gpu_sample(&mut state);
+        let sampled_tokens = self.sample(&mut state)?;
 
         let mut accepted_token_indices = Vec::new();
         let mut accepted_tokens = Vec::new();
@@ -296,10 +296,10 @@ impl Generator {
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
 
-        GenerateResult {
+        Ok(GenerateResult {
             tokens: accepted_tokens,
             forwardpass_duration: run_time,
-        }
+        })
     }
 
     pub fn clear_cache(&mut self) {
@@ -404,15 +404,17 @@ impl Generator {
         })
     }
 
-    fn gpu_sample(
+    fn sample(
         &mut self,
         state: &mut ForwardPassState,
-    ) -> Vec<u64> {
+    ) -> Result<Vec<u64>, Error> {
         let sampling_output = state.sampling_output.as_ref()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer.as_view::<u32>().unwrap();
+        let output_view = output_buffer
+            .as_view::<u32>()
+            .map_err(|_| Error::SamplingFailed)?;
         let batch_size = output_buffer.shape()[0];
 
         let mut result = Vec::with_capacity(batch_size);
@@ -420,7 +422,7 @@ impl Generator {
             result.push(output_view[[i]] as u64);
         }
 
-        result
+        Ok(result)
     }
 
     fn update_kv_cache(
