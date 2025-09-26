@@ -1,0 +1,9 @@
+[project]
+name = "tools"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32.5",
+    "rich>=14.1.0",
+    "typer>=0.19.2",
+]
