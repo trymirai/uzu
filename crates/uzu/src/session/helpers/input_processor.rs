@@ -3,7 +3,10 @@ use minijinja_contrib::pycompat::unknown_method_callback;
 
 use crate::{
     config::MessageProcessorConfig,
-    session::types::{Error, Input},
+    session::{
+        parameter::ConfigResolvableValue,
+        types::{Error, Input},
+    },
 };
 
 pub trait InputProcessor: Send + Sync {
@@ -32,7 +35,11 @@ impl InputProcessor for InputProcessorDefault {
         input: &Input,
         enable_thinking: bool,
     ) -> Result<String, Error> {
-        let messages = input.get_messages();
+        let messages = input
+            .get_messages()
+            .into_iter()
+            .map(|message| message.resolve(&self.message_processing_config))
+            .collect::<Vec<_>>();
         let template = self.message_processing_config.prompt_template.clone();
         let bos_token = self.message_processing_config.bos_token.clone();
 
