@@ -41,7 +41,7 @@ uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 Alternatively, you can download a prepared model using the sample script:
 
 ```bash
-./scripts/download_test_model.sh $MODEL_PATH
+./scripts/download_test_model.sh
 ```
 
 ### Bindings
