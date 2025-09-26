@@ -35,13 +35,13 @@ uv run lalamo list-models
 Then, export the specific one:
 
 ```bash
-uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct --precision float16
+uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 ```
 
 Alternatively, you can download a prepared model using the sample script:
 
 ```bash
-./scripts/download_test_model.sh $MODEL_PATH
+./scripts/download_test_model.sh
 ```
 
 ### Bindings
@@ -80,32 +80,25 @@ Then, create an inference `Session` with a specific model and configuration:
 
 ```rust
 use std::path::PathBuf;
-use uzu::{
-    backends::metal::sampling_config::SamplingConfig,
-    session::{
-        session::Session, session_config::SessionConfig,
-        session_input::SessionInput, session_output::SessionOutput,
-        session_run_config::SessionRunConfig,
-    },
+
+use uzu::session::{
+    config::{DecodingConfig, RunConfig},
+    session::Session,
+    types::{Input, Output},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = PathBuf::from("MODEL_PATH");
+    let mut session = Session::new(model_path, DecodingConfig::default())?;
 
-    let mut session = Session::new(model_path.clone())?;
-    session.load_with_session_config(SessionConfig::default())?;
-
-    let input = SessionInput::Text("Tell about London".to_string());
-
-    let tokens_limit = 128;
-    let run_config = SessionRunConfig::new_with_sampling_config(
-        tokens_limit,
-        Some(SamplingConfig::default())
-    );
-
-    let output = session.run(input, run_config, Some(|_: SessionOutput| {
-        return true;
-    }))?;
+    let input = Input::Text(String::from("Tell about London"));
+    let output = session.run(
+        input,
+        RunConfig::default().tokens_limit(128),
+        Some(|_: Output| {
+            return true;
+        }),
+    )?;
     println!("{}", output.text);
     Ok(())
 }

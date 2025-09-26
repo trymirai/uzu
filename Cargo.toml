@@ -3,7 +3,7 @@ members = ["crates/cli", "crates/uzu"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MIT"
 authors = ["Mirai Tech <https://trymirai.com>"]

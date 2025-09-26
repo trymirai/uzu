@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 use std::path::PathBuf;
 
-pub const MODEL_DIR_NAME: &str = "Meta-Llama-3.2-1B-Instruct-float16";
+use uzu::VERSION;
+
+pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
@@ -9,12 +11,12 @@ pub fn get_test_model_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
-        .join("..")
-        .join("mirai_models")
+        .join("models")
+        .join(VERSION)
         .join(MODEL_DIR_NAME);
     if !path.exists() {
         panic!(
-            "Test model not found at {:?}. Run `bash scripts/download_test_model.sh` to fetch it.",
+            "Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.",
             path
         );
     }

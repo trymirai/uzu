@@ -11,12 +11,10 @@ use super::{
 };
 use crate::{
     DataType, DeviceContext,
-    backends::metal::{
-        forward_pass::traces::DecoderActivationTrace,
-        sampling_config::SamplingConfig,
-    },
+    backends::metal::forward_pass::traces::DecoderActivationTrace,
     config::{DecoderConfig, EmbeddingConfig},
     parameters::ParameterTree,
+    session::parameter::SamplingMethod,
 };
 
 type ArrayCell = RefCell<MetalArray>;
@@ -333,7 +331,7 @@ pub struct ForwardPassState {
     /// [suffix_length] - u32 sampling output buffer
     pub sampling_output: Option<ArrayCell>,
     /// Current sampling configuration for this forward pass
-    pub sampling_config: Option<SamplingConfig>,
+    pub sampling_method: Option<SamplingMethod>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
 }
 
@@ -473,7 +471,7 @@ impl ForwardPassState {
             shared_buffers,
             aux_buffers,
             sampling_output: Some(sampling_output),
-            sampling_config: None,
+            sampling_method: None,
             traces,
         }
     }

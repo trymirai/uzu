@@ -3,7 +3,6 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
 };
 
 use half::{bf16, f16};
@@ -21,14 +20,14 @@ use crate::{
         },
     },
     generator::{
-        config::{
-            ContextLength, GeneratorConfig, SamplingSeed, SpeculatorConfig,
-        },
         context::GeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
     parameters::{ParameterLoader, ParameterTree},
-    speculators::empty_speculator::EmptySpeculator,
+    session::{
+        config::{DecodingConfig, SpeculatorConfig},
+        parameter::{ContextLength, PrefillStepSize, SamplingSeed},
+    },
 };
 
 enum Transform {
@@ -141,18 +140,15 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn new(model_path: &Path) -> Self {
-        let generator_config = GeneratorConfig::new(
-            1024,
-            SpeculatorConfig {
-                number_of_speculated_tokens: 0,
-                speculator: Arc::new(EmptySpeculator {}),
-            },
+        let decoding_config = DecodingConfig::new(
+            PrefillStepSize::Custom(1024),
+            ContextLength::default(),
+            SpeculatorConfig::default(),
+            SamplingSeed::default(),
             false,
-            SamplingSeed::Default,
-            ContextLength::Default,
         );
         let generator_context =
-            GeneratorContext::new(model_path, &generator_config).unwrap();
+            GeneratorContext::new(model_path, &decoding_config).unwrap();
 
         Self {
             model_path: model_path.to_path_buf(),
@@ -165,18 +161,15 @@ impl Tracer {
         sampling_seed: SamplingSeed,
         max_prefix_length: ContextLength,
     ) -> Self {
-        let generator_config = GeneratorConfig::new(
-            1024,
-            SpeculatorConfig {
-                number_of_speculated_tokens: 0,
-                speculator: Arc::new(EmptySpeculator {}),
-            },
-            false,
-            sampling_seed,
+        let decoding_config = DecodingConfig::new(
+            PrefillStepSize::Custom(1024),
             max_prefix_length,
+            SpeculatorConfig::default(),
+            sampling_seed,
+            false,
         );
         let generator_context =
-            GeneratorContext::new(model_path, &generator_config).unwrap();
+            GeneratorContext::new(model_path, &decoding_config).unwrap();
 
         Self {
             model_path: model_path.to_path_buf(),
@@ -206,19 +199,6 @@ impl Tracer {
             &traces_view,
             "activation_trace.token_positions".to_string(),
         );
-        let mask: Vec<Vec<bool>> = Self::load_array_as_vec::<i8, i8>(
-            &traces_view,
-            "activation_trace.mask".to_string(),
-        )
-        .iter()
-        .map(|x| *x != 0)
-        .collect::<Vec<bool>>()
-        .chunks(token_ids.len())
-        .map(|chunk| chunk.to_vec())
-        .collect();
-
-        let external_bias_fn =
-            |row: usize, col: usize| -> bool { !mask[row][col] };
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
@@ -229,7 +209,7 @@ impl Tracer {
             &token_ids,
             &token_positions,
             true,
-            Some(&external_bias_fn),
+            None,
         );
 
         let root_command_buffer = self

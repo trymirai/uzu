@@ -107,7 +107,6 @@ fn compile_metal_shaders() {
     for file in sorted_files {
         println!("cargo:rerun-if-changed={}", file.display());
     }
-    println!("cargo:rerun-if-changed=src/ffi.rs");
     println!("cargo:rerun-if-changed=build.rs");
 }
 

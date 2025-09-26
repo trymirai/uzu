@@ -1,14 +1,16 @@
 mod common;
 use metal::{Device, MTLResourceOptions};
 use rand::seq::SliceRandom; // for Vec::shuffle
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::{
-        SamplingKernel,
-        sampling::{ArgmaxStrategy, CategoricalStrategy},
+use uzu::{
+    backends::metal::{
+        KernelDataType, MTLContext,
+        kernel::{
+            SamplingKernel,
+            sampling::{ArgmaxStrategy, CategoricalStrategy},
+        },
+        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
     },
-    metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
-    sampling_config::SamplingConfig,
+    session::parameter::SamplingMethod,
 };
 
 // Constant seed for reproducible test results
@@ -103,7 +105,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     // Run sampling
     kernel
         .encode(
-            &SamplingConfig::argmax(),
+            &SamplingMethod::Greedy,
             &logits_buffer,
             &output_buffer,
             batch_size,
@@ -236,7 +238,9 @@ fn test_topp_sampling_from_prob_exact_match(
         let cb = cb_ref.to_owned();
         kernel
             .encode(
-                &SamplingConfig::top_p(p),
+                &SamplingMethod::TopP {
+                    top_p: p,
+                },
                 &logits_buf,
                 &output_buf,
                 batch_size,
@@ -357,7 +361,9 @@ fn test_topp_sampling_statistical_large() {
 
         kernel
             .encode(
-                &SamplingConfig::top_p(TOP_P),
+                &SamplingMethod::TopP {
+                    top_p: TOP_P,
+                },
                 &logits_buf,
                 &output_buf,
                 BATCH,
@@ -459,7 +465,9 @@ fn perf_topp_128k_vocab() {
 
     kernel
         .encode(
-            &SamplingConfig::top_p(TOP_P),
+            &SamplingMethod::TopP {
+                top_p: TOP_P,
+            },
             &logits_buf,
             &output_buf,
             BATCH,
@@ -554,7 +562,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
     kernel
         .encode(
-            &SamplingConfig::argmax(),
+            &SamplingMethod::Greedy,
             &logits_buf,
             &output_buf,
             BATCH,
@@ -668,7 +676,9 @@ fn test_categorical_sampling() {
 
         kernel
             .encode(
-                &SamplingConfig::categorical(1.0),
+                &SamplingMethod::Temperature {
+                    temperature: 1.0,
+                },
                 &logits_buffer,
                 &output_buffer,
                 batch_size,
@@ -804,7 +814,9 @@ fn test_categorical_sampling_statistical() {
 
         kernel
             .encode(
-                &SamplingConfig::categorical(1.0),
+                &SamplingMethod::Temperature {
+                    temperature: 1.0,
+                },
                 &logits_buffer,
                 &output_buffer,
                 BATCH,
@@ -904,7 +916,9 @@ fn perf_categorical_128k_vocab() {
 
     kernel
         .encode(
-            &SamplingConfig::categorical(1.0),
+            &SamplingMethod::Temperature {
+                temperature: 1.0,
+            },
             &logits_buf,
             &output_buf,
             BATCH,
@@ -1028,7 +1042,9 @@ fn test_categorical_1pass_vs_2pass_equivalence() {
 
         kernel_1pass
             .encode(
-                &SamplingConfig::categorical(1.0),
+                &SamplingMethod::Temperature {
+                    temperature: 1.0,
+                },
                 &logits_buffer,
                 &output_buffer_1pass,
                 batch_size,
@@ -1054,7 +1070,9 @@ fn test_categorical_1pass_vs_2pass_equivalence() {
 
         kernel_2pass
             .encode(
-                &SamplingConfig::categorical(1.0),
+                &SamplingMethod::Temperature {
+                    temperature: 1.0,
+                },
                 &logits_buffer,
                 &output_buffer_2pass,
                 batch_size,
@@ -1225,7 +1243,9 @@ fn test_categorical_sampling_with_strategy(strategy: CategoricalStrategy) {
 
         kernel
             .encode(
-                &SamplingConfig::categorical(1.0),
+                &SamplingMethod::Temperature {
+                    temperature: 1.0,
+                },
                 &logits_buffer,
                 &output_buffer,
                 batch_size,
@@ -1334,7 +1354,9 @@ fn perf_categorical_128k_vocab_with_strategy(strategy: CategoricalStrategy) {
 
     kernel
         .encode(
-            &SamplingConfig::categorical(1.0),
+            &SamplingMethod::Temperature {
+                temperature: 1.0,
+            },
             &logits_buf,
             &output_buf,
             BATCH,
