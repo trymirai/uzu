@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-pub struct SplittedText {
+pub struct ParsedText {
     pub chain_of_thought: Option<String>,
     pub response: Option<String>,
 }
@@ -7,5 +7,5 @@ pub struct SplittedText {
 #[derive(Debug, Clone)]
 pub struct Text {
     pub original: String,
-    pub splitted: SplittedText,
+    pub parsed: ParsedText,
 }

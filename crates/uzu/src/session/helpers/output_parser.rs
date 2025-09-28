@@ -1,6 +1,6 @@
 use regex::{Regex, RegexBuilder};
 
-use crate::session::types::{Error, SplittedText, Text};
+use crate::session::types::{Error, ParsedText, Text};
 
 pub struct OutputParser {
     regex: Option<Regex>,
@@ -27,7 +27,7 @@ impl OutputParser {
         &self,
         text: String,
     ) -> Text {
-        let splitted_text = match &self.regex {
+        let parsed_text = match &self.regex {
             Some(regex) => match regex.captures(&text) {
                 Some(captures) => {
                     let chain_of_thought = captures
@@ -36,24 +36,24 @@ impl OutputParser {
                     let response = captures
                         .name("response")
                         .map(|m| m.as_str().to_string());
-                    SplittedText {
+                    ParsedText {
                         chain_of_thought,
                         response,
                     }
                 },
-                None => SplittedText {
+                None => ParsedText {
                     chain_of_thought: None,
                     response: Some(text.clone()),
                 },
             },
-            None => SplittedText {
+            None => ParsedText {
                 chain_of_thought: None,
                 response: Some(text.clone()),
             },
         };
         Text {
             original: text.clone(),
-            splitted: splitted_text,
+            parsed: parsed_text,
         }
     }
 }
