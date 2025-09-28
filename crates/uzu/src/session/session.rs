@@ -236,7 +236,7 @@ impl Session {
             finish_reason(generator, prefill_tokens.clone());
         let prefill_generated_text =
             build_generated_text(generator, &self.tokenizer)?;
-        let prefill_parsed_output =
+        let prefill_parsed_text =
             self.output_parser.parse(prefill_generated_text);
 
         let prefill_suffix_length = generator
@@ -244,8 +244,7 @@ impl Session {
             .prefill_step_size
             .resolve(&self.model_metadata.model_config);
         let prefill_output = Output {
-            chain_of_thought: prefill_parsed_output.chain_of_thought,
-            response: prefill_parsed_output.response,
+            text: prefill_parsed_text,
             stats: Self::build_stats(
                 prefill_result.clone(),
                 prefill_duration,
@@ -289,12 +288,11 @@ impl Session {
                 finish_reason(generator, generate_tokens);
             let generate_generated_text =
                 build_generated_text(generator, &self.tokenizer)?;
-            let generate_parsed_output =
+            let generate_parsed_text =
                 self.output_parser.parse(generate_generated_text);
 
             let generate_output = Output {
-                chain_of_thought: generate_parsed_output.chain_of_thought,
-                response: generate_parsed_output.response,
+                text: generate_parsed_text,
                 stats: Self::build_stats(
                     prefill_result.clone(),
                     prefill_duration,

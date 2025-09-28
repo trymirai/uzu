@@ -66,9 +66,9 @@ fn run(
         .unwrap();
 
     println!("-------------------------");
-    println!("{:#?}", output.chain_of_thought);
+    println!("{:#?}", output.text.splitted.chain_of_thought);
     println!("-------------------------");
-    println!("{:#?}", output.response);
+    println!("{:#?}", output.text.splitted.response);
     println!("-------------------------");
     println!("{:#?}", output.stats);
     println!("-------------------------");
@@ -104,9 +104,9 @@ fn run_scenario(
             )
             .unwrap();
         messages.push(Message::assistant(
-            output.response.clone().unwrap_or(String::new()),
-            output.chain_of_thought.clone(),
+            output.text.splitted.response.clone().unwrap_or(String::new()),
+            output.text.splitted.chain_of_thought.clone(),
         ));
-        println!("Assistant > {}", output.response.clone().unwrap());
+        println!("Assistant > {}", output.text.original.clone());
     }
 }

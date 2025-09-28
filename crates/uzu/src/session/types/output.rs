@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{Stats, TotalStats};
+use crate::session::types::{Stats, Text, TotalStats};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -13,8 +13,7 @@ pub enum FinishReason {
 
 #[derive(Debug, Clone)]
 pub struct Output {
-    pub chain_of_thought: Option<String>,
-    pub response: Option<String>,
+    pub text: Text,
     pub stats: Stats,
     pub finish_reason: Option<FinishReason>,
 }
@@ -25,8 +24,7 @@ impl Output {
         finish_reason: Option<FinishReason>,
     ) -> Self {
         Self {
-            chain_of_thought: self.chain_of_thought.clone(),
-            response: self.response.clone(),
+            text: self.text.clone(),
             stats: self.stats.clone(),
             finish_reason: finish_reason,
         }
@@ -37,8 +35,7 @@ impl Output {
         duration: f64,
     ) -> Self {
         Self {
-            chain_of_thought: self.chain_of_thought.clone(),
-            response: self.response.clone(),
+            text: self.text.clone(),
             stats: Stats {
                 prefill_stats: self.stats.prefill_stats.clone(),
                 generate_stats: self.stats.generate_stats.clone(),
