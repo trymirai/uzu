@@ -12,7 +12,7 @@ use crate::{
     session::{
         config::{DecodingConfig, RunConfig},
         helpers::{
-            Context, InputProcessor, InputProcessorDefault,
+            Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
         parameter::ConfigResolvableValue,
@@ -29,6 +29,7 @@ pub struct Session {
 
     tokenizer: Tokenizer,
     input_processor: Box<dyn InputProcessor>,
+    output_parser: OutputParser,
     generator: Option<Generator>,
 }
 
@@ -66,6 +67,14 @@ impl Session {
             model_metadata.model_config.message_processor_config.clone(),
         );
 
+        let output_parser = OutputParser::new(
+            model_metadata
+                .model_config
+                .message_processor_config
+                .output_parser_regex
+                .clone(),
+        )?;
+
         let generator = Generator::new(&model_path, decoding_config)
             .map_err(Error::from)?;
 
@@ -74,6 +83,7 @@ impl Session {
             model_metadata,
             tokenizer,
             input_processor: Box::new(input_processor),
+            output_parser,
             generator: Some(generator),
         })
     }
@@ -226,13 +236,16 @@ impl Session {
             finish_reason(generator, prefill_tokens.clone());
         let prefill_generated_text =
             build_generated_text(generator, &self.tokenizer)?;
+        let prefill_parsed_output =
+            self.output_parser.parse(prefill_generated_text);
 
         let prefill_suffix_length = generator
             .decoding_config
             .prefill_step_size
             .resolve(&self.model_metadata.model_config);
         let prefill_output = Output {
-            text: prefill_generated_text,
+            chain_of_thought: prefill_parsed_output.chain_of_thought,
+            response: prefill_parsed_output.response,
             stats: Self::build_stats(
                 prefill_result.clone(),
                 prefill_duration,
@@ -276,9 +289,12 @@ impl Session {
                 finish_reason(generator, generate_tokens);
             let generate_generated_text =
                 build_generated_text(generator, &self.tokenizer)?;
+            let generate_parsed_output =
+                self.output_parser.parse(generate_generated_text);
 
             let generate_output = Output {
-                text: generate_generated_text,
+                chain_of_thought: generate_parsed_output.chain_of_thought,
+                response: generate_parsed_output.response,
                 stats: Self::build_stats(
                     prefill_result.clone(),
                     prefill_duration,

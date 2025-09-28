@@ -66,7 +66,9 @@ fn run(
         .unwrap();
 
     println!("-------------------------");
-    println!("{}", output.text);
+    println!("{:#?}", output.chain_of_thought);
+    println!("-------------------------");
+    println!("{:#?}", output.response);
     println!("-------------------------");
     println!("{:#?}", output.stats);
     println!("-------------------------");
@@ -109,8 +111,8 @@ fn run_scenario(
             .unwrap();
         messages.push(Message {
             role: Role::Assistant,
-            content: output.text.clone(),
+            content: output.response.clone().unwrap(),
         });
-        println!("Assistant > {}", output.text.clone());
+        println!("Assistant > {}", output.response.clone().unwrap());
     }
 }

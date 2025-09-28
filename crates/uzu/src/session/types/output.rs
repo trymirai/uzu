@@ -13,7 +13,8 @@ pub enum FinishReason {
 
 #[derive(Debug, Clone)]
 pub struct Output {
-    pub text: String,
+    pub chain_of_thought: Option<String>,
+    pub response: Option<String>,
     pub stats: Stats,
     pub finish_reason: Option<FinishReason>,
 }
@@ -24,7 +25,8 @@ impl Output {
         finish_reason: Option<FinishReason>,
     ) -> Self {
         Self {
-            text: self.text.clone(),
+            chain_of_thought: self.chain_of_thought.clone(),
+            response: self.response.clone(),
             stats: self.stats.clone(),
             finish_reason: finish_reason,
         }
@@ -35,7 +37,8 @@ impl Output {
         duration: f64,
     ) -> Self {
         Self {
-            text: self.text.clone(),
+            chain_of_thought: self.chain_of_thought.clone(),
+            response: self.response.clone(),
             stats: Stats {
                 prefill_stats: self.stats.prefill_stats.clone(),
                 generate_stats: self.stats.generate_stats.clone(),
