@@ -8,7 +8,7 @@ use uzu::session::{
         ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
         SamplingSeed,
     },
-    types::{Input, Message, Output, Role},
+    types::{Input, Message, Output},
 };
 
 fn build_model_path() -> PathBuf {
@@ -85,18 +85,12 @@ fn run_scenario(
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {
-        messages.push(Message {
-            role: Role::System,
-            content: system_prompt.clone(),
-        });
+        messages.push(Message::system(system_prompt.clone()));
         println!("System > {}", system_prompt.clone());
     }
 
     for user_prompt in user_prompts {
-        messages.push(Message {
-            role: Role::User,
-            content: user_prompt.clone(),
-        });
+        messages.push(Message::user(user_prompt.clone()));
         println!("User > {}", user_prompt.clone());
 
         let input = Input::Messages(messages.clone());
@@ -109,10 +103,10 @@ fn run_scenario(
                 }),
             )
             .unwrap();
-        messages.push(Message {
-            role: Role::Assistant,
-            content: output.response.clone().unwrap(),
-        });
+        messages.push(Message::assistant(
+            output.response.clone().unwrap_or(String::new()),
+            output.chain_of_thought.clone(),
+        ));
         println!("Assistant > {}", output.response.clone().unwrap());
     }
 }

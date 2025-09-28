@@ -5,7 +5,7 @@ use crate::{
     config::MessageProcessorConfig,
     session::{
         parameter::ConfigResolvableValue,
-        types::{Error, Input},
+        types::{Error, Input, Role},
     },
 };
 
@@ -35,8 +35,16 @@ impl InputProcessor for InputProcessorDefault {
         input: &Input,
         enable_thinking: bool,
     ) -> Result<String, Error> {
-        let messages = input
-            .get_messages()
+        let messages = input.get_messages();
+        for message in &messages {
+            if message.role != Role::Assistant
+                && message.reasoning_content.is_some()
+            {
+                return Err(Error::UnexpectedReasoningContent);
+            }
+        }
+
+        let messages = messages
             .into_iter()
             .map(|message| message.resolve(&self.message_processing_config))
             .collect::<Vec<_>>();
