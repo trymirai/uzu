@@ -29,7 +29,7 @@ fn format_output(output: Output) -> String {
         stats.total_stats.duration, tokens_per_second,
     ));
 
-    let result = format!("{}\n\n{}", output.text, stats_info,);
+    let result = format!("{}\n\n{}", output.text.original, stats_info,);
     result
 }
 
