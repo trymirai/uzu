@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return true;
         }),
     )?;
-    println!("{}", output.text);
+    println!("{}", output.text.original);
     Ok(())
 }
 ```

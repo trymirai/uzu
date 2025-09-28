@@ -81,6 +81,7 @@ pub fn handle_chat_completions(
         .map(|m| Message {
             content: m.content,
             role: m.role,
+            reasoning_content: None,
         })
         .collect();
     let input = Input::Messages(messages);
@@ -204,7 +205,7 @@ pub fn handle_chat_completions(
     let finish_reason_val = finish_reason.unwrap_or(FinishReason::Cancelled);
 
     println!("📤 [{}] Sending response:", id);
-    println!("   Response length: {} chars", text.len());
+    println!("   Response length: {} chars", text.original.len());
     println!("   Finish reason: {:?}", finish_reason_val);
     println!("   Processing time: {:.3}s", processing_time.as_secs_f64());
     println!(
@@ -217,6 +218,7 @@ pub fn handle_chat_completions(
     );
 
     print!("   Response preview: ");
+    let text = text.original.clone();
     if text.len() > 3000 {
         print!("{}", &text[..3000]);
         println!("...");

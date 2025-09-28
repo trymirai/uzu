@@ -18,6 +18,10 @@ pub enum Error {
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]
     UnableToRenderPromptTemplate,
+    #[error("Only assistant messages can have reasoning content")]
+    UnexpectedReasoningContent,
+    #[error("Unable to build output parser regex")]
+    UnableToBuildOutputParserRegex,
     #[error("Unable to encode text")]
     UnableToEncodeText,
     #[error("Unable to decode text")]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{Stats, TotalStats};
+use crate::session::types::{Stats, Text, TotalStats};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -13,7 +13,7 @@ pub enum FinishReason {
 
 #[derive(Debug, Clone)]
 pub struct Output {
-    pub text: String,
+    pub text: Text,
     pub stats: Stats,
     pub finish_reason: Option<FinishReason>,
 }

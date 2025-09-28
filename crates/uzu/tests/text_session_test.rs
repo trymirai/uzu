@@ -8,7 +8,7 @@ use uzu::session::{
         ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
         SamplingSeed,
     },
-    types::{Input, Message, Output, Role},
+    types::{Input, Message, Output},
 };
 
 fn build_model_path() -> PathBuf {
@@ -66,7 +66,9 @@ fn run(
         .unwrap();
 
     println!("-------------------------");
-    println!("{}", output.text);
+    println!("{:#?}", output.text.parsed.chain_of_thought);
+    println!("-------------------------");
+    println!("{:#?}", output.text.parsed.response);
     println!("-------------------------");
     println!("{:#?}", output.stats);
     println!("-------------------------");
@@ -83,18 +85,12 @@ fn run_scenario(
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {
-        messages.push(Message {
-            role: Role::System,
-            content: system_prompt.clone(),
-        });
+        messages.push(Message::system(system_prompt.clone()));
         println!("System > {}", system_prompt.clone());
     }
 
     for user_prompt in user_prompts {
-        messages.push(Message {
-            role: Role::User,
-            content: user_prompt.clone(),
-        });
+        messages.push(Message::user(user_prompt.clone()));
         println!("User > {}", user_prompt.clone());
 
         let input = Input::Messages(messages.clone());
@@ -107,10 +103,10 @@ fn run_scenario(
                 }),
             )
             .unwrap();
-        messages.push(Message {
-            role: Role::Assistant,
-            content: output.text.clone(),
-        });
-        println!("Assistant > {}", output.text.clone());
+        messages.push(Message::assistant(
+            output.text.parsed.response.clone().unwrap_or(String::new()),
+            output.text.parsed.chain_of_thought.clone(),
+        ));
+        println!("Assistant > {}", output.text.original.clone());
     }
 }
