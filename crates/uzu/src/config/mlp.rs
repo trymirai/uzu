@@ -12,18 +12,14 @@ pub struct MLPConfig {
 mod tests {
     use serde_json::from_str;
 
-    use super::{
-        super::{
-            common::{ConfigDataType, QuantizationMode},
-            linear::QuantizationConfig,
-        },
-        *,
-    };
+    use super::{super::linear::QuantizationConfig, *};
+    use crate::config::{Activation, ConfigDataType, QuantizationMode};
 
     #[test]
-    fn test_mlp_config() {
+    fn test_dense_mlp_config() {
         let config_str = r#"
             {
+                "type": "DenseMLPConfig",
                 "linear_config": {
                     "type": "QLoRALinearConfig",
                     "group_size": 32,
@@ -33,7 +29,7 @@ mod tests {
                     "lora_rank": 16,
                     "lora_scale": 2.0
                 },
-                "activation": "silu"
+                "activation": {"type": "SiLU"}
             }
         "#;
 

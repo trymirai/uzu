@@ -58,6 +58,7 @@ mod tests {
                         "lora_scale": 2.0
                     },
                     "logit_soft_cap": null,
+                    "has_sinks": false,
                     "has_qkv_biases": false,
                     "has_out_biases": false
                 },
@@ -70,6 +71,7 @@ mod tests {
                     "upcast_mode": "only_normalization"
                 },
                 "mlp_config": {
+                    "type": "DenseMLPConfig",
                     "linear_config": {
                         "type": "QLoRALinearConfig",
                         "group_size": 32,
@@ -79,7 +81,7 @@ mod tests {
                         "lora_rank": 16,
                         "lora_scale": 2.0
                     },
-                    "activation": "silu"
+                    "activation": {"type": "SiLU"}
                 },
                 "post_mlp_norm_config": null
             }
@@ -128,6 +130,7 @@ mod tests {
                 query_norm_config: None,
                 key_norm_config: None,
                 logit_soft_cap: None,
+                has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
             },

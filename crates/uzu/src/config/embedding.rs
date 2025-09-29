@@ -5,6 +5,7 @@ use super::common::{ConfigDataType, QuantizationMode};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct EmbeddingConfigCommon {
     pub input_scale: Option<f32>,
+    #[serde(rename = "logits_soft_cap")]
     pub logit_soft_cap: Option<f32>,
 }
 

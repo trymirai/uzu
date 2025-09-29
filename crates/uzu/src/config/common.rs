@@ -57,8 +57,10 @@ impl Into<DataType> for QuantizationMode {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
-#[serde(rename_all = "lowercase")]
+#[serde(tag = "type")]
 pub enum Activation {
+    #[serde(rename = "SiLU")]
     SILU,
+    #[serde(rename = "GELU")]
     GELU,
 }
