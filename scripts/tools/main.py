@@ -39,7 +39,7 @@ def get_uzu_version() -> str:
 
 
 def load_registry() -> Registry:
-    url = f"https://sdk.trymirai.com/api/v1/models/list/uzu/{get_uzu_version()}"
+    url = f"https://sdk.trymirai.com/api/v1/models/list/uzu/{get_uzu_version()}?includeTraces=true"
     response = requests.get(url)
     response.raise_for_status()
     data = response.json()

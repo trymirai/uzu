@@ -10,6 +10,7 @@ impl OutputParser {
     pub fn new(regex_str: Option<String>) -> Result<Self, Error> {
         let regex = match regex_str {
             Some(regex_str) => {
+                let regex_str = Self::preprocess_regex_string(regex_str);
                 let re = RegexBuilder::new(&regex_str)
                     .dot_matches_new_line(true)
                     .build()
@@ -55,5 +56,19 @@ impl OutputParser {
             original: text.clone(),
             parsed: parsed_text,
         }
+    }
+}
+
+impl OutputParser {
+    // Needed because of differences in regex syntax between Python and Rust
+    fn preprocess_regex_string(regex_str: String) -> String {
+        let mut result = regex_str.clone();
+
+        // Replace trailing \Z with \z
+        if let Some(prefix) = result.strip_suffix("\\Z") {
+            result = format!("{}\\z", prefix);
+        }
+
+        result
     }
 }
