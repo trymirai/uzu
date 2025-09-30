@@ -152,21 +152,34 @@ impl EncodableWithState for DecoderExecutables {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let t_total = std::time::Instant::now();
+        
+        let t_embed = std::time::Instant::now();
         self.embed.encode(state, command_buffer, parameters);
+        eprintln!("[Decoder] Embed: {:.3}ms", t_embed.elapsed().as_secs_f64() * 1000.0);
 
+        let t_layers = std::time::Instant::now();
         for layer in self.layers.iter() {
             layer.encode(state, command_buffer, parameters);
         }
+        eprintln!("[Decoder] All 24 layers: {:.3}ms", t_layers.elapsed().as_secs_f64() * 1000.0);
 
+        let t_norm = std::time::Instant::now();
         self.norm.encode(state, command_buffer, parameters);
+        eprintln!("[Decoder] OutputNorm: {:.3}ms", t_norm.elapsed().as_secs_f64() * 1000.0);
         if let Some(traces) = state.traces.clone() {
             state
                 .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
+        let t_readout = std::time::Instant::now();
         self.readout.encode(state, command_buffer, parameters);
+        eprintln!("[Decoder] Readout: {:.3}ms", t_readout.elapsed().as_secs_f64() * 1000.0);
+        
         if let Some(traces) = state.traces.clone() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
+        
+        eprintln!("[Decoder] COMPLETE FORWARD PASS: {:.3}ms", t_total.elapsed().as_secs_f64() * 1000.0);
     }
 }

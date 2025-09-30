@@ -110,6 +110,7 @@ impl DecoderTestContext {
         // Scratch buffers sized for the maximum prefix/suffix lengths in this test
         let scratch_buffers = ForwardPassBuffers::new(
             &mtl_context,
+            &decoder_config,
             &model_shape,
             max_prefix_length,
             max_suffix_length,
@@ -117,6 +118,7 @@ impl DecoderTestContext {
 
         let state = ForwardPassState::new(
             mtl_context.clone(),
+            &decoder_config,
             &model_shape,
             &scratch_buffers,
             kv_cache.clone(),

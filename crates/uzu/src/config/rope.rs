@@ -29,8 +29,9 @@ pub enum RoPEConfig {
         common: RopeConfigCommon,
         scaling_factor: f32,
         original_context_length: usize,
-        low_frequency_factor: f32,
-        high_frequency_factor: f32,
+        beta_fast: f32,
+        beta_slow: f32,
+        truncate: bool,
     },
     LinearScalingRoPEConfig {
         #[serde(flatten)]

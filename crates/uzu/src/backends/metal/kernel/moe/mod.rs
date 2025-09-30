@@ -8,6 +8,9 @@ use metal::{
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
+mod encodable;
+pub use encodable::MoeBlockEncodable;
+
 #[derive(Debug, thiserror::Error)]
 pub enum MoeTopKError {
     #[error("Metal error: {0}")]
@@ -145,12 +148,18 @@ pub struct MoeExpertsArguments<'a> {
     pub w3_all: &'a MTLBuffer,             // [E*d_ff*d_model] or empty
     pub w2_all: &'a MTLBuffer,             // [E*d_model*d_ff]
     pub y_partial: &'a MTLBuffer,          // [sum_k,d_model]
+    pub up_biases: &'a MTLBuffer, // [E*2*d_ff] if fused, [E*d_ff] otherwise
+    pub down_biases: &'a MTLBuffer, // [E*d_model]
     pub t: usize,
     pub d_model: usize,
     pub d_ff: usize,
     pub e: usize,
     pub gating_code: u32, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
-                          // No debug/fault buffers in clean encoder
+    pub gate_clip_min: f32,
+    pub gate_clip_max: f32,
+    pub up_clip_min: f32,
+    pub up_clip_max: f32,
+    pub silu_alpha: f32,
 }
 
 impl MoeExpertsKernel {
@@ -220,7 +229,14 @@ impl MoeExpertsKernel {
             size_of::<u32>() as u64,
             &gate as *const u32 as *const _,
         );
-        // No debug/fault buffers in clean encoder
+        encoder.set_buffer(12, Some(args.up_biases), 0);
+        encoder.set_buffer(13, Some(args.down_biases), 0);
+        encoder.set_bytes(14, std::mem::size_of::<f32>() as u64, &args.gate_clip_min as *const f32 as *const _);
+        encoder.set_bytes(15, std::mem::size_of::<f32>() as u64, &args.gate_clip_max as *const f32 as *const _);
+        encoder.set_bytes(16, std::mem::size_of::<f32>() as u64, &args.up_clip_min as *const f32 as *const _);
+        encoder.set_bytes(17, std::mem::size_of::<f32>() as u64, &args.up_clip_max as *const f32 as *const _);
+        encoder.set_bytes(18, std::mem::size_of::<f32>() as u64, &args.silu_alpha as *const f32 as *const _);
+        
         // Launch tiled 3D grid over (N tiles, M tiles, experts)
         const BM: usize = 32; // must match experts_fused.metal
         const BN: usize = 64; // must match experts_fused.metal

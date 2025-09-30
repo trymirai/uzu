@@ -343,11 +343,14 @@ impl Generator {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
+            let t_create_state = Instant::now();
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
+            eprintln!("[RunModel] Create state: {:.3}ms", t_create_state.elapsed().as_secs_f64() * 1000.0);
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
+            let t_encode = Instant::now();
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
             } else {
@@ -360,6 +363,7 @@ impl Generator {
                     encoded_task_key.clone(),
                 );
             }
+            eprintln!("[RunModel] Encode: {:.3}ms", t_encode.elapsed().as_secs_f64() * 1000.0);
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
@@ -397,8 +401,12 @@ impl Generator {
                     .insert(next_task_key.clone(), next_encoded_task);
             }
 
+            let t_wait = Instant::now();
             root_command_buffer.wait_until_completed();
+            eprintln!("[RunModel] GPU wait: {:.3}ms", t_wait.elapsed().as_secs_f64() * 1000.0);
+            
             let run_time = run_start.elapsed().as_secs_f64();
+            eprintln!("[RunModel] TOTAL run_model: {:.3}ms", run_time * 1000.0);
 
             (state, run_time)
         })

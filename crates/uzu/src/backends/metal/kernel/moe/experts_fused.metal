@@ -32,8 +32,8 @@ static inline float gelu_approx(float x) {
     return 0.5f * x * (1.0f + tanh(tanh_arg));
 }
 
-static inline float silu(float x) {
-    return x / (1.0f + exp(-x));
+static inline float silu(float x, float alpha) {
+    return x / (1.0f + exp(-alpha * x));
 }
 
 static inline uint lower_bound_offsets(device const uint* offsets, uint E, uint idx) {
@@ -65,6 +65,13 @@ kernel void moe_fused_expert_mlp_f16(
     constant uint& d_ff [[buffer(9)]],
     constant uint& E [[buffer(10)]],
     constant uint& gating_code [[buffer(11)]],
+    device const half* up_biases [[buffer(12)]],        // [E*d_ff] or [E*2*d_ff] if fused
+    device const half* down_biases [[buffer(13)]],      // [E*d_model]
+    constant float& gate_clip_min [[buffer(14)]],
+    constant float& gate_clip_max [[buffer(15)]],
+    constant float& up_clip_min [[buffer(16)]],
+    constant float& up_clip_max [[buffer(17)]],
+    constant float& silu_alpha [[buffer(18)]],
     uint lid [[thread_index_in_threadgroup]],
     uint3 tgpig [[threadgroup_position_in_grid]],
     ushort simd_gid [[simdgroup_index_in_threadgroup]],
@@ -165,6 +172,18 @@ kernel void moe_fused_expert_mlp_f16(
         // Store U tile to threadgroup Htile (float)
         mma_fc1.store_result_tg(Htile, (int)BK);
 
+        // Add up biases (W1 biases) - first d_ff elements
+        for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
+            const uint mi = idx / BK;
+            const uint r = idx % BK;
+            if (mi < m_rows && r < ff_chunk) {
+                const ulong bias_idx = (ulong)expert_idx * (ulong)(d_ff * 2) + (ulong)(ff0 + r);
+                float val = Htile[idx] + (float)up_biases[bias_idx];
+                Htile[idx] = clamp(val, up_clip_min, up_clip_max);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
         if (GATING_SEL > 1u) {
             // V tile accumulation for GLU
             for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
@@ -207,6 +226,18 @@ kernel void moe_fused_expert_mlp_f16(
             }
             // Store V tile to Hs temporarily
             mma_fc1_v.store_result_tg(Hs, (int)BK);
+            
+            // Add gate biases (W3 biases) - second d_ff elements
+            for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
+                const uint mi = idx / BK;
+                const uint r = idx % BK;
+                if (mi < m_rows && r < ff_chunk) {
+                    const ulong bias_idx = (ulong)expert_idx * (ulong)(d_ff * 2) + (ulong)d_ff + (ulong)(ff0 + r);
+                    float val = Hs[idx] + (float)up_biases[bias_idx];
+                    Hs[idx] = metal::min(val, gate_clip_max);  // Only max clipping for gate
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
         }
 
         // Apply activation/gating to produce Hs (BM x ff_chunk)
@@ -216,10 +247,12 @@ kernel void moe_fused_expert_mlp_f16(
             if (mi < m_rows && r < ff_chunk) {
                 const float up = Htile[idx];
                 if (GATING_SEL <= 1u) {
-                    Hs[idx] = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up);
+                    Hs[idx] = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up, silu_alpha);
                 } else {
-                    const float g = (GATING_SEL == 2u) ? silu(up) : gelu_approx(up);
-                    Hs[idx] = g * Hs[idx]; // Hs holds V tile here
+                    // GLU: gate is in Hs, up is in Htile
+                    const float gate = Hs[idx];
+                    const float swish_y = (GATING_SEL == 2u) ? silu(gate, silu_alpha) : gelu_approx(gate);
+                    Hs[idx] = swish_y * up + swish_y;  // OpenAI: silu(gate)*up + silu(gate)
                 }
             } else {
                 Hs[idx] = 0.0f;
@@ -254,6 +287,17 @@ kernel void moe_fused_expert_mlp_f16(
         mma_op.store_result_safe(y_ptr, (int)d_model, short2(num_outs, num_els));
     } else {
         mma_op.store_result(y_ptr, (int)d_model);
+    }
+    
+    // Add down biases
+    for (uint idx = lid; idx < (uint)(m_rows * n_cols); idx += 128u) {
+        const uint mi = idx / n_cols;
+        const uint nj = idx % n_cols;
+        if (mi < m_rows && nj < n_cols) {
+            const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)(tile_n0 + nj);
+            const ulong y_idx = y_base + (ulong)mi * (ulong)d_model + (ulong)nj;
+            Y_partial[y_idx] = (half)((float)Y_partial[y_idx] + (float)down_biases[bias_idx]);
+        }
     }
 }
 

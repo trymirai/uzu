@@ -27,8 +27,8 @@ fn build_decoding_config() -> DecodingConfig {
 
 #[test]
 fn test_text_session_base() {
-    let text = String::from("Tell about London");
-    run(text, build_decoding_config(), 128);
+    let text = String::from("The capital of France is");
+    run(text, build_decoding_config(), 5);
 }
 
 #[test]
@@ -49,7 +49,8 @@ fn run(
     let mut session =
         Session::new(build_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
-    let output = session
+    
+    let output = match session
         .run(
             input,
             RunConfig::new(
@@ -59,11 +60,17 @@ fn run(
                     value: SamplingMethod::Greedy,
                 },
             ),
-            Some(|_: Output| {
+            Some(|output: Output| {
+                eprintln!("[Callback] Generated so far: {:?}", output.text);
                 return true;
             }),
-        )
-        .unwrap();
+        ) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[ERROR] Session run failed: {:?}", e);
+            panic!("Session run failed: {:?}", e);
+        }
+    };
 
     println!("-------------------------");
     println!("{}", output.text);

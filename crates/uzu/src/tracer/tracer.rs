@@ -202,6 +202,7 @@ impl Tracer {
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
+            &self.generator_context.model_config.decoder_config,
             &self.generator_context.model_shape,
             &self.generator_context.scratch_buffers,
             self.generator_context.kv_cache.clone(),

@@ -1,13 +1,14 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use std::time::Instant;
+
 use half::f16;
 use metal::{Device, MTLResourceOptions};
-use std::time::Instant;
+use rand::SeedableRng;
 use uzu::backends::metal::{
     MTLContext,
     kernel::{MoeExpertsArguments, MoeExpertsKernel},
 };
-use rand::SeedableRng;
 
 fn create_ctx() -> MTLContext {
     let d = Device::system_default().expect("no metal");
@@ -88,6 +89,8 @@ fn run_case(
     );
 
     let kf = MoeExpertsKernel::new(ctx).expect("experts");
+    let empty_buf =
+        ctx.device.new_buffer(0, metal::MTLResourceOptions::StorageModeShared);
 
     // Warmup
     {
@@ -103,11 +106,18 @@ fn run_case(
                 w3_all: &w3_buf,
                 w2_all: &w2_buf,
                 y_partial: &y_buf,
+                up_biases: &empty_buf,
+                down_biases: &empty_buf,
                 t,
                 d_model,
                 d_ff,
                 e,
                 gating_code,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                silu_alpha: 1.0,
             },
         )
         .expect("encode experts");
@@ -131,11 +141,18 @@ fn run_case(
                 w3_all: &w3_buf,
                 w2_all: &w2_buf,
                 y_partial: &y_buf,
+                up_biases: &empty_buf,
+                down_biases: &empty_buf,
                 t,
                 d_model,
                 d_ff,
                 e,
                 gating_code,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                silu_alpha: 1.0,
             },
         )
         .expect("encode experts");
@@ -160,8 +177,6 @@ fn moe_fused_expert_mlp_perf_prefill_and_decode() {
     run_case(&ctx, 1024, 8, 256, 1024, 2, 10); // SwiGLU
     run_case(&ctx, 1024, 8, 256, 1024, 0, 10); // GELU
     // Decode-like (latency)
-    run_case(&ctx, 4, 8, 256, 1024, 2, 200);   // more iters for stable timing
+    run_case(&ctx, 4, 8, 256, 1024, 2, 200); // more iters for stable timing
     run_case(&ctx, 1, 8, 256, 1024, 0, 500);
 }
-
-

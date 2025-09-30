@@ -354,6 +354,7 @@ fn run_single_pass_attention(
         mask_kv_seq_stride: 1,
         mask_q_seq_stride: seq_len as i32,
         mask_head_stride: 0,
+        sinks_buffer: None,
         num_heads,
         suffix_length: seq_len,
         head_dim,
@@ -733,6 +734,7 @@ fn run_two_pass_attention(
         mask_kv_seq_stride: 1,
         mask_q_seq_stride: seq_len as i32,
         mask_head_stride: 0,
+        sinks_buffer: None,
         num_heads,
         suffix_length: seq_len,
         head_dim,
@@ -1013,6 +1015,7 @@ fn perf_two_pass_attention() {
         mask_kv_seq_stride: 1,
         mask_q_seq_stride: suffix_length as i32,
         mask_head_stride: 0,
+        sinks_buffer: None,
         num_heads,
         suffix_length, // Use actual suffix_length, not seq_len
         head_dim,

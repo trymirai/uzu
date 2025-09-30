@@ -62,6 +62,7 @@ pub struct AttentionSinglePassArguments<'a> {
     pub mask_kv_seq_stride: i32,       // buffer(13)
     pub mask_q_seq_stride: i32,        // buffer(14)
     pub mask_head_stride: i32,         // buffer(15)
+    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(16)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -86,6 +87,7 @@ pub struct AttentionTwoPassArguments<'a> {
     pub mask_kv_seq_stride: i32,        // buffer(15)
     pub mask_q_seq_stride: i32,         // buffer(16)
     pub mask_head_stride: i32,          // buffer(17)
+    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(18)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -300,6 +302,10 @@ impl AttentionKernel {
             );
         }
 
+        if let Some(sinks_buffer) = args.sinks_buffer {
+            compute_encoder.set_buffer(16, Some(sinks_buffer), 0);
+        }
+
         let threads_per_threadgroup = MTLSize {
             width: 32 * 32, // sequence_block_size * head_block_size
             height: 1,
@@ -397,6 +403,10 @@ impl AttentionKernel {
                 size_of::<i32>() as u64,
                 &args.mask_head_stride as *const i32 as *const _,
             );
+        }
+
+        if let Some(sinks_buffer) = args.sinks_buffer {
+            compute_encoder.set_buffer(18, Some(sinks_buffer), 0);
         }
 
         let total_blocks_count = 32u64;
@@ -516,6 +526,7 @@ pub struct AttentionKernelEncodable {
     kernel: AttentionKernel,
     layer_index: usize,
     attention_scale: Option<f32>,
+    has_sinks: bool,
 }
 
 impl AttentionKernelEncodable {
@@ -524,12 +535,14 @@ impl AttentionKernelEncodable {
         data_type: KernelDataType,
         layer_index: usize,
         attention_scale: Option<f32>,
+        has_sinks: bool,
     ) -> Result<Self, AttentionError> {
         let kernel = AttentionKernel::new(context, data_type)?;
         Ok(Self {
             kernel,
             layer_index,
             attention_scale,
+            has_sinks,
         })
     }
 }
@@ -648,6 +661,16 @@ impl EncodableWithState for AttentionKernelEncodable {
 
         let mut maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
+        
+        let sinks_binding = if self.has_sinks {
+            Some(state.arrays(&[ArrayId::AttentionSinks(self.layer_index)]))
+        } else {
+            None
+        };
+        let sinks_buffer = sinks_binding.as_ref().and_then(|binding| {
+            let mut arr = binding[0].borrow_mut();
+            Some(unsafe { arr.mtl_buffer().clone() })
+        });
 
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
@@ -703,6 +726,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
+                        sinks_buffer: sinks_buffer.as_ref(),
                         num_heads,
                         suffix_length,
                         head_dim,
@@ -736,6 +760,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
+                        sinks_buffer: sinks_buffer.as_ref(),
                         num_heads,
                         suffix_length,
                         head_dim,

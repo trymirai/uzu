@@ -62,8 +62,8 @@ fn cpu_ref(
             a[r] = match gating {
                 0 => gelu(up),
                 1 => silu(up),
-                2 => silu(up) * vp,
-                _ => gelu(up) * vp,
+                2 => { let s = silu(vp); s * up + s },  // OpenAI: silu(gate)*up + silu(gate)
+                _ => { let g = gelu(vp); g * up + g },
             };
         }
         for c in 0..d_model {
@@ -149,6 +149,16 @@ fn test_moe_fused_expert_mlp_parity() {
     let kf = MoeExpertsKernel::new(&ctx).expect("experts");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
+    
+    let up_bias_size = (e * d_ff * 2 * std::mem::size_of::<f16>()) as u64;
+    let down_bias_size = (e * d_model * std::mem::size_of::<f16>()) as u64;
+    let up_biases_buf = ctx.device.new_buffer(up_bias_size, metal::MTLResourceOptions::StorageModeShared);
+    let down_biases_buf = ctx.device.new_buffer(down_bias_size, metal::MTLResourceOptions::StorageModeShared);
+    unsafe {
+        std::ptr::write_bytes(up_biases_buf.contents() as *mut u8, 0, up_bias_size as usize);
+        std::ptr::write_bytes(down_biases_buf.contents() as *mut u8, 0, down_bias_size as usize);
+    }
+    
     kf.encode(
         &enc,
         MoeExpertsArguments {
@@ -159,11 +169,18 @@ fn test_moe_fused_expert_mlp_parity() {
             w3_all: &w3_buf,
             w2_all: &w2_buf,
             y_partial: &y_buf,
+            up_biases: &up_biases_buf,
+            down_biases: &down_biases_buf,
             t,
             d_model,
             d_ff,
             e,
             gating_code: 2,
+            gate_clip_min: f32::NEG_INFINITY,
+            gate_clip_max: f32::INFINITY,
+            up_clip_min: f32::NEG_INFINITY,
+            up_clip_max: f32::INFINITY,
+            silu_alpha: 1.0,
         },
     )
     .expect("encode experts");
@@ -277,8 +294,16 @@ fn test_moe_fused_expert_mlp_large_dmodel_tail_dff_and_non_glu() {
         // GELU and SiLU
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
-        // No debug buffers in clean test
-
+        
+        let up_bias_size = (e * d_ff * 2 * std::mem::size_of::<f16>()) as u64;
+        let down_bias_size = (e * d_model * std::mem::size_of::<f16>()) as u64;
+        let up_biases_buf = ctx.device.new_buffer(up_bias_size, metal::MTLResourceOptions::StorageModeShared);
+        let down_biases_buf = ctx.device.new_buffer(down_bias_size, metal::MTLResourceOptions::StorageModeShared);
+        unsafe {
+            std::ptr::write_bytes(up_biases_buf.contents() as *mut u8, 0, up_bias_size as usize);
+            std::ptr::write_bytes(down_biases_buf.contents() as *mut u8, 0, down_bias_size as usize);
+        }
+        
         kf.encode(
             &enc,
             MoeExpertsArguments {
@@ -289,11 +314,18 @@ fn test_moe_fused_expert_mlp_large_dmodel_tail_dff_and_non_glu() {
                 w3_all: &w3_buf,
                 w2_all: &w2_buf,
                 y_partial: &y_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
                 t,
                 d_model,
                 d_ff,
                 e,
                 gating_code: gate,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                silu_alpha: 1.0,
             },
         )
         .expect("encode experts");

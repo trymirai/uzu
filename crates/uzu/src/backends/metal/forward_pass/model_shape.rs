@@ -19,12 +19,15 @@ pub struct ModelShape {
 
 impl ModelShape {
     pub fn from_decoder_config(decoder_config: &DecoderConfig) -> Self {
-        let activation_type: DataType = decoder_config
-            .layer_config
-            .mlp_config
-            .linear_config
-            .activation_precision()
-            .into();
+        let activation_type: DataType =
+            match &decoder_config.layer_config.mlp_config {
+                crate::config::MLPConfig::Dense(d) => {
+                    d.linear_config.activation_precision().into()
+                },
+                crate::config::MLPConfig::MixtureOfExperts(m) => {
+                    m.expert_config.linear_config.activation_precision().into()
+                },
+            };
         let num_layers = decoder_config.num_layers;
         Self {
             activation_type,
@@ -100,7 +103,7 @@ impl ModelShape {
     }
 
     pub fn embeddings_output_shape(&self) -> [usize; 2] {
-        [self.model_dim, self.vocabulary_size]
+        [self.vocabulary_size, self.model_dim]
     }
 
     pub fn quantized_embeddings_weights_shape(&self) -> [usize; 2] {
@@ -169,5 +172,76 @@ impl ModelShape {
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
         [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
+    }
+
+    pub fn moe_router_logits_shape(
+        &self,
+        suffix_length: usize,
+        num_experts: usize,
+    ) -> [usize; 2] {
+        [suffix_length, num_experts]
+    }
+
+    pub fn moe_topk_ids_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 2] {
+        [suffix_length, k]
+    }
+
+    pub fn moe_topk_probs_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 2] {
+        [suffix_length, k]
+    }
+
+    pub fn moe_counts_shape(
+        &self,
+        num_experts: usize,
+    ) -> [usize; 1] {
+        [num_experts]
+    }
+
+    pub fn moe_offsets_shape(
+        &self,
+        num_experts: usize,
+    ) -> [usize; 1] {
+        [num_experts + 1]
+    }
+
+    pub fn moe_sumk_shape(&self) -> [usize; 1] {
+        [1]
+    }
+
+    pub fn moe_bucketed_token_ids_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        [max_routed_tokens]
+    }
+
+    pub fn moe_bucketed_probs_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        [max_routed_tokens]
+    }
+
+    pub fn moe_tok2row_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 1] {
+        [suffix_length * k]
+    }
+
+    pub fn moe_y_partial_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 2] {
+        [max_routed_tokens, self.model_dim]
     }
 }

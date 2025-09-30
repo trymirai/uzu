@@ -56,11 +56,27 @@ impl Into<DataType> for QuantizationMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
 #[serde(tag = "type")]
 pub enum Activation {
     #[serde(rename = "SiLU")]
-    SILU,
+    SILU {
+        #[serde(default = "default_silu_alpha")]
+        alpha: f32,
+    },
     #[serde(rename = "GELU")]
     GELU,
+}
+
+fn default_silu_alpha() -> f32 {
+    1.0
+}
+
+impl Activation {
+    pub fn alpha(&self) -> f32 {
+        match self {
+            Activation::SILU { alpha } => *alpha,
+            Activation::GELU => 1.0,
+        }
+    }
 }
