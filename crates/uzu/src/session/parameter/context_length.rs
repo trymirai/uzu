@@ -24,9 +24,9 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for ContextLength {
         let proposed_value = match self {
             ContextLength::Default => {
                 if cfg!(target_os = "ios") {
-                    return 8192;
+                    8192
                 } else {
-                    return 16384;
+                    16384
                 }
             },
             ContextLength::Maximal => model_context_length,
