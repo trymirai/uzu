@@ -52,6 +52,7 @@ impl LayerExecutables {
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
         rope: Rc<Box<dyn EncodableWithState>>,
+        shared_moe_weights: Option<crate::backends::metal::kernel::moe::SharedMoeWeights>,
     ) -> Self {
         autoreleasepool(|_| {
             let intermediate_data_type: DataType = layer_config
@@ -193,6 +194,7 @@ impl LayerExecutables {
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
                 &compilation_config.descriptor_mlp,
+                shared_moe_weights,
             );
 
             let post_mlp_norm: Option<Box<dyn EncodableWithState>> =
@@ -268,9 +270,7 @@ impl EncodableWithState for LayerExecutables {
         self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
         // shortcut = input
 
-        let t_prenorm = std::time::Instant::now();
         self.pre_attention_norm.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] PreAttnNorm: {:.3}ms", self.layer_index, t_prenorm.elapsed().as_secs_f64() * 1000.0);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -278,24 +278,16 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        let t_qkv = std::time::Instant::now();
         self.qkv_projection.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] QKV: {:.3}ms", self.layer_index, t_qkv.elapsed().as_secs_f64() * 1000.0);
         
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, command_buffer, parameters);
         }
-        let t_rope = std::time::Instant::now();
         self.rope.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] RoPE: {:.3}ms", self.layer_index, t_rope.elapsed().as_secs_f64() * 1000.0);
         
-        let t_attn = std::time::Instant::now();
         self.attention.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] Attention: {:.3}ms", self.layer_index, t_attn.elapsed().as_secs_f64() * 1000.0);
         
-        let t_out = std::time::Instant::now();
         self.out_projection.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] OutProj: {:.3}ms", self.layer_index, t_out.elapsed().as_secs_f64() * 1000.0);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -324,9 +316,7 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        let t_mlpnorm = std::time::Instant::now();
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] PreMLPNorm: {:.3}ms", self.layer_index, t_mlpnorm.elapsed().as_secs_f64() * 1000.0);
         
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
@@ -335,9 +325,7 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        let t_mlp = std::time::Instant::now();
         self.mlp.encode(state, command_buffer, parameters);
-        eprintln!("[Layer{}] MLP: {:.3}ms", self.layer_index, t_mlp.elapsed().as_secs_f64() * 1000.0);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
@@ -362,6 +350,9 @@ impl EncodableWithState for LayerExecutables {
                 layer_traces.borrow().outputs.clone(),
             );
         }
-        eprintln!("[Layer{}] TOTAL: {:.3}ms", self.layer_index, t_layer.elapsed().as_secs_f64() * 1000.0);
+        
+        if self.layer_index == 0 {
+            eprintln!("[Layer0] TOTAL: {:.3}ms", t_layer.elapsed().as_secs_f64() * 1000.0);
+        }
     }
 }

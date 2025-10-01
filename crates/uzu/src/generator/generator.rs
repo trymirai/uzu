@@ -9,10 +9,12 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
-        kv_cache::INVALID_POSITION,
+    backends::metal::{
+        forward_pass::{
+            ForwardPassState,
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+            kv_cache::INVALID_POSITION,
+        },
     },
     linearizer::trie::TokenTrie,
     session::{
@@ -401,13 +403,8 @@ impl Generator {
                     .insert(next_task_key.clone(), next_encoded_task);
             }
 
-            let t_wait = Instant::now();
             root_command_buffer.wait_until_completed();
-            eprintln!("[RunModel] GPU wait: {:.3}ms", t_wait.elapsed().as_secs_f64() * 1000.0);
-            
             let run_time = run_start.elapsed().as_secs_f64();
-            eprintln!("[RunModel] TOTAL run_model: {:.3}ms", run_time * 1000.0);
-
             (state, run_time)
         })
     }

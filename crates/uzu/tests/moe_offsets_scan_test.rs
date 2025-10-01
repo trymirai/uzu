@@ -80,10 +80,17 @@ fn gen_counts_via_gpu(
             e * std::mem::size_of::<u32>(),
         );
     }
+    let num_blocks = ((t + 255) / 256).max(1);
+    let num_tiles = ((e + 512 - 1) / 512).max(1);
+    let partials_buf = ctx.device.new_buffer(
+        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
     let bucket = MoeBucketCountsKernel::new(ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
     let bargs = MoeBucketCountsArguments {
+                partials_buffer: &partials_buf,
         topk_ids_buffer: &topk_ids_buf,
         counts_buffer: &counts_buf,
         t,

@@ -81,7 +81,7 @@ fn run_case(
         (w2.len() * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let mut y = vec![f16::from_f32(0.0); sum_k * d_model];
+    let y = vec![f16::from_f32(0.0); sum_k * d_model];
     let y_buf = ctx.device.new_buffer_with_data(
         y.as_ptr() as *const _,
         (y.len() * std::mem::size_of::<f16>()) as u64,
@@ -112,6 +112,7 @@ fn run_case(
                 d_model,
                 d_ff,
                 e,
+                k: 2,
                 gating_code,
                 gate_clip_min: f32::NEG_INFINITY,
                 gate_clip_max: f32::INFINITY,
@@ -147,6 +148,7 @@ fn run_case(
                 d_model,
                 d_ff,
                 e,
+                k: 2,
                 gating_code,
                 gate_clip_min: f32::NEG_INFINITY,
                 gate_clip_max: f32::INFINITY,

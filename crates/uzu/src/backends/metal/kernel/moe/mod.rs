@@ -1,15 +1,15 @@
-use std::{cell::RefCell, mem::size_of};
+use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
+    ComputePipelineState as MTLComputePipelineState,
     FunctionConstantValues, MTLDataType, MTLResourceOptions, MTLSize,
 };
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 mod encodable;
-pub use encodable::MoeBlockEncodable;
+pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeTopKError {
@@ -56,13 +56,13 @@ pub enum MoeBucketCountsError {
 pub struct MoeBucketCountsKernel {
     pipeline_partials: MTLComputePipelineState,
     pipeline_reduce: MTLComputePipelineState,
-    device: MTLDevice,
 }
 
 #[derive(Debug)]
 pub struct MoeBucketCountsArguments<'a> {
     pub topk_ids_buffer: &'a MTLBuffer,
     pub counts_buffer: &'a MTLBuffer,
+    pub partials_buffer: &'a MTLBuffer,
     pub t: usize,
     pub e: usize,
     pub k: usize,
@@ -137,6 +137,9 @@ pub enum MoeExpertsError {
 
 pub struct MoeExpertsKernel {
     pipelines_f16: Vec<MTLComputePipelineState>, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
+    tile_counts_pipeline: MTLComputePipelineState,
+    tile_scan_pipeline: MTLComputePipelineState,
+    tile_build_map_pipeline: MTLComputePipelineState,
 }
 
 #[derive(Debug)]
@@ -154,6 +157,7 @@ pub struct MoeExpertsArguments<'a> {
     pub d_model: usize,
     pub d_ff: usize,
     pub e: usize,
+    pub k: usize, // num_experts_per_token
     pub gating_code: u32, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
     pub gate_clip_min: f32,
     pub gate_clip_max: f32,
@@ -164,7 +168,6 @@ pub struct MoeExpertsArguments<'a> {
 
 impl MoeExpertsKernel {
     pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        // Build four specialized pipelines by gating selection function constant (index=30)
         let mut pipelines_f16 = Vec::with_capacity(4);
         for gate in 0u32..4u32 {
             let fcv = FunctionConstantValues::new();
@@ -173,14 +176,27 @@ impl MoeExpertsKernel {
                 MTLDataType::UInt,
                 30,
             );
+            let debug_mask: u32 = 0;
+            fcv.set_constant_value_at_index(
+                &debug_mask as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                31,
+            );
             let pipeline = ctx.compute_pipeline_state(
                 "moe_fused_expert_mlp_f16",
                 Some(&fcv),
             )?;
             pipelines_f16.push(pipeline);
         }
+        let tile_counts = ctx.compute_pipeline_state("moe_tile_counts", None)?;
+        let tile_scan = ctx.compute_pipeline_state("moe_tile_scan", None)?;
+        let tile_build = ctx.compute_pipeline_state("moe_build_tile_map", None)?;
+
         Ok(Self {
             pipelines_f16,
+            tile_counts_pipeline: tile_counts,
+            tile_scan_pipeline: tile_scan,
+            tile_build_map_pipeline: tile_build,
         })
     }
 
@@ -237,42 +253,79 @@ impl MoeExpertsKernel {
         encoder.set_bytes(17, std::mem::size_of::<f32>() as u64, &args.up_clip_max as *const f32 as *const _);
         encoder.set_bytes(18, std::mem::size_of::<f32>() as u64, &args.silu_alpha as *const f32 as *const _);
         
-        // Launch tiled 3D grid over (N tiles, M tiles, experts)
-        const BM: usize = 32; // must match experts_fused.metal
-        const BN: usize = 64; // must match experts_fused.metal
+        const BN: usize = 64;
 
-        // Compute N tile count
+        // Build compact tile map on GPU: counts -> scan
+        // Get device from a buffer we already have
+        let device = args.expert_offsets.device();
+        let tile_counts_buf = device.new_buffer((args.e * size_of::<u32>()) as u64, MTLResourceOptions::StorageModeShared);
+        let tile_offsets_buf = device.new_buffer(((args.e + 1) * size_of::<u32>()) as u64, MTLResourceOptions::StorageModeShared);
+        let total_tiles_buf = device.new_buffer(size_of::<u32>() as u64, MTLResourceOptions::StorageModeShared);
+
+        // Pass A: tile counts
+        encoder.set_compute_pipeline_state(&self.tile_counts_pipeline);
+        encoder.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder.set_buffer(1, Some(&tile_counts_buf), 0);
+        let e_u32 = args.e as u32;
+        encoder.set_bytes(2, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
+        encoder.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+
+        // Pass B: scan (single TG)
+        encoder.set_compute_pipeline_state(&self.tile_scan_pipeline);
+        encoder.set_buffer(0, Some(&tile_counts_buf), 0);
+        encoder.set_buffer(1, Some(&tile_offsets_buf), 0);
+        encoder.set_buffer(2, Some(&total_tiles_buf), 0);
+        encoder.set_bytes(3, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
+        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
+
+        // Pass C: build tile map (unused for now, will be used for indirect dispatch later)
+        let total_tiles = unsafe { *(total_tiles_buf.contents() as *const u32) } as usize;
+        encoder.set_compute_pipeline_state(&self.tile_build_map_pipeline);
+        encoder.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder.set_buffer(1, Some(&tile_offsets_buf), 0);
+        encoder.set_buffer(2, Some(&tile_counts_buf), 0);
+        encoder.set_buffer(3, Some(&device.new_buffer(1, MTLResourceOptions::StorageModeShared)), 0);
+        encoder.set_bytes(4, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
+        encoder.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+
+        // Now run experts kernel over compact tiles: grid = (num_tiles_n, total_tiles)
         let num_tiles_n = (args.d_model + BN - 1) / BN;
-
-        // Compute max M tiles across experts (scan offsets)
-        let offsets_ptr = args.expert_offsets.contents() as *const u32;
-        let offsets =
-            unsafe { std::slice::from_raw_parts(offsets_ptr, args.e + 1) };
-        let mut max_seg_len: usize = 0;
-        for e_idx in 0..args.e {
-            let start = offsets[e_idx] as usize;
-            let end = offsets[e_idx + 1] as usize;
-            let len = end.saturating_sub(start);
-            if len > max_seg_len {
-                max_seg_len = len;
-            }
-        }
-        let num_tiles_m = if max_seg_len == 0 {
-            0
-        } else {
-            (max_seg_len + BM - 1) / BM
-        };
-
-        // Threadgroup: 4 simdgroups (WM*WN*32 = 128)
         let threads_per_threadgroup = MTLSize::new(128, 1, 1);
-        if num_tiles_m > 0 && num_tiles_n > 0 && args.e > 0 {
-            let threadgroups = MTLSize::new(
-                num_tiles_n as u64,
-                num_tiles_m as u64,
-                args.e as u64,
-            );
-            encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        if total_tiles > 0 && num_tiles_n > 0 {
+            let threadgroups = MTLSize::new(num_tiles_n as u64, total_tiles as u64, 1);
+            // Bind tile_map as buffer 19..21 inside kernel via encoded args
+            encoder.set_compute_pipeline_state(&self.pipelines_f16[(args.gating_code.min(3)) as usize]);
+            encoder.set_buffer(0, Some(args.x_buffer), 0);
+            encoder.set_buffer(1, Some(args.bucketed_token_ids), 0);
+            encoder.set_buffer(2, Some(args.expert_offsets), 0);
+            encoder.set_buffer(3, Some(args.w1_all), 0);
+            encoder.set_buffer(4, Some(args.w3_all), 0);
+            encoder.set_buffer(5, Some(args.w2_all), 0);
+            encoder.set_buffer(6, Some(args.y_partial), 0);
+            let t_u = args.t as u32;
+            let dm_u = args.d_model as u32;
+            let dff_u = args.d_ff as u32;
+            let gate = args.gating_code as u32;
+            encoder.set_bytes(7, size_of::<u32>() as u64, &t_u as *const u32 as *const _);
+            encoder.set_bytes(8, size_of::<u32>() as u64, &dm_u as *const u32 as *const _);
+            encoder.set_bytes(9, size_of::<u32>() as u64, &dff_u as *const u32 as *const _);
+            encoder.set_bytes(10, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
+            encoder.set_bytes(11, size_of::<u32>() as u64, &gate as *const u32 as *const _);
+            encoder.set_buffer(12, Some(args.up_biases), 0);
+            encoder.set_buffer(13, Some(args.down_biases), 0);
+            encoder.set_bytes(14, size_of::<f32>() as u64, &args.gate_clip_min as *const f32 as *const _);
+            encoder.set_bytes(15, size_of::<f32>() as u64, &args.gate_clip_max as *const f32 as *const _);
+            encoder.set_bytes(16, size_of::<f32>() as u64, &args.up_clip_min as *const f32 as *const _);
+            encoder.set_bytes(17, size_of::<f32>() as u64, &args.up_clip_max as *const f32 as *const _);
+            encoder.set_bytes(18, size_of::<f32>() as u64, &args.silu_alpha as *const f32 as *const _);
+            encoder.set_buffer(19, Some(&tile_offsets_buf), 0);
+            encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }
         Ok(())
     }
@@ -287,14 +340,13 @@ pub struct MoeScatterKernels {
     pipeline_scatter_map_f16: MTLComputePipelineState,
     pipeline_scatter_map_f32: MTLComputePipelineState,
     pipeline_scatter_map_bf16: MTLComputePipelineState,
-    device: MTLDevice,
-    last_block_alloc: RefCell<Option<MTLBuffer>>,
 }
 
 #[derive(Debug)]
 pub struct MoeBlockBasesArguments<'a> {
     pub partials_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
     pub block_bases_buffer: &'a MTLBuffer, // same shape as partials
+    pub block_alloc_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
     pub e: usize,
     pub num_blocks: usize,
     pub num_tiles: usize,
@@ -306,6 +358,7 @@ pub struct MoeScatterArguments<'a> {
     pub topk_probs_buffer: &'a MTLBuffer,
     pub offsets_buffer: &'a MTLBuffer,
     pub block_bases_buffer: &'a MTLBuffer,
+    pub block_alloc_buffer: &'a MTLBuffer,
     pub out_ids_buffer: &'a MTLBuffer,
     pub out_probs_buffer: &'a MTLBuffer,
     pub t: usize,
@@ -337,6 +390,7 @@ impl MoeScatterKernels {
             .compute_pipeline_state("moe_scatter_buckets_map_f32", None)?;
         let pipeline_scatter_map_bf16 = mtl_context
             .compute_pipeline_state("moe_scatter_buckets_map_bf16", None)?;
+        
         Ok(Self {
             pipeline_bases,
             pipeline_scatter_f16,
@@ -345,8 +399,6 @@ impl MoeScatterKernels {
             pipeline_scatter_map_f16,
             pipeline_scatter_map_f32,
             pipeline_scatter_map_bf16,
-            device: mtl_context.device.clone(),
-            last_block_alloc: RefCell::new(None),
         })
     }
 
@@ -358,13 +410,8 @@ impl MoeScatterKernels {
         compute_encoder.set_compute_pipeline_state(&self.pipeline_bases);
         compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.block_bases_buffer), 0);
-        // Allocate block_alloc buffer and keep it for scatter
-        let entries = args.num_blocks * args.num_tiles * 512usize;
-        let block_alloc = self.device.new_buffer(
-            (entries * size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        compute_encoder.set_buffer(2, Some(&block_alloc), 0);
+        compute_encoder.set_buffer(2, Some(args.block_alloc_buffer), 0);
+        
         let e_u32 = args.e as u32;
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
@@ -396,8 +443,6 @@ impl MoeScatterKernels {
         if total_entries > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
-        // Stash for subsequent scatter call
-        self.last_block_alloc.borrow_mut().replace(block_alloc);
         Ok(())
     }
 
@@ -426,15 +471,7 @@ impl MoeScatterKernels {
         compute_encoder.set_buffer(1, Some(args.topk_probs_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.offsets_buffer), 0);
         compute_encoder.set_buffer(3, Some(args.block_bases_buffer), 0);
-        // Use the last computed block_alloc
-        let block_alloc_opt = self.last_block_alloc.borrow();
-        let block_alloc_buf = block_alloc_opt.as_ref().ok_or_else(|| {
-            MoeScatterError::MetalError(MTLError::Generic(
-                "block_alloc buffer missing; call encode_block_bases first"
-                    .to_string(),
-            ))
-        })?;
-        compute_encoder.set_buffer(4, Some(block_alloc_buf), 0);
+        compute_encoder.set_buffer(4, Some(args.block_alloc_buffer), 0);
         compute_encoder.set_buffer(5, Some(args.out_ids_buffer), 0);
         compute_encoder.set_buffer(6, Some(args.out_probs_buffer), 0);
         let t_u32 = args.t as u32;
@@ -493,15 +530,7 @@ impl MoeScatterKernels {
         compute_encoder.set_buffer(1, Some(base.topk_probs_buffer), 0);
         compute_encoder.set_buffer(2, Some(base.offsets_buffer), 0);
         compute_encoder.set_buffer(3, Some(base.block_bases_buffer), 0);
-        // Use the last computed block_alloc
-        let block_alloc_opt = self.last_block_alloc.borrow();
-        let block_alloc_buf = block_alloc_opt.as_ref().ok_or_else(|| {
-            MoeScatterError::MetalError(MTLError::Generic(
-                "block_alloc buffer missing; call encode_block_bases first"
-                    .to_string(),
-            ))
-        })?;
-        compute_encoder.set_buffer(4, Some(block_alloc_buf), 0);
+        compute_encoder.set_buffer(4, Some(base.block_alloc_buffer), 0);
         compute_encoder.set_buffer(5, Some(base.out_ids_buffer), 0);
         compute_encoder.set_buffer(6, Some(base.out_probs_buffer), 0);
         let t_u32 = base.t as u32;
@@ -554,7 +583,6 @@ impl MoeBucketCountsKernel {
         Ok(Self {
             pipeline_partials,
             pipeline_reduce,
-            device: mtl_context.device.clone(),
         })
     }
 
@@ -580,18 +608,10 @@ impl MoeBucketCountsKernel {
         // Pass A: partials
         compute_encoder.set_compute_pipeline_state(&self.pipeline_partials);
         compute_encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
+        compute_encoder.set_buffer(1, Some(args.partials_buffer), 0);
 
-        // Compute sizes for partials buffer
+        // Compute sizes
         let num_blocks = ((args.t + 255) / 256) as u32;
-        let num_tiles = (args.e as u32 + 512 - 1) / 512;
-        let partials_len =
-            (num_blocks as usize) * (num_tiles as usize) * 512usize;
-        let partials_size = (partials_len * size_of::<u32>()) as u64;
-        let partials_buf = self
-            .device
-            .new_buffer(partials_size, MTLResourceOptions::StorageModeShared);
-
-        compute_encoder.set_buffer(1, Some(&partials_buf), 0);
         let t_u32 = args.t as u32;
         let e_u32 = args.e as u32;
         let k_u32 = args.k as u32;
@@ -624,7 +644,7 @@ impl MoeBucketCountsKernel {
 
         // Pass B: reduce
         compute_encoder.set_compute_pipeline_state(&self.pipeline_reduce);
-        compute_encoder.set_buffer(0, Some(&partials_buf), 0);
+        compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.counts_buffer), 0);
         compute_encoder.set_bytes(
             2,

@@ -140,6 +140,7 @@ pub fn mlp_block(
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     compilation_descriptor: &CompilationDescriptor,
+    shared_moe_weights: Option<crate::backends::metal::kernel::moe::SharedMoeWeights>,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let crate::config::MLPConfig::Dense(dense) = config {
         if let crate::config::LinearConfig::Quantized(ref quant_config) =
@@ -190,13 +191,16 @@ pub fn mlp_block(
         }
     }
 
+    // STEP 2: Enable MOE block creation (encode will be minimal)
     if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
+        eprintln!("[DEBUG] Step 2: MOE block creation ENABLED, kernels will be tested incrementally");
         let moe_block = MoeBlockEncodable::new(
             context,
             moe,
             model_dim,
             hidden_dim,
             parameter_tree,
+            shared_moe_weights,
         )
         .expect("Failed to build MoE block");
         return Box::new(moe_block);

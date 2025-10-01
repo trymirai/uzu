@@ -292,6 +292,7 @@ struct AuxBuffers {
     moe_y_partial: Option<ArrayCell>,
     moe_scatter_partials: Option<ArrayCell>,
     moe_scatter_block_bases: Option<ArrayCell>,
+    moe_block_alloc: Option<ArrayCell>,
 }
 
 impl AuxBuffers {
@@ -525,6 +526,21 @@ impl AuxBuffers {
                     }
                 }),
                 moe_scatter_block_bases: scratch.moe_scatter_block_bases.as_ref().map(|buf| {
+                    let num_blocks = ((suffix_length + 255) / 256).max(1);
+                    match &decoder_config.layer_config.mlp_config {
+                        MLPConfig::MixtureOfExperts(moe) => {
+                            let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+                            let entries = num_blocks * num_tiles * 512;
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &[entries],
+                                DataType::U32,
+                            ))
+                        },
+                        _ => unreachable!(),
+                    }
+                }),
+                moe_block_alloc: scratch.moe_block_alloc.as_ref().map(|buf| {
                     let num_blocks = ((suffix_length + 255) / 256).max(1);
                     match &decoder_config.layer_config.mlp_config {
                         MLPConfig::MixtureOfExperts(moe) => {
@@ -823,6 +839,7 @@ impl ForwardPassState {
             ArrayId::MoeYPartial => self.aux_buffers.moe_y_partial.as_ref().expect("MoE y_partial buffer not initialized").clone(),
             ArrayId::MoeScatterPartials => self.aux_buffers.moe_scatter_partials.as_ref().expect("MoE scatter partials buffer not initialized").clone(),
             ArrayId::MoeScatterBlockBases => self.aux_buffers.moe_scatter_block_bases.as_ref().expect("MoE scatter block bases buffer not initialized").clone(),
+            ArrayId::MoeBlockAlloc => self.aux_buffers.moe_block_alloc.as_ref().expect("MoE block alloc buffer not initialized").clone(),
             
             ArrayId::AttentionSinks(layer_index) => {
                 self.shared_buffers.borrow().attention_sinks.as_ref()
@@ -952,6 +969,7 @@ pub enum ArrayId {
     MoeYPartial,
     MoeScatterPartials,
     MoeScatterBlockBases,
+    MoeBlockAlloc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

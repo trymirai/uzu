@@ -4,7 +4,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+    MoeExpertsKernel, MoeFinalizeKernel,
     MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterKernels,
     MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
 };
@@ -34,6 +34,15 @@ enum RouterBlock {
     },
 }
 
+#[derive(Clone)]
+pub struct SharedMoeWeights {
+    pub w1_buf: Rc<metal::Buffer>,
+    pub w2_buf: Rc<metal::Buffer>,
+    pub w3_buf: Rc<metal::Buffer>,
+    pub up_biases_buf: Rc<metal::Buffer>,
+    pub down_biases_buf: Rc<metal::Buffer>,
+}
+
 pub struct MoeBlockEncodable {
     router: RouterBlock,
     topk_kernel: MoeTopKKernel,
@@ -46,162 +55,23 @@ pub struct MoeBlockEncodable {
     model_dim: usize,
     hidden_dim: usize,
     data_type: KernelDataType,
-    fused_up_weights: bool,
-    w1_buf: metal::Buffer,
-    w2_buf: metal::Buffer,
-    w3_buf: metal::Buffer,
-    up_biases_buf: metal::Buffer,
-    down_biases_buf: metal::Buffer,
+    shared_weights: SharedMoeWeights,
 }
 
 impl MoeBlockEncodable {
-    pub fn new(
+    pub fn transform_expert_weights_once(
         context: &MTLContext,
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         hidden_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, crate::backends::metal::MTLError> {
+    ) -> Result<SharedMoeWeights, crate::backends::metal::MTLError> {
+        
         let activation_data_type: DataType = moe_config
             .expert_config
             .linear_config
             .activation_precision()
             .into();
-        let data_type: KernelDataType = activation_data_type.into();
-
-        let router_tree = parameter_tree.subtree("router").map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "Router subtree error: {:?}",
-                e
-            ))
-        })?;
-
-        let router = match &moe_config.router_config {
-            LinearConfig::Quantized(quant_config) => {
-                RouterBlock::Quantized(QuantizedLinearKernelBlock::new(
-                    context,
-                    quant_config,
-                    model_dim,
-                    moe_config.mixture_size,
-                    &router_tree,
-                    ArrayId::Main,
-                    ArrayId::MoeRouterLogits,
-                )?)
-            },
-            LinearConfig::FullPrecision {
-                ..
-            } => {
-                let kernel_name = match activation_data_type {
-                    DataType::BF16 => "moe_router_bf16",
-                    DataType::F16 => "moe_router_f16",
-                    _ => "moe_router_bf16",
-                };
-                eprintln!(
-                    "[MoE Init] Requesting router kernel: {}",
-                    kernel_name
-                );
-                let pipeline = context
-                    .compute_pipeline_state(kernel_name, None)
-                    .map_err(|e| {
-                        eprintln!(
-                            "[MoE Init] FAILED to load '{}': {:?}",
-                            kernel_name, e
-                        );
-                        e
-                    })?;
-                eprintln!("[MoE Init] Router kernel loaded OK");
-
-                let mut weights_arr =
-                    router_tree.leaf("weights").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router weights error: {:?}",
-                            e
-                        ))
-                    })?;
-                let weights_buf = unsafe { weights_arr.mtl_buffer().clone() };
-
-                let mut biases_arr =
-                    router_tree.leaf("biases").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router biases error: {:?}",
-                            e
-                        ))
-                    })?;
-                let biases_buf = unsafe { biases_arr.mtl_buffer().clone() };
-
-                RouterBlock::Metal {
-                    pipeline,
-                    weights_buf,
-                    biases_buf,
-                    mixture_size: moe_config.mixture_size,
-                    model_dim,
-                }
-            },
-            LinearConfig::QLoRA {
-                ..
-            } => {
-                return Err(crate::backends::metal::MTLError::Generic(
-                    "QLoRA router not yet supported for MoE".to_string(),
-                ));
-            },
-        };
-
-        eprintln!("[MoE Init] Loading TopK kernel...");
-        let topk_kernel = MoeTopKKernel::new(context).map_err(|e| {
-            eprintln!("[MoE Init] FAILED TopK: {:?}", e);
-            crate::backends::metal::MTLError::Generic(format!(
-                "TopK kernel error: {:?}",
-                e
-            ))
-        })?;
-        eprintln!("[MoE Init] TopK OK");
-        eprintln!("[MoE Init] Loading Counts...");
-        let counts_kernel =
-            MoeBucketCountsKernel::new(context).map_err(|e| {
-                eprintln!("[MoE Init] FAILED Counts: {:?}", e);
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Counts kernel error: {:?}",
-                    e
-                ))
-            })?;
-        eprintln!("[MoE Init] Counts OK");
-        eprintln!("[MoE Init] Loading Offsets...");
-        let offsets_kernel =
-            MoeOffsetsScanKernel::new(context).map_err(|e| {
-                eprintln!("[MoE Init] FAILED Offsets: {:?}", e);
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Offsets kernel error: {:?}",
-                    e
-                ))
-            })?;
-        eprintln!("[MoE Init] Offsets OK");
-        eprintln!("[MoE Init] Loading Scatter...");
-        let scatter_kernels = MoeScatterKernels::new(context).map_err(|e| {
-            eprintln!("[MoE Init] FAILED Scatter: {:?}", e);
-            crate::backends::metal::MTLError::Generic(format!(
-                "Scatter kernels error: {:?}",
-                e
-            ))
-        })?;
-        eprintln!("[MoE Init] Scatter OK");
-        eprintln!("[MoE Init] Loading Experts...");
-        let experts_kernel = MoeExpertsKernel::new(context).map_err(|e| {
-            eprintln!("[MoE Init] FAILED Experts: {:?}", e);
-            crate::backends::metal::MTLError::Generic(format!(
-                "Experts kernel error: {:?}",
-                e
-            ))
-        })?;
-        eprintln!("[MoE Init] Experts OK");
-        eprintln!("[MoE Init] Loading Finalize...");
-        let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
-            eprintln!("[MoE Init] FAILED Finalize: {:?}", e);
-            crate::backends::metal::MTLError::Generic(format!(
-                "Finalize kernel error: {:?}",
-                e
-            ))
-        })?;
-        eprintln!("[MoE Init] Finalize OK");
 
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
@@ -229,13 +99,9 @@ impl MoeBlockEncodable {
         let up_shape = up_arr.shape();
         let fused_up_weights = up_shape[2] == hidden_dim * 2;
 
-        eprintln!(
-            "[MoE Init] Up weights shape: {:?}, fused={}",
-            up_shape, fused_up_weights
-        );
         let up_buf = unsafe { up_arr.mtl_buffer().clone() };
+        
         let (w1_buf, w3_buf) = if fused_up_weights {
-            eprintln!("[MoE Init] Starting weight transformation...");
             let elem_size: u64 = match activation_data_type {
                 DataType::F16 | DataType::BF16 => 2,
                 DataType::F32 => 4,
@@ -261,17 +127,8 @@ impl MoeBlockEncodable {
                 DataType::BF16 => "transpose_split_fused_expert_weights_bf16",
                 _ => "transpose_split_fused_expert_weights_f16",
             };
-            eprintln!(
-                "[MoE Init] Loading weight transform kernel: {}",
-                kernel_name
-            );
             let pipeline = context
-                .compute_pipeline_state(kernel_name, None)
-                .map_err(|e| {
-                    eprintln!("[MoE Init] FAILED weight transform: {:?}", e);
-                    e
-                })?;
-            eprintln!("[MoE Init] Weight transform kernel loaded");
+                .compute_pipeline_state(kernel_name, None)?;
 
             let command_buffer = context.command_queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
@@ -312,15 +169,8 @@ impl MoeBlockEncodable {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
-            eprintln!(
-                "[MoE Init] Weight transformation complete, buffers ready"
-            );
-
             (w1_buf, w3_buf)
         } else {
-            eprintln!(
-                "[MoE Init] Weights not fused, using source buffers directly"
-            );
             let w3_buf = context
                 .device
                 .new_buffer(0, metal::MTLResourceOptions::StorageModeShared);
@@ -378,6 +228,126 @@ impl MoeBlockEncodable {
             })?;
         let down_biases_buf = unsafe { down_biases_arr.mtl_buffer().clone() };
 
+        Ok(SharedMoeWeights {
+            w1_buf: Rc::new(w1_buf),
+            w2_buf: Rc::new(w2_buf),
+            w3_buf: Rc::new(w3_buf),
+            up_biases_buf: Rc::new(up_biases_buf),
+            down_biases_buf: Rc::new(down_biases_buf),
+        })
+    }
+
+    pub fn new(
+        context: &MTLContext,
+        moe_config: &MixtureOfExpertsConfig,
+        model_dim: usize,
+        hidden_dim: usize,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        shared_weights: Option<SharedMoeWeights>,
+    ) -> Result<Self, crate::backends::metal::MTLError> {
+        let activation_data_type: DataType = moe_config
+            .expert_config
+            .linear_config
+            .activation_precision()
+            .into();
+        let data_type: KernelDataType = activation_data_type.into();
+
+        let router_tree = parameter_tree.subtree("router").map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!(
+                "Router subtree error: {:?}",
+                e
+            ))
+        })?;
+
+        let router = match &moe_config.router_config {
+            LinearConfig::Quantized(quant_config) => {
+                RouterBlock::Quantized(QuantizedLinearKernelBlock::new(
+                    context,
+                    quant_config,
+                    model_dim,
+                    moe_config.mixture_size,
+                    &router_tree,
+                    ArrayId::Main,
+                    ArrayId::MoeRouterLogits,
+                )?)
+            },
+            LinearConfig::FullPrecision {
+                ..
+            } => {
+                let kernel_name = match activation_data_type {
+                    DataType::BF16 => "moe_router_bf16",
+                    DataType::F16 => "moe_router_f16",
+                    _ => "moe_router_bf16",
+                };
+                let pipeline = context
+                    .compute_pipeline_state(kernel_name, None)?;
+
+                let mut weights_arr =
+                    router_tree.leaf("weights").map_err(|e| {
+                        crate::backends::metal::MTLError::Generic(format!(
+                            "Router weights error: {:?}",
+                            e
+                        ))
+                    })?;
+                let weights_buf = unsafe { weights_arr.mtl_buffer().clone() };
+
+                let mut biases_arr =
+                    router_tree.leaf("biases").map_err(|e| {
+                        crate::backends::metal::MTLError::Generic(format!(
+                            "Router biases error: {:?}",
+                            e
+                        ))
+                    })?;
+                let biases_buf = unsafe { biases_arr.mtl_buffer().clone() };
+
+                RouterBlock::Metal {
+                    pipeline,
+                    weights_buf,
+                    biases_buf,
+                    mixture_size: moe_config.mixture_size,
+                    model_dim,
+                }
+            },
+            LinearConfig::QLoRA {
+                ..
+            } => {
+                return Err(crate::backends::metal::MTLError::Generic(
+                    "QLoRA router not yet supported for MoE".to_string(),
+                ));
+            },
+        };
+
+        let topk_kernel = MoeTopKKernel::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("TopK kernel error: {:?}", e))
+        })?;
+        let counts_kernel = MoeBucketCountsKernel::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("Counts kernel error: {:?}", e))
+        })?;
+        let offsets_kernel = MoeOffsetsScanKernel::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("Offsets kernel error: {:?}", e))
+        })?;
+        let scatter_kernels = MoeScatterKernels::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("Scatter kernels error: {:?}", e))
+        })?;
+        let experts_kernel = MoeExpertsKernel::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("Experts kernel error: {:?}", e))
+        })?;
+        let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!("Finalize kernel error: {:?}", e))
+        })?;
+
+        let shared_weights = if let Some(weights) = shared_weights {
+            weights
+        } else {
+            Self::transform_expert_weights_once(
+                context,
+                moe_config,
+                model_dim,
+                hidden_dim,
+                parameter_tree,
+            )?
+        };
+
         Ok(Self {
             router,
             topk_kernel,
@@ -390,29 +360,16 @@ impl MoeBlockEncodable {
             model_dim,
             hidden_dim,
             data_type,
-            fused_up_weights,
-            w1_buf,
-            w2_buf,
-            w3_buf,
-            up_biases_buf,
-            down_biases_buf,
+            shared_weights,
         })
     }
 
     fn gating_code_from_activation(
         activation: &Activation,
-        fused: bool,
     ) -> u32 {
-        if fused {
-            match activation {
-                Activation::GELU => 3,
-                Activation::SILU { .. } => 2,
-            }
-        } else {
-            match activation {
-                Activation::GELU => 0,
-                Activation::SILU { .. } => 1,
-            }
+        match activation {
+            Activation::GELU => 3,
+            Activation::SILU { .. } => 2,
         }
     }
 }
@@ -439,6 +396,7 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeYPartial,
             ArrayId::MoeScatterPartials,
             ArrayId::MoeScatterBlockBases,
+            ArrayId::MoeBlockAlloc,
         ]);
 
         let mut borrow0 = arrays[0].borrow_mut();
@@ -454,6 +412,7 @@ impl EncodableWithState for MoeBlockEncodable {
         let mut borrow10 = arrays[10].borrow_mut();
         let mut borrow11 = arrays[11].borrow_mut();
         let mut borrow12 = arrays[12].borrow_mut();
+        let mut borrow13 = arrays[13].borrow_mut();
 
         let main_buf = unsafe { borrow0.mtl_buffer().clone() };
         let router_logits_buf = unsafe { borrow1.mtl_buffer().clone() };
@@ -468,13 +427,13 @@ impl EncodableWithState for MoeBlockEncodable {
         let y_partial_buf = unsafe { borrow10.mtl_buffer().clone() };
         let partials_buf = unsafe { borrow11.mtl_buffer().clone() };
         let block_bases_buf = unsafe { borrow12.mtl_buffer().clone() };
+        let block_alloc_buf = unsafe { borrow13.mtl_buffer().clone() };
 
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
         let root = command_buffer.root_command_buffer();
         let compute_encoder = root.new_compute_command_encoder();
-
         match &self.router {
             RouterBlock::Quantized(block) => {
                 block.encode(state, command_buffer, parameters)
@@ -520,7 +479,6 @@ impl EncodableWithState for MoeBlockEncodable {
                 );
             },
         }
-
         self.topk_kernel
             .encode(
                 &compute_encoder,
@@ -536,20 +494,19 @@ impl EncodableWithState for MoeBlockEncodable {
                 },
             )
             .expect("MoE TopK failed");
-
         self.counts_kernel
             .encode(
                 &compute_encoder,
                 MoeBucketCountsArguments {
                     topk_ids_buffer: &topk_ids_buf,
                     counts_buffer: &counts_buf,
+                    partials_buffer: &partials_buf,
                     t: suffix_length,
                     e,
                     k,
                 },
             )
             .expect("MoE counts failed");
-
         self.offsets_kernel
             .encode(
                 &compute_encoder,
@@ -564,20 +521,19 @@ impl EncodableWithState for MoeBlockEncodable {
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
-
         self.scatter_kernels
             .encode_block_bases(
                 &compute_encoder,
                 super::MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
+                    block_alloc_buffer: &block_alloc_buf,
                     e,
                     num_blocks,
                     num_tiles,
                 },
             )
             .expect("MoE block bases failed");
-
         self.scatter_kernels
             .encode_scatter_with_map(
                 &compute_encoder,
@@ -587,6 +543,7 @@ impl EncodableWithState for MoeBlockEncodable {
                         topk_probs_buffer: &topk_probs_buf,
                         offsets_buffer: &offsets_buf,
                         block_bases_buffer: &block_bases_buf,
+                        block_alloc_buffer: &block_alloc_buf,
                         out_ids_buffer: &bucketed_ids_buf,
                         out_probs_buffer: &bucketed_probs_buf,
                         t: suffix_length,
@@ -603,9 +560,7 @@ impl EncodableWithState for MoeBlockEncodable {
 
         let gating_code = Self::gating_code_from_activation(
             &self.moe_config.expert_config.activation,
-            self.fused_up_weights,
         );
-
         self.experts_kernel
             .encode(
                 &compute_encoder,
@@ -613,16 +568,17 @@ impl EncodableWithState for MoeBlockEncodable {
                     x_buffer: &main_buf,
                     bucketed_token_ids: &bucketed_ids_buf,
                     expert_offsets: &offsets_buf,
-                    w1_all: &self.w1_buf,
-                    w3_all: &self.w3_buf,
-                    w2_all: &self.w2_buf,
+                    w1_all: &self.shared_weights.w1_buf,
+                    w3_all: &self.shared_weights.w3_buf,
+                    w2_all: &self.shared_weights.w2_buf,
                     y_partial: &y_partial_buf,
-                    up_biases: &self.up_biases_buf,
-                    down_biases: &self.down_biases_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
                     t: suffix_length,
                     d_model: self.model_dim,
                     d_ff: self.hidden_dim,
                     e,
+                    k,
                     gating_code,
                     gate_clip_min: self.moe_config.expert_config.gate_clipping
                         [0]
@@ -636,11 +592,10 @@ impl EncodableWithState for MoeBlockEncodable {
                 },
             )
             .expect("MoE experts failed");
-
         self.finalize_kernel
             .encode(
                 &compute_encoder,
-                MoeFinalizeArguments {
+                super::MoeFinalizeArguments {
                     tok2row_buffer: &tok2row_buf,
                     probs_buffer: &topk_probs_buf,
                     y_partial_buffer: &y_partial_buf,

@@ -51,6 +51,7 @@ pub struct ForwardPassBuffers {
     pub moe_y_partial: Option<MTLBuffer>,
     pub moe_scatter_partials: Option<MTLBuffer>,
     pub moe_scatter_block_bases: Option<MTLBuffer>,
+    pub moe_block_alloc: Option<MTLBuffer>,
 }
 
 impl ForwardPassBuffers {
@@ -236,6 +237,19 @@ impl ForwardPassBuffers {
                 .layer_config
                 .mlp_config
             {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let num_blocks = ((max_suffix_len + 255) / 256).max(1);
+                    let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+                    let entries = num_blocks * num_tiles * 512;
+                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
+                    Some(context.device.new_buffer(
+                        bytes,
+                        metal::MTLResourceOptions::StorageModeShared,
+                    ))
+                },
+                _ => None,
+            },
+            moe_block_alloc: match &decoder_config.layer_config.mlp_config {
                 MLPConfig::MixtureOfExperts(moe) => {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);

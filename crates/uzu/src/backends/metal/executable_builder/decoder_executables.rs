@@ -74,6 +74,30 @@ impl DecoderExecutables {
             .activation_precision()
             .into();
 
+        // STEP 1: Transform MOE expert weights once (initialization only)
+        eprintln!("[DEBUG] Step 1: MOE initialization ENABLED, execution DISABLED");
+        let shared_moe_weights = if let crate::config::MLPConfig::MixtureOfExperts(moe_config) = &decoder_config.layer_config.mlp_config {
+            eprintln!("[Decoder] Detected MOE config, transforming expert weights once for all {} layers", decoder_config.num_layers);
+            let first_layer_mlp_tree = decoder_weight_loader
+                .subtree("layers.0")
+                .unwrap()
+                .subtree("mlp")
+                .unwrap();
+            
+            Some(
+                crate::backends::metal::kernel::moe::MoeBlockEncodable::transform_expert_weights_once(
+                    &mtl_context,
+                    moe_config,
+                    decoder_config.model_dim,
+                    decoder_config.hidden_dim,
+                    &first_layer_mlp_tree,
+                )
+                .expect("Failed to transform MOE weights")
+            )
+        } else {
+            None
+        };
+
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
                 let mut rope = global_rope.clone();
@@ -98,6 +122,7 @@ impl DecoderExecutables {
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
                     rope,
+                    shared_moe_weights.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -154,32 +179,24 @@ impl EncodableWithState for DecoderExecutables {
     ) {
         let t_total = std::time::Instant::now();
         
-        let t_embed = std::time::Instant::now();
         self.embed.encode(state, command_buffer, parameters);
-        eprintln!("[Decoder] Embed: {:.3}ms", t_embed.elapsed().as_secs_f64() * 1000.0);
 
-        let t_layers = std::time::Instant::now();
         for layer in self.layers.iter() {
             layer.encode(state, command_buffer, parameters);
         }
-        eprintln!("[Decoder] All 24 layers: {:.3}ms", t_layers.elapsed().as_secs_f64() * 1000.0);
 
-        let t_norm = std::time::Instant::now();
         self.norm.encode(state, command_buffer, parameters);
-        eprintln!("[Decoder] OutputNorm: {:.3}ms", t_norm.elapsed().as_secs_f64() * 1000.0);
         if let Some(traces) = state.traces.clone() {
             state
                 .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        let t_readout = std::time::Instant::now();
         self.readout.encode(state, command_buffer, parameters);
-        eprintln!("[Decoder] Readout: {:.3}ms", t_readout.elapsed().as_secs_f64() * 1000.0);
         
         if let Some(traces) = state.traces.clone() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
         
-        eprintln!("[Decoder] COMPLETE FORWARD PASS: {:.3}ms", t_total.elapsed().as_secs_f64() * 1000.0);
+        eprintln!("[Decoder] Encoding complete: {:.3}ms", t_total.elapsed().as_secs_f64() * 1000.0);
     }
 }

@@ -121,6 +121,12 @@ fn test_moe_finalize_end_to_end() {
             e * std::mem::size_of::<u32>(),
         );
     }
+    let num_blocks = ((t + 255) / 256).max(1);
+    let num_tiles = ((e + 512 - 1) / 512).max(1);
+    let partials_buf = ctx.device.new_buffer(
+        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
     let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
@@ -128,6 +134,7 @@ fn test_moe_finalize_end_to_end() {
         .encode(
             &enc,
             MoeBucketCountsArguments {
+                partials_buffer: &partials_buf,
                 topk_ids_buffer: &topk_ids_buf,
                 counts_buffer: &counts_buf,
                 t,
@@ -230,12 +237,17 @@ fn test_moe_finalize_end_to_end() {
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
+    let block_alloc_buf = ctx.device.new_buffer(
+        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
     scatter
         .encode_block_bases(
             &enc,
             MoeBlockBasesArguments {
                 partials_buffer: &partials,
                 block_bases_buffer: &block_bases_buf,
+                block_alloc_buffer: &block_alloc_buf,
                 e,
                 num_blocks,
                 num_tiles,
@@ -272,6 +284,7 @@ fn test_moe_finalize_end_to_end() {
                     topk_probs_buffer: &topk_probs_buf,
                     offsets_buffer: &offsets_buf,
                     block_bases_buffer: &block_bases_buf,
+                    block_alloc_buffer: &block_alloc_buf,
                     out_ids_buffer: &out_ids_buf,
                     out_probs_buffer: &out_probs_buf,
                     t,
@@ -341,6 +354,7 @@ fn test_moe_finalize_end_to_end() {
                 d_model,
                 d_ff,
                 e,
+                k,
                 gating_code: 2,
                 gate_clip_min: f32::NEG_INFINITY,
                 gate_clip_max: f32::INFINITY,

@@ -135,6 +135,12 @@ fn test_scatter_buckets_parity() {
                 e * std::mem::size_of::<u32>(),
             );
         }
+    let num_blocks = ((t + 255) / 256).max(1);
+    let num_tiles = ((e + 512 - 1) / 512).max(1);
+    let partials_buf = ctx.device.new_buffer(
+        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
         let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
@@ -142,6 +148,7 @@ fn test_scatter_buckets_parity() {
             .encode(
                 &enc,
                 MoeBucketCountsArguments {
+                partials_buffer: &partials_buf,
                     topk_ids_buffer: &topk_ids_buf,
                     counts_buffer: &counts_buf,
                     t,
@@ -191,12 +198,17 @@ fn test_scatter_buckets_parity() {
         let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
+        let block_alloc_buf = ctx.device.new_buffer(
+            (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
         scatter
             .encode_block_bases(
                 &enc,
                 MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
+                    block_alloc_buffer: &block_alloc_buf,
                     e,
                     num_blocks,
                     num_tiles,
@@ -221,7 +233,7 @@ fn test_scatter_buckets_parity() {
 
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
-        scatter
+            scatter
             .encode_scatter(
                 &enc,
                 MoeScatterArguments {
@@ -229,6 +241,7 @@ fn test_scatter_buckets_parity() {
                     topk_probs_buffer: &topk_probs_buf,
                     offsets_buffer: &offsets_buf,
                     block_bases_buffer: &block_bases_buf,
+                    block_alloc_buffer: &block_alloc_buf,
                     out_ids_buffer: &out_ids_buf,
                     out_probs_buffer: &out_probs_buf,
                     t,
@@ -244,7 +257,7 @@ fn test_scatter_buckets_parity() {
         cb.commit();
         cb.wait_until_completed();
 
-        let out_ids = unsafe {
+        let _out_ids = unsafe {
             std::slice::from_raw_parts(
                 out_ids_buf.contents() as *const i32,
                 sumk,
@@ -256,11 +269,11 @@ fn test_scatter_buckets_parity() {
                 sumk,
             )
         };
-        let out_probs: Vec<f32> =
+        let _out_probs: Vec<f32> =
             out_probs_h.iter().map(|&h| h.to_f32()).collect();
 
         // CPU reference (stable per expert)
-        let (cpu_ids, cpu_probs, offsets_cpu) =
+        let (cpu_ids, _cpu_probs, offsets_cpu) =
             cpu_expert_buckets(topk_ids_cpu, &topk_probs_cpu, t, e, k);
         let offsets_gpu = unsafe {
             std::slice::from_raw_parts(
@@ -661,7 +674,7 @@ fn test_multiblock_multitile_parity_real_partials() {
                 e + 1,
             )
         };
-        let out_ids = unsafe {
+        let _out_ids = unsafe {
             std::slice::from_raw_parts(
                 out_ids_buf.contents() as *const i32,
                 sumk,
@@ -800,9 +813,6 @@ fn test_capacity_clamp_correctness() {
         num_tiles,
         sumk,
     );
-    let out_ids = unsafe {
-        std::slice::from_raw_parts(out_ids_buf.contents() as *const i32, sumk)
-    };
     let offsets = unsafe {
         std::slice::from_raw_parts(offsets_buf.contents() as *const u32, e + 1)
     };
