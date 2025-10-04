@@ -138,17 +138,12 @@ inline void moe_scatter_buckets_impl(
                                 const uint idx_sg_te = sg_id * TILE_E + te;
                                 const uint local = atomic_fetch_add_explicit(&sg_counts[idx_sg_te], 1u, memory_order_relaxed);
                                 const uint base_s = sg_base[idx_sg_te];
-                                const uint next_base = (sg_id + 1u < NUM_SG) ? sg_base[(sg_id + 1u) * TILE_E + te] : block_alloc[base_idx_block];
-                                const uint alloc_s = (next_base >= base_s) ? (next_base - base_s) : 0u;
-                                if (local < alloc_s) {
-                                    const uint slot = offsets[ue] + block_bases[base_idx_block] + base_s + local;
-                                    out_ids[slot] = (int)t;
-                                    out_probs[slot] = topk_probs[base + k];
-                                    if (tok2row_opt != nullptr) {
-                                        tok2row_opt[base + k] = (int)slot;
-                                    }
-                                } else if (tok2row_opt != nullptr) {
-                                    tok2row_opt[base + k] = -1;
+
+                                const uint slot = offsets[ue] + block_bases[base_idx_block] + base_s + local;
+                                out_ids[slot] = (int)t;
+                                out_probs[slot] = topk_probs[base + k];
+                                if (tok2row_opt != nullptr) {
+                                    tok2row_opt[base + k] = (int)slot;
                                 }
                             }
                         }
@@ -296,5 +291,3 @@ kernel void moe_scatter_buckets_map_bf16(
     threadgroup uint          sg_base  [NUM_SG * TILE_E];
     moe_scatter_buckets_impl<bfloat>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, tok2row, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
 }
-
-

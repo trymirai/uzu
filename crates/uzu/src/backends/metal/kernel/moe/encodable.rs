@@ -749,7 +749,7 @@ impl EncodableWithState for MoeBlockEncodable {
                 },
             )
             .expect("MoE TopK failed");
-        
+
         self.counts_kernel
             .encode(
                 root,
@@ -763,7 +763,7 @@ impl EncodableWithState for MoeBlockEncodable {
                 },
             )
             .expect("MoE counts failed");
-        
+
         self.offsets_kernel
             .encode(
                 root,
@@ -778,7 +778,7 @@ impl EncodableWithState for MoeBlockEncodable {
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
-        
+
         self.scatter_kernels
             .encode_block_bases(
                 root,
@@ -792,7 +792,7 @@ impl EncodableWithState for MoeBlockEncodable {
                 },
             )
             .expect("MoE block bases failed");
-        
+
         self.scatter_kernels
             .encode_scatter_with_map(
                 root,

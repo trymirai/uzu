@@ -53,9 +53,9 @@ void moe_fused_expert_mlp_impl(
     uint3 tgpig,
     ushort simd_gid,
     ushort simd_lid,
-    threadgroup half* Xs,
-    threadgroup half* Wk_up,
-    threadgroup half* Wk_gate,
+    threadgroup T* Xs,
+    threadgroup T* Wk_up,
+    threadgroup T* Wk_gate,
     threadgroup float* Htile,
     threadgroup float* W2sf,
     threadgroup float* Hs)
@@ -102,8 +102,8 @@ void moe_fused_expert_mlp_impl(
 
     for (uint ff0 = 0; ff0 < d_ff; ff0 += BK) {
         const uint ff_chunk = min((uint)BK, d_ff - ff0);
-        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_up(simd_gid, simd_lid);
-        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_gate(simd_gid, simd_lid);
+        matmul_utils::BlockMMA<T, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_up(simd_gid, simd_lid);
+        matmul_utils::BlockMMA<T, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_gate(simd_gid, simd_lid);
         mma_fc1_up.Ctile.clear();
         if (GATING_SEL > 1u) {
             mma_fc1_gate.Ctile.clear();
@@ -114,27 +114,27 @@ void moe_fused_expert_mlp_impl(
             for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
                 const uint mi = idx / BK;
                 const uint kk = idx % BK;
-                half val = (half)0.0h;
+                T val = T(0.0f);
                 if (mi < m_rows && kk < k_chunk && is_active) {
                     const ulong row_offset = x_block_base
                         + (ulong)mi * (ulong)d_model
                         + (ulong)(k0 + kk);
-                    val = half(float(X_perm[row_offset]));
+                    val = X_perm[row_offset];
                 }
                 Xs[mi * BK + kk] = val;
             }
             for (uint idx = lid; idx < (uint)(BK * BK); idx += 128u) {
                 const uint kk = idx / BK;
                 const uint r = idx % BK;
-                half up_val = (half)0.0h;
-                half gate_val = (half)0.0h;
+                T up_val = T(0.0f);
+                T gate_val = T(0.0f);
                 if (kk < k_chunk && r < ff_chunk && is_active) {
                     const ulong fused_idx = W13_base
                         + (ulong)(k0 + kk) * (ulong)(2u * d_ff)
                         + (ulong)(ff0 + r);
-                    up_val = half(float(W13_all[fused_idx]));
+                    up_val = W13_all[fused_idx];
                     if (GATING_SEL > 1u) {
-                        gate_val = half(float(W13_all[fused_idx + d_ff]));
+                        gate_val = W13_all[fused_idx + d_ff];
                     }
                 }
                 Wk_up[kk * BK + r] = up_val;
@@ -198,7 +198,6 @@ void moe_fused_expert_mlp_impl(
                     result = swish_y * up;
                 }
                 result = isfinite(result) ? result : 0.0f;
-                result = clamp(result, -128.0f, 128.0f);
             }
             Hs[idx] = result;
         }
@@ -223,7 +222,7 @@ void moe_fused_expert_mlp_impl(
 
     const ulong y_offset =
         (ulong)(seg_start + tile_m0) * (ulong)d_model + (ulong)tile_n0;
-    device T* y_ptr = Y_partial + (uint)y_offset;
+    device T* y_ptr = Y_partial + y_offset;
     const short num_els = (short)m_rows;
     const short num_outs = (short)n_cols;
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -233,33 +232,34 @@ void moe_fused_expert_mlp_impl(
         mma_op.store_result(y_ptr, (int)d_model);
     }
 
-    for (uint idx = lid; idx < (uint)(m_rows * n_cols); idx += 128u) {
-        const uint mi = idx / n_cols;
-        const uint nj = idx % n_cols;
-        if (mi < m_rows && nj < n_cols && is_active) {
-            const ulong bias_idx = (ulong)expert_idx * (ulong)d_model
-                + (ulong)(tile_n0 + nj);
-            const ulong y_idx =
-                y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
-            float bias_val = float(down_biases[bias_idx]);
-            float prev_val = float(Y_partial[y_idx]);
-            float out_val = prev_val + bias_val;
-            out_val = isfinite(out_val) ? out_val : 0.0f;
-            Y_partial[y_idx] = T(out_val);
+    // Re-enabled after confirming bug is HERE, not in MMA store
+    if (is_active) {
+        for (uint mi = 0; mi < m_rows; ++mi) {
+            for (uint nj = lid; nj < n_cols; nj += 128u) {
+                const ulong bias_idx = (ulong)expert_idx * (ulong)d_model
+                    + (ulong)(tile_n0 + nj);
+                const ulong y_idx =
+                    y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
+                float prev_val = float(Y_partial[y_idx]);
+                float bias_val = float(down_biases[bias_idx]);
+                float out_val = prev_val + bias_val;
+                out_val = isfinite(out_val) ? out_val : 0.0f;
+                Y_partial[y_idx] = T(out_val);
+            }
         }
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint idx = lid; idx < (uint)(m_rows * n_cols); idx += 128u) {
-        const uint mi = idx / n_cols;
-        const uint nj = idx % n_cols;
-        if (mi < m_rows && nj < n_cols && is_active) {
-            const ulong y_idx =
-                y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
-            float val = float(Y_partial[y_idx]);
-            if (!isfinite(val)) {
-                Y_partial[y_idx] = T(0.0f);
+    if (is_active) {
+        for (uint mi = 0; mi < m_rows; ++mi) {
+            for (uint nj = lid; nj < n_cols; nj += 128u) {
+                const ulong y_idx =
+                    y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
+                float val = float(Y_partial[y_idx]);
+                if (!isfinite(val)) {
+                    Y_partial[y_idx] = T(0.0f);
+                }
             }
         }
     }
@@ -311,9 +311,9 @@ kernel void moe_fused_expert_mlp_f16 outerArguments(half) {
 }
 
 kernel void moe_fused_expert_mlp_bf16 outerArguments(bfloat) {
-    threadgroup half Xs[BM * BK];
-    threadgroup half Wk_up[BK * BK];
-    threadgroup half Wk_gate[BK * BK];
+    threadgroup bfloat Xs[BM * BK];
+    threadgroup bfloat Wk_up[BK * BK];
+    threadgroup bfloat Wk_gate[BK * BK];
     threadgroup float Htile[BM * BK];
     threadgroup float W2sf[BK * BN];
     threadgroup float Hs[BM * BK];
@@ -321,9 +321,9 @@ kernel void moe_fused_expert_mlp_bf16 outerArguments(bfloat) {
 }
 
 kernel void moe_fused_expert_mlp_f32 outerArguments(float) {
-    threadgroup half Xs[BM * BK];
-    threadgroup half Wk_up[BK * BK];
-    threadgroup half Wk_gate[BK * BK];
+    threadgroup float Xs[BM * BK];
+    threadgroup float Wk_up[BK * BK];
+    threadgroup float Wk_gate[BK * BK];
     threadgroup float Htile[BM * BK];
     threadgroup float W2sf[BK * BN];
     threadgroup float Hs[BM * BK];
