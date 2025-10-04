@@ -90,7 +90,7 @@ fn gen_counts_via_gpu(
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
     let bargs = MoeBucketCountsArguments {
-                partials_buffer: &partials_buf,
+        partials_buffer: &partials_buf,
         topk_ids_buffer: &topk_ids_buf,
         counts_buffer: &counts_buf,
         t,

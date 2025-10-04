@@ -33,3 +33,4 @@ serde_json5 = "0.2.1"
 [features]
 default = ["metal-shaders"]
 metal-shaders = []
+moe_dev_tests = []

@@ -15,6 +15,10 @@ fn get_directory_size(path: &Path) -> std::io::Result<u64> {
 }
 
 pub fn is_directory_fits_ram(path: &Path) -> bool {
+    if std::env::var_os("UZU_SKIP_RAM_CHECK").is_some() {
+        return true;
+    }
+
     use sysinfo::System;
 
     let model_size_bytes = get_directory_size(path).unwrap_or(0);
@@ -23,5 +27,5 @@ pub fn is_directory_fits_ram(path: &Path) -> bool {
     sys.refresh_memory();
 
     let allowed_bytes = sys.total_memory() * 60 / 100;
-    return model_size_bytes <= allowed_bytes;
+    model_size_bytes <= allowed_bytes
 }

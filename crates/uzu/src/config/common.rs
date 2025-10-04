@@ -75,7 +75,9 @@ fn default_silu_alpha() -> f32 {
 impl Activation {
     pub fn alpha(&self) -> f32 {
         match self {
-            Activation::SILU { alpha } => *alpha,
+            Activation::SILU {
+                alpha,
+            } => *alpha,
             Activation::GELU => 1.0,
         }
     }

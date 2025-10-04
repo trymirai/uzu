@@ -75,17 +75,25 @@ impl DecoderExecutables {
             .into();
 
         // STEP 1: Transform MOE expert weights once (initialization only)
-        eprintln!("[DEBUG] Step 1: MOE initialization ENABLED, execution DISABLED");
-        let shared_moe_weights = if let crate::config::MLPConfig::MixtureOfExperts(moe_config) = &decoder_config.layer_config.mlp_config {
-            eprintln!("[Decoder] Detected MOE config, transforming expert weights once for all {} layers", decoder_config.num_layers);
-            let first_layer_mlp_tree = decoder_weight_loader
-                .subtree("layers.0")
-                .unwrap()
-                .subtree("mlp")
-                .unwrap();
-            
-            Some(
-                crate::backends::metal::kernel::moe::MoeBlockEncodable::transform_expert_weights_once(
+        eprintln!(
+            "[DEBUG] Step 1: MOE initialization ENABLED, execution DISABLED"
+        );
+        let shared_moe_weights =
+            if let crate::config::MLPConfig::MixtureOfExperts(moe_config) =
+                &decoder_config.layer_config.mlp_config
+            {
+                eprintln!(
+                    "[Decoder] Detected MOE config, transforming expert weights once for all {} layers",
+                    decoder_config.num_layers
+                );
+                let first_layer_mlp_tree = decoder_weight_loader
+                    .subtree("layers.0")
+                    .unwrap()
+                    .subtree("mlp")
+                    .unwrap();
+
+                Some(
+                crate::backends::metal::kernel::moe::MoeBlockEncodable::load_shared_expert_weights(
                     &mtl_context,
                     moe_config,
                     decoder_config.model_dim,
@@ -94,12 +102,14 @@ impl DecoderExecutables {
                 )
                 .expect("Failed to transform MOE weights")
             )
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
+        eprintln!("[Decoder] Compiling {} layers...", decoder_config.num_layers);
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
+                eprintln!("[Decoder] Compiling layer {}...", layer_index);
                 let mut rope = global_rope.clone();
                 if let (Some(_), Some(local_rope_block)) =
                     (sliding_window_sizes[layer_index], local_rope.clone())
@@ -107,7 +117,7 @@ impl DecoderExecutables {
                     rope = local_rope_block;
                 }
 
-                LayerExecutables::new(
+                let layer = LayerExecutables::new(
                     &mtl_context,
                     &decoder_config.layer_config,
                     compilation_config.clone(),
@@ -123,9 +133,12 @@ impl DecoderExecutables {
                         .unwrap(),
                     rope,
                     shared_moe_weights.clone(),
-                )
+                );
+                eprintln!("[Decoder] Layer {} compiled.", layer_index);
+                layer
             })
             .collect::<Vec<_>>();
+        eprintln!("[Decoder] All {} layers compiled successfully.", decoder_config.num_layers);
 
         let norm_block: Box<dyn EncodableWithState> = Box::new(
             RMSNormKernelEncodable::new(
@@ -178,7 +191,7 @@ impl EncodableWithState for DecoderExecutables {
         parameters: &EncodingParameters,
     ) {
         let t_total = std::time::Instant::now();
-        
+
         self.embed.encode(state, command_buffer, parameters);
 
         for layer in self.layers.iter() {
@@ -192,11 +205,14 @@ impl EncodableWithState for DecoderExecutables {
         }
 
         self.readout.encode(state, command_buffer, parameters);
-        
+
         if let Some(traces) = state.traces.clone() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
-        
-        eprintln!("[Decoder] Encoding complete: {:.3}ms", t_total.elapsed().as_secs_f64() * 1000.0);
+
+        eprintln!(
+            "[Decoder] Encoding complete: {:.3}ms",
+            t_total.elapsed().as_secs_f64() * 1000.0
+        );
     }
 }

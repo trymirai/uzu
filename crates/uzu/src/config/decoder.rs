@@ -228,7 +228,9 @@ mod tests {
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SILU { alpha: 1.0 },
+                    activation: Activation::SILU {
+                        alpha: 1.0,
+                    },
                 }),
                 post_attention_norm_config: None,
                 post_mlp_norm_config: None,

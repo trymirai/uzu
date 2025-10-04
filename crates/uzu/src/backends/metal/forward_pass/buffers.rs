@@ -47,8 +47,14 @@ pub struct ForwardPassBuffers {
     pub moe_sumk: Option<MTLBuffer>,
     pub moe_bucketed_token_ids: Option<MTLBuffer>,
     pub moe_bucketed_probs: Option<MTLBuffer>,
+    pub moe_x_perm: Option<MTLBuffer>,
     pub moe_tok2row: Option<MTLBuffer>,
     pub moe_y_partial: Option<MTLBuffer>,
+    pub moe_tile_counts: Option<MTLBuffer>,
+    pub moe_tile_offsets: Option<MTLBuffer>,
+    pub moe_tile_map: Option<MTLBuffer>,
+    pub moe_total_tiles: Option<MTLBuffer>,
+    pub moe_dispatch_args: Option<MTLBuffer>,
     pub moe_scatter_partials: Option<MTLBuffer>,
     pub moe_scatter_block_bases: Option<MTLBuffer>,
     pub moe_block_alloc: Option<MTLBuffer>,
@@ -201,6 +207,14 @@ impl ForwardPassBuffers {
                 },
                 _ => None,
             },
+            moe_x_perm: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_x_perm_shape(max_routed);
+                    Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
             moe_tok2row: match &decoder_config.layer_config.mlp_config {
                 MLPConfig::MixtureOfExperts(moe) => {
                     let shape = model_shape.moe_tok2row_shape(
@@ -215,7 +229,43 @@ impl ForwardPassBuffers {
                 MLPConfig::MixtureOfExperts(moe) => {
                     let max_routed = max_suffix_len * moe.num_experts_per_token;
                     let shape = model_shape.moe_y_partial_shape(max_routed);
-                    Some(alloc(&shape, act_ty))
+                    Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
+            moe_tile_counts: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_counts_shape(moe.mixture_size);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_tile_offsets: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_offsets_shape(moe.mixture_size);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_tile_map: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_tile_map_shape(max_routed);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_total_tiles: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(_) => {
+                    let shape = model_shape.moe_total_tiles_shape();
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_dispatch_args: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(_) => {
+                    let shape = model_shape.moe_dispatch_args_shape();
+                    Some(alloc(&shape, DataType::U32))
                 },
                 _ => None,
             },

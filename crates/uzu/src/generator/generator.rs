@@ -8,13 +8,11 @@ use super::{
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
 use crate::{
-    Array,
-    backends::metal::{
-        forward_pass::{
-            ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-            kv_cache::INVALID_POSITION,
-        },
+    Array, DataType,
+    backends::metal::forward_pass::{
+        ArrayId, ForwardPassState,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
+        kv_cache::INVALID_POSITION,
     },
     linearizer::trie::TokenTrie,
     session::{
@@ -348,7 +346,10 @@ impl Generator {
             let t_create_state = Instant::now();
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
-            eprintln!("[RunModel] Create state: {:.3}ms", t_create_state.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "[RunModel] Create state: {:.3}ms",
+                t_create_state.elapsed().as_secs_f64() * 1000.0
+            );
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
@@ -365,7 +366,10 @@ impl Generator {
                     encoded_task_key.clone(),
                 );
             }
-            eprintln!("[RunModel] Encode: {:.3}ms", t_encode.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "[RunModel] Encode: {:.3}ms",
+                t_encode.elapsed().as_secs_f64() * 1000.0
+            );
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
@@ -404,6 +408,41 @@ impl Generator {
             }
 
             root_command_buffer.wait_until_completed();
+
+            if std::env::var_os("UZU_DEBUG_MOE").is_some() {
+                let debug_arrays = state.arrays(&[ArrayId::MoeTotalTiles]);
+                if let Some(cell) = debug_arrays.get(0) {
+                    let array = cell.borrow();
+                    if array.data_type() == DataType::U32 {
+                        let raw = array.buffer();
+                        if raw.len() >= 32 {
+                            let words = unsafe {
+                                std::slice::from_raw_parts(
+                                    raw.as_ptr() as *const u32,
+                                    raw.len() / 4,
+                                )
+                            };
+                            if words.len() >= 8 {
+                                let sample_fc1 = f32::from_bits(words[4]);
+                                let sample_fc2 = f32::from_bits(words[5]);
+                                let sample_gate = f32::from_bits(words[6]);
+                                let sample_up = f32::from_bits(words[7]);
+                                eprintln!(
+                                    "[DebugMoe] total_tiles={} total_jobs={} nan_fc1={} nan_fc2={} sample_fc1={} sample_fc2={} gate={} up={}",
+                                    words[0],
+                                    words[1],
+                                    words[2],
+                                    words[3],
+                                    sample_fc1,
+                                    sample_fc2,
+                                    sample_gate,
+                                    sample_up
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             let run_time = run_start.elapsed().as_secs_f64();
             (state, run_time)
         })
@@ -422,9 +461,233 @@ impl Generator {
             .map_err(|_| Error::SamplingFailed)?;
         let batch_size = output_buffer.shape()[0];
 
+        if std::env::var_os("UZU_DEBUG_LOGITS").is_some() {
+            let logits_binding = state.arrays(&[ArrayId::Logits]);
+            let logits = logits_binding[0].borrow();
+            let shape = logits.shape().to_vec();
+            let (samples, min_val, max_val, first_nan_idx) = match logits
+                .data_type()
+            {
+                DataType::F16 => {
+                    let slice = logits
+                        .as_slice::<half::f16>()
+                        .expect("Failed to map logits as f16 slice");
+                    collect_logit_stats(
+                        slice
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, &v)| (idx, f32::from(v))),
+                    )
+                },
+                DataType::BF16 => {
+                    let slice = logits
+                        .as_slice::<half::bf16>()
+                        .expect("Failed to map logits as bf16 slice");
+                    collect_logit_stats(
+                        slice
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, &v)| (idx, f32::from(v))),
+                    )
+                },
+                DataType::F32 => {
+                    let slice = logits
+                        .as_slice::<f32>()
+                        .expect("Failed to map logits as f32 slice");
+                    collect_logit_stats(
+                        slice.iter().enumerate().map(|(idx, &v)| (idx, v)),
+                    )
+                },
+                other => {
+                    eprintln!("[DebugLogits] unsupported dtype {:?}", other);
+                    (Vec::new(), None, None, None)
+                },
+            };
+            eprintln!(
+                "[DebugLogits] dtype={:?} shape={:?} sample={:?} min={:?} max={:?} first_nan_idx={:?}",
+                logits.data_type(),
+                shape,
+                samples,
+                min_val,
+                max_val,
+                first_nan_idx
+            );
+        }
+
         let mut result = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             result.push(output_view[[i]] as u64);
+        }
+
+        if std::env::var_os("UZU_DEBUG_MOE").is_some() {
+            let y_partial_binding = state.arrays(&[ArrayId::MoeYPartial]);
+            let y_partial = y_partial_binding[0].borrow();
+            let y_shape = y_partial.shape().to_vec();
+            let (samples, min_val, max_val, first_nan_idx) =
+                match y_partial.data_type() {
+                    DataType::F16 => {
+                        let slice = y_partial
+                            .as_slice::<half::f16>()
+                            .expect("Failed to map y_partial as f16 slice");
+                        collect_logit_stats(
+                            slice
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, &v)| (idx, f32::from(v))),
+                        )
+                    },
+                    DataType::BF16 => {
+                        let slice = y_partial
+                            .as_slice::<half::bf16>()
+                            .expect("Failed to map y_partial as bf16 slice");
+                        collect_logit_stats(
+                            slice
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, &v)| (idx, f32::from(v))),
+                        )
+                    },
+                    DataType::F32 => {
+                        let slice = y_partial
+                            .as_slice::<f32>()
+                            .expect("Failed to map y_partial as f32 slice");
+                        collect_logit_stats(
+                            slice.iter().enumerate().map(|(idx, &v)| (idx, v)),
+                        )
+                    },
+                    other => {
+                        eprintln!(
+                            "[DebugMoe] unsupported y_partial dtype {:?}",
+                            other
+                        );
+                        (Vec::new(), None, None, None)
+                    },
+                };
+            let (nan_row, nan_col) = first_nan_idx
+                .map(|idx| {
+                    let cols = y_shape.get(1).copied().unwrap_or(1);
+                    (idx / cols, idx % cols)
+                })
+                .unwrap_or((0, 0));
+            if let Some(idx) = first_nan_idx {
+                match y_partial.data_type() {
+                    DataType::F16 => {
+                        if let Ok(slice) = y_partial.as_slice::<half::f16>() {
+                            let start = idx.saturating_sub(4);
+                            let end = (idx + 5).min(slice.len());
+                            let window: Vec<f32> = slice[start..end]
+                                .iter()
+                                .map(|v| f32::from(*v))
+                                .collect();
+                            eprintln!(
+                                "[DebugMoe] y_partial window@{} {:?}",
+                                idx, window
+                            );
+                        }
+                    },
+                    DataType::BF16 => {
+                        if let Ok(slice) = y_partial.as_slice::<half::bf16>() {
+                            let start = idx.saturating_sub(4);
+                            let end = (idx + 5).min(slice.len());
+                            let window: Vec<f32> = slice[start..end]
+                                .iter()
+                                .map(|v| f32::from(*v))
+                                .collect();
+                            eprintln!(
+                                "[DebugMoe] y_partial window@{} {:?}",
+                                idx, window
+                            );
+                        }
+                    },
+                    DataType::F32 => {
+                        if let Ok(slice) = y_partial.as_slice::<f32>() {
+                            let start = idx.saturating_sub(4);
+                            let end = (idx + 5).min(slice.len());
+                            eprintln!(
+                                "[DebugMoe] y_partial window@{} {:?}",
+                                idx,
+                                &slice[start..end]
+                            );
+                        }
+                    },
+                    _ => {},
+                }
+            }
+            eprintln!(
+                "[DebugMoe] y_partial dtype={:?} shape={:?} sample={:?} min={:?} max={:?} first_nan_idx={:?} (row={}, col={})",
+                y_partial.data_type(),
+                y_shape,
+                samples,
+                min_val,
+                max_val,
+                first_nan_idx,
+                nan_row,
+                nan_col
+            );
+
+            {
+                let x_perm_binding = state.arrays(&[ArrayId::MoeXPerm]);
+                let x_perm = x_perm_binding[0].borrow();
+                let x_shape = x_perm.shape().to_vec();
+                let (x_samples, x_min, x_max, x_nan_idx) = match x_perm
+                    .data_type()
+                {
+                    DataType::F16 => {
+                        let slice = x_perm
+                            .as_slice::<half::f16>()
+                            .expect("Failed to map x_perm as f16 slice");
+                        collect_logit_stats(
+                            slice
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, &v)| (idx, f32::from(v))),
+                        )
+                    },
+                    DataType::BF16 => {
+                        let slice = x_perm
+                            .as_slice::<half::bf16>()
+                            .expect("Failed to map x_perm as bf16 slice");
+                        collect_logit_stats(
+                            slice
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, &v)| (idx, f32::from(v))),
+                        )
+                    },
+                    DataType::F32 => {
+                        let slice = x_perm
+                            .as_slice::<f32>()
+                            .expect("Failed to map x_perm as f32 slice");
+                        collect_logit_stats(
+                            slice.iter().enumerate().map(|(idx, &v)| (idx, v)),
+                        )
+                    },
+                    other => {
+                        eprintln!(
+                            "[DebugMoe] unsupported x_perm dtype {:?}",
+                            other
+                        );
+                        (Vec::new(), None, None, None)
+                    },
+                };
+                let (x_nan_row, x_nan_col) = x_nan_idx
+                    .map(|idx| {
+                        let cols = x_shape.get(1).copied().unwrap_or(1);
+                        (idx / cols, idx % cols)
+                    })
+                    .unwrap_or((0, 0));
+                eprintln!(
+                    "[DebugMoe] x_perm dtype={:?} shape={:?} sample={:?} min={:?} max={:?} first_nan_idx={:?} (row={}, col={})",
+                    x_perm.data_type(),
+                    x_shape,
+                    x_samples,
+                    x_min,
+                    x_max,
+                    x_nan_idx,
+                    x_nan_row,
+                    x_nan_col
+                );
+            }
         }
 
         Ok(result)
@@ -485,4 +748,36 @@ impl Generator {
             self.registered_prefix_len = desired_prefix_len;
         }
     }
+}
+
+fn collect_logit_stats<I>(
+    iter: I
+) -> (Vec<f32>, Option<f32>, Option<f32>, Option<usize>)
+where
+    I: IntoIterator<Item = (usize, f32)>,
+{
+    let mut samples = Vec::new();
+    let mut min_val: Option<f32> = None;
+    let mut max_val: Option<f32> = None;
+    let mut first_nan_idx: Option<usize> = None;
+
+    for (idx, value) in iter {
+        if idx < 8 {
+            samples.push(value);
+        }
+        if value.is_nan() {
+            first_nan_idx = Some(idx);
+            break;
+        }
+        min_val = Some(match min_val {
+            Some(current) => current.min(value),
+            None => value,
+        });
+        max_val = Some(match max_val {
+            Some(current) => current.max(value),
+            None => value,
+        });
+    }
+
+    (samples, min_val, max_val, first_nan_idx)
 }

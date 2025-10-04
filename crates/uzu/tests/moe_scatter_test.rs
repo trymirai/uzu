@@ -1,7 +1,5 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use std::collections::BTreeMap;
-
 use half::f16;
 use metal::{Device, MTLResourceOptions};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -135,12 +133,12 @@ fn test_scatter_buckets_parity() {
                 e * std::mem::size_of::<u32>(),
             );
         }
-    let num_blocks = ((t + 255) / 256).max(1);
-    let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+        let num_blocks = ((t + 255) / 256).max(1);
+        let num_tiles = ((e + 512 - 1) / 512).max(1);
+        let partials_buf = ctx.device.new_buffer(
+            (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
         let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
@@ -148,7 +146,7 @@ fn test_scatter_buckets_parity() {
             .encode(
                 &enc,
                 MoeBucketCountsArguments {
-                partials_buffer: &partials_buf,
+                    partials_buffer: &partials_buf,
                     topk_ids_buffer: &topk_ids_buf,
                     counts_buffer: &counts_buf,
                     t,
@@ -233,7 +231,7 @@ fn test_scatter_buckets_parity() {
 
         let cb = ctx.command_queue.new_command_buffer();
         let enc = cb.new_compute_command_encoder();
-            scatter
+        scatter
             .encode_scatter(
                 &enc,
                 MoeScatterArguments {
@@ -257,7 +255,7 @@ fn test_scatter_buckets_parity() {
         cb.commit();
         cb.wait_until_completed();
 
-        let _out_ids = unsafe {
+        let out_ids = unsafe {
             std::slice::from_raw_parts(
                 out_ids_buf.contents() as *const i32,
                 sumk,
@@ -674,7 +672,7 @@ fn test_multiblock_multitile_parity_real_partials() {
                 e + 1,
             )
         };
-        let _out_ids = unsafe {
+        let out_ids = unsafe {
             std::slice::from_raw_parts(
                 out_ids_buf.contents() as *const i32,
                 sumk,
@@ -799,7 +797,7 @@ fn test_capacity_clamp_correctness() {
     let sumk = unsafe { *(sumk_buf.contents() as *const u32) } as usize;
     assert_eq!(sumk as u32, clamped_counts.iter().copied().sum::<u32>());
 
-    let (out_ids_buf, _out_probs_buf) = run_scatter(
+    let (_out_ids_buf, _out_probs_buf) = run_scatter(
         &ctx,
         &topk_ids_buf,
         &topk_probs_buf,

@@ -5,31 +5,20 @@
 #include "../quant_matmul/mma.h"
 using namespace metal;
 
-// Tiling parameters (conservative defaults; multiples of 8 and 32)
-#define BM 32   // token rows per tile (M)
-#define BN 64   // output columns per tile (N)
-#define BK 32   // reduction step (K)
+#define BM 16
+#define BN 64
+#define BK 32
 
-// Compile-time gating selection via function constant (0=GELU,1=SiLU,2=SwiGLU,3=GEGLU)
 constant uint GATING_SEL [[function_constant(30)]];
-constant uint DEBUG_MASK [[function_constant(31)]];
 
 static inline float gelu_approx(float x) {
-    const float k0 = 0.7978845608f; // sqrt(2/pi)
+    const float k0 = 0.7978845608f;
     const float k1 = 0.044715f;
-    
-    // For large |x|, GELU(x) ≈ x for x > 0 and ≈ 0 for x < 0
-    // This avoids tanh overflow for extreme values
     if (x > 10.0f) return x;
     if (x < -10.0f) return 0.0f;
-    
     float x3 = x * x * x;
     float inner = x + k1 * x3;
-    float tanh_arg = k0 * inner;
-    
-    // Clamp tanh argument to avoid potential Metal tanh issues
-    tanh_arg = clamp(tanh_arg, -10.0f, 10.0f);
-    
+    float tanh_arg = clamp(k0 * inner, -10.0f, 10.0f);
     return 0.5f * x * (1.0f + tanh(tanh_arg));
 }
 
@@ -37,254 +26,192 @@ static inline float silu(float x, float alpha) {
     return x / (1.0f + exp(-alpha * x));
 }
 
-static inline uint lower_bound_offsets(device const uint* offsets, uint E, uint idx) {
-    // find e such that offsets[e] <= idx < offsets[e+1]
-    uint lo = 0u, hi = E;
-    while (lo < hi) {
-        uint mid = (lo + hi) >> 1;
-        uint v = offsets[mid+1];
-        if (idx < v) {
-            hi = mid;
-        } else {
-            lo = mid + 1u;
-        }
-    }
-    return lo;
-}
-
-// Find expert index e such that tile_row_offsets[e] <= y < tile_row_offsets[e+1]
-static inline uint expert_for_tile(device const uint* tile_row_offsets, uint E, uint y) {
-    uint lo = 0u, hi = E;
-    while (lo < hi) {
-        uint mid = (lo + hi) >> 1;
-        uint v = tile_row_offsets[mid + 1u];
-        if (y < v) {
-            hi = mid;
-        } else {
-            lo = mid + 1u;
-        }
-    }
-    return lo;
-}
-
-// PERSISTENT KERNEL: loops over experts internally (like vLLM grouped GEMM)
-// Dispatch as 2D grid (N_tiles, M_tiles_total) instead of 3D (N_tiles, M_tiles, E)
-// This avoids allocating threadgroup memory for empty experts
-kernel void moe_fused_expert_mlp_f16(
-    device const half* X [[buffer(0)]],                 // [T, d_model]
-    device const int* bucketed_token_ids [[buffer(1)]], // [sum_k]
-    device const uint* expert_offsets [[buffer(2)]],    // [E+1]
-    device const half* W1_all [[buffer(3)]],            // [E*d_ff*d_model]
-    device const half* W3_all [[buffer(4)]],            // [E*d_ff*d_model] or ignored
-    device const half* W2_all [[buffer(5)]],            // [E*d_model*d_ff]
-    device half* Y_partial [[buffer(6)]],               // [sum_k, d_model]
-    constant uint& T [[buffer(7)]],
-    constant uint& d_model [[buffer(8)]],
-    constant uint& d_ff [[buffer(9)]],
-    constant uint& E [[buffer(10)]],
-    constant uint& gating_code [[buffer(11)]],
-    device const half* up_biases [[buffer(12)]],        // [E*d_ff] or [E*2*d_ff] if fused
-    device const half* down_biases [[buffer(13)]],      // [E*d_model]
-    constant float& gate_clip_min [[buffer(14)]],
-    constant float& gate_clip_max [[buffer(15)]],
-    constant float& up_clip_min [[buffer(16)]],
-    constant float& up_clip_max [[buffer(17)]],
-    constant float& silu_alpha [[buffer(18)]],
-    device const uint* tile_row_offsets [[buffer(19)]], // [E+1]
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]],
-    ushort simd_gid [[simdgroup_index_in_threadgroup]],
-    ushort simd_lid [[thread_index_in_simdgroup]])
+template<typename T>
+void moe_fused_expert_mlp_impl(
+    device const T* X_perm,
+    device const uint* expert_offsets,
+    device const T* W13_all,
+    device const T* W2_all,
+    device T* Y_partial,
+    uint T_val,
+    uint d_model,
+    uint d_ff,
+    uint E,
+    uint gating_code_val,
+    device const T* up_biases,
+    device const T* down_biases,
+    float gate_clip_min,
+    float gate_clip_max,
+    float up_clip_min,
+    float up_clip_max,
+    float silu_alpha,
+    device const uint* tile_row_offsets,
+    device const uint* tile_map,
+    device uint* total_meta_buf,
+    uint y_base,
+    uint lid,
+    uint3 tgpig,
+    ushort simd_gid,
+    ushort simd_lid,
+    threadgroup half* Xs,
+    threadgroup half* Wk_up,
+    threadgroup half* Wk_gate,
+    threadgroup float* Htile,
+    threadgroup float* W2sf,
+    threadgroup float* Hs)
 {
-    (void)gating_code; // compile-time specialized via GATING_SEL
+    (void)gating_code_val;
+    (void)tile_row_offsets;
+    (void)T_val;
 
-    const uint tile_n0 = tgpig.x * BN;  // Column tile
-    if (tile_n0 >= d_model) return;
-    
-    const uint n_cols = min((uint)BN, d_model - tile_n0);
-    
-    // Threadgroup scratch (declared once, reused for each expert iteration)
-    threadgroup half Xs[BM * BK];      // X chunk (BM x BK)
-    threadgroup half Wk[BK * BK];      // Weight chunk (BKxBK) for W1/W3
-    threadgroup float Htile[BM * BK];  // FC1 temporary accumulators (BM x BK)
-    threadgroup float W2sf[BK * BN];   // W2 chunk as float (BK x BN)
-    threadgroup float Hs[BM * BK];     // Activated FC1 output (BM x BK)
-    threadgroup int tok[BM];           // Token IDs for this tile
-    
-    // Compact tile path using tile_row_offsets
-    const uint total_tiles = tile_row_offsets[E];
-    const uint y_id = tgpig.y;
-    if (y_id >= total_tiles) return;
-    const uint expert_idx = expert_for_tile(tile_row_offsets, E, y_id);
-    const uint seg_start = expert_offsets[expert_idx];
-    const uint seg_end   = expert_offsets[expert_idx + 1u];
-    const uint tiles_before = tile_row_offsets[expert_idx];
-    const uint tile_local = y_id - tiles_before;
-    const uint tile_m0 = tile_local * BM;
-    const uint seg_len = (seg_end > seg_start) ? (seg_end - seg_start) : 0u;
-    if (seg_len == 0u) return;
-    if (tile_m0 >= seg_len) return;
-    const uint m_rows = min((uint)BM, seg_len - tile_m0);
+    const uint total_tiles = total_meta_buf[0];
+    if (total_tiles == 0u) return;
 
-    // Base pointers for expert weights
-    const ulong W1_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
-    const ulong W3_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
-    const ulong W2_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff;
+    const uint tile_n_idx = tgpig.x;
+    const uint tile_y = y_base + tgpig.y;
+    const bool tile_y_valid = (tile_y < total_tiles);
+    const uint tile_n0 = tile_n_idx * BN;
+    const uint n_cols = (tile_n0 < d_model) ? min((uint)BN, d_model - tile_n0) : 0u;
 
-    // Prefetch token ids for the BM rows in this tile
-    for (uint idx = lid; idx < (uint)BM; idx += 128u) {
-        const uint row_global = seg_start + tile_m0 + idx;
-        tok[idx] = (idx < m_rows) ? bucketed_token_ids[row_global] : -1;
+    uint expert_idx = 0u;
+    uint seg_start = 0u;
+    uint tile_m0 = 0u;
+    if (tile_y_valid) {
+        const uint base = tile_y * 3u;
+        expert_idx = tile_map[base + 0u];
+        seg_start = tile_map[base + 1u];
+        tile_m0 = tile_map[base + 2u];
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool expert_valid = tile_y_valid && (expert_idx < E);
+    uint seg_len = 0u;
+    if (expert_valid) {
+        const uint seg_end = expert_offsets[expert_idx + 1u];
+        seg_len = (seg_end > seg_start) ? (seg_end - seg_start) : 0u;
+    }
+    const bool rows_ok = expert_valid && (seg_len > tile_m0);
+    const uint m_rows = rows_ok ? min((uint)BM, seg_len - tile_m0) : 0u;
+    const bool is_active = rows_ok && (n_cols > 0u);
 
-    // Set up MMA operator for FC2
-    constexpr int WM = 2;
-    constexpr int WN = 2;
-    using mma_fc2_t = matmul_utils::BlockMMA<float, half, BM, BN, BK, WM, WN, false, false, BK, BN, float>;
+    const ulong W13_base = (ulong)expert_idx * (ulong)d_model * (ulong)(d_ff * 2);
+    const ulong W2_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
+    const ulong x_block_base = (ulong)(seg_start + tile_m0) * (ulong)d_model;
+
+    using mma_fc2_t = matmul_utils::BlockMMA<float, T, BM, BN, BK, 2, 2, false, false, BK, BN, float>;
     mma_fc2_t mma_op(simd_gid, simd_lid);
+    mma_op.Ctile.clear();
 
-    // Loop over ff (d_ff) in BK-sized tiles
     for (uint ff0 = 0; ff0 < d_ff; ff0 += BK) {
         const uint ff_chunk = min((uint)BK, d_ff - ff0);
-
-        // FC1 using MMA: compute U (and V for GLU) tiles of size (BM x ff_chunk)
-        // U tile accumulation
-        for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
-            Htile[idx] = 0.0f;
+        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_up(simd_gid, simd_lid);
+        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_gate(simd_gid, simd_lid);
+        mma_fc1_up.Ctile.clear();
+        if (GATING_SEL > 1u) {
+            mma_fc1_gate.Ctile.clear();
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1(simd_gid, simd_lid);
         for (uint k0 = 0; k0 < d_model; k0 += BK) {
             const uint k_chunk = min((uint)BK, d_model - k0);
-            // Load X tile
             for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
                 const uint mi = idx / BK;
                 const uint kk = idx % BK;
                 half val = (half)0.0h;
-                if (mi < m_rows && kk < k_chunk) {
-                    const int token_id = tok[mi];
-                    if (token_id >= 0) {
-                        const ulong xg = (ulong)(uint)token_id * (ulong)d_model + (ulong)(k0 + kk);
-                        val = X[xg];
-                    }
+                if (mi < m_rows && kk < k_chunk && is_active) {
+                    const ulong row_offset = x_block_base
+                        + (ulong)mi * (ulong)d_model
+                        + (ulong)(k0 + kk);
+                    val = half(float(X_perm[row_offset]));
                 }
                 Xs[mi * BK + kk] = val;
             }
-            // Load W1 panel (K x ff_chunk -> BK x BK)
             for (uint idx = lid; idx < (uint)(BK * BK); idx += 128u) {
                 const uint kk = idx / BK;
                 const uint r = idx % BK;
-                half v = (half)0.0h;
-                if (kk < k_chunk && r < ff_chunk) {
-                    const ulong w1g = W1_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(k0 + kk);
-                    v = W1_all[w1g];
+                half up_val = (half)0.0h;
+                half gate_val = (half)0.0h;
+                if (kk < k_chunk && r < ff_chunk && is_active) {
+                    const ulong fused_idx = W13_base
+                        + (ulong)(k0 + kk) * (ulong)(2u * d_ff)
+                        + (ulong)(ff0 + r);
+                    up_val = half(float(W13_all[fused_idx]));
+                    if (GATING_SEL > 1u) {
+                        gate_val = half(float(W13_all[fused_idx + d_ff]));
+                    }
                 }
-                Wk[kk * BK + r] = v;
+                Wk_up[kk * BK + r] = up_val;
+                Wk_gate[kk * BK + r] = gate_val;
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
-            mma_fc1.mma(Xs, Wk);
+            mma_fc1_up.mma(Xs, Wk_up);
+            if (GATING_SEL > 1u) {
+                mma_fc1_gate.mma(Xs, Wk_gate);
+            }
             threadgroup_barrier(mem_flags::mem_threadgroup);
         }
-        // Store U tile to threadgroup Htile (float)
-        mma_fc1.store_result_tg(Htile, (int)BK);
+        mma_fc1_up.store_result_tg(Htile, (int)BK);
+        if (GATING_SEL > 1u) {
+            mma_fc1_gate.store_result_tg(Hs, (int)BK);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Add up biases (W1 biases) - first d_ff elements
         for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
             const uint mi = idx / BK;
             const uint r = idx % BK;
-            if (mi < m_rows && r < ff_chunk) {
+            if (mi < m_rows && r < ff_chunk && is_active) {
                 const ulong bias_idx = (ulong)expert_idx * (ulong)(d_ff * 2) + (ulong)(ff0 + r);
-                float val = Htile[idx] + (float)up_biases[bias_idx];
+                float bias_val = float(up_biases[bias_idx]);
+                float val = Htile[idx] + bias_val;
+                val = isfinite(val) ? val : 0.0f;
                 Htile[idx] = clamp(val, up_clip_min, up_clip_max);
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         if (GATING_SEL > 1u) {
-            // V tile accumulation for GLU
-            for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
-                Hs[idx] = 0.0f;
-            }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-
-            matmul_utils::BlockMMA<half, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_v(simd_gid, simd_lid);
-            for (uint k0 = 0; k0 < d_model; k0 += BK) {
-                const uint k_chunk = min((uint)BK, d_model - k0);
-                // Load X tile
-                for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
-                    const uint mi = idx / BK;
-                    const uint kk = idx % BK;
-                    half val = (half)0.0h;
-                    if (mi < m_rows && kk < k_chunk) {
-                        const int token_id = tok[mi];
-                        if (token_id >= 0) {
-                            const ulong xg = (ulong)(uint)token_id * (ulong)d_model + (ulong)(k0 + kk);
-                            val = X[xg];
-                        }
-                    }
-                    Xs[mi * BK + kk] = val;
-                }
-                // Load W3 panel (K x ff_chunk)
-                for (uint idx = lid; idx < (uint)(BK * BK); idx += 128u) {
-                    const uint kk = idx / BK;
-                    const uint r = idx % BK;
-                    half v = (half)0.0h;
-                    if (kk < k_chunk && r < ff_chunk) {
-                        const ulong w3g = W3_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(k0 + kk);
-                        v = W3_all[w3g];
-                    }
-                    Wk[kk * BK + r] = v;
-                }
-                threadgroup_barrier(mem_flags::mem_threadgroup);
-                mma_fc1_v.mma(Xs, Wk);
-                threadgroup_barrier(mem_flags::mem_threadgroup);
-            }
-            // Store V tile to Hs temporarily
-            mma_fc1_v.store_result_tg(Hs, (int)BK);
-            
-            // Add gate biases (W3 biases) - second d_ff elements
             for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
                 const uint mi = idx / BK;
                 const uint r = idx % BK;
-                if (mi < m_rows && r < ff_chunk) {
-                    const ulong bias_idx = (ulong)expert_idx * (ulong)(d_ff * 2) + (ulong)d_ff + (ulong)(ff0 + r);
-                    float val = Hs[idx] + (float)up_biases[bias_idx];
-                    Hs[idx] = metal::min(val, gate_clip_max);  // Only max clipping for gate
+                if (mi < m_rows && r < ff_chunk && is_active) {
+                    const ulong bias_idx = (ulong)expert_idx * (ulong)(d_ff * 2)
+                        + (ulong)d_ff + (ulong)(ff0 + r);
+                    float bias_val = float(up_biases[bias_idx]);
+                    float val = Hs[idx] + bias_val;
+                    val = isfinite(val) ? val : 0.0f;
+                    Hs[idx] = clamp(val, gate_clip_min, gate_clip_max);
                 }
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
         }
 
-        // Apply activation/gating to produce Hs (BM x ff_chunk)
         for (uint idx = lid; idx < (uint)(BM * BK); idx += 128u) {
             const uint mi = idx / BK;
             const uint r = idx % BK;
-            if (mi < m_rows && r < ff_chunk) {
+            float result = 0.0f;
+            if (mi < m_rows && r < ff_chunk && is_active) {
                 const float up = Htile[idx];
                 if (GATING_SEL <= 1u) {
-                    Hs[idx] = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up, silu_alpha);
+                    result = (GATING_SEL == 0u) ? gelu_approx(up) : silu(up, silu_alpha);
                 } else {
-                    // GLU variant (GPT-OSS): activation(gate) * up + activation(gate)
                     const float gate = Hs[idx];
-                    const float swish_y = (GATING_SEL == 2u) ? silu(gate, silu_alpha) : gelu_approx(gate);
-                    Hs[idx] = swish_y * up + swish_y;
+                    const float swish_y = (GATING_SEL == 2u)
+                        ? silu(gate, silu_alpha)
+                        : gelu_approx(gate);
+                    result = swish_y * up;
                 }
-            } else {
-                Hs[idx] = 0.0f;
+                result = isfinite(result) ? result : 0.0f;
+                result = clamp(result, -128.0f, 128.0f);
             }
+            Hs[idx] = result;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Cooperative load W2sf for this ff_chunk and our N tile (BK x BN)
         for (uint idx = lid; idx < (uint)(BK * BN); idx += 128u) {
             const uint r = idx / BN;
             const uint nj = idx % BN;
             float v = 0.0f;
-            if (r < ff_chunk && nj < n_cols) {
-                const ulong w2g = W2_base + (ulong)(tile_n0 + nj) * (ulong)d_ff + (ulong)(ff0 + r);
-                v = (float)W2_all[w2g];
+            if (r < ff_chunk && nj < n_cols && is_active) {
+                const ulong w2g = W2_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(tile_n0 + nj);
+                v = float(W2_all[w2g]);
+                v = isfinite(v) ? v : 0.0f;
             }
             W2sf[r * BN + nj] = v;
         }
@@ -293,10 +220,10 @@ kernel void moe_fused_expert_mlp_f16(
         mma_op.mma(Hs, W2sf);
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    
-    // Store MMA tile to Y_partial with tail handling
-    const ulong y_base = (ulong)(seg_start + tile_m0) * (ulong)d_model + (ulong)tile_n0;
-    device half* y_ptr = Y_partial + (uint)y_base;
+
+    const ulong y_offset =
+        (ulong)(seg_start + tile_m0) * (ulong)d_model + (ulong)tile_n0;
+    device T* y_ptr = Y_partial + (uint)y_offset;
     const short num_els = (short)m_rows;
     const short num_outs = (short)n_cols;
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -305,17 +232,100 @@ kernel void moe_fused_expert_mlp_f16(
     } else {
         mma_op.store_result(y_ptr, (int)d_model);
     }
-    
-    // Add down biases
+
     for (uint idx = lid; idx < (uint)(m_rows * n_cols); idx += 128u) {
         const uint mi = idx / n_cols;
         const uint nj = idx % n_cols;
-        if (mi < m_rows && nj < n_cols) {
-            const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)(tile_n0 + nj);
-            const ulong y_idx = y_base + (ulong)mi * (ulong)d_model + (ulong)nj;
-            Y_partial[y_idx] = (half)((float)Y_partial[y_idx] + (float)down_biases[bias_idx]);
+        if (mi < m_rows && nj < n_cols && is_active) {
+            const ulong bias_idx = (ulong)expert_idx * (ulong)d_model
+                + (ulong)(tile_n0 + nj);
+            const ulong y_idx =
+                y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
+            float bias_val = float(down_biases[bias_idx]);
+            float prev_val = float(Y_partial[y_idx]);
+            float out_val = prev_val + bias_val;
+            out_val = isfinite(out_val) ? out_val : 0.0f;
+            Y_partial[y_idx] = T(out_val);
         }
     }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint idx = lid; idx < (uint)(m_rows * n_cols); idx += 128u) {
+        const uint mi = idx / n_cols;
+        const uint nj = idx % n_cols;
+        if (mi < m_rows && nj < n_cols && is_active) {
+            const ulong y_idx =
+                y_offset + (ulong)mi * (ulong)d_model + (ulong)nj;
+            float val = float(Y_partial[y_idx]);
+            if (!isfinite(val)) {
+                Y_partial[y_idx] = T(0.0f);
+            }
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
+#define outerArguments(T) \
+(device const T* X_perm [[buffer(0)]], \
+ device const uint* expert_offsets [[buffer(1)]], \
+ device const T* W13_all [[buffer(2)]], \
+ device const T* W2_all [[buffer(3)]], \
+ device T* Y_partial [[buffer(4)]], \
+ constant uint& T_param [[buffer(5)]], \
+ constant uint& d_model [[buffer(6)]], \
+ constant uint& d_ff [[buffer(7)]], \
+ constant uint& E [[buffer(8)]], \
+ constant uint& gating_code [[buffer(9)]], \
+ device const T* up_biases [[buffer(10)]], \
+ device const T* down_biases [[buffer(11)]], \
+ constant float& gate_clip_min [[buffer(12)]], \
+ constant float& gate_clip_max [[buffer(13)]], \
+ constant float& up_clip_min [[buffer(14)]], \
+ constant float& up_clip_max [[buffer(15)]], \
+ constant float& silu_alpha [[buffer(16)]], \
+ device const uint* tile_row_offsets [[buffer(17)]], \
+ device const uint* tile_map [[buffer(18)]], \
+ device uint* total_meta_buf [[buffer(19)]], \
+ constant uint& y_base [[buffer(20)]], \
+ uint lid [[thread_index_in_threadgroup]], \
+ uint3 tgpig [[threadgroup_position_in_grid]], \
+ ushort simd_gid [[simdgroup_index_in_threadgroup]], \
+ ushort simd_lid [[thread_index_in_simdgroup]])
 
+#define innerArguments \
+(X_perm, expert_offsets, W13_all, W2_all, Y_partial, T_param, d_model, d_ff, E, gating_code, \
+ up_biases, down_biases, gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha, \
+ tile_row_offsets, tile_map, total_meta_buf, y_base, lid, tgpig, simd_gid, simd_lid, \
+ Xs, Wk_up, Wk_gate, Htile, W2sf, Hs)
+
+kernel void moe_fused_expert_mlp_f16 outerArguments(half) {
+    threadgroup half Xs[BM * BK];
+    threadgroup half Wk_up[BK * BK];
+    threadgroup half Wk_gate[BK * BK];
+    threadgroup float Htile[BM * BK];
+    threadgroup float W2sf[BK * BN];
+    threadgroup float Hs[BM * BK];
+    moe_fused_expert_mlp_impl<half> innerArguments;
+}
+
+kernel void moe_fused_expert_mlp_bf16 outerArguments(bfloat) {
+    threadgroup half Xs[BM * BK];
+    threadgroup half Wk_up[BK * BK];
+    threadgroup half Wk_gate[BK * BK];
+    threadgroup float Htile[BM * BK];
+    threadgroup float W2sf[BK * BN];
+    threadgroup float Hs[BM * BK];
+    moe_fused_expert_mlp_impl<bfloat> innerArguments;
+}
+
+kernel void moe_fused_expert_mlp_f32 outerArguments(float) {
+    threadgroup half Xs[BM * BK];
+    threadgroup half Wk_up[BK * BK];
+    threadgroup half Wk_gate[BK * BK];
+    threadgroup float Htile[BM * BK];
+    threadgroup float W2sf[BK * BN];
+    threadgroup float Hs[BM * BK];
+    moe_fused_expert_mlp_impl<float> innerArguments;
+}

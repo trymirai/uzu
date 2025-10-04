@@ -1,9 +1,9 @@
 use std::mem::size_of;
 
 use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
-    FunctionConstantValues, MTLDataType, MTLResourceOptions, MTLSize,
+    Buffer as MTLBuffer, CommandBufferRef,
+    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
+    MTLDataType, MTLSize,
 };
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
@@ -26,6 +26,7 @@ pub enum MoeTopKError {
 pub struct MoeTopKKernel {
     pipeline_f16: MTLComputePipelineState,
     pipeline_f32: MTLComputePipelineState,
+    pipeline_bf16: MTLComputePipelineState,
 }
 
 #[derive(Debug)]
@@ -99,9 +100,10 @@ impl MoeOffsetsScanKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeOffsetsScanArguments,
     ) -> Result<(), MoeOffsetsScanError> {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
         compute_encoder.set_buffer(0, Some(args.counts_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.offsets_buffer), 0);
@@ -118,6 +120,90 @@ impl MoeOffsetsScanKernel {
         let threadgroups = MTLSize::new(1, 1, 1);
         compute_encoder
             .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        compute_encoder.end_encoding();
+        Ok(())
+    }
+}
+
+// ---- Gather Permuted Activations Kernel ----
+
+#[derive(Debug, thiserror::Error)]
+pub enum MoeGatherError {
+    #[error("Metal error: {0}")]
+    MetalError(#[from] MTLError),
+}
+
+pub struct MoeGatherKernel {
+    pipeline_f16: MTLComputePipelineState,
+    pipeline_f32: MTLComputePipelineState,
+    pipeline_bf16: MTLComputePipelineState,
+}
+
+#[derive(Debug)]
+pub struct MoeGatherArguments<'a> {
+    pub x_buffer: &'a MTLBuffer,
+    pub bucketed_ids_buffer: &'a MTLBuffer,
+    pub x_perm_buffer: &'a MTLBuffer,
+    pub sumk_buffer: &'a MTLBuffer,
+    pub t: usize,
+    pub k: usize,
+    pub d_model: usize,
+}
+
+impl MoeGatherKernel {
+    pub fn new(ctx: &MTLContext) -> Result<Self, MoeGatherError> {
+        let pipeline_f16 =
+            ctx.compute_pipeline_state("moe_gather_x_perm_f16", None)?;
+        let pipeline_f32 =
+            ctx.compute_pipeline_state("moe_gather_x_perm_f32", None)?;
+        let pipeline_bf16 =
+            ctx.compute_pipeline_state("moe_gather_x_perm_bf16", None)?;
+        Ok(Self {
+            pipeline_f16,
+            pipeline_f32,
+            pipeline_bf16,
+        })
+    }
+
+    pub fn encode(
+        &self,
+        command_buffer: &CommandBufferRef,
+        dtype: KernelDataType,
+        args: MoeGatherArguments,
+    ) -> Result<(), MoeGatherError> {
+        let encoder = command_buffer.new_compute_command_encoder();
+        match dtype {
+            KernelDataType::Float16 => {
+                encoder.set_compute_pipeline_state(&self.pipeline_f16);
+            },
+            KernelDataType::Float32 => {
+                encoder.set_compute_pipeline_state(&self.pipeline_f32);
+            },
+            KernelDataType::BFloat16 => {
+                encoder.set_compute_pipeline_state(&self.pipeline_bf16);
+            },
+        }
+
+        encoder.set_buffer(0, Some(args.x_buffer), 0);
+        encoder.set_buffer(1, Some(args.bucketed_ids_buffer), 0);
+        encoder.set_buffer(2, Some(args.x_perm_buffer), 0);
+        encoder.set_buffer(3, Some(args.sumk_buffer), 0);
+        let d_model_u32 = args.d_model as u32;
+        encoder.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &d_model_u32 as *const u32 as *const _,
+        );
+
+        let max_rows = args.t * args.k;
+        if max_rows == 0 {
+            encoder.end_encoding();
+            return Ok(());
+        }
+        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
+        let threadgroups = MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1);
+        encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        encoder.end_encoding();
         Ok(())
     }
 }
@@ -136,197 +222,268 @@ pub enum MoeExpertsError {
 }
 
 pub struct MoeExpertsKernel {
-    pipelines_f16: Vec<MTLComputePipelineState>, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
+    pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
     tile_build_map_pipeline: MTLComputePipelineState,
+    write_dispatch_args_pipeline: MTLComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeExpertsArguments<'a> {
-    pub x_buffer: &'a MTLBuffer,           // [T,d_model]
-    pub bucketed_token_ids: &'a MTLBuffer, // [sum_k]
-    pub expert_offsets: &'a MTLBuffer,     // [E+1]
-    pub w1_all: &'a MTLBuffer,             // [E*d_ff*d_model]
-    pub w3_all: &'a MTLBuffer,             // [E*d_ff*d_model] or empty
-    pub w2_all: &'a MTLBuffer,             // [E*d_model*d_ff]
-    pub y_partial: &'a MTLBuffer,          // [sum_k,d_model]
-    pub up_biases: &'a MTLBuffer, // [E*2*d_ff] if fused, [E*d_ff] otherwise
-    pub down_biases: &'a MTLBuffer, // [E*d_model]
+    pub x_perm_buffer: &'a MTLBuffer, // [sum_k, d_model]
+    pub expert_offsets: &'a MTLBuffer, // [E+1]
+    pub w13_all: &'a MTLBuffer,       // [E*d_model*2*d_ff]
+    pub w2_all: &'a MTLBuffer,        // [E*d_model*d_ff]
+    pub y_partial: &'a MTLBuffer,     // [sum_k,d_model]
+    pub up_biases: &'a MTLBuffer,     // [E*2*d_ff] if fused, [E*d_ff] otherwise
+    pub down_biases: &'a MTLBuffer,   // [E*d_model]
+    pub tile_counts: &'a MTLBuffer,   // [E]
+    pub tile_row_offsets: &'a MTLBuffer, // [E+1]
+    pub tile_map: &'a MTLBuffer,      // [max_tiles * 3]
+    pub total_tiles: &'a MTLBuffer,   // [2]
+    pub dispatch_args: &'a MTLBuffer, // [3] u32 for indirect dispatch
+    pub num_tiles_n: usize,
     pub t: usize,
     pub d_model: usize,
     pub d_ff: usize,
     pub e: usize,
-    pub k: usize, // num_experts_per_token
+    pub k: usize,         // num_experts_per_token
     pub gating_code: u32, // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
     pub gate_clip_min: f32,
     pub gate_clip_max: f32,
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
+    pub data_type: KernelDataType,
 }
 
 impl MoeExpertsKernel {
     pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let mut pipelines_f16 = Vec::with_capacity(4);
+        let mut pipelines: Vec<Vec<MTLComputePipelineState>> =
+            vec![Vec::with_capacity(3); 4];
+
+        let dtypes = [
+            (KernelDataType::Float16, "f16"),
+            (KernelDataType::BFloat16, "bf16"),
+            (KernelDataType::Float32, "f32"),
+        ];
+
         for gate in 0u32..4u32 {
-            let fcv = FunctionConstantValues::new();
-            fcv.set_constant_value_at_index(
-                &gate as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                30,
-            );
-            let debug_mask: u32 = 0;
-            fcv.set_constant_value_at_index(
-                &debug_mask as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                31,
-            );
-            let pipeline = ctx.compute_pipeline_state(
-                "moe_fused_expert_mlp_f16",
-                Some(&fcv),
-            )?;
-            pipelines_f16.push(pipeline);
+            for (_, dtype_suffix) in &dtypes {
+                let fcv = FunctionConstantValues::new();
+                fcv.set_constant_value_at_index(
+                    &gate as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    30,
+                );
+                let kernel_name =
+                    format!("moe_fused_expert_mlp_{}", dtype_suffix);
+                let pipeline =
+                    ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?;
+                pipelines[gate as usize].push(pipeline);
+            }
         }
-        let tile_counts = ctx.compute_pipeline_state("moe_tile_counts", None)?;
+        let tile_counts =
+            ctx.compute_pipeline_state("moe_tile_counts", None)?;
         let tile_scan = ctx.compute_pipeline_state("moe_tile_scan", None)?;
-        let tile_build = ctx.compute_pipeline_state("moe_build_tile_map", None)?;
+        let tile_build =
+            ctx.compute_pipeline_state("moe_build_tile_map", None)?;
+        let write_dispatch_args =
+            ctx.compute_pipeline_state("moe_write_dispatch_args", None)?;
 
         Ok(Self {
-            pipelines_f16,
+            pipelines,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
             tile_build_map_pipeline: tile_build,
+            write_dispatch_args_pipeline: write_dispatch_args,
         })
     }
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
-        // Select specialized pipeline by gating code
+        let e_u32 = args.e as u32;
+
+        // Pass A: per-expert tile counts
+        let encoder_a = command_buffer.new_compute_command_encoder();
+        encoder_a.set_compute_pipeline_state(&self.tile_counts_pipeline);
+        encoder_a.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder_a.set_buffer(1, Some(args.tile_counts), 0);
+        encoder_a.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_a.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_a.end_encoding();
+        eprintln!(
+            "[MOE encode] Pass A complete. Starting Pass B: tile scan..."
+        );
+
+        // Pass B: exclusive scan for tile offsets + total tile count
+        let encoder_b = command_buffer.new_compute_command_encoder();
+        encoder_b.set_compute_pipeline_state(&self.tile_scan_pipeline);
+        encoder_b.set_buffer(0, Some(args.tile_counts), 0);
+        encoder_b.set_buffer(1, Some(args.tile_row_offsets), 0);
+        encoder_b.set_buffer(2, Some(args.total_tiles), 0);
+        encoder_b.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_b.dispatch_thread_groups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1024, 1, 1),
+        );
+        encoder_b.end_encoding();
+        eprintln!(
+            "[MOE encode] Pass B complete. Starting Pass C: build tile map..."
+        );
+
+        // Pass C: flatten into tile_map descriptors
+        let encoder_c = command_buffer.new_compute_command_encoder();
+        encoder_c.set_compute_pipeline_state(&self.tile_build_map_pipeline);
+        encoder_c.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder_c.set_buffer(1, Some(args.tile_row_offsets), 0);
+        encoder_c.set_buffer(2, Some(args.tile_counts), 0);
+        encoder_c.set_buffer(3, Some(args.tile_map), 0);
+        encoder_c.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_c.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_c.end_encoding();
+        eprintln!(
+            "[MOE encode] Pass C complete. Writing indirect dispatch args..."
+        );
+
+        // Tiny pass: write MTLDispatchThreadgroupsIndirectArguments {x, y, z}
+        let encoder_w = command_buffer.new_compute_command_encoder();
+        encoder_w
+            .set_compute_pipeline_state(&self.write_dispatch_args_pipeline);
+        encoder_w.set_buffer(0, Some(args.total_tiles), 0);
+        encoder_w.set_buffer(1, Some(args.dispatch_args), 0);
+        let ntx_u32 = args.num_tiles_n as u32;
+        encoder_w.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &ntx_u32 as *const u32 as *const _,
+        );
+        encoder_w.dispatch_thread_groups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1, 1, 1),
+        );
+        encoder_w.end_encoding();
+
+        eprintln!(
+            "[MOE encode] Indirect args written. Starting experts indirect dispatch..."
+        );
+
+        // Experts kernel: deterministic 2D dispatch without atomics
+        let num_tiles_n = args.num_tiles_n;
+        if num_tiles_n == 0 {
+            return Ok(());
+        }
         let gate_idx = (args.gating_code.min(3)) as usize;
-        encoder.set_compute_pipeline_state(&self.pipelines_f16[gate_idx]);
-        encoder.set_buffer(0, Some(args.x_buffer), 0);
-        encoder.set_buffer(1, Some(args.bucketed_token_ids), 0);
-        encoder.set_buffer(2, Some(args.expert_offsets), 0);
-        encoder.set_buffer(3, Some(args.w1_all), 0);
-        encoder.set_buffer(4, Some(args.w3_all), 0);
-        encoder.set_buffer(5, Some(args.w2_all), 0);
-        encoder.set_buffer(6, Some(args.y_partial), 0);
+        let dtype_idx = match args.data_type {
+            KernelDataType::Float16 => 0usize,
+            KernelDataType::BFloat16 => 1usize,
+            KernelDataType::Float32 => 2usize,
+        };
+        let pipeline = &self.pipelines[gate_idx][dtype_idx];
         let t_u = args.t as u32;
         let dm_u = args.d_model as u32;
         let dff_u = args.d_ff as u32;
-        let e_u = args.e as u32;
         let gate = args.gating_code as u32;
-        encoder.set_bytes(
-            7,
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        let encoder_e = command_buffer.new_compute_command_encoder();
+        encoder_e.set_compute_pipeline_state(pipeline);
+        encoder_e.set_buffer(0, Some(args.x_perm_buffer), 0);
+        encoder_e.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_e.set_buffer(2, Some(args.w13_all), 0);
+        encoder_e.set_buffer(3, Some(args.w2_all), 0);
+        encoder_e.set_buffer(4, Some(args.y_partial), 0);
+        encoder_e.set_bytes(
+            5,
             size_of::<u32>() as u64,
             &t_u as *const u32 as *const _,
         );
-        encoder.set_bytes(
-            8,
+        encoder_e.set_bytes(
+            6,
             size_of::<u32>() as u64,
             &dm_u as *const u32 as *const _,
         );
-        encoder.set_bytes(
-            9,
+        encoder_e.set_bytes(
+            7,
             size_of::<u32>() as u64,
             &dff_u as *const u32 as *const _,
         );
-        encoder.set_bytes(
-            10,
+        encoder_e.set_bytes(
+            8,
             size_of::<u32>() as u64,
-            &e_u as *const u32 as *const _,
+            &e_u32 as *const u32 as *const _,
         );
-        encoder.set_bytes(
-            11,
+        encoder_e.set_bytes(
+            9,
             size_of::<u32>() as u64,
             &gate as *const u32 as *const _,
         );
-        encoder.set_buffer(12, Some(args.up_biases), 0);
-        encoder.set_buffer(13, Some(args.down_biases), 0);
-        encoder.set_bytes(14, std::mem::size_of::<f32>() as u64, &args.gate_clip_min as *const f32 as *const _);
-        encoder.set_bytes(15, std::mem::size_of::<f32>() as u64, &args.gate_clip_max as *const f32 as *const _);
-        encoder.set_bytes(16, std::mem::size_of::<f32>() as u64, &args.up_clip_min as *const f32 as *const _);
-        encoder.set_bytes(17, std::mem::size_of::<f32>() as u64, &args.up_clip_max as *const f32 as *const _);
-        encoder.set_bytes(18, std::mem::size_of::<f32>() as u64, &args.silu_alpha as *const f32 as *const _);
-        
-        const BN: usize = 64;
-
-        // Build compact tile map on GPU: counts -> scan
-        // Get device from a buffer we already have
-        let device = args.expert_offsets.device();
-        let tile_counts_buf = device.new_buffer((args.e * size_of::<u32>()) as u64, MTLResourceOptions::StorageModeShared);
-        let tile_offsets_buf = device.new_buffer(((args.e + 1) * size_of::<u32>()) as u64, MTLResourceOptions::StorageModeShared);
-        let total_tiles_buf = device.new_buffer(size_of::<u32>() as u64, MTLResourceOptions::StorageModeShared);
-
-        // Pass A: tile counts
-        encoder.set_compute_pipeline_state(&self.tile_counts_pipeline);
-        encoder.set_buffer(0, Some(args.expert_offsets), 0);
-        encoder.set_buffer(1, Some(&tile_counts_buf), 0);
-        let e_u32 = args.e as u32;
-        encoder.set_bytes(2, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
-        encoder.dispatch_thread_groups(
-            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
-            MTLSize::new(256, 1, 1),
+        encoder_e.set_buffer(10, Some(args.up_biases), 0);
+        encoder_e.set_buffer(11, Some(args.down_biases), 0);
+        encoder_e.set_bytes(
+            12,
+            size_of::<f32>() as u64,
+            &args.gate_clip_min as *const f32 as *const _,
         );
-
-        // Pass B: scan (single TG)
-        encoder.set_compute_pipeline_state(&self.tile_scan_pipeline);
-        encoder.set_buffer(0, Some(&tile_counts_buf), 0);
-        encoder.set_buffer(1, Some(&tile_offsets_buf), 0);
-        encoder.set_buffer(2, Some(&total_tiles_buf), 0);
-        encoder.set_bytes(3, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
-        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
-
-        // Pass C: build tile map (unused for now, will be used for indirect dispatch later)
-        let total_tiles = unsafe { *(total_tiles_buf.contents() as *const u32) } as usize;
-        encoder.set_compute_pipeline_state(&self.tile_build_map_pipeline);
-        encoder.set_buffer(0, Some(args.expert_offsets), 0);
-        encoder.set_buffer(1, Some(&tile_offsets_buf), 0);
-        encoder.set_buffer(2, Some(&tile_counts_buf), 0);
-        encoder.set_buffer(3, Some(&device.new_buffer(1, MTLResourceOptions::StorageModeShared)), 0);
-        encoder.set_bytes(4, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
-        encoder.dispatch_thread_groups(
-            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
-            MTLSize::new(256, 1, 1),
+        encoder_e.set_bytes(
+            13,
+            size_of::<f32>() as u64,
+            &args.gate_clip_max as *const f32 as *const _,
         );
+        encoder_e.set_bytes(
+            14,
+            size_of::<f32>() as u64,
+            &args.up_clip_min as *const f32 as *const _,
+        );
+        encoder_e.set_bytes(
+            15,
+            size_of::<f32>() as u64,
+            &args.up_clip_max as *const f32 as *const _,
+        );
+        encoder_e.set_bytes(
+            16,
+            size_of::<f32>() as u64,
+            &args.silu_alpha as *const f32 as *const _,
+        );
+        encoder_e.set_buffer(17, Some(args.tile_row_offsets), 0);
+        encoder_e.set_buffer(18, Some(args.tile_map), 0);
+        encoder_e.set_buffer(19, Some(args.total_tiles), 0);
 
-        // Now run experts kernel over compact tiles: grid = (num_tiles_n, total_tiles)
-        let num_tiles_n = (args.d_model + BN - 1) / BN;
-        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
-        if total_tiles > 0 && num_tiles_n > 0 {
-            let threadgroups = MTLSize::new(num_tiles_n as u64, total_tiles as u64, 1);
-            // Bind tile_map as buffer 19..21 inside kernel via encoded args
-            encoder.set_compute_pipeline_state(&self.pipelines_f16[(args.gating_code.min(3)) as usize]);
-            encoder.set_buffer(0, Some(args.x_buffer), 0);
-            encoder.set_buffer(1, Some(args.bucketed_token_ids), 0);
-            encoder.set_buffer(2, Some(args.expert_offsets), 0);
-            encoder.set_buffer(3, Some(args.w1_all), 0);
-            encoder.set_buffer(4, Some(args.w3_all), 0);
-            encoder.set_buffer(5, Some(args.w2_all), 0);
-            encoder.set_buffer(6, Some(args.y_partial), 0);
-            let t_u = args.t as u32;
-            let dm_u = args.d_model as u32;
-            let dff_u = args.d_ff as u32;
-            let gate = args.gating_code as u32;
-            encoder.set_bytes(7, size_of::<u32>() as u64, &t_u as *const u32 as *const _);
-            encoder.set_bytes(8, size_of::<u32>() as u64, &dm_u as *const u32 as *const _);
-            encoder.set_bytes(9, size_of::<u32>() as u64, &dff_u as *const u32 as *const _);
-            encoder.set_bytes(10, size_of::<u32>() as u64, &e_u32 as *const u32 as *const _);
-            encoder.set_bytes(11, size_of::<u32>() as u64, &gate as *const u32 as *const _);
-            encoder.set_buffer(12, Some(args.up_biases), 0);
-            encoder.set_buffer(13, Some(args.down_biases), 0);
-            encoder.set_bytes(14, size_of::<f32>() as u64, &args.gate_clip_min as *const f32 as *const _);
-            encoder.set_bytes(15, size_of::<f32>() as u64, &args.gate_clip_max as *const f32 as *const _);
-            encoder.set_bytes(16, size_of::<f32>() as u64, &args.up_clip_min as *const f32 as *const _);
-            encoder.set_bytes(17, size_of::<f32>() as u64, &args.up_clip_max as *const f32 as *const _);
-            encoder.set_bytes(18, size_of::<f32>() as u64, &args.silu_alpha as *const f32 as *const _);
-            encoder.set_buffer(19, Some(&tile_offsets_buf), 0);
-            encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
-        }
+        let y_base_u32: u32 = 0;
+        encoder_e.set_bytes(
+            20,
+            size_of::<u32>() as u64,
+            &y_base_u32 as *const u32 as *const _,
+        );
+        encoder_e.dispatch_thread_groups_indirect(
+            args.dispatch_args,
+            0,
+            threads_per_threadgroup,
+        );
+        encoder_e.end_encoding();
+        eprintln!("[MOE encode] Experts indirect dispatch completed.");
+
         Ok(())
     }
 }
@@ -390,7 +547,7 @@ impl MoeScatterKernels {
             .compute_pipeline_state("moe_scatter_buckets_map_f32", None)?;
         let pipeline_scatter_map_bf16 = mtl_context
             .compute_pipeline_state("moe_scatter_buckets_map_bf16", None)?;
-        
+
         Ok(Self {
             pipeline_bases,
             pipeline_scatter_f16,
@@ -404,14 +561,15 @@ impl MoeScatterKernels {
 
     pub fn encode_block_bases(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         compute_encoder.set_compute_pipeline_state(&self.pipeline_bases);
         compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.block_bases_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.block_alloc_buffer), 0);
-        
+
         let e_u32 = args.e as u32;
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
@@ -443,15 +601,17 @@ impl MoeScatterKernels {
         if total_entries > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
+        compute_encoder.end_encoding();
         Ok(())
     }
 
     pub fn encode_scatter(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         // Select pipeline based on dtype
         match dtype {
             KernelDataType::Float16 => {
@@ -510,15 +670,17 @@ impl MoeScatterKernels {
         if args.num_blocks > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
+        compute_encoder.end_encoding();
         Ok(())
     }
 
     pub fn encode_scatter_with_map(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         let pipeline = match dtype {
             KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
             KernelDataType::Float32 => &self.pipeline_scatter_map_f32,
@@ -570,6 +732,7 @@ impl MoeScatterKernels {
         if base.num_blocks > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
+        compute_encoder.end_encoding();
         Ok(())
     }
 }
@@ -588,7 +751,7 @@ impl MoeBucketCountsKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeBucketCountsArguments,
     ) -> Result<(), MoeBucketCountsError> {
         if args.k == 0 || args.e == 0 {
@@ -605,6 +768,7 @@ impl MoeBucketCountsKernel {
             });
         }
 
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         // Pass A: partials
         compute_encoder.set_compute_pipeline_state(&self.pipeline_partials);
         compute_encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
@@ -661,6 +825,7 @@ impl MoeBucketCountsKernel {
             compute_encoder
                 .dispatch_thread_groups(tg2, threads_per_threadgroup);
         }
+        compute_encoder.end_encoding();
         Ok(())
     }
 }
@@ -671,15 +836,18 @@ impl MoeTopKKernel {
             mtl_context.compute_pipeline_state("moe_topk_select_f16", None)?;
         let pipeline_f32 =
             mtl_context.compute_pipeline_state("moe_topk_select_f32", None)?;
+        let pipeline_bf16 =
+            mtl_context.compute_pipeline_state("moe_topk_select_bf16", None)?;
         Ok(Self {
             pipeline_f16,
             pipeline_f32,
+            pipeline_bf16,
         })
     }
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         dtype: KernelDataType,
         args: MoeTopKArguments,
     ) -> Result<(), MoeTopKError> {
@@ -697,6 +865,7 @@ impl MoeTopKKernel {
             });
         }
 
+        let compute_encoder = command_buffer.new_compute_command_encoder();
         match dtype {
             KernelDataType::Float16 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f16)
@@ -705,8 +874,7 @@ impl MoeTopKKernel {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f32)
             },
             KernelDataType::BFloat16 => {
-                // Not supported in v1; fallback to f32 logits path
-                compute_encoder.set_compute_pipeline_state(&self.pipeline_f32)
+                compute_encoder.set_compute_pipeline_state(&self.pipeline_bf16)
             },
         }
 
@@ -756,6 +924,7 @@ impl MoeTopKKernel {
             compute_encoder
                 .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }
+        compute_encoder.end_encoding();
 
         Ok(())
     }
@@ -798,10 +967,11 @@ impl MoeFinalizeKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        command_buffer: &CommandBufferRef,
         args: MoeFinalizeArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeFinalizeError> {
+        let encoder = command_buffer.new_compute_command_encoder();
         match dtype {
             KernelDataType::Float16 => {
                 encoder.set_compute_pipeline_state(&self.pipeline_f16);
@@ -849,6 +1019,7 @@ impl MoeFinalizeKernel {
             encoder
                 .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }
+        encoder.end_encoding();
         Ok(())
     }
 }

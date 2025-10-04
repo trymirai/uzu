@@ -89,7 +89,9 @@ impl MlpGateActMulKernel {
 
     fn act_code(act: &Activation) -> u16 {
         match act {
-            Activation::SILU { .. } => 0,
+            Activation::SILU {
+                ..
+            } => 0,
             Activation::GELU => 1,
         }
     }

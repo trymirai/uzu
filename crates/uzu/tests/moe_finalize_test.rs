@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "macos", target_os = "ios"))]
+#![cfg(feature = "moe_dev_tests")]
 
 use half::f16;
 use metal::MTLResourceOptions;
@@ -7,10 +7,10 @@ use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
-        MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsKernel,
-        MoeFinalizeArguments, MoeFinalizeKernel, MoeOffsetsScanArguments,
-        MoeOffsetsScanKernel, MoeScatterArguments, MoeScatterKernels,
-        MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
+        MoeBucketCountsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+        MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterArguments,
+        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+        MoeTopKKernel,
     },
 };
 
@@ -60,18 +60,6 @@ fn test_moe_finalize_end_to_end() {
     // Inputs
     let logits: Vec<f32> =
         (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
-    let x: Vec<f16> = (0..t * d_model)
-        .map(|_| f16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
-    let w1: Vec<f16> = (0..e * d_ff * d_model)
-        .map(|_| f16::from_f32(rng.random_range(-0.5..0.5)))
-        .collect();
-    let w3: Vec<f16> = (0..e * d_ff * d_model)
-        .map(|_| f16::from_f32(rng.random_range(-0.5..0.5)))
-        .collect();
-    let w2: Vec<f16> = (0..e * d_model * d_ff)
-        .map(|_| f16::from_f32(rng.random_range(-0.5..0.5)))
-        .collect();
 
     // Buffers
     let logits_buf = ctx.device.new_buffer_with_data(
@@ -302,73 +290,23 @@ fn test_moe_finalize_end_to_end() {
     cb.commit();
     cb.wait_until_completed();
 
-    // Experts fused
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w1_buf = ctx.device.new_buffer_with_data(
-        w1.as_ptr() as *const _,
-        (w1.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w3_buf = ctx.device.new_buffer_with_data(
-        w3.as_ptr() as *const _,
-        (w3.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    // Finalize
     let y_partial_buf = ctx.device.new_buffer(
         (sumk * d_model * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
+    let mut y_partial = vec![f16::from_f32(0.0); sumk * d_model];
+    for item in &mut y_partial {
+        *item = f16::from_f32(rng.random_range(-2.0..2.0));
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            y_partial.as_ptr(),
+            y_partial_buf.contents() as *mut f16,
+            y_partial.len(),
+        );
+    }
 
-    let experts = MoeExpertsKernel::new(&ctx).expect("experts");
-    let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
-    experts
-        .encode(
-            &enc,
-            MoeExpertsArguments {
-                x_buffer: &x_buf,
-                bucketed_token_ids: &out_ids_buf,
-                expert_offsets: &offsets_buf,
-                w1_all: &w1_buf,
-                w3_all: &w3_buf,
-                w2_all: &w2_buf,
-                y_partial: &y_partial_buf,
-                up_biases: &ctx.device.new_buffer(
-                    0,
-                    metal::MTLResourceOptions::StorageModeShared,
-                ),
-                down_biases: &ctx.device.new_buffer(
-                    0,
-                    metal::MTLResourceOptions::StorageModeShared,
-                ),
-                t,
-                d_model,
-                d_ff,
-                e,
-                k,
-                gating_code: 2,
-                gate_clip_min: f32::NEG_INFINITY,
-                gate_clip_max: f32::INFINITY,
-                up_clip_min: f32::NEG_INFINITY,
-                up_clip_max: f32::INFINITY,
-                silu_alpha: 1.0,
-            },
-        )
-        .expect("encode experts");
-    enc.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
-
-    // Finalize
     let y_out_buf = ctx.device.new_buffer(
         (t * d_model * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,

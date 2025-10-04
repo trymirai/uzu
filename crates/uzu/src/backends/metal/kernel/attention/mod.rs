@@ -661,7 +661,7 @@ impl EncodableWithState for AttentionKernelEncodable {
 
         let mut maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
-        
+
         let sinks_binding = if self.has_sinks {
             Some(state.arrays(&[ArrayId::AttentionSinks(self.layer_index)]))
         } else {

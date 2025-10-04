@@ -1,7 +1,8 @@
 #include <metal_stdlib>
+#include <metal_atomic>
 using namespace metal;
 
-#define BM 32
+#define BM 16
 
 // Compute per-expert tile counts: tiles_e = ceil((seg_len)/BM)
 kernel void moe_tile_counts(
@@ -22,7 +23,7 @@ kernel void moe_tile_counts(
 kernel void moe_tile_scan(
     device const uint* tile_counts [[buffer(0)]],    // [E]
     device uint* tile_row_offsets [[buffer(1)]],     // [E+1]
-    device uint* total_tiles_buf [[buffer(2)]],      // [1]
+    device uint* total_tiles_buf [[buffer(2)]],      // [>=2]
     constant uint& E [[buffer(3)]],
     uint tid [[thread_index_in_threadgroup]])
 {
@@ -60,6 +61,13 @@ kernel void moe_tile_scan(
     if (tid == 0u) {
         tile_row_offsets[E] = (E == 0u) ? 0u : scratch[E - 1u];
         total_tiles_buf[0] = tile_row_offsets[E];
+        total_tiles_buf[1] = 0u;
+        total_tiles_buf[2] = 0u;
+        total_tiles_buf[3] = 0u;
+        total_tiles_buf[4] = 0u;
+        total_tiles_buf[5] = 0u;
+        total_tiles_buf[6] = 0u;
+        total_tiles_buf[7] = 0u;
     }
 }
 
@@ -85,4 +93,17 @@ kernel void moe_build_tile_map(
     }
 }
 
-
+// Write MTLDispatchThreadgroupsIndirectArguments {x, y, z} where:
+//  x = num_tiles_n (computed on CPU and passed in), y = total_tiles, z = 1
+kernel void moe_write_dispatch_args(
+    device const uint* total_tiles_buf [[buffer(0)]],   // [>=1], total_tiles_buf[0] = total_rows
+    device uint* dispatch_args [[buffer(1)]],           // [3] u32
+    constant uint& num_tiles_n [[buffer(2)]],           // x dimension
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid > 0u) return;
+    const uint total_rows = total_tiles_buf[0];
+    dispatch_args[0] = num_tiles_n; // x
+    dispatch_args[1] = total_rows;  // y
+    dispatch_args[2] = 1u;          // z
+}

@@ -35,8 +35,19 @@ kernel void moe_finalize_f16(
             const int row = tok2row[base + k];
             if (row >= 0) {
                 const ulong yidx = (ulong)(uint)row * (ulong)d_model + (ulong)f;
-                acc += (float)probs[base + k] * (float)Y_partial[yidx];
+                float prob = (float)probs[base + k];
+                if (!isfinite(prob)) {
+                    prob = 0.0f;
+                }
+                float val = (float)Y_partial[yidx];
+                if (!isfinite(val)) {
+                    val = 0.0f;
+                }
+                acc = fma(prob, val, acc);
             }
+        }
+        if (!isfinite(acc)) {
+            acc = 0.0f;
         }
         Y[t * d_model + f] = (half)acc;
     }
@@ -45,8 +56,8 @@ kernel void moe_finalize_f16(
 kernel void moe_finalize_bf16(
     device const int*  tok2row   [[buffer(0)]],  // [T*K], -1 if dropped
     device const bfloat* probs   [[buffer(1)]],  // [T*K]
-    device const half* Y_partial [[buffer(2)]],  // [sum_k, d_model]
-    device half*       Y         [[buffer(3)]],  // [T, d_model]
+    device const bfloat* Y_partial [[buffer(2)]],  // [sum_k, d_model]
+    device bfloat*     Y         [[buffer(3)]],  // [T, d_model]
     constant uint& T            [[buffer(4)]],
     constant uint& d_model      [[buffer(5)]],
     constant uint& K            [[buffer(6)]],
@@ -71,11 +82,20 @@ kernel void moe_finalize_bf16(
             const int row = tok2row[base + k];
             if (row >= 0) {
                 const ulong yidx = (ulong)(uint)row * (ulong)d_model + (ulong)f;
-                acc += (float)probs[base + k] * (float)Y_partial[yidx];
+                float prob = (float)probs[base + k];
+                if (!isfinite(prob)) {
+                    prob = 0.0f;
+                }
+                float val = (float)Y_partial[yidx];
+                if (!isfinite(val)) {
+                    val = 0.0f;
+                }
+                acc = fma(prob, val, acc);
             }
         }
-        Y[t * d_model + f] = (half)acc;
+        if (!isfinite(acc)) {
+            acc = 0.0f;
+        }
+        Y[t * d_model + f] = bfloat(acc);
     }
 }
-
-

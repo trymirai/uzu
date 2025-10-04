@@ -10,11 +10,11 @@ using namespace metal;
 // bytes(5): K (u32)
 // bytes(6): renorm (u32: 0/1)
 
-template <typename F>
+template <typename LogitT, typename ProbT>
 inline void topk_select_impl(
-    device const F* logits,
+    device const LogitT* logits,
     device int* topk_ids,
-    device half* topk_probs,
+    device ProbT* topk_probs,
     uint T,
     uint E,
     uint K,
@@ -70,11 +70,11 @@ inline void topk_select_impl(
         }
         for (uint k = 0; k < K; ++k) {
             float p = (sum > 0.0f) ? (expv[k] / sum) : (1.0f / float(K));
-            topk_probs[out_off + k] = half(p);
+            topk_probs[out_off + k] = ProbT(p);
         }
     } else {
         for (uint k = 0; k < K; ++k) {
-            topk_probs[out_off + k] = half(best_vals[k]);
+            topk_probs[out_off + k] = ProbT(best_vals[k]);
         }
     }
 }
@@ -89,7 +89,7 @@ kernel void moe_topk_select_f16(
     constant uint& renorm [[buffer(6)]],
     uint gid [[thread_position_in_grid]])
 {
-    topk_select_impl<half>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
+    topk_select_impl<half, half>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
 }
 
 kernel void moe_topk_select_f32(
@@ -102,7 +102,19 @@ kernel void moe_topk_select_f32(
     constant uint& renorm [[buffer(6)]],
     uint gid [[thread_position_in_grid]])
 {
-    topk_select_impl<float>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
+    topk_select_impl<float, half>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
 }
 
+kernel void moe_topk_select_bf16(
+    device const bfloat* logits [[buffer(0)]],
+    device int* topk_ids [[buffer(1)]],
+    device bfloat* topk_probs [[buffer(2)]],
+    constant uint& T [[buffer(3)]],
+    constant uint& E [[buffer(4)]],
+    constant uint& K [[buffer(5)]],
+    constant uint& renorm [[buffer(6)]],
+    uint gid [[thread_position_in_grid]])
+{
+    topk_select_impl<bfloat, bfloat>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
+}
 

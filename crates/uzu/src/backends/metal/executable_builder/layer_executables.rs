@@ -52,7 +52,9 @@ impl LayerExecutables {
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
         rope: Rc<Box<dyn EncodableWithState>>,
-        shared_moe_weights: Option<crate::backends::metal::kernel::moe::SharedMoeWeights>,
+        shared_moe_weights: Option<
+            crate::backends::metal::kernel::moe::SharedMoeWeights,
+        >,
     ) -> Self {
         autoreleasepool(|_| {
             let intermediate_data_type: DataType = layer_config
@@ -279,14 +281,14 @@ impl EncodableWithState for LayerExecutables {
         }
 
         self.qkv_projection.encode(state, command_buffer, parameters);
-        
+
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, command_buffer, parameters);
         }
         self.rope.encode(state, command_buffer, parameters);
-        
+
         self.attention.encode(state, command_buffer, parameters);
-        
+
         self.out_projection.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
@@ -317,7 +319,7 @@ impl EncodableWithState for LayerExecutables {
         }
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
-        
+
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -350,9 +352,12 @@ impl EncodableWithState for LayerExecutables {
                 layer_traces.borrow().outputs.clone(),
             );
         }
-        
+
         if self.layer_index == 0 {
-            eprintln!("[Layer0] TOTAL: {:.3}ms", t_layer.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "[Layer0] TOTAL: {:.3}ms",
+                t_layer.elapsed().as_secs_f64() * 1000.0
+            );
         }
     }
 }

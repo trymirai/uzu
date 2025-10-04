@@ -120,10 +120,11 @@ fn test_bucket_counts_parity_random() {
             let num_blocks = ((t + 255) / 256).max(1);
             let num_tiles = ((e + 512 - 1) / 512).max(1);
             let partials_buf = ctx.device.new_buffer(
-                (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
+                (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>())
+                    as u64,
                 MTLResourceOptions::StorageModeShared,
             );
-            
+
             let kernel =
                 MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
             let cb = ctx.command_queue.new_command_buffer();
@@ -189,14 +190,14 @@ fn test_bucket_counts_edge_cases() {
             e * std::mem::size_of::<u32>(),
         );
     }
-    
+
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let partials_buf = ctx.device.new_buffer(
         (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    
+
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
@@ -238,14 +239,14 @@ fn test_bucket_counts_edge_cases() {
             e * std::mem::size_of::<u32>(),
         );
     }
-    
+
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let partials_buf = ctx.device.new_buffer(
         (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    
+
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();
@@ -294,14 +295,14 @@ fn test_bucket_counts_edge_cases() {
             e * std::mem::size_of::<u32>(),
         );
     }
-    
+
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let partials_buf = ctx.device.new_buffer(
         (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    
+
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
     let enc = cb.new_compute_command_encoder();

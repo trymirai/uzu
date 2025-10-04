@@ -52,25 +52,32 @@ impl InputProcessor for InputProcessorDefault {
         let template = environment
             .get_template(template_name)
             .map_err(|_| Error::UnableToLoadPromptTemplate)?;
-        
-        let result = template
-            .render(context!(
-                messages => messages,
-                add_generation_prompt => true,
-                bos_token => bos_token,
-                enable_thinking => enable_thinking
-            ));
-        
+
+        let result = template.render(context!(
+            messages => messages,
+            add_generation_prompt => true,
+            bos_token => bos_token,
+            enable_thinking => enable_thinking
+        ));
+
         // For simple text inputs on base models, fall back to BOS + text if template fails
         match result {
             Ok(rendered) => Ok(rendered),
             Err(e) => {
-                eprintln!("[Template Error] Failed to render prompt template: {:?}", e);
-                eprintln!("[Template Error] Falling back to simple format for single-message input");
+                eprintln!(
+                    "[Template Error] Failed to render prompt template: {:?}",
+                    e
+                );
+                eprintln!(
+                    "[Template Error] Falling back to simple format for single-message input"
+                );
                 // If it's a single user message (typical for Input::Text), use simple format
                 if messages.len() == 1 {
                     if let Some(content_str) = messages[0].get("content") {
-                        let prefix = bos_token.as_ref().map(|s| s.as_str()).unwrap_or("");
+                        let prefix = bos_token
+                            .as_ref()
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
                         Ok(format!("{}{}", prefix, content_str))
                     } else {
                         Err(Error::UnableToRenderPromptTemplate)
@@ -78,7 +85,7 @@ impl InputProcessor for InputProcessorDefault {
                 } else {
                     Err(Error::UnableToRenderPromptTemplate)
                 }
-            }
+            },
         }
     }
 }

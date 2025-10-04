@@ -244,4 +244,30 @@ impl ModelShape {
     ) -> [usize; 2] {
         [max_routed_tokens, self.model_dim]
     }
+
+    pub fn moe_x_perm_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 2] {
+        [max_routed_tokens, self.model_dim]
+    }
+
+    pub fn moe_tile_map_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        [max_routed_tokens * 3]
+    }
+
+    pub fn moe_dispatch_args_shape(&self) -> [usize; 1] {
+        [3]
+    }
+
+    pub fn moe_total_tiles_shape(&self) -> [usize; 1] {
+        // layout: [total_tiles, total_jobs,
+        //          nan_fc1_count, nan_fc2_count,
+        //          nan_fc1_bits, nan_fc2_bits,
+        //          nan_gate_bits, nan_up_bits]
+        [8]
+    }
 }
