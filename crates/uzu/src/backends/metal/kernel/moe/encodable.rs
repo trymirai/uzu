@@ -721,13 +721,12 @@ impl EncodableWithState for MoeBlockEncodable {
                     &e_u as *const u32 as *const _,
                 );
 
-                let num_simdgroups = 4u64;
-                let threadgroups_x = (*mixture_size as u64 + num_simdgroups
-                    - 1)
+                // Optimized: 8 simdgroups per TG (256 threads) with TG input caching
+                let num_simdgroups: u64 = 8;
+                let tg_x = ((*mixture_size as u64) + num_simdgroups - 1)
                     / num_simdgroups;
-                let threadgroups_y = suffix_length as u64;
                 compute_encoder.dispatch_thread_groups(
-                    metal::MTLSize::new(threadgroups_x, threadgroups_y, 1),
+                    metal::MTLSize::new(tg_x, suffix_length as u64, 1),
                     metal::MTLSize::new(32 * num_simdgroups, 1, 1),
                 );
                 compute_encoder.end_encoding();

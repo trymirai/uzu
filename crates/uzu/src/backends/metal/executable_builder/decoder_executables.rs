@@ -106,7 +106,10 @@ impl DecoderExecutables {
                 None
             };
 
-        eprintln!("[Decoder] Compiling {} layers...", decoder_config.num_layers);
+        eprintln!(
+            "[Decoder] Compiling {} layers...",
+            decoder_config.num_layers
+        );
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
                 eprintln!("[Decoder] Compiling layer {}...", layer_index);
@@ -138,7 +141,10 @@ impl DecoderExecutables {
                 layer
             })
             .collect::<Vec<_>>();
-        eprintln!("[Decoder] All {} layers compiled successfully.", decoder_config.num_layers);
+        eprintln!(
+            "[Decoder] All {} layers compiled successfully.",
+            decoder_config.num_layers
+        );
 
         let norm_block: Box<dyn EncodableWithState> = Box::new(
             RMSNormKernelEncodable::new(
@@ -190,8 +196,6 @@ impl EncodableWithState for DecoderExecutables {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let t_total = std::time::Instant::now();
-
         self.embed.encode(state, command_buffer, parameters);
 
         for layer in self.layers.iter() {
@@ -209,10 +213,5 @@ impl EncodableWithState for DecoderExecutables {
         if let Some(traces) = state.traces.clone() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
-
-        eprintln!(
-            "[Decoder] Encoding complete: {:.3}ms",
-            t_total.elapsed().as_secs_f64() * 1000.0
-        );
     }
 }

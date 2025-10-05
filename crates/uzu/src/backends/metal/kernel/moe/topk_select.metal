@@ -24,7 +24,6 @@ inline void topk_select_impl(
     if (gid >= T) return;
     const uint row_off = gid * E;
 
-    // small fixed-size arrays for K<=4 (v1 uses K<=2)
     float best_vals[4];
     int   best_ids[4];
     for (uint i = 0; i < 4; ++i) { best_vals[i] = -INFINITY; best_ids[i] = -1; }
