@@ -20,6 +20,7 @@ fn reference_attention(
     keys: &Array4<f32>,    // [batch, num_kv_heads, seq_len, head_dim]
     values: &Array4<f32>,  // [batch, num_kv_heads, seq_len, head_dim]
     mask: Option<&Array3<f32>>, // [batch, seq_len, seq_len] or None
+    sinks: Option<&[f32]>,
     scale: f32,
 ) -> Array4<f32> {
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
@@ -60,12 +61,16 @@ fn reference_attention(
                     }
 
                     for i in 0..seq_len {
-                        let mut max_score = f32::NEG_INFINITY;
+                        let sink_logit = sinks.map(|s| s[q_head]);
+                        let mut max_score =
+                            sink_logit.unwrap_or(f32::NEG_INFINITY);
                         for j in 0..kv_seq_len {
                             max_score = max_score.max(scores[[i, j]]);
                         }
 
-                        let mut sum_exp = 0.0;
+                        let mut sum_exp = sink_logit
+                            .map(|sink| (sink - max_score).exp())
+                            .unwrap_or(0.0);
                         for j in 0..kv_seq_len {
                             scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                             sum_exp += scores[[i, j]];
@@ -113,12 +118,15 @@ fn reference_attention(
                 }
 
                 for i in 0..seq_len {
-                    let mut max_score = f32::NEG_INFINITY;
+                    let sink_logit = sinks.map(|s| s[h]);
+                    let mut max_score = sink_logit.unwrap_or(f32::NEG_INFINITY);
                     for j in 0..kv_seq_len {
                         max_score = max_score.max(scores[[i, j]]);
                     }
 
-                    let mut sum_exp = 0.0;
+                    let mut sum_exp = sink_logit
+                        .map(|sink| (sink - max_score).exp())
+                        .unwrap_or(0.0);
                     for j in 0..kv_seq_len {
                         scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                         sum_exp += scores[[i, j]];
@@ -289,6 +297,17 @@ fn create_mask_buffer(
     )
 }
 
+fn create_sinks_buffer(
+    sinks: &[f32],
+    context: &MTLContext,
+) -> metal::Buffer {
+    context.device.new_buffer_with_data(
+        sinks.as_ptr() as *const _,
+        (sinks.len() * size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    )
+}
+
 fn convert_kernel_output(
     output_slice: &[f32],
     batch_size: usize,
@@ -318,6 +337,7 @@ fn run_single_pass_attention(
     keys: &Array4<f32>,
     values: &Array4<f32>,
     mask: Option<&Array3<f32>>,
+    sinks: Option<&[f32]>,
     scale: f32,
 ) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
@@ -329,6 +349,7 @@ fn run_single_pass_attention(
         create_value_cache_buffer(values, seq_len, context);
 
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
+    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let output_buffer = context.device.new_buffer(
         (num_heads * seq_len * head_dim * size_of::<f32>()) as u64,
@@ -354,7 +375,7 @@ fn run_single_pass_attention(
         mask_kv_seq_stride: 1,
         mask_q_seq_stride: seq_len as i32,
         mask_head_stride: 0,
-        sinks_buffer: None,
+        sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
         suffix_length: seq_len,
         head_dim,
@@ -477,7 +498,7 @@ fn test_single_pass_attention_basic() {
 
     println!("Testing reference implementation without mask...");
     let reference_output =
-        reference_attention(&queries, &keys, &values, None, scale);
+        reference_attention(&queries, &keys, &values, None, None, scale);
 
     let ref_max = reference_output.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
     let ref_min =
@@ -513,7 +534,7 @@ fn test_single_pass_attention_basic() {
     }
 
     let kernel_output = match run_single_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, scale,
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
     ) {
         Ok(output) => output,
         Err(e) => {
@@ -577,6 +598,7 @@ fn test_single_pass_attention_with_mask() {
         &keys,
         &values,
         Some(&mask),
+        None,
         scale,
     ) {
         Ok(output) => output,
@@ -586,7 +608,7 @@ fn test_single_pass_attention_with_mask() {
     };
 
     let reference_output =
-        reference_attention(&queries, &keys, &values, Some(&mask), scale);
+        reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
 
     println!("Mask values:");
     for i in 0..seq_len.min(4) {
@@ -602,6 +624,166 @@ fn test_single_pass_attention_with_mask() {
         &reference_output,
         tolerance,
         "Single-pass attention with mask",
+    ) {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_single_pass_attention_with_sinks() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 4;
+    let num_kv_heads = 4;
+    let seq_len = 8;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (queries, keys, values, _mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        444,
+    );
+
+    let sinks: Vec<f32> = (0..num_heads)
+        .map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25)
+        .collect();
+    println!("Using sinks: {:?}", sinks);
+
+    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+        Ok(k) => k,
+        Err(e) => {
+            panic!("Failed to create AttentionKernel: {:?}", e);
+        },
+    };
+
+    if !kernel.supports_single_pass(head_dim) {
+        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
+    }
+
+    let reference_output = reference_attention(
+        &queries,
+        &keys,
+        &values,
+        None,
+        Some(&sinks),
+        scale,
+    );
+
+    let kernel_output = match run_single_pass_attention(
+        &kernel,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        None,
+        Some(&sinks),
+        scale,
+    ) {
+        Ok(output) => output,
+        Err(e) => {
+            panic!("Failed to run single-pass attention with sinks: {:?}", e);
+        },
+    };
+
+    let tolerance = 1e-2;
+    if let Err(e) = compare_results(
+        &kernel_output,
+        &reference_output,
+        tolerance,
+        "Single-pass attention with sinks",
+    ) {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_single_pass_attention_with_sinks_long_sequence() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 4;
+    let num_kv_heads = 4;
+    let seq_len = 64;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (queries, keys, values, _mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        777,
+    );
+
+    let sinks: Vec<f32> =
+        (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
+    println!("Long sequence sinks: {:?}", sinks);
+
+    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+        Ok(k) => k,
+        Err(e) => {
+            panic!("Failed to create AttentionKernel: {:?}", e);
+        },
+    };
+
+    if !kernel.supports_single_pass(head_dim) {
+        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
+    }
+
+    let reference_output = reference_attention(
+        &queries,
+        &keys,
+        &values,
+        None,
+        Some(&sinks),
+        scale,
+    );
+
+    let kernel_output = match run_single_pass_attention(
+        &kernel,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        None,
+        Some(&sinks),
+        scale,
+    ) {
+        Ok(output) => output,
+        Err(e) => {
+            panic!(
+                "Failed to run single-pass attention long sequence with sinks: {:?}",
+                e
+            );
+        },
+    };
+
+    let tolerance = 5e-2;
+    if let Err(e) = compare_results(
+        &kernel_output,
+        &reference_output,
+        tolerance,
+        "Single-pass attention with sinks (long sequence)",
     ) {
         panic!("{}", e);
     }
@@ -649,7 +831,7 @@ fn test_single_pass_attention_gqa() {
     }
 
     let kernel_output = match run_single_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, scale,
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
     ) {
         Ok(output) => output,
         Err(e) => {
@@ -658,7 +840,7 @@ fn test_single_pass_attention_gqa() {
     };
 
     let reference_output =
-        reference_attention(&queries, &keys, &values, None, scale);
+        reference_attention(&queries, &keys, &values, None, None, scale);
 
     let tolerance = 1e-1;
     if let Err(e) = compare_results(
@@ -678,6 +860,7 @@ fn run_two_pass_attention(
     keys: &Array4<f32>,
     values: &Array4<f32>,
     mask: Option<&Array3<f32>>,
+    sinks: Option<&[f32]>,
     scale: f32,
 ) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
@@ -687,6 +870,7 @@ fn run_two_pass_attention(
     let keys_buffer = create_key_cache_buffer(keys, seq_len, context);
     let values_buffer = create_value_cache_buffer(values, seq_len, context);
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
+    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let total_blocks_count = 32;
     let partials_size = num_heads * seq_len * total_blocks_count * head_dim;
@@ -734,7 +918,7 @@ fn run_two_pass_attention(
         mask_kv_seq_stride: 1,
         mask_q_seq_stride: seq_len as i32,
         mask_head_stride: 0,
-        sinks_buffer: None,
+        sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
         suffix_length: seq_len,
         head_dim,
@@ -809,10 +993,10 @@ fn test_two_pass_attention() {
     );
 
     let reference_output =
-        reference_attention(&queries, &keys, &values, None, scale);
+        reference_attention(&queries, &keys, &values, None, None, scale);
 
     let kernel_output = match run_two_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, scale,
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
     ) {
         Ok(output) => output,
         Err(e) => {
@@ -878,10 +1062,10 @@ fn test_two_pass_attention_gqa() {
     );
 
     let reference_output =
-        reference_attention(&queries, &keys, &values, None, scale);
+        reference_attention(&queries, &keys, &values, None, None, scale);
 
     let kernel_output = match run_two_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, scale,
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
     ) {
         Ok(output) => output,
         Err(e) => {

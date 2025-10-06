@@ -1,5 +1,7 @@
-use std::rc::Rc;
+use std::{cell::RefCell, mem::size_of, rc::Rc};
 
+use half::{bf16, f16};
+use metal::MTLResourceOptions;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -11,7 +13,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        KernelDataType, MTLContext,
+        KernelDataType, MTLContext, MetalArray,
         forward_pass::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
@@ -56,6 +58,7 @@ pub struct MoeBlockEncodable {
     hidden_dim: usize,
     data_type: KernelDataType,
     shared_weights: SharedMoeWeights,
+    layer_index: usize,
 }
 
 impl MoeBlockEncodable {
@@ -101,88 +104,6 @@ impl MoeBlockEncodable {
 
         let w13_src = unsafe { up_arr.mtl_buffer().clone() };
 
-        if std::env::var_os("UZU_DEBUG_MOE_WEIGHTS").is_some() {
-            let mut min_val = f32::INFINITY;
-            let mut max_val = f32::NEG_INFINITY;
-            let mut max_abs = 0f32;
-            eprintln!(
-                "[DebugMoeWeights] w13 dtype={:?} shape={:?}",
-                up_arr.data_type(),
-                up_shape
-            );
-            match up_arr.data_type() {
-                DataType::BF16 => {
-                    if let Ok(slice) = up_arr.as_slice::<half::bf16>() {
-                        if let Some((idx, _)) = slice
-                            .iter()
-                            .enumerate()
-                            .find(|(_, v)| f32::from(**v).is_nan())
-                        {
-                            eprintln!(
-                                "[DebugMoeWeights] w13 first NaN at idx {}",
-                                idx
-                            );
-                            eprintln!(
-                                "[DebugMoeWeights] sample {:?}",
-                                &slice[idx.saturating_sub(4)
-                                    ..(idx + 1).min(slice.len())]
-                            );
-                        }
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F16 => {
-                    if let Ok(slice) = up_arr.as_slice::<half::f16>() {
-                        if let Some((idx, _)) = slice
-                            .iter()
-                            .enumerate()
-                            .find(|(_, v)| f32::from(**v).is_nan())
-                        {
-                            eprintln!(
-                                "[DebugMoeWeights] w13 first NaN at idx {}",
-                                idx
-                            );
-                            eprintln!(
-                                "[DebugMoeWeights] sample {:?}",
-                                &slice[idx.saturating_sub(4)
-                                    ..(idx + 1).min(slice.len())]
-                            );
-                        }
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            eprintln!(
-                "[DebugMoeWeights] w13 stats min={:?} max={:?} max_abs={:?}",
-                if min_val.is_finite() {
-                    Some(min_val)
-                } else {
-                    None
-                },
-                if max_val.is_finite() {
-                    Some(max_val)
-                } else {
-                    None
-                },
-                max_abs
-            );
-        }
-
         let mut w2_arr = experts_tree
             .subtree("down_projection")
             .map_err(|e| {
@@ -199,80 +120,6 @@ impl MoeBlockEncodable {
                 ))
             })?;
         let w2_src = unsafe { w2_arr.mtl_buffer().clone() };
-
-        if std::env::var_os("UZU_DEBUG_MOE_WEIGHTS").is_some()
-            || std::env::var_os("UZU_DEBUG_MOE").is_some()
-        {
-            let mut min_val = f32::INFINITY;
-            let mut max_val = f32::NEG_INFINITY;
-            let mut max_abs = 0f32;
-            eprintln!(
-                "[DebugMoeWeights] w2 dtype={:?} shape={:?}",
-                w2_arr.data_type(),
-                w2_arr.shape()
-            );
-            match w2_arr.data_type() {
-                DataType::BF16 => {
-                    if let Ok(slice) = w2_arr.as_slice::<half::bf16>() {
-                        if let Some((idx, _)) = slice
-                            .iter()
-                            .enumerate()
-                            .find(|(_, v)| f32::from(**v).is_nan())
-                        {
-                            eprintln!(
-                                "[DebugMoeWeights] w2 first NaN at idx {}",
-                                idx
-                            );
-                        }
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F16 => {
-                    if let Ok(slice) = w2_arr.as_slice::<half::f16>() {
-                        if let Some((idx, _)) = slice
-                            .iter()
-                            .enumerate()
-                            .find(|(_, v)| f32::from(**v).is_nan())
-                        {
-                            eprintln!(
-                                "[DebugMoeWeights] w2 first NaN at idx {}",
-                                idx
-                            );
-                        }
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            eprintln!(
-                "[DebugMoeWeights] w2 stats min={:?} max={:?} max_abs={:?}",
-                if min_val.is_finite() {
-                    Some(min_val)
-                } else {
-                    None
-                },
-                if max_val.is_finite() {
-                    Some(max_val)
-                } else {
-                    None
-                },
-                max_abs
-            );
-        }
 
         let mut up_biases_arr = experts_tree
             .subtree("up_projection")
@@ -291,66 +138,6 @@ impl MoeBlockEncodable {
             })?;
         let up_biases_src = unsafe { up_biases_arr.mtl_buffer().clone() };
 
-        if std::env::var_os("UZU_DEBUG_MOE_WEIGHTS").is_some()
-            || std::env::var_os("UZU_DEBUG_MOE").is_some()
-        {
-            let mut min_val = f32::INFINITY;
-            let mut max_val = f32::NEG_INFINITY;
-            let mut max_abs = 0f32;
-            match up_biases_arr.data_type() {
-                DataType::BF16 => {
-                    if let Ok(slice) = up_biases_arr.as_slice::<half::bf16>() {
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F16 => {
-                    if let Ok(slice) = up_biases_arr.as_slice::<half::f16>() {
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F32 => {
-                    if let Ok(slice) = up_biases_arr.as_slice::<f32>() {
-                        for &val in slice {
-                            if val.is_finite() {
-                                min_val = min_val.min(val);
-                                max_val = max_val.max(val);
-                                max_abs = max_abs.max(val.abs());
-                            }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            eprintln!(
-                "[DebugMoeWeights] up_biases stats min={:?} max={:?} max_abs={:?}",
-                if min_val.is_finite() {
-                    Some(min_val)
-                } else {
-                    None
-                },
-                if max_val.is_finite() {
-                    Some(max_val)
-                } else {
-                    None
-                },
-                max_abs
-            );
-        }
-
         let mut down_biases_arr = experts_tree
             .subtree("down_projection")
             .map_err(|e| {
@@ -367,67 +154,6 @@ impl MoeBlockEncodable {
                 ))
             })?;
         let down_biases_src = unsafe { down_biases_arr.mtl_buffer().clone() };
-
-        if std::env::var_os("UZU_DEBUG_MOE_WEIGHTS").is_some()
-            || std::env::var_os("UZU_DEBUG_MOE").is_some()
-        {
-            let mut min_val = f32::INFINITY;
-            let mut max_val = f32::NEG_INFINITY;
-            let mut max_abs = 0f32;
-            match down_biases_arr.data_type() {
-                DataType::BF16 => {
-                    if let Ok(slice) = down_biases_arr.as_slice::<half::bf16>()
-                    {
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F16 => {
-                    if let Ok(slice) = down_biases_arr.as_slice::<half::f16>() {
-                        for &val in slice {
-                            let f = f32::from(val);
-                            if f.is_finite() {
-                                min_val = min_val.min(f);
-                                max_val = max_val.max(f);
-                                max_abs = max_abs.max(f.abs());
-                            }
-                        }
-                    }
-                },
-                DataType::F32 => {
-                    if let Ok(slice) = down_biases_arr.as_slice::<f32>() {
-                        for &val in slice {
-                            if val.is_finite() {
-                                min_val = min_val.min(val);
-                                max_val = max_val.max(val);
-                                max_abs = max_abs.max(val.abs());
-                            }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            eprintln!(
-                "[DebugMoeWeights] down_biases stats min={:?} max={:?} max_abs={:?}",
-                if min_val.is_finite() {
-                    Some(min_val)
-                } else {
-                    None
-                },
-                if max_val.is_finite() {
-                    Some(max_val)
-                } else {
-                    None
-                },
-                max_abs
-            );
-        }
 
         let w13_buf = w13_src;
         let w2_buf = w2_src;
@@ -449,6 +175,7 @@ impl MoeBlockEncodable {
         hidden_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
         shared_weights: Option<SharedMoeWeights>,
+        layer_index: usize,
     ) -> Result<Self, crate::backends::metal::MTLError> {
         let activation_data_type: DataType = moe_config
             .expert_config
@@ -494,7 +221,91 @@ impl MoeBlockEncodable {
                             e
                         ))
                     })?;
-                let weights_buf = unsafe { weights_arr.mtl_buffer().clone() };
+                let weights_shape = weights_arr.shape().to_owned();
+                if weights_shape.len() != 2 {
+                    return Err(crate::backends::metal::MTLError::Generic(
+                        format!(
+                            "Router weights expected 2D tensor, got shape {:?}",
+                            weights_shape
+                        ),
+                    ));
+                }
+                let rows = weights_shape[0];
+                let cols = weights_shape[1];
+                let expected_lalamo_layout =
+                    (model_dim, moe_config.mixture_size);
+                let expected_kernel_layout =
+                    (moe_config.mixture_size, model_dim);
+
+                let weights_buf = if (rows, cols) == expected_kernel_layout {
+                    unsafe { weights_arr.mtl_buffer().clone() }
+                } else if (rows, cols) == expected_lalamo_layout {
+                    let transpose_err =
+                        |err: crate::device::array::ArrayConversionError| {
+                            crate::backends::metal::MTLError::Generic(format!(
+                                "Router weights transpose failed: {}",
+                                err
+                            ))
+                        };
+
+                    match weights_arr.data_type() {
+                        DataType::BF16 => {
+                            let src = weights_arr
+                                .as_slice::<bf16>()
+                                .map_err(transpose_err)?;
+                            let transposed =
+                                transpose_router_weights(src, rows, cols);
+                            context.device.new_buffer_with_data(
+                                transposed.as_ptr() as *const _,
+                                (transposed.len() * size_of::<bf16>()) as u64,
+                                MTLResourceOptions::StorageModeShared,
+                            )
+                        },
+                        DataType::F16 => {
+                            let src = weights_arr
+                                .as_slice::<f16>()
+                                .map_err(transpose_err)?;
+                            let transposed =
+                                transpose_router_weights(src, rows, cols);
+                            context.device.new_buffer_with_data(
+                                transposed.as_ptr() as *const _,
+                                (transposed.len() * size_of::<f16>()) as u64,
+                                MTLResourceOptions::StorageModeShared,
+                            )
+                        },
+                        DataType::F32 => {
+                            let src = weights_arr
+                                .as_slice::<f32>()
+                                .map_err(transpose_err)?;
+                            let transposed =
+                                transpose_router_weights(src, rows, cols);
+                            context.device.new_buffer_with_data(
+                                transposed.as_ptr() as *const _,
+                                (transposed.len() * size_of::<f32>()) as u64,
+                                MTLResourceOptions::StorageModeShared,
+                            )
+                        },
+                        other => {
+                            return Err(
+                                crate::backends::metal::MTLError::Generic(
+                                    format!(
+                                        "Unsupported router weight dtype {:?}",
+                                        other
+                                    ),
+                                ),
+                            );
+                        },
+                    }
+                } else {
+                    return Err(crate::backends::metal::MTLError::Generic(
+                        format!(
+                            "Unexpected router weight shape {:?}, expected {:?} or {:?}",
+                            weights_shape,
+                            expected_lalamo_layout,
+                            expected_kernel_layout
+                        ),
+                    ));
+                };
 
                 let mut biases_arr =
                     router_tree.leaf("biases").map_err(|e| {
@@ -593,6 +404,7 @@ impl MoeBlockEncodable {
             hidden_dim,
             data_type,
             shared_weights,
+            layer_index,
         })
     }
 
@@ -604,6 +416,25 @@ impl MoeBlockEncodable {
             } => 2,
         }
     }
+}
+
+fn transpose_router_weights<T>(
+    src: &[T],
+    rows: usize,
+    cols: usize,
+) -> Vec<T>
+where
+    T: Copy + Default,
+{
+    debug_assert_eq!(rows * cols, src.len());
+    let mut dst = vec![T::default(); src.len()];
+    for r in 0..rows {
+        let row_offset = r * cols;
+        for c in 0..cols {
+            dst[c * rows + r] = src[row_offset + c];
+        }
+    }
+    dst
 }
 
 impl EncodableWithState for MoeBlockEncodable {
@@ -637,52 +468,64 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeBlockAlloc,
         ]);
 
-        let mut borrow0 = arrays[0].borrow_mut();
-        let mut borrow1 = arrays[1].borrow_mut();
-        let mut borrow2 = arrays[2].borrow_mut();
-        let mut borrow3 = arrays[3].borrow_mut();
-        let mut borrow4 = arrays[4].borrow_mut();
-        let mut borrow5 = arrays[5].borrow_mut();
-        let mut borrow6 = arrays[6].borrow_mut();
-        let mut borrow7 = arrays[7].borrow_mut();
-        let mut borrow8 = arrays[8].borrow_mut();
-        let mut borrow9 = arrays[9].borrow_mut();
-        let mut borrow10 = arrays[10].borrow_mut();
-        let mut borrow11 = arrays[11].borrow_mut();
-        let mut borrow12 = arrays[12].borrow_mut();
-        let mut borrow13 = arrays[13].borrow_mut();
-        let mut borrow14 = arrays[14].borrow_mut();
-        let mut borrow15 = arrays[15].borrow_mut();
-        let mut borrow16 = arrays[16].borrow_mut();
-        let mut borrow17 = arrays[17].borrow_mut();
-        let mut borrow18 = arrays[18].borrow_mut();
-        let mut borrow19 = arrays[19].borrow_mut();
+        let clone_buffer = |array: &RefCell<MetalArray>| -> metal::Buffer {
+            let mut borrow = array.borrow_mut();
+            let buffer = unsafe { borrow.mtl_buffer().clone() };
+            buffer
+        };
 
-        let main_buf = unsafe { borrow0.mtl_buffer().clone() };
-        let router_logits_buf = unsafe { borrow1.mtl_buffer().clone() };
-        let topk_ids_buf = unsafe { borrow2.mtl_buffer().clone() };
-        let topk_probs_buf = unsafe { borrow3.mtl_buffer().clone() };
-        let counts_buf = unsafe { borrow4.mtl_buffer().clone() };
-        let offsets_buf = unsafe { borrow5.mtl_buffer().clone() };
-        let sumk_buf = unsafe { borrow6.mtl_buffer().clone() };
-        let bucketed_ids_buf = unsafe { borrow7.mtl_buffer().clone() };
-        let bucketed_probs_buf = unsafe { borrow8.mtl_buffer().clone() };
-        let x_perm_buf = unsafe { borrow9.mtl_buffer().clone() };
-        let tok2row_buf = unsafe { borrow10.mtl_buffer().clone() };
-        let y_partial_buf = unsafe { borrow11.mtl_buffer().clone() };
-        let tile_counts_buf = unsafe { borrow12.mtl_buffer().clone() };
-        let tile_offsets_buf = unsafe { borrow13.mtl_buffer().clone() };
-        let tile_map_buf = unsafe { borrow14.mtl_buffer().clone() };
-        let total_tiles_buf = unsafe { borrow15.mtl_buffer().clone() };
-        let dispatch_args_buf = unsafe { borrow16.mtl_buffer().clone() };
-        let partials_buf = unsafe { borrow17.mtl_buffer().clone() };
-        let block_bases_buf = unsafe { borrow18.mtl_buffer().clone() };
-        let block_alloc_buf = unsafe { borrow19.mtl_buffer().clone() };
+        let main_buf = clone_buffer(&arrays[0]);
+        let router_logits_buf = clone_buffer(&arrays[1]);
+        let topk_ids_buf = clone_buffer(&arrays[2]);
+        let topk_probs_buf = clone_buffer(&arrays[3]);
+        let counts_buf = clone_buffer(&arrays[4]);
+        let offsets_buf = clone_buffer(&arrays[5]);
+        let sumk_buf = clone_buffer(&arrays[6]);
+        let bucketed_ids_buf = clone_buffer(&arrays[7]);
+        let bucketed_probs_buf = clone_buffer(&arrays[8]);
+        let x_perm_buf = clone_buffer(&arrays[9]);
+        let tok2row_buf = clone_buffer(&arrays[10]);
+        let y_partial_buf = clone_buffer(&arrays[11]);
+        let tile_counts_buf = clone_buffer(&arrays[12]);
+        let tile_offsets_buf = clone_buffer(&arrays[13]);
+        let tile_map_buf = clone_buffer(&arrays[14]);
+        let total_tiles_buf = clone_buffer(&arrays[15]);
+        let dispatch_args_buf = clone_buffer(&arrays[16]);
+        let partials_buf = clone_buffer(&arrays[17]);
+        let block_bases_buf = clone_buffer(&arrays[18]);
+        let block_alloc_buf = clone_buffer(&arrays[19]);
+
+        let debug_moe = std::env::var_os("UZU_DEBUG_MOE_STATE").is_some();
 
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
-        let root = command_buffer.root_command_buffer();
+        if suffix_length > 0 && k > 0 {
+            let entries = suffix_length * k;
+            let topk_bytes = entries * std::mem::size_of::<u32>();
+            let tok2row_bytes = entries * std::mem::size_of::<i32>();
+
+            unsafe {
+                if topk_bytes > 0 {
+                    std::ptr::write_bytes(
+                        topk_ids_buf.contents() as *mut u8,
+                        0xFF,
+                        topk_bytes,
+                    );
+                }
+                if tok2row_bytes > 0 {
+                    std::ptr::write_bytes(
+                        tok2row_buf.contents() as *mut u8,
+                        0xFF,
+                        tok2row_bytes,
+                    );
+                }
+            }
+        }
+
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let root = &*mtl_command_buffer;
 
         match &self.router {
             RouterBlock::Quantized(block) => {
@@ -894,5 +737,132 @@ impl EncodableWithState for MoeBlockEncodable {
                 self.data_type,
             )
             .expect("MoE finalize failed");
+
+        // NOTE: When inspecting kernels, we temporarily comment out the buffer cleanup.
+
+        let wait_for_gpu = parameters.wait_until_completed || debug_moe;
+        if wait_for_gpu {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+
+        if let Some(traces_rc) = state.traces.as_ref() {
+            let layer_trace_rc = {
+                let traces_borrow = traces_rc.borrow();
+                traces_borrow.layer_results[self.layer_index].clone()
+            };
+
+            let mut layer_trace = layer_trace_rc.borrow_mut();
+            let moe_trace = layer_trace.ensure_moe_trace(
+                suffix_length,
+                e,
+                k,
+                self.model_dim,
+            );
+
+            let routed_tokens = suffix_length * k;
+
+            unsafe {
+                let src_topk_ids = std::slice::from_raw_parts(
+                    topk_ids_buf.contents() as *const i32,
+                    routed_tokens,
+                );
+                moe_trace.topk_ids.copy_from_slice(src_topk_ids);
+
+                let src_counts = std::slice::from_raw_parts(
+                    counts_buf.contents() as *const u32,
+                    e,
+                );
+                moe_trace.counts.copy_from_slice(src_counts);
+
+                let src_offsets = std::slice::from_raw_parts(
+                    offsets_buf.contents() as *const u32,
+                    e + 1,
+                );
+                moe_trace.offsets.copy_from_slice(src_offsets);
+
+                let src_sumk = std::slice::from_raw_parts(
+                    sumk_buf.contents() as *const u32,
+                    1,
+                );
+                moe_trace.sumk.copy_from_slice(src_sumk);
+
+                let src_bucketed_ids = std::slice::from_raw_parts(
+                    bucketed_ids_buf.contents() as *const u32,
+                    routed_tokens,
+                );
+                moe_trace.bucketed_ids.copy_from_slice(src_bucketed_ids);
+
+                let src_tok2row = std::slice::from_raw_parts(
+                    tok2row_buf.contents() as *const i32,
+                    routed_tokens,
+                );
+                moe_trace.tok2row.copy_from_slice(src_tok2row);
+            }
+
+            Self::copy_probs_buffer(
+                self.data_type,
+                &topk_probs_buf,
+                &mut moe_trace.topk_probs,
+                routed_tokens,
+            );
+            Self::copy_probs_buffer(
+                self.data_type,
+                &bucketed_probs_buf,
+                &mut moe_trace.bucketed_probs,
+                routed_tokens,
+            );
+            Self::copy_probs_buffer(
+                self.data_type,
+                &y_partial_buf,
+                &mut moe_trace.y_partial,
+                routed_tokens * self.model_dim,
+            );
+        }
+    }
+}
+
+impl MoeBlockEncodable {
+    fn copy_probs_buffer(
+        data_type: KernelDataType,
+        buffer: &metal::Buffer,
+        destination: &mut [f32],
+        len: usize,
+    ) {
+        if len == 0 {
+            return;
+        }
+
+        unsafe {
+            match data_type {
+                KernelDataType::BFloat16 => {
+                    let src = std::slice::from_raw_parts(
+                        buffer.contents() as *const bf16,
+                        len,
+                    );
+                    destination
+                        .iter_mut()
+                        .zip(src.iter())
+                        .for_each(|(dst, value)| *dst = value.to_f32());
+                },
+                KernelDataType::Float16 => {
+                    let src = std::slice::from_raw_parts(
+                        buffer.contents() as *const f16,
+                        len,
+                    );
+                    destination
+                        .iter_mut()
+                        .zip(src.iter())
+                        .for_each(|(dst, value)| *dst = value.to_f32());
+                },
+                KernelDataType::Float32 => {
+                    let src = std::slice::from_raw_parts(
+                        buffer.contents() as *const f32,
+                        len,
+                    );
+                    destination.copy_from_slice(src);
+                },
+            }
+        }
     }
 }

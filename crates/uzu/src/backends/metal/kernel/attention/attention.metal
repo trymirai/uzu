@@ -9,6 +9,7 @@ constant bool query_transposed [[function_constant(21)]];
 constant bool do_causal [[function_constant(22)]];
 constant bool bool_mask [[function_constant(23)]];
 constant bool float_mask [[function_constant(24)]];
+constant bool has_sinks [[function_constant(25)]];
 
 template <typename T, int head_dim, int value_dim = head_dim>
 void attention_single_pass_impl(
@@ -28,7 +29,7 @@ void attention_single_pass_impl(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const device T* sinks,
+    const device float* sinks,
     uint3 tid, // thread index in threadgroup
     uint3 tpg, // threads per group
     uint simd_gid, // simdgroup index in threadgroup
@@ -79,6 +80,12 @@ void attention_single_pass_impl(
 
     U max_score = -INFINITY;
     U sum_exp_score = 0;
+    if (has_sinks && simd_gid == 0) {
+        const int num_q_heads = static_cast<int>(tpg.x);
+        int q_head_idx = head_idx % num_q_heads;
+        max_score = static_cast<U>(sinks[q_head_idx]);
+        sum_exp_score = 1;
+    }
 
     // For each key
     for (int i = simd_gid; i < sequence_length; i += sequence_block_size) {
@@ -140,14 +147,6 @@ void attention_single_pass_impl(
     U new_max = simd_max(max_score);
     U factor = fast::exp(max_score - new_max);
     sum_exp_score = simd_sum(shared_sum_exp_scores[simd_lid] * factor);
-    
-    // Add attention sink constant to denominator
-    if (sinks != nullptr && simd_lid == 0) {
-        U sink_value = static_cast<U>(sinks[tid.x]);
-        U sink_mass = fast::exp(sink_value - new_max);
-        sum_exp_score += sink_mass;
-    }
-    sum_exp_score = simd_broadcast(sum_exp_score, 0);
 
     // Now we need to aggregate all the outputs
     for (int i = 0; i < value_elements_per_thread; i++) {
@@ -185,7 +184,7 @@ void attention_2pass_1_impl(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const device T* sinks,
+    const device float* sinks,
     uint3 tid, // thread index in threadgroup
     uint3 tpg, // threads per group
     uint simd_gid, // simdgroup index in threadgroup
@@ -239,6 +238,12 @@ void attention_2pass_1_impl(
 
     U max_score = -1e9;
     U sum_exp_score = 0;
+    if (has_sinks && block_idx == 0 && simd_gid == 0) {
+        const int num_q_heads = static_cast<int>(tpg.x);
+        int q_head_idx = head_idx % num_q_heads;
+        max_score = static_cast<U>(sinks[q_head_idx]);
+        sum_exp_score = 1;
+    }
 
     // For each key
     for (int i = block_idx * sequence_block_size + simd_gid; i < sequence_length; i += total_blocks_count * sequence_block_size) {
@@ -301,13 +306,6 @@ void attention_2pass_1_impl(
     U factor = fast::exp(max_score - new_max);
     sum_exp_score = (simd_lid < sequence_block_size) ? shared_sum_exp_scores[simd_lid] : 0;
     sum_exp_score = simd_sum(sum_exp_score * factor);
-
-    // Add attention sink constant to denominator
-    if (sinks != nullptr && simd_gid == 0 && simd_lid == 0) {
-        U sink_value = static_cast<U>(sinks[tid.x]);
-        U sink_mass = fast::exp(sink_value - new_max);
-        sum_exp_score += sink_mass;
-    }
 
     // Write the sum and new max
     if (simd_gid == 0) {
@@ -406,7 +404,7 @@ void attention_single_pass(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const device T* sinks,
+    const device float* sinks,
     uint3 tid,
     uint3 tpg,
     uint simd_gid,
@@ -419,7 +417,8 @@ void attention_single_pass(
         queries, keys, values, out, gqa_factor, sequence_length,
         k_head_stride, k_seq_stride, v_head_stride, v_seq_stride,
         scale, bmask, fmask, mask_kv_seq_stride, mask_q_seq_stride, mask_head_stride,
-        sinks, tid, tpg, simd_gid, simd_lid,
+        sinks,
+        tid, tpg, simd_gid, simd_lid,
         shared_max_scores, shared_sum_exp_scores, shared_outputs
     );
 }
@@ -444,7 +443,7 @@ void attention_2pass_1(
     const constant int& mask_kv_seq_stride,
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
-    const device T* sinks,
+    const device float* sinks,
     uint3 tid,
     uint3 tpg,
     uint simd_gid,
@@ -457,7 +456,8 @@ void attention_2pass_1(
         queries, keys, values, out, sums, maxs, gqa_factor, sequence_length,
         k_head_stride, k_seq_stride, v_head_stride, v_seq_stride,
         scale, bmask, fmask, mask_kv_seq_stride, mask_q_seq_stride, mask_head_stride,
-        sinks, tid, tpg, simd_gid, simd_lid,
+        sinks,
+        tid, tpg, simd_gid, simd_lid,
         shared_max_scores, shared_sum_exp_scores, shared_outputs
     );
 }
@@ -496,7 +496,7 @@ void attention_2pass_2(
  const constant int& mask_kv_seq_stride [[ buffer(13), function_constant(has_mask) ]], \
  const constant int& mask_q_seq_stride [[ buffer(14), function_constant(has_mask) ]], \
  const constant int& mask_head_stride [[ buffer(15), function_constant(has_mask) ]], \
- const device T* sinks         [[ buffer(16) ]],                  \
+ const device float* sinks     [[ buffer(16), function_constant(has_sinks) ]], \
  uint3 tid                     [[ threadgroup_position_in_grid ]], \
  uint3 tpg                     [[ threadgroups_per_grid ]],       \
  uint simd_gid                 [[ simdgroup_index_in_threadgroup ]], \
@@ -561,7 +561,7 @@ GENERATE_SINGLE_PASS_KERNELS(256)
  const constant int& mask_kv_seq_stride [[ buffer(15), function_constant(has_mask) ]], \
  const constant int& mask_q_seq_stride [[ buffer(16), function_constant(has_mask) ]], \
  const constant int& mask_head_stride [[ buffer(17), function_constant(has_mask) ]], \
- const device T* sinks         [[ buffer(18) ]],                  \
+ const device float* sinks     [[ buffer(18), function_constant(has_sinks) ]], \
  uint3 tid                     [[ threadgroup_position_in_grid ]], \
  uint3 tpg                     [[ threadgroups_per_grid ]],       \
  uint simd_gid                 [[ simdgroup_index_in_threadgroup ]], \

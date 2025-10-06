@@ -87,9 +87,8 @@ fn test_scatter_buckets_parity() {
         );
         let topk = MoeTopKKernel::new(&ctx).expect("topk");
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         topk.encode(
-            &enc,
+            &cb,
             KernelDataType::Float32,
             MoeTopKArguments {
                 logits_buffer: &logits_buf,
@@ -102,7 +101,6 @@ fn test_scatter_buckets_parity() {
             },
         )
         .expect("encode topk");
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -141,10 +139,9 @@ fn test_scatter_buckets_parity() {
         );
         let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         bucket
             .encode(
-                &enc,
+                &cb,
                 MoeBucketCountsArguments {
                     partials_buffer: &partials_buf,
                     topk_ids_buffer: &topk_ids_buf,
@@ -155,7 +152,6 @@ fn test_scatter_buckets_parity() {
                 },
             )
             .expect("encode bucket");
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -169,9 +165,8 @@ fn test_scatter_buckets_parity() {
         );
         let scan = MoeOffsetsScanKernel::new(&ctx).expect("scan");
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         scan.encode(
-            &enc,
+            &cb,
             MoeOffsetsScanArguments {
                 counts_buffer: &counts_buf,
                 offsets_buffer: &offsets_buf,
@@ -180,7 +175,6 @@ fn test_scatter_buckets_parity() {
             },
         )
         .expect("encode scan");
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -195,14 +189,13 @@ fn test_scatter_buckets_parity() {
 
         let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         let block_alloc_buf = ctx.device.new_buffer(
             (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
             MTLResourceOptions::StorageModeShared,
         );
         scatter
             .encode_block_bases(
-                &enc,
+                &cb,
                 MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
@@ -213,7 +206,6 @@ fn test_scatter_buckets_parity() {
                 },
             )
             .expect("encode bases");
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -230,10 +222,9 @@ fn test_scatter_buckets_parity() {
         );
 
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         scatter
             .encode_scatter(
-                &enc,
+                &cb,
                 MoeScatterArguments {
                     topk_ids_buffer: &topk_ids_buf,
                     topk_probs_buffer: &topk_probs_buf,
@@ -251,7 +242,6 @@ fn test_scatter_buckets_parity() {
                 KernelDataType::Float16,
             )
             .expect("encode scatter");
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -418,9 +408,8 @@ fn run_offsets(
     let scan =
         uzu::backends::metal::kernel::MoeOffsetsScanKernel::new(ctx).unwrap();
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     scan.encode(
-        &enc,
+        &cb,
         uzu::backends::metal::kernel::MoeOffsetsScanArguments {
             counts_buffer: counts,
             offsets_buffer: &offsets,
@@ -429,7 +418,6 @@ fn run_offsets(
         },
     )
     .unwrap();
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
     (offsets, sumk)
@@ -609,9 +597,8 @@ fn test_multiblock_multitile_parity_real_partials() {
         );
         let topk = MoeTopKKernel::new(&ctx).unwrap();
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         topk.encode(
-            &enc,
+            &cb,
             KernelDataType::Float32,
             MoeTopKArguments {
                 logits_buffer: &logits_buf,
@@ -624,7 +611,6 @@ fn test_multiblock_multitile_parity_real_partials() {
             },
         )
         .unwrap();
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -727,9 +713,8 @@ fn test_capacity_clamp_correctness() {
     );
     let topk = MoeTopKKernel::new(&ctx).unwrap();
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     topk.encode(
-        &enc,
+        &cb,
         KernelDataType::Float32,
         MoeTopKArguments {
             logits_buffer: &logits_buf,
@@ -742,7 +727,6 @@ fn test_capacity_clamp_correctness() {
         },
     )
     .unwrap();
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -850,9 +834,8 @@ fn test_content_prob_pairing_integrity() {
     );
     let topk = MoeTopKKernel::new(&ctx).unwrap();
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     topk.encode(
-        &enc,
+        &cb,
         KernelDataType::Float32,
         MoeTopKArguments {
             logits_buffer: &logits_buf,
@@ -865,7 +848,6 @@ fn test_content_prob_pairing_integrity() {
         },
     )
     .unwrap();
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 

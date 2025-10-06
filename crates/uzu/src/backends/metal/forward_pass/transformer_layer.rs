@@ -143,6 +143,7 @@ pub fn mlp_block(
     shared_moe_weights: Option<
         crate::backends::metal::kernel::moe::SharedMoeWeights,
     >,
+    layer_index: usize,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let crate::config::MLPConfig::Dense(dense) = config {
         if let crate::config::LinearConfig::Quantized(ref quant_config) =
@@ -205,6 +206,7 @@ pub fn mlp_block(
             hidden_dim,
             parameter_tree,
             shared_moe_weights,
+            layer_index,
         )
         .expect("Failed to build MoE block");
         return Box::new(moe_block);

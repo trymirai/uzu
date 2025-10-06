@@ -886,11 +886,7 @@ impl MoeExpertsKernel {
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
         let estimated_sum_k = args.t * args.k;
-        if estimated_sum_k <= 4 && args.t == 1 {
-            eprintln!(
-                "[GEMV-V2] Using two-phase fused GEMV for T={}, K={}, sum_k={}",
-                args.t, args.k, estimated_sum_k
-            );
+        if args.t == 1 {
             return self.encode_gemv_decode(command_buffer, args);
         }
 

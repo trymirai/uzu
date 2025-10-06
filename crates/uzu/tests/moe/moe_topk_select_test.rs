@@ -123,7 +123,6 @@ fn run_topk_once(
     );
 
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
 
     let args = MoeTopKArguments {
         logits_buffer: &logits_buf,
@@ -135,9 +134,7 @@ fn run_topk_once(
         renorm,
     };
 
-    kernel.encode(&enc, dtype, args)?;
-
-    enc.end_encoding();
+    kernel.encode(&cb, dtype, args)?;
     cb.commit();
     cb.wait_until_completed();
 
@@ -333,7 +330,6 @@ fn test_topk_edge_cases_and_determinism() {
             MTLResourceOptions::StorageModeShared,
         );
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         let args = MoeTopKArguments {
             logits_buffer: &logits_buf,
             topk_ids_buffer: &ids_buf,
@@ -344,14 +340,13 @@ fn test_topk_edge_cases_and_determinism() {
             renorm: true,
         };
         let err =
-            kernel.encode(&enc, KernelDataType::Float32, args).unwrap_err();
+            kernel.encode(&cb, KernelDataType::Float32, args).unwrap_err();
         match err {
             MoeTopKError::InvalidDimensions {
                 ..
             } => {},
             other => panic!("Unexpected error: {:?}", other),
         }
-        enc.end_encoding();
         cb.commit();
         cb.wait_until_completed();
     }

@@ -65,7 +65,6 @@ fn gen_topk_ids_from_logits(
 
     let topk = MoeTopKKernel::new(ctx).expect("topk kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeTopKArguments {
         logits_buffer: &logits_buf,
         topk_ids_buffer: &topk_ids_buf,
@@ -75,8 +74,7 @@ fn gen_topk_ids_from_logits(
         k,
         renorm: true,
     };
-    topk.encode(&enc, KernelDataType::Float32, args).expect("encode topk");
-    enc.end_encoding();
+    topk.encode(&cb, KernelDataType::Float32, args).expect("encode topk");
     cb.commit();
     cb.wait_until_completed();
 
@@ -128,7 +126,6 @@ fn test_bucket_counts_parity_random() {
             let kernel =
                 MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
             let cb = ctx.command_queue.new_command_buffer();
-            let enc = cb.new_compute_command_encoder();
             let args = MoeBucketCountsArguments {
                 topk_ids_buffer: &topk_ids_buf,
                 counts_buffer: &counts_buf,
@@ -137,8 +134,7 @@ fn test_bucket_counts_parity_random() {
                 e,
                 k,
             };
-            kernel.encode(&enc, args).expect("encode bucket");
-            enc.end_encoding();
+            kernel.encode(&cb, args).expect("encode bucket");
             cb.commit();
             cb.wait_until_completed();
 
@@ -200,7 +196,6 @@ fn test_bucket_counts_edge_cases() {
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeBucketCountsArguments {
         topk_ids_buffer: &topk_ids_buf,
         counts_buffer: &counts_buf,
@@ -209,8 +204,7 @@ fn test_bucket_counts_edge_cases() {
         e,
         k,
     };
-    kernel.encode(&enc, args).expect("encode bucket");
-    enc.end_encoding();
+    kernel.encode(&cb, args).expect("encode bucket");
     cb.commit();
     cb.wait_until_completed();
     let counts_gpu = unsafe {
@@ -249,7 +243,6 @@ fn test_bucket_counts_edge_cases() {
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeBucketCountsArguments {
         topk_ids_buffer: &topk_ids_buf,
         counts_buffer: &counts_buf,
@@ -258,8 +251,7 @@ fn test_bucket_counts_edge_cases() {
         e,
         k,
     };
-    kernel.encode(&enc, args).expect("encode bucket");
-    enc.end_encoding();
+    kernel.encode(&cb, args).expect("encode bucket");
     cb.commit();
     cb.wait_until_completed();
     let counts_gpu = unsafe {
@@ -305,7 +297,6 @@ fn test_bucket_counts_edge_cases() {
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeBucketCountsArguments {
         topk_ids_buffer: &topk_ids_buf,
         counts_buffer: &counts_buf,
@@ -314,8 +305,7 @@ fn test_bucket_counts_edge_cases() {
         e,
         k,
     };
-    kernel.encode(&enc, args).expect("encode bucket");
-    enc.end_encoding();
+    kernel.encode(&cb, args).expect("encode bucket");
     cb.commit();
     cb.wait_until_completed();
     let counts_gpu = unsafe {

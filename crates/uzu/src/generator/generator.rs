@@ -346,10 +346,6 @@ impl Generator {
             let t_create_state = Instant::now();
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
-            eprintln!(
-                "[RunModel] Create state: {:.3}ms",
-                t_create_state.elapsed().as_secs_f64() * 1000.0
-            );
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
@@ -366,10 +362,6 @@ impl Generator {
                     encoded_task_key.clone(),
                 );
             }
-            eprintln!(
-                "[RunModel] Encode: {:.3}ms",
-                t_encode.elapsed().as_secs_f64() * 1000.0
-            );
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
@@ -409,40 +401,6 @@ impl Generator {
 
             root_command_buffer.wait_until_completed();
 
-            if std::env::var_os("UZU_DEBUG_MOE").is_some() {
-                let debug_arrays = state.arrays(&[ArrayId::MoeTotalTiles]);
-                if let Some(cell) = debug_arrays.get(0) {
-                    let array = cell.borrow();
-                    if array.data_type() == DataType::U32 {
-                        let raw = array.buffer();
-                        if raw.len() >= 32 {
-                            let words = unsafe {
-                                std::slice::from_raw_parts(
-                                    raw.as_ptr() as *const u32,
-                                    raw.len() / 4,
-                                )
-                            };
-                            if words.len() >= 8 {
-                                let sample_fc1 = f32::from_bits(words[4]);
-                                let sample_fc2 = f32::from_bits(words[5]);
-                                let sample_gate = f32::from_bits(words[6]);
-                                let sample_up = f32::from_bits(words[7]);
-                                eprintln!(
-                                    "[DebugMoe] total_tiles={} total_jobs={} nan_fc1={} nan_fc2={} sample_fc1={} sample_fc2={} gate={} up={}",
-                                    words[0],
-                                    words[1],
-                                    words[2],
-                                    words[3],
-                                    sample_fc1,
-                                    sample_fc2,
-                                    sample_gate,
-                                    sample_up
-                                );
-                            }
-                        }
-                    }
-                }
-            }
             let run_time = run_start.elapsed().as_secs_f64();
             (state, run_time)
         })

@@ -78,9 +78,8 @@ fn test_moe_finalize_end_to_end() {
 
     let topk = MoeTopKKernel::new(&ctx).expect("topk");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     topk.encode(
-        &enc,
+        &cb,
         KernelDataType::Float32,
         MoeTopKArguments {
             logits_buffer: &logits_buf,
@@ -93,7 +92,6 @@ fn test_moe_finalize_end_to_end() {
         },
     )
     .expect("encode topk");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -117,10 +115,9 @@ fn test_moe_finalize_end_to_end() {
     );
     let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     bucket
         .encode(
-            &enc,
+            &cb,
             MoeBucketCountsArguments {
                 partials_buffer: &partials_buf,
                 topk_ids_buffer: &topk_ids_buf,
@@ -131,7 +128,6 @@ fn test_moe_finalize_end_to_end() {
             },
         )
         .expect("encode bucket");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -145,9 +141,8 @@ fn test_moe_finalize_end_to_end() {
     );
     let scan = MoeOffsetsScanKernel::new(&ctx).expect("scan");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     scan.encode(
-        &enc,
+        &cb,
         MoeOffsetsScanArguments {
             counts_buffer: &counts_buf,
             offsets_buffer: &offsets_buf,
@@ -156,7 +151,6 @@ fn test_moe_finalize_end_to_end() {
         },
     )
     .expect("encode scan");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -224,14 +218,13 @@ fn test_moe_finalize_end_to_end() {
     );
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let block_alloc_buf = ctx.device.new_buffer(
         (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
     scatter
         .encode_block_bases(
-            &enc,
+            &cb,
             MoeBlockBasesArguments {
                 partials_buffer: &partials,
                 block_bases_buffer: &block_bases_buf,
@@ -242,7 +235,6 @@ fn test_moe_finalize_end_to_end() {
             },
         )
         .expect("encode bases");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -262,10 +254,9 @@ fn test_moe_finalize_end_to_end() {
 
     // Scatter with map
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     scatter
         .encode_scatter_with_map(
-            &enc,
+            &cb,
             MoeScatterWithMapArguments {
                 base: MoeScatterArguments {
                     topk_ids_buffer: &topk_ids_buf,
@@ -286,7 +277,6 @@ fn test_moe_finalize_end_to_end() {
             KernelDataType::Float16,
         )
         .expect("encode scatter map");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -313,10 +303,9 @@ fn test_moe_finalize_end_to_end() {
     );
     let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     finalize
         .encode(
-            &enc,
+            &cb,
             MoeFinalizeArguments {
                 tok2row_buffer: &tok2row_buf,
                 probs_buffer: &topk_probs_buf,
@@ -329,7 +318,6 @@ fn test_moe_finalize_end_to_end() {
             KernelDataType::Float16,
         )
         .expect("encode finalize");
-    enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 

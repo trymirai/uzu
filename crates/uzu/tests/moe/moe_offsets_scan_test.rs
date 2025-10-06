@@ -54,7 +54,6 @@ fn gen_counts_via_gpu(
     );
     let topk = MoeTopKKernel::new(ctx).expect("topk");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeTopKArguments {
         logits_buffer: &logits_buf,
         topk_ids_buffer: &topk_ids_buf,
@@ -64,8 +63,7 @@ fn gen_counts_via_gpu(
         k,
         renorm: true,
     };
-    topk.encode(&enc, KernelDataType::Float32, args).expect("encode topk");
-    enc.end_encoding();
+    topk.encode(&cb, KernelDataType::Float32, args).expect("encode topk");
     cb.commit();
     cb.wait_until_completed();
 
@@ -88,7 +86,6 @@ fn gen_counts_via_gpu(
     );
     let bucket = MoeBucketCountsKernel::new(ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let bargs = MoeBucketCountsArguments {
         partials_buffer: &partials_buf,
         topk_ids_buffer: &topk_ids_buf,
@@ -97,8 +94,7 @@ fn gen_counts_via_gpu(
         e,
         k,
     };
-    bucket.encode(&enc, bargs).expect("encode bucket");
-    enc.end_encoding();
+    bucket.encode(&cb, bargs).expect("encode bucket");
     cb.commit();
     cb.wait_until_completed();
     counts_buf
@@ -133,15 +129,13 @@ fn test_offsets_scan_parity() {
 
         let kernel = MoeOffsetsScanKernel::new(&ctx).expect("scan");
         let cb = ctx.command_queue.new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
         let args = MoeOffsetsScanArguments {
             counts_buffer: &counts_buf,
             offsets_buffer: &offsets_buf,
             sumk_buffer: &sumk_buf,
             e,
         };
-        kernel.encode(&enc, args).expect("encode scan");
-        enc.end_encoding();
+        kernel.encode(&cb, args).expect("encode scan");
         cb.commit();
         cb.wait_until_completed();
 
@@ -182,15 +176,13 @@ fn test_offsets_scan_edge_cases() {
     );
     let kernel = MoeOffsetsScanKernel::new(&ctx).expect("scan");
     let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
     let args = MoeOffsetsScanArguments {
         counts_buffer: &counts_buf,
         offsets_buffer: &offsets_buf,
         sumk_buffer: &sumk_buf,
         e: 0,
     };
-    kernel.encode(&enc, args).expect("encode scan");
-    enc.end_encoding();
+    kernel.encode(&cb, args).expect("encode scan");
     cb.commit();
     cb.wait_until_completed();
     let offsets_gpu = unsafe {
