@@ -11,6 +11,36 @@ use crate::{
 pub struct Message {
     pub role: Role,
     pub content: String,
+    pub reasoning_content: Option<String>,
+}
+
+impl Message {
+    pub fn new(
+        role: Role,
+        content: String,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self {
+            role,
+            content,
+            reasoning_content,
+        }
+    }
+
+    pub fn system(content: String) -> Self {
+        Self::new(Role::System, content, None)
+    }
+
+    pub fn user(content: String) -> Self {
+        Self::new(Role::User, content, None)
+    }
+
+    pub fn assistant(
+        content: String,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self::new(Role::Assistant, content, reasoning_content)
+    }
 }
 
 impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>>
@@ -26,9 +56,13 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>>
             Role::Assistant => config.assistant_role_name.clone(),
         };
         let content = self.content.clone();
-        HashMap::from([
+        let mut result = HashMap::from([
             (String::from("role"), role),
             (String::from("content"), content),
-        ])
+        ]);
+        if let Some(reasoning_content) = self.reasoning_content.clone() {
+            result.insert(String::from("reasoning_content"), reasoning_content);
+        }
+        result
     }
 }

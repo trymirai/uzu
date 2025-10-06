@@ -41,9 +41,9 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         let proposed_value = match self {
             PrefillStepSize::Default => {
                 if cfg!(target_os = "ios") {
-                    return 1;
+                    64
                 } else {
-                    return 1;
+                    64
                 }
             },
             PrefillStepSize::Maximal => maximal_value,

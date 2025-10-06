@@ -1,10 +1,10 @@
 use std::{path::PathBuf, rc::Rc};
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig},
     helpers::Context,
     parameter::{SamplingMethod, SamplingPolicy},
-    session::Session,
     types::{Input, Output},
 };
 
@@ -269,6 +269,7 @@ fn ask_with_context(
         )
         .unwrap()
         .text
+        .original
 }
 
 fn ask_without_context(
@@ -289,4 +290,5 @@ fn ask_without_context(
         )
         .unwrap()
         .text
+        .original
 }

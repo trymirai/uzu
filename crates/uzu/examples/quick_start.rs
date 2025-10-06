@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use uzu::session::{
+    Session,
     config::{DecodingConfig, RunConfig},
-    session::Session,
     types::{Input, Output},
 };
 
@@ -18,6 +18,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return true;
         }),
     )?;
-    println!("{}", output.text);
+    println!("{}", output.text.original);
     Ok(())
 }

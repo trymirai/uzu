@@ -12,6 +12,7 @@ impl Input {
             Input::Text(content) => vec![Message {
                 role: Role::User,
                 content: content.clone(),
+                reasoning_content: None,
             }],
             Input::Messages(messages) => messages.clone(),
         }
