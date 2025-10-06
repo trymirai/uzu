@@ -1,5 +1,3 @@
-#![cfg(feature = "moe_dev_tests")]
-
 use std::time::Instant;
 
 use half::bf16;

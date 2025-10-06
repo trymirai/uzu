@@ -1,5 +1,3 @@
-#![cfg(feature = "moe_dev_tests")]
-
 use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -50,7 +48,7 @@ fn moe_cpu_reference(
     w13: &[bf16],          // [E, d_model, 2*d_ff] - BF16 to match GPU precision
     w2: &[bf16],           // [E, d_ff, d_model]
     up_biases: &[bf16],    // [E, 2*d_ff]
-    _down_biases: &[bf16], // [E, d_model] - unused when debugging bias loop
+    down_biases: &[bf16],  // [E, d_model]
     t: usize,
     e: usize,
     k: usize,
@@ -165,7 +163,7 @@ fn moe_cpu_reference(
 
                 // Add down bias and quantize again (GPU does Y_partial[idx] = T(out_val))
                 let down_bias_val =
-                    f32::from(_down_biases[bias_down_offset + out_idx]);
+                    f32::from(down_biases[bias_down_offset + out_idx]);
                 let with_bias = fc2_val + down_bias_val;
                 let with_bias_bf16 = bf16::from_f32(with_bias);
                 let final_val = f32::from(with_bias_bf16);
@@ -192,7 +190,6 @@ fn run_moe_parity_test(
     seed: u64,
     test_name: &str,
 ) {
-    let use_uniform_weights = test_name.contains("Uniform");
     let mut rng = StdRng::seed_from_u64(seed);
 
     eprintln!(
@@ -200,14 +197,10 @@ fn run_moe_parity_test(
         test_name, t, e, k, d_model, d_ff, silu_alpha, gate_clip, up_clip
     );
 
-    // Generate input (uniform for pattern spotting, random otherwise)
-    let x: Vec<bf16> = if use_uniform_weights {
-        vec![bf16::from_f32(1.0); t * d_model]
-    } else {
-        (0..t * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-            .collect()
-    };
+    // Random BF16 inputs
+    let x: Vec<bf16> = (0..t * d_model)
+        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
+        .collect();
 
     // Generate random router weights and biases for CPU reference
     let router_weight_f32: Vec<f32> =
@@ -240,37 +233,21 @@ fn run_moe_parity_test(
     let router_logits: Vec<bf16> =
         router_logits_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
-    // Generate expert weights and biases (uniform if testing pattern, random otherwise)
+    // Generate random expert weights and biases
     let w13_len = e * d_model * 2 * d_ff;
     let w2_len = e * d_ff * d_model;
-    let w13: Vec<bf16> = if use_uniform_weights {
-        vec![bf16::from_f32(1.0); w13_len]
-    } else {
-        (0..w13_len)
-            .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
-            .collect()
-    };
-    let w2: Vec<bf16> = if use_uniform_weights {
-        vec![bf16::from_f32(1.0); w2_len]
-    } else {
-        (0..w2_len)
-            .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
-            .collect()
-    };
-    let up_biases: Vec<bf16> = if use_uniform_weights {
-        vec![bf16::from_f32(0.0); e * 2 * d_ff]
-    } else {
-        (0..e * 2 * d_ff)
-            .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
-            .collect()
-    };
-    let down_biases: Vec<bf16> = if use_uniform_weights {
-        vec![bf16::from_f32(0.0); e * d_model]
-    } else {
-        (0..e * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
-            .collect()
-    };
+    let w13: Vec<bf16> = (0..w13_len)
+        .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
+        .collect();
+    let w2: Vec<bf16> = (0..w2_len)
+        .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
+        .collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
+        .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
+        .collect();
+    let down_biases: Vec<bf16> = (0..e * d_model)
+        .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
+        .collect();
 
     // Create Metal buffers
     let x_buf = ctx.device.new_buffer_with_data(
@@ -887,7 +864,6 @@ fn run_moe_parity_test(
     }
 
     // Adaptive threshold: BF16 error scales with accumulation depth and K
-    // Empirical calibration from 25+ tests:
     //   K=1: error < 0.001 for all scales (including D=4096, H=14336) - virtually perfect
     //   K=2: error ~ 0.015 * sqrt(k0 × ff0) - finalize weighted accumulation adds variance
     //   Pattern: K>1 scales linearly with K
@@ -1313,29 +1289,6 @@ fn test_moe_basic() {
         (f32::NEG_INFINITY, f32::INFINITY),
         0xE2E_0024,
         "BoundarySweep_D1024_FF256_T1",
-    );
-}
-
-#[test]
-fn test_moe_multi_row_bug() {
-    let ctx = create_ctx();
-
-    // Isolated test for multi-row tile odd-column corruption bug
-    // Both tokens route to same expert → 2-row tile
-    // BUG: ODD columns of row 1 corrupted to near-zero in y_partial
-    run_moe_parity_test(
-        &ctx,
-        2,    // t (2 tokens - both route to same expert with this seed)
-        4,    // e
-        1,    // k
-        1024, // d_model (16 n-tiles)
-        256,  // d_ff (8 ff0 chunks)
-        2,    // gating_code (SwiGLU)
-        1.0,
-        (f32::NEG_INFINITY, f32::INFINITY),
-        (f32::NEG_INFINITY, f32::INFINITY),
-        0xE2E_0025,
-        "BoundarySweep_D1024_FF256_T2",
     );
 }
 

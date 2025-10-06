@@ -1,5 +1,3 @@
-#![cfg(feature = "moe_dev_tests")]
-
 use half::bf16;
 use metal::MTLResourceOptions;
 use uzu::backends::metal::{
@@ -13,7 +11,10 @@ fn create_ctx() -> MTLContext {
     MTLContext::new(device, queue).expect("ctx")
 }
 
-fn silu(x: f32, alpha: f32) -> f32 {
+fn silu(
+    x: f32,
+    alpha: f32,
+) -> f32 {
     x / (1.0 + (-alpha * x).exp())
 }
 
@@ -94,9 +95,7 @@ fn run_decode_parity_case(
     let gate_clip = (-6.0f32, 7.0f32);
     let up_clip = (-6.0f32, 8.0f32);
 
-    let x: Vec<f32> = vec![
-        0.25, -0.5, 1.0, -1.25, 0.75, -0.375, 0.125, 0.875,
-    ];
+    let x: Vec<f32> = vec![0.25, -0.5, 1.0, -1.25, 0.75, -0.375, 0.125, 0.875];
     let active_experts = [1usize, 3usize];
     let sum_k = active_experts.len();
 
@@ -109,10 +108,8 @@ fn run_decode_parity_case(
     let mut running = 0u32;
     for expert in 0..e {
         expert_offsets[expert] = running;
-        let count = active_experts
-            .iter()
-            .filter(|&&idx| idx == expert)
-            .count() as u32;
+        let count =
+            active_experts.iter().filter(|&&idx| idx == expert).count() as u32;
         running += count;
     }
     expert_offsets[e] = running;
@@ -160,33 +157,39 @@ fn run_decode_parity_case(
         }
     }
 
-    let (x_perm_upload_bytes, x_perm_buf, x_perm_cpu): (u64, metal::Buffer, Vec<f32>) =
-        match dtype {
-            KernelDataType::Float32 => {
-                let bytes = (x_perm.len() * std::mem::size_of::<f32>()) as u64;
-                let buf = ctx.device.new_buffer_with_data(
-                    x_perm.as_ptr() as *const _,
-                    bytes,
-                    MTLResourceOptions::StorageModeShared,
-                );
-                (bytes, buf, x_perm.clone())
-            },
-            KernelDataType::BFloat16 => {
-                let x_bf16: Vec<bf16> = x_perm.iter().map(|&v| bf16::from_f32(v)).collect();
-                let bytes = (x_bf16.len() * std::mem::size_of::<bf16>()) as u64;
-                let buf = ctx.device.new_buffer_with_data(
-                    x_bf16.as_ptr() as *const _,
-                    bytes,
-                    MTLResourceOptions::StorageModeShared,
-                );
-                let cpu = x_bf16.iter().map(|&v| f32::from(v)).collect();
-                (bytes, buf, cpu)
-            },
-            _ => panic!("dtype {:?} not supported", dtype),
-        };
+    let (x_perm_upload_bytes, x_perm_buf, x_perm_cpu): (
+        u64,
+        metal::Buffer,
+        Vec<f32>,
+    ) = match dtype {
+        KernelDataType::Float32 => {
+            let bytes = (x_perm.len() * std::mem::size_of::<f32>()) as u64;
+            let buf = ctx.device.new_buffer_with_data(
+                x_perm.as_ptr() as *const _,
+                bytes,
+                MTLResourceOptions::StorageModeShared,
+            );
+            (bytes, buf, x_perm.clone())
+        },
+        KernelDataType::BFloat16 => {
+            let x_bf16: Vec<bf16> =
+                x_perm.iter().map(|&v| bf16::from_f32(v)).collect();
+            let bytes = (x_bf16.len() * std::mem::size_of::<bf16>()) as u64;
+            let buf = ctx.device.new_buffer_with_data(
+                x_bf16.as_ptr() as *const _,
+                bytes,
+                MTLResourceOptions::StorageModeShared,
+            );
+            let cpu = x_bf16.iter().map(|&v| f32::from(v)).collect();
+            (bytes, buf, cpu)
+        },
+        _ => panic!("dtype {:?} not supported", dtype),
+    };
     let _ = x_perm_upload_bytes;
 
-    let upload_as = |data: &[f32], dtype: KernelDataType| -> (metal::Buffer, Vec<f32>) {
+    let upload_as = |data: &[f32],
+                     dtype: KernelDataType|
+     -> (metal::Buffer, Vec<f32>) {
         match dtype {
             KernelDataType::Float32 => {
                 let bytes = (data.len() * std::mem::size_of::<f32>()) as u64;
@@ -198,8 +201,10 @@ fn run_decode_parity_case(
                 (buf, data.to_vec())
             },
             KernelDataType::BFloat16 => {
-                let bf16_data: Vec<bf16> = data.iter().map(|&v| bf16::from_f32(v)).collect();
-                let bytes = (bf16_data.len() * std::mem::size_of::<bf16>()) as u64;
+                let bf16_data: Vec<bf16> =
+                    data.iter().map(|&v| bf16::from_f32(v)).collect();
+                let bytes =
+                    (bf16_data.len() * std::mem::size_of::<bf16>()) as u64;
                 let buf = ctx.device.new_buffer_with_data(
                     bf16_data.as_ptr() as *const _,
                     bytes,
@@ -325,10 +330,14 @@ fn run_decode_parity_case(
     let mut expected = Vec::with_capacity(sum_k * d_model);
     for (row_idx, &expert_idx) in active_experts.iter().enumerate() {
         let base = expert_idx;
-        let w13_slice = &w13_cpu[base * d_model * 2 * d_ff..(base + 1) * d_model * 2 * d_ff];
-        let w2_slice = &w2_cpu[base * d_ff * d_model..(base + 1) * d_ff * d_model];
-        let up_bias_slice = &up_biases_cpu[base * 2 * d_ff..(base + 1) * 2 * d_ff];
-        let down_bias_slice = &down_biases_cpu[base * d_model..(base + 1) * d_model];
+        let w13_slice = &w13_cpu
+            [base * d_model * 2 * d_ff..(base + 1) * d_model * 2 * d_ff];
+        let w2_slice =
+            &w2_cpu[base * d_ff * d_model..(base + 1) * d_ff * d_model];
+        let up_bias_slice =
+            &up_biases_cpu[base * 2 * d_ff..(base + 1) * 2 * d_ff];
+        let down_bias_slice =
+            &down_biases_cpu[base * d_model..(base + 1) * d_model];
 
         let y = cpu_expert_forward(
             &x_perm_cpu[row_idx * d_model..(row_idx + 1) * d_model],

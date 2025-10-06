@@ -22,7 +22,7 @@ static inline float silu(float x, float alpha) {
 }
 
 template<typename T>
-void moe_experts_decode_fused_gemv_v2_impl(
+void moe_experts_decode_fused_gemv_impl(
     device const T* X_perm,
     device const uint* expert_offsets,
     device const T* W13_all,
@@ -160,28 +160,18 @@ void moe_experts_decode_fused_gemv_v2_impl(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-        // Write FC2 result first (match tiled MMA's two-stage quantization)
         const uint my_col = col0 + lid;
         if (my_col < d_model) {
             const ulong y_idx = (ulong)(seg_start + row_idx) * (ulong)d_model + (ulong)my_col;
-            Y_partial[y_idx] = T(y_acc);  // First BF16 conversion
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        
-        // Read back, add bias, write (second BF16 conversion - matches tiled MMA)
-        if (my_col < d_model) {
-            const ulong y_idx = (ulong)(seg_start + row_idx) * (ulong)d_model + (ulong)my_col;
-            float prev_val = float(Y_partial[y_idx]);  // BF16 → F32
-            float bias_val = float(down_biases[bias_down_base + my_col]);
-            float final_val = prev_val + bias_val;
-            Y_partial[y_idx] = T(final_val);  // F32 → BF16
+            float final_val = y_acc + float(down_biases[bias_down_base + my_col]);
+            Y_partial[y_idx] = T(final_val);
         }
     } // End row loop
 }
 
 // Kernel entry points
 #define MOE_V2_KERNEL(DTYPE, SUFFIX) \
-kernel void moe_experts_decode_fused_gemv_v2_##SUFFIX( \
+kernel void moe_experts_decode_fused_gemv_##SUFFIX( \
     device const DTYPE* X_perm [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
@@ -203,7 +193,7 @@ kernel void moe_experts_decode_fused_gemv_v2_##SUFFIX( \
 { \
     threadgroup float4 x_cache_local[1024]; \
     threadgroup float h_tile_local[512]; \
-    moe_experts_decode_fused_gemv_v2_impl<DTYPE>( \
+    moe_experts_decode_fused_gemv_impl<DTYPE>( \
         X_perm, expert_offsets, W13_all, W2_all, Y_partial, \
         d_model, d_ff, E, up_biases, down_biases, \
         gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha, \

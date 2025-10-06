@@ -411,13 +411,15 @@ impl AuxBuffers {
                 {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_router_logits.as_ref().map(|buf| {
+                            let logits_dtype: DataType =
+                                moe.router_config.activation_precision().into();
                             RefCell::new(MetalArray::new(
                                 buf.clone(),
                                 &model_shape.moe_router_logits_shape(
                                     suffix_length,
                                     moe.mixture_size,
                                 ),
-                                act_dtype,
+                                logits_dtype,
                             ))
                         })
                     },

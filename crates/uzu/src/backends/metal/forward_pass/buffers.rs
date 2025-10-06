@@ -141,7 +141,9 @@ impl ForwardPassBuffers {
                         max_suffix_len,
                         moe.mixture_size,
                     );
-                    Some(alloc(&shape, act_ty))
+                    let logits_dtype: DataType =
+                        moe.router_config.activation_precision().into();
+                    Some(alloc(&shape, logits_dtype))
                 },
                 _ => None,
             },

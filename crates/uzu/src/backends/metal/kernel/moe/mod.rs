@@ -860,10 +860,8 @@ impl MoeExpertsKernel {
                     MTLDataType::UInt,
                     32,
                 );
-                let kernel_name = format!(
-                    "moe_experts_decode_fused_gemv_v2_{}",
-                    dtype_suffix
-                );
+                let kernel_name =
+                    format!("moe_experts_decode_fused_gemv_{}", dtype_suffix);
                 let pipeline =
                     ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?;
                 gemv_pipelines[gate as usize].push(pipeline);

@@ -116,4 +116,3 @@ kernel void moe_topk_select_bf16(
 {
     topk_select_impl<bfloat, bfloat>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
 }
-

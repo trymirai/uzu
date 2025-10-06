@@ -1,5 +1,3 @@
-#![cfg(feature = "moe_dev_tests")]
-
 use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};

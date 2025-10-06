@@ -46,6 +46,7 @@ pub struct SharedMoeWeights {
 
 pub struct MoeBlockEncodable {
     router: RouterBlock,
+    router_data_type: KernelDataType,
     topk_kernel: MoeTopKKernel,
     counts_kernel: MoeBucketCountsKernel,
     offsets_kernel: MoeOffsetsScanKernel,
@@ -184,6 +185,10 @@ impl MoeBlockEncodable {
             .into();
         let data_type: KernelDataType = activation_data_type.into();
 
+        let router_data_type: DataType =
+            moe_config.router_config.activation_precision().into();
+        let router_kernel_data_type: KernelDataType = router_data_type.into();
+
         let router_tree = parameter_tree.subtree("router").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Router subtree error: {:?}",
@@ -206,10 +211,10 @@ impl MoeBlockEncodable {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let kernel_name = match activation_data_type {
-                    DataType::BF16 => "moe_router_bf16",
-                    DataType::F16 => "moe_router_f16",
-                    _ => "moe_router_bf16",
+                let kernel_name = match router_kernel_data_type {
+                    KernelDataType::BFloat16 => "moe_router_bf16",
+                    KernelDataType::Float16 => "moe_router_f16",
+                    KernelDataType::Float32 => "moe_router_f32",
                 };
                 let pipeline =
                     context.compute_pipeline_state(kernel_name, None)?;
@@ -392,6 +397,7 @@ impl MoeBlockEncodable {
 
         Ok(Self {
             router,
+            router_data_type: router_kernel_data_type,
             topk_kernel,
             counts_kernel,
             offsets_kernel,
@@ -475,6 +481,13 @@ impl EncodableWithState for MoeBlockEncodable {
         };
 
         let main_buf = clone_buffer(&arrays[0]);
+        if std::env::var_os("UZU_DEBUG_ROUTER").is_some() {
+            let dtype = arrays[1].borrow().data_type();
+            eprintln!(
+                "[RouterDebug] layer={} router logits dtype={:?}",
+                self.layer_index, dtype
+            );
+        }
         let router_logits_buf = clone_buffer(&arrays[1]);
         let topk_ids_buf = clone_buffer(&arrays[2]);
         let topk_probs_buf = clone_buffer(&arrays[3]);
@@ -577,7 +590,7 @@ impl EncodableWithState for MoeBlockEncodable {
         self.topk_kernel
             .encode(
                 root,
-                self.data_type,
+                self.router_data_type,
                 MoeTopKArguments {
                     logits_buffer: &router_logits_buf,
                     topk_ids_buffer: &topk_ids_buf,
