@@ -8,9 +8,9 @@ use super::{
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
 use crate::{
-    Array, DataType,
+    Array,
     backends::metal::forward_pass::{
-        ArrayId, ForwardPassState,
+        ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
         kv_cache::INVALID_POSITION,
     },
@@ -343,13 +343,11 @@ impl Generator {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let t_create_state = Instant::now();
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
-            let t_encode = Instant::now();
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
             } else {
@@ -486,36 +484,4 @@ impl Generator {
             self.registered_prefix_len = desired_prefix_len;
         }
     }
-}
-
-fn collect_logit_stats<I>(
-    iter: I
-) -> (Vec<f32>, Option<f32>, Option<f32>, Option<usize>)
-where
-    I: IntoIterator<Item = (usize, f32)>,
-{
-    let mut samples = Vec::new();
-    let mut min_val: Option<f32> = None;
-    let mut max_val: Option<f32> = None;
-    let mut first_nan_idx: Option<usize> = None;
-
-    for (idx, value) in iter {
-        if idx < 8 {
-            samples.push(value);
-        }
-        if value.is_nan() {
-            first_nan_idx = Some(idx);
-            break;
-        }
-        min_val = Some(match min_val {
-            Some(current) => current.min(value),
-            None => value,
-        });
-        max_val = Some(match max_val {
-            Some(current) => current.max(value),
-            None => value,
-        });
-    }
-
-    (samples, min_val, max_val, first_nan_idx)
 }

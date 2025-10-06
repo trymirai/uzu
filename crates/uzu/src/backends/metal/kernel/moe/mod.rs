@@ -885,7 +885,6 @@ impl MoeExpertsKernel {
         command_buffer: &CommandBufferRef,
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
-        let estimated_sum_k = args.t * args.k;
         if args.t == 1 {
             return self.encode_gemv_decode(command_buffer, args);
         }

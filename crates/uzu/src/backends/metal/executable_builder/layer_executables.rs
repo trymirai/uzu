@@ -256,7 +256,6 @@ impl EncodableWithState for LayerExecutables {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let t_layer = std::time::Instant::now();
         let layer_traces = if let Some(traces) = state.traces.clone() {
             traces.borrow().layer_results.get(self.layer_index).cloned()
         } else {
@@ -351,13 +350,6 @@ impl EncodableWithState for LayerExecutables {
             state.copy_array(
                 ArrayId::Main,
                 layer_traces.borrow().outputs.clone(),
-            );
-        }
-
-        if self.layer_index == 0 {
-            eprintln!(
-                "[Layer0] TOTAL: {:.3}ms",
-                t_layer.elapsed().as_secs_f64() * 1000.0
             );
         }
     }

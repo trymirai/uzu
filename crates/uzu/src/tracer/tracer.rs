@@ -899,6 +899,25 @@ impl Tracer {
         Ok(())
     }
 
+    fn load_array_as_vec<
+        SourcePrecision: ArrayElement,
+        TargetPrecision: NumCast,
+    >(
+        traces_view: &ParameterTree<Rc<MTLContext>>,
+        name: String,
+    ) -> Vec<TargetPrecision> {
+        let array = traces_view.leaf(name.as_str()).unwrap();
+        let slice = array.as_slice::<SourcePrecision>().unwrap();
+        let vec: Vec<TargetPrecision> = slice
+            .iter()
+            .map(|x| {
+                let casted_value: TargetPrecision = NumCast::from(*x).unwrap();
+                return casted_value;
+            })
+            .collect();
+        return vec;
+    }
+
     fn get_tokens_from_logits(logits: &MetalArray) -> Vec<u64> {
         let data_type = logits.data_type();
         match data_type {

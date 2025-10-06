@@ -1,18 +1,17 @@
-use std::{cell::RefCell, collections::HashMap, mem::size_of};
+use std::{collections::HashMap, mem::size_of};
 
-use half::{bf16, f16};
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize, foreign_types::ForeignType,
+    MTLDataType, MTLSize,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
 use crate::{
-    Array, DataType,
+    Array,
     backends::metal::{
-        KernelDataType, MTLContext, MTLError, MetalArray,
+        KernelDataType, MTLContext, MTLError,
         forward_pass::{
             ArrayId, ForwardPassState, HashMapId,
             encodable_with_state::{EncodableWithState, EncodingParameters},
