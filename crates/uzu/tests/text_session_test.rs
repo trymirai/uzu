@@ -27,8 +27,8 @@ fn build_decoding_config() -> DecodingConfig {
 
 #[test]
 fn test_text_session_base() {
-    let text = String::from("The capital of France is");
-    run(text, build_decoding_config(), 10);
+    let text = String::from("Tell about london");
+    run(text, build_decoding_config(), 128);
 }
 
 #[test]
@@ -46,33 +46,24 @@ fn run(
     decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
-    unsafe {
-        std::env::set_var("UZU_SKIP_RAM_CHECK", "1");
-    }
     let mut session =
         Session::new(build_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
-
-    let output = match session.run(
-        input,
-        RunConfig::new(
-            tokens_limit,
-            true,
-            SamplingPolicy::Custom {
-                value: SamplingMethod::Greedy,
-            },
-        ),
-        Some(|output: Output| {
-            eprintln!("[Callback] Generated so far: {:?}", output.text);
-            return true;
-        }),
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("[ERROR] Session run failed: {:?}", e);
-            panic!("Session run failed: {:?}", e);
-        },
-    };
+    let output = session
+        .run(
+            input,
+            RunConfig::new(
+                tokens_limit,
+                true,
+                SamplingPolicy::Custom {
+                    value: SamplingMethod::Greedy,
+                },
+            ),
+            Some(|_: Output| {
+                return true;
+            }),
+        )
+        .unwrap();
 
     println!("-------------------------");
     println!("{}", output.text);
