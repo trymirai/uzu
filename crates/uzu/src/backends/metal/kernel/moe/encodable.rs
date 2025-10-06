@@ -495,8 +495,6 @@ impl EncodableWithState for MoeBlockEncodable {
         let block_bases_buf = clone_buffer(&arrays[18]);
         let block_alloc_buf = clone_buffer(&arrays[19]);
 
-        let debug_moe = std::env::var_os("UZU_DEBUG_MOE_STATE").is_some();
-
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
@@ -738,10 +736,7 @@ impl EncodableWithState for MoeBlockEncodable {
             )
             .expect("MoE finalize failed");
 
-        // NOTE: When inspecting kernels, we temporarily comment out the buffer cleanup.
-
-        let wait_for_gpu = parameters.wait_until_completed || debug_moe;
-        if wait_for_gpu {
+        if parameters.wait_until_completed {
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
         }

@@ -1066,11 +1066,6 @@ impl MoeExpertsKernel {
         command_buffer: &CommandBufferRef,
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
-        eprintln!(
-            "[GEMV-ENCODE] t={}, k={}, d_model={}, d_ff={}, e={}",
-            args.t, args.k, args.d_model, args.d_ff, args.e
-        );
-
         let gate_idx = (args.gating_code.min(3)) as usize;
         let dtype_idx = match args.data_type {
             KernelDataType::Float16 => 0usize,
@@ -1149,14 +1144,6 @@ impl MoeExpertsKernel {
         const COLS_PER_TG: u64 = THREADS_PER_TG;
         let tg_x = (args.d_model as u64 + COLS_PER_TG - 1) / COLS_PER_TG;
         let tg_y = args.e as u64;
-
-        eprintln!(
-            "[GEMV-V2-DISPATCH] grid=({}, {}, 1), threads_per_tg=({}, 1, 1)",
-            tg_x, tg_y, THREADS_PER_TG
-        );
-        eprintln!(
-            "[GEMV-V2] Two-phase fused: FC1 (all threads) → TG barrier → FC2 (all threads)"
-        );
 
         encoder.dispatch_thread_groups(
             MTLSize::new(tg_x, tg_y, 1),

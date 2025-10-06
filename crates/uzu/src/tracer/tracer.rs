@@ -253,9 +253,6 @@ impl Tracer {
         let data_type =
             self.generator_context.model_shape.activation_data_type();
 
-        if std::env::var_os("UZU_DEBUG_MOE_STATE").is_some() {
-            self.debug_moe_state(state, data_type);
-        }
         let mut validate =
             |expected_array_path: &str,
              produced_array: &Ref<MetalArray>,
@@ -450,12 +447,7 @@ impl Tracer {
 
         if let Some(dump_dir_os) = std::env::var_os("UZU_DEBUG_MOE_DUMP") {
             let dump_path = PathBuf::from(dump_dir_os);
-            if let Err(error) = Self::dump_moe_traces(&dump_path, &traces_ref) {
-                eprintln!(
-                    "[DebugMoeState] failed to dump MoE traces to {:?}: {}",
-                    dump_path, error
-                );
-            }
+            let _ = Self::dump_moe_traces(&dump_path, &traces_ref);
         }
 
         drop(traces_ref);
@@ -477,16 +469,6 @@ impl Tracer {
         let expected_array =
             traces_view.leaf(expected_array_path.as_str()).unwrap();
 
-        if std::env::var_os("UZU_DEBUG_MOE_MLP").is_some()
-            && expected_array_path.contains("activation_trace.mlp")
-        {
-            Self::debug_mlp_sample(
-                data_type,
-                expected_array_path.as_str(),
-                &expected_array,
-                produced_array,
-            );
-        }
         return Self::validate_array(
             data_type,
             &expected_array,
@@ -575,15 +557,6 @@ impl Tracer {
                 value_f32
             })
             .collect::<Vec<_>>();
-
-        if std::env::var("UZU_DEBUG_ATTENTION").is_ok() {
-            let preview = |label: &str, values: &Vec<f32>| {
-                let slice: Vec<_> = values.iter().take(8).copied().collect();
-                eprintln!("[TracerDebug] {} preview {:?}", label, slice);
-            };
-            preview("reference", &reference);
-            preview("result", &result);
-        }
 
         let atol: f32 = 1e-2;
         let rtol: f32 = 0.03;
@@ -924,93 +897,6 @@ impl Tracer {
         }
         file.write_all(b"\n")?;
         Ok(())
-    }
-
-    fn debug_mlp_sample(
-        data_type: DataType,
-        array_path: &str,
-        expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
-    ) {
-        let len =
-            expected_array.num_elements().min(produced_array.num_elements());
-        if len == 0 {
-            return;
-        }
-
-        let inspect = [0usize, 1, 2, 1167];
-
-        match data_type {
-            DataType::BF16 => {
-                if let (Ok(ref_slice), Ok(prod_slice)) = (
-                    expected_array.as_slice::<bf16>(),
-                    produced_array.as_slice::<bf16>(),
-                ) {
-                    Self::print_samples(array_path, len, &inspect, |idx| {
-                        (prod_slice[idx].to_f32(), ref_slice[idx].to_f32())
-                    });
-                }
-            },
-            DataType::F16 => {
-                if let (Ok(ref_slice), Ok(prod_slice)) = (
-                    expected_array.as_slice::<f16>(),
-                    produced_array.as_slice::<f16>(),
-                ) {
-                    Self::print_samples(array_path, len, &inspect, |idx| {
-                        (prod_slice[idx].to_f32(), ref_slice[idx].to_f32())
-                    });
-                }
-            },
-            DataType::F32 => {
-                if let (Ok(ref_slice), Ok(prod_slice)) = (
-                    expected_array.as_slice::<f32>(),
-                    produced_array.as_slice::<f32>(),
-                ) {
-                    Self::print_samples(array_path, len, &inspect, |idx| {
-                        (prod_slice[idx], ref_slice[idx])
-                    });
-                }
-            },
-            _ => {},
-        }
-    }
-
-    fn print_samples<F>(
-        array_path: &str,
-        len: usize,
-        inspect: &[usize],
-        mut value_fn: F,
-    ) where
-        F: FnMut(usize) -> (f32, f32),
-    {
-        let _ = (array_path, len, inspect, &mut value_fn);
-    }
-
-    fn debug_moe_state(
-        &self,
-        state: &ForwardPassState,
-        data_type: DataType,
-    ) {
-        let _ = (state, data_type); // logging disabled
-    }
-
-    fn load_array_as_vec<
-        SourcePrecision: ArrayElement,
-        TargetPrecision: NumCast,
-    >(
-        traces_view: &ParameterTree<Rc<MTLContext>>,
-        name: String,
-    ) -> Vec<TargetPrecision> {
-        let array = traces_view.leaf(name.as_str()).unwrap();
-        let slice = array.as_slice::<SourcePrecision>().unwrap();
-        let vec: Vec<TargetPrecision> = slice
-            .iter()
-            .map(|x| {
-                let casted_value: TargetPrecision = NumCast::from(*x).unwrap();
-                return casted_value;
-            })
-            .collect();
-        return vec;
     }
 
     fn get_tokens_from_logits(logits: &MetalArray) -> Vec<u64> {

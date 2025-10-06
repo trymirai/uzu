@@ -196,9 +196,6 @@ pub fn mlp_block(
 
     // STEP 2: Enable MOE block creation (encode will be minimal)
     if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
-        eprintln!(
-            "[DEBUG] Step 2: MOE block creation ENABLED, kernels will be tested incrementally"
-        );
         let moe_block = MoeBlockEncodable::new(
             context,
             moe,
