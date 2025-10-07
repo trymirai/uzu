@@ -459,11 +459,6 @@ impl AttentionKernel {
         compute_encoder.set_buffer(1, Some(args.sums_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.maxs_buffer), 0);
         compute_encoder.set_buffer(3, Some(args.output_buffer), 0);
-        compute_encoder.set_bytes(
-            5,
-            size_of::<f32>() as u64,
-            &args.scale as *const f32 as *const _,
-        );
 
         let pass2_threads_per_threadgroup = MTLSize {
             width: 32 * 32,

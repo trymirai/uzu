@@ -5,7 +5,6 @@ using namespace metal;
 // Tiled two-phase GEMV for T=1 decode
 // Tiles H dimension to fit in TG memory (~17KB total)
 
-constant bool WEIGHTS_ARE_TRANSPOSED [[function_constant(28)]];
 constant uint GATING_SEL [[function_constant(30)]]; // 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
 constant uint TILE_H [[function_constant(32)]]; // H tile size (e.g., 256)
 
@@ -91,34 +90,22 @@ void moe_experts_decode_fused_gemv_impl(
             for (uint d4 = 0; d4 < num_vec4; ++d4) {
                 const float4 xv = x_cache[d4];
                 
-                if (WEIGHTS_ARE_TRANSPOSED) {
-                    const ulong w_up_base = w13_expert_base + (ulong)ff_idx * (ulong)d_model + (ulong)(d4 * 4);
-                    const float4 w_up = float4(reinterpret_cast<const device typename metal::vec<T,4>*>(W13_all + w_up_base)[0]);
-                    up_acc += dot(xv, w_up);
+                const ulong w_base = w13_expert_base + (ulong)(d4 * 4) * (ulong)(2 * d_ff) + (ulong)ff_idx;
+                float4 w_up;
+                w_up.x = float(W13_all[w_base + 0u * (ulong)(2 * d_ff)]);
+                w_up.y = float(W13_all[w_base + 1u * (ulong)(2 * d_ff)]);
+                w_up.z = float(W13_all[w_base + 2u * (ulong)(2 * d_ff)]);
+                w_up.w = float(W13_all[w_base + 3u * (ulong)(2 * d_ff)]);
+                up_acc += dot(xv, w_up);
 
-                    if (GATING_SEL > 1u) {
-                        const ulong w_gate_base = w_up_base + (ulong)d_ff * (ulong)d_model;
-                        const float4 w_gate = float4(reinterpret_cast<const device typename metal::vec<T,4>*>(W13_all + w_gate_base)[0]);
-                        gate_acc += dot(xv, w_gate);
-                    }
-                } else {
-                    const ulong w_base = w13_expert_base + (ulong)(d4 * 4) * (ulong)(2 * d_ff) + (ulong)ff_idx;
-                    float4 w_up;
-                    w_up.x = float(W13_all[w_base + 0u * (ulong)(2 * d_ff)]);
-                    w_up.y = float(W13_all[w_base + 1u * (ulong)(2 * d_ff)]);
-                    w_up.z = float(W13_all[w_base + 2u * (ulong)(2 * d_ff)]);
-                    w_up.w = float(W13_all[w_base + 3u * (ulong)(2 * d_ff)]);
-                    up_acc += dot(xv, w_up);
-
-                    if (GATING_SEL > 1u) {
-                        const ulong gate_base = w_base + (ulong)d_ff;
-                        float4 w_gate;
-                        w_gate.x = float(W13_all[gate_base + 0u * (ulong)(2 * d_ff)]);
-                        w_gate.y = float(W13_all[gate_base + 1u * (ulong)(2 * d_ff)]);
-                        w_gate.z = float(W13_all[gate_base + 2u * (ulong)(2 * d_ff)]);
-                        w_gate.w = float(W13_all[gate_base + 3u * (ulong)(2 * d_ff)]);
-                        gate_acc += dot(xv, w_gate);
-                    }
+                if (GATING_SEL > 1u) {
+                    const ulong gate_base = w_base + (ulong)d_ff;
+                    float4 w_gate;
+                    w_gate.x = float(W13_all[gate_base + 0u * (ulong)(2 * d_ff)]);
+                    w_gate.y = float(W13_all[gate_base + 1u * (ulong)(2 * d_ff)]);
+                    w_gate.z = float(W13_all[gate_base + 2u * (ulong)(2 * d_ff)]);
+                    w_gate.w = float(W13_all[gate_base + 3u * (ulong)(2 * d_ff)]);
+                    gate_acc += dot(xv, w_gate);
                 }
             }
             
@@ -147,13 +134,8 @@ void moe_experts_decode_fused_gemv_impl(
                 const float h_val = h_tile[h_local];
                 float w2_val;
                 
-                if (WEIGHTS_ARE_TRANSPOSED) {
-                    const ulong w2_idx = w2_expert_base + (ulong)my_col * (ulong)d_ff + (ulong)ff_idx;
-                    w2_val = float(W2_all[w2_idx]);
-                } else {
-                    const ulong w2_idx = w2_expert_base + (ulong)ff_idx * (ulong)d_model + (ulong)my_col;
-                    w2_val = float(W2_all[w2_idx]);
-                }
+                const ulong w2_idx = w2_expert_base + (ulong)ff_idx * (ulong)d_model + (ulong)my_col;
+                w2_val = float(W2_all[w2_idx]);
                 y_acc = fma(h_val, w2_val, y_acc);
             }
         }

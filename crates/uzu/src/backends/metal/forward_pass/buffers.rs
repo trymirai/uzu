@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use metal::Buffer as MTLBuffer;
 
-use super::{super::MTLContext, model_shape::ModelShape};
+use super::{
+    super::MTLContext,
+    model_shape::{MOE_TWO_PASS_K_TILE, ModelShape},
+};
 use crate::{
     DataType,
     array::array_size_in_bytes,
@@ -50,6 +53,8 @@ pub struct ForwardPassBuffers {
     pub moe_x_perm: Option<MTLBuffer>,
     pub moe_tok2row: Option<MTLBuffer>,
     pub moe_y_partial: Option<MTLBuffer>,
+    pub moe_hidden: Option<MTLBuffer>,
+    pub moe_two_pass_partial: Option<MTLBuffer>,
     pub moe_tile_counts: Option<MTLBuffer>,
     pub moe_tile_offsets: Option<MTLBuffer>,
     pub moe_tile_map: Option<MTLBuffer>,
@@ -232,6 +237,26 @@ impl ForwardPassBuffers {
                     let max_routed = max_suffix_len * moe.num_experts_per_token;
                     let shape = model_shape.moe_y_partial_shape(max_routed);
                     Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
+            moe_hidden: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_hidden_shape(max_routed);
+                    Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
+            moe_two_pass_partial: match &decoder_config.layer_config.mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_two_pass_partial_shape(
+                        max_routed,
+                        MOE_TWO_PASS_K_TILE,
+                    );
+                    Some(alloc(&shape, DataType::F32))
                 },
                 _ => None,
             },

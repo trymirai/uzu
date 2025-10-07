@@ -1,7 +1,6 @@
 use std::{
     cell::{Ref, RefCell},
-    fs::{self, File},
-    io::Write,
+    fs::File,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -13,21 +12,26 @@ use num_traits::NumCast;
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{
-        ForwardPassState, MTLContext, MetalArray,
+        ForwardPassState, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
+        MetalArray,
         forward_pass::{
-            ArrayId,
+            ArrayId, ForwardPassBuffers,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             traces::DecoderActivationTrace,
         },
+        kernel::SamplingKernelEncodable,
     },
     generator::{
         context::GeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
-    parameters::{ParameterLoader, ParameterTree},
+    parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
     session::{
         config::{DecodingConfig, SpeculatorConfig},
-        parameter::{ContextLength, PrefillStepSize, SamplingSeed},
+        parameter::{
+            ConfigResolvableValue, ContextLength, PrefillStepSize,
+            ResolvableValue, SamplingSeed,
+        },
     },
 };
 
@@ -141,15 +145,23 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn new(model_path: &Path) -> Self {
+        let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(1),
+            PrefillStepSize::Custom(prefill_step_size),
             ContextLength::default(),
             SpeculatorConfig::default(),
             SamplingSeed::default(),
             false,
         );
-        let generator_context =
+        let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
+        let desired_suffix_length =
+            prefill_step_size.max(decoding_config.generate_suffix_length());
+        Self::ensure_context_capacity(
+            &decoding_config,
+            desired_suffix_length,
+            &mut generator_context,
+        );
 
         Self {
             model_path: model_path.to_path_buf(),
@@ -162,20 +174,108 @@ impl Tracer {
         sampling_seed: SamplingSeed,
         max_prefix_length: ContextLength,
     ) -> Self {
+        let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(1),
+            PrefillStepSize::Custom(prefill_step_size),
             max_prefix_length,
             SpeculatorConfig::default(),
             sampling_seed,
             false,
         );
-        let generator_context =
+        let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
+        let desired_suffix_length =
+            prefill_step_size.max(decoding_config.generate_suffix_length());
+        Self::ensure_context_capacity(
+            &decoding_config,
+            desired_suffix_length,
+            &mut generator_context,
+        );
 
         Self {
             model_path: model_path.to_path_buf(),
             generator_context,
         }
+    }
+
+    fn determine_prefill_step_size(model_path: &Path) -> usize {
+        let traces_path = model_path.join("traces.safetensors");
+        if let Ok(file) = File::open(&traces_path) {
+            if let Ok((_header_len, metadata)) =
+                read_safetensors_metadata(&file)
+            {
+                if let Some(tensor) =
+                    metadata.tensors.get("activation_trace.token_ids")
+                {
+                    if let Some(&length) = tensor.shape.first() {
+                        return tensor
+                            .shape
+                            .iter()
+                            .copied()
+                            .max()
+                            .unwrap_or(length)
+                            .max(1);
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    fn ensure_context_capacity(
+        decoding_config: &DecodingConfig,
+        desired_suffix_length: usize,
+        context: &mut GeneratorContext,
+    ) {
+        let resolved_prefix_length =
+            decoding_config.context_length.resolve(&context.model_config);
+        let current_suffix_length = std::cmp::max(
+            decoding_config.prefill_step_size.resolve(&context.model_config),
+            decoding_config.generate_suffix_length(),
+        );
+
+        if desired_suffix_length <= current_suffix_length {
+            return;
+        }
+
+        let decoder_config = &context.model_config.decoder_config;
+        context.scratch_buffers = ForwardPassBuffers::new(
+            &context.mtl_context,
+            decoder_config,
+            &context.model_shape,
+            resolved_prefix_length,
+            desired_suffix_length,
+        );
+
+        context.kv_cache = Rc::new(RefCell::new(KVCache::new(
+            &context.mtl_context,
+            &context.model_shape,
+            resolved_prefix_length,
+            desired_suffix_length,
+        )));
+
+        let intermediate_dtype: DataType =
+            decoder_config.output_norm_config.scale_precision.into();
+        let kernel_dtype: KernelDataType = intermediate_dtype.into();
+
+        context.kv_cache_update = Box::new(
+            KVCacheUpdate::new(
+                &context.mtl_context,
+                kernel_dtype,
+                resolved_prefix_length,
+            )
+            .expect("Failed to create KV cache update kernel"),
+        );
+
+        let sampling_seed = decoding_config.sampling_seed.resolve();
+        context.gpu_sampler = SamplingKernelEncodable::new(
+            &context.mtl_context,
+            kernel_dtype,
+            desired_suffix_length,
+            decoder_config.vocab_size,
+            sampling_seed,
+        )
+        .expect("Failed to create sampling kernel");
     }
 
     pub fn run(&self) -> TracerValidationResults {
@@ -192,19 +292,14 @@ impl Tracer {
         .expect("Failed to create ParameterLoader for traces");
         let traces_view = traces_loader.tree();
 
-        let mut token_ids = Self::load_array_as_vec::<i32, u64>(
+        let token_ids = Self::load_array_as_vec::<i32, u64>(
             &traces_view,
             "activation_trace.token_ids".to_string(),
         );
-        let mut token_positions = Self::load_array_as_vec::<i32, usize>(
+        let token_positions = Self::load_array_as_vec::<i32, usize>(
             &traces_view,
             "activation_trace.token_positions".to_string(),
         );
-
-        let max_suffix_length =
-            self.generator_context.kv_cache.borrow().max_suffix_length();
-        token_ids.truncate(max_suffix_length);
-        token_positions.truncate(max_suffix_length);
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
@@ -247,12 +342,10 @@ impl Tracer {
         traces_view: &ParameterTree<Rc<MTLContext>>,
         traces: Rc<RefCell<DecoderActivationTrace>>,
     ) -> TracerValidationResults {
-        let mut base_results: Vec<TracerValidationResult> = Vec::new();
-        let mut moe_results_all: Vec<TracerValidationResult> = Vec::new();
+        let mut results: Vec<TracerValidationResult> = Vec::new();
 
         let data_type =
             self.generator_context.model_shape.activation_data_type();
-
         let mut validate =
             |expected_array_path: &str,
              produced_array: &Ref<MetalArray>,
@@ -264,16 +357,15 @@ impl Tracer {
                     produced_array,
                     produced_transform,
                 );
-                base_results.push(TracerValidationResult {
+                results.push(TracerValidationResult {
                     name: expected_array_path.to_string(),
                     metrics,
                 });
             };
 
-        let traces_ref = traces.borrow();
-        for (index, layer_traces) in traces_ref.layer_results.iter().enumerate()
+        for (index, layer_traces) in
+            traces.borrow().layer_results.iter().enumerate()
         {
-            let layer_trace_ref = layer_traces.borrow();
             let path = |suffix: &str| -> String {
                 format!(
                     "activation_trace.layer_results.{}.activation_trace.{}",
@@ -284,17 +376,17 @@ impl Tracer {
 
             validate(
                 path("inputs").as_str(),
-                &layer_trace_ref.inputs.borrow(),
+                &layer_traces.borrow().inputs.borrow(),
                 None,
             );
             validate(
                 path("pre_attention_norm").as_str(),
-                &layer_trace_ref.pre_attention_norm.borrow(),
+                &layer_traces.borrow().pre_attention_norm.borrow(),
                 None,
             );
             validate(
                 path("attention").as_str(),
-                &layer_trace_ref.attention.borrow(),
+                &layer_traces.borrow().attention.borrow(),
                 None,
             );
             if self.generator_context.executables.layers[index]
@@ -303,28 +395,32 @@ impl Tracer {
             {
                 validate(
                     path("post_attention_norm").as_str(),
-                    &layer_trace_ref.post_attention_norm.borrow(),
+                    &layer_traces.borrow().post_attention_norm.borrow(),
                     None,
                 );
             }
             validate(
                 path("mlp_inputs").as_str(),
-                &layer_trace_ref.mlp_inputs.borrow(),
+                &layer_traces.borrow().mlp_inputs.borrow(),
                 None,
             );
             validate(
                 path("pre_mlp_norm").as_str(),
-                &layer_trace_ref.pre_mlp_norm.borrow(),
+                &layer_traces.borrow().pre_mlp_norm.borrow(),
                 None,
             );
-            validate(path("mlp").as_str(), &layer_trace_ref.mlp.borrow(), None);
+            validate(
+                path("mlp").as_str(),
+                &layer_traces.borrow().mlp.borrow(),
+                None,
+            );
             if self.generator_context.executables.layers[index]
                 .post_mlp_norm
                 .is_some()
             {
                 validate(
                     path("post_mlp_norm").as_str(),
-                    &layer_trace_ref.post_mlp_norm.borrow(),
+                    &layer_traces.borrow().post_mlp_norm.borrow(),
                     None,
                 );
             }
@@ -334,77 +430,17 @@ impl Tracer {
                     index.clone()
                 )
                 .as_str(),
-                &layer_trace_ref.outputs.borrow(),
+                &layer_traces.borrow().outputs.borrow(),
                 None,
             );
-
-            if let Some(moe_trace) = layer_trace_ref.moe.as_ref() {
-                let moe_base =
-                    format!("activation_trace.layer_results.{}.moe", index);
-
-                Self::maybe_validate_moe_vec_i32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.topk_ids", moe_base),
-                    &moe_trace.topk_ids,
-                );
-                Self::maybe_validate_moe_vec_u32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.counts", moe_base),
-                    &moe_trace.counts,
-                );
-                Self::maybe_validate_moe_vec_u32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.offsets", moe_base),
-                    &moe_trace.offsets,
-                );
-                Self::maybe_validate_moe_vec_u32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.sumk", moe_base),
-                    &moe_trace.sumk,
-                );
-                Self::maybe_validate_moe_vec_u32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.bucketed_ids", moe_base),
-                    &moe_trace.bucketed_ids,
-                );
-                Self::maybe_validate_moe_vec_i32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.tok2row", moe_base),
-                    &moe_trace.tok2row,
-                );
-                Self::maybe_validate_moe_vec_f32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.topk_probs", moe_base),
-                    &moe_trace.topk_probs,
-                );
-                Self::maybe_validate_moe_vec_f32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.bucketed_probs", moe_base),
-                    &moe_trace.bucketed_probs,
-                );
-                Self::maybe_validate_moe_vec_f32(
-                    &mut moe_results_all,
-                    traces_view,
-                    format!("{}.y_partial", moe_base),
-                    &moe_trace.y_partial,
-                );
-            }
         }
 
         validate(
             "activation_trace.output_norm",
-            &traces_ref.output_norm.borrow(),
+            &traces.borrow().output_norm.borrow(),
             None,
         );
-        validate("logits", &traces_ref.logits.borrow(), None);
+        validate("logits", &traces.borrow().logits.borrow(), None);
 
         for index in 0..state.kv_cache.borrow().data.len() {
             let arrays =
@@ -428,7 +464,7 @@ impl Tracer {
         let expected_tokens =
             Self::get_tokens_from_logits(&traces_view.leaf("logits").unwrap());
         let produced_tokens =
-            Self::get_tokens_from_logits(&*traces_ref.logits.borrow());
+            Self::get_tokens_from_logits(&*traces.borrow().logits.borrow());
         let tokens_violation_indices: Vec<usize> = expected_tokens
             .iter()
             .zip(produced_tokens.iter())
@@ -441,16 +477,6 @@ impl Tracer {
                 }
             })
             .collect();
-
-        let mut results = base_results;
-        results.extend(moe_results_all);
-
-        if let Some(dump_dir_os) = std::env::var_os("UZU_DEBUG_MOE_DUMP") {
-            let dump_path = PathBuf::from(dump_dir_os);
-            let _ = Self::dump_moe_traces(&dump_path, &traces_ref);
-        }
-
-        drop(traces_ref);
 
         return TracerValidationResults {
             suffix_length,
@@ -468,7 +494,6 @@ impl Tracer {
     ) -> TracerValidationMetrics {
         let expected_array =
             traces_view.leaf(expected_array_path.as_str()).unwrap();
-
         return Self::validate_array(
             data_type,
             &expected_array,
@@ -517,44 +542,71 @@ impl Tracer {
         let expected_view = expected_array.as_view::<Precision>().unwrap();
         let produced_view = produced_array.as_view::<Precision>().unwrap();
 
-        let (expected_data, produced_data) = match produced_transform {
+        let (mut expected_data, mut produced_data) = match produced_transform {
             Some(transform) => match transform {
                 Transform::KVCacheSlice => {
-                    let transformed_data = produced_view
-                        .permuted_axes(IxDyn(&[1, 0, 2]))
-                        .slice(s![0..expected_view.shape()[0], .., ..])
-                        .into_dyn()
-                        .to_owned();
-                    (expected_view.to_owned(), transformed_data)
+                    let permuted =
+                        produced_view.permuted_axes(IxDyn(&[1, 0, 2]));
+                    let total_tokens = permuted.shape()[0];
+                    let expected_tokens = expected_view.shape()[1];
+                    let start = total_tokens.saturating_sub(expected_tokens);
+                    let sliced = permuted.slice(s![start.., .., ..]);
+                    let reshaped = sliced
+                        .into_owned()
+                        .into_shape(IxDyn(&[
+                            1,
+                            expected_tokens,
+                            permuted.shape()[1],
+                            permuted.shape()[2],
+                        ]))
+                        .expect("Failed to reshape KV cache slice");
+                    (expected_view.to_owned(), reshaped)
                 },
             },
             None => (expected_view.to_owned(), produced_view.to_owned()),
         };
+        let expected_shape = expected_data.shape().to_vec();
+        let produced_shape = produced_data.shape().to_vec();
 
-        let produced_len = produced_data.len();
-        let expected_len = expected_data.len();
-        assert!(
-            produced_len <= expected_len,
-            "Produced array length {} exceeds reference length {}",
-            produced_len,
-            expected_len
-        );
+        if expected_shape != produced_shape {
+            if expected_shape.len() == produced_shape.len() + 1
+                && expected_shape.get(0) == Some(&1)
+                && expected_shape[1..] == produced_shape[..]
+            {
+                expected_data = expected_data
+                    .into_shape(IxDyn(&produced_shape))
+                    .expect("Failed to reshape expected data");
+            } else if produced_shape.len() == expected_shape.len() + 1
+                && produced_shape.get(0) == Some(&1)
+                && produced_shape[1..] == expected_shape[..]
+            {
+                produced_data = produced_data
+                    .into_shape(IxDyn(&expected_shape))
+                    .expect("Failed to reshape produced data");
+            }
+        }
+
+        if expected_data.shape() != produced_data.shape() {
+            panic!(
+                "Shape mismatch after alignment: expected {:?}, produced {:?}",
+                expected_data.shape(),
+                produced_data.shape()
+            );
+        }
 
         let reference = expected_data
             .iter()
-            .take(produced_len)
             .map(|value| {
                 let value_f32: f32 = NumCast::from(*value).unwrap();
-                value_f32
+                return value_f32;
             })
             .collect::<Vec<_>>();
 
         let result = produced_data
             .iter()
-            .take(produced_len)
             .map(|value| {
                 let value_f32: f32 = NumCast::from(*value).unwrap();
-                value_f32
+                return value_f32;
             })
             .collect::<Vec<_>>();
 
@@ -562,13 +614,11 @@ impl Tracer {
         let rtol: f32 = 0.03;
         let end_to_end_fraction_of_allowed_violations: f32 = 0.01;
 
-        let produced_shape = produced_data.shape().to_vec();
-
         return Self::compare_arrays(
             &reference,
-            produced_shape.clone(),
+            expected_data.shape().to_vec(),
             &result,
-            produced_shape,
+            produced_data.shape().to_vec(),
             atol,
             rtol,
             end_to_end_fraction_of_allowed_violations,
@@ -675,228 +725,6 @@ impl Tracer {
             diff_avg,
             result_nan,
         };
-    }
-
-    fn maybe_validate_moe_vec_i32(
-        results: &mut Vec<TracerValidationResult>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
-        path: String,
-        data: &[i32],
-    ) {
-        if let Ok(expected_array) = traces_view.leaf(path.as_str()) {
-            if let Ok(expected_slice) = expected_array.as_slice::<i32>() {
-                let expected_shape = expected_array.shape().to_vec();
-                let reference: Vec<f32> =
-                    expected_slice.iter().map(|&v| v as f32).collect();
-                let result: Vec<f32> = data.iter().map(|&v| v as f32).collect();
-                let len = reference.len().min(result.len());
-                if len == 0 {
-                    return;
-                }
-                let reference_vec = reference[..len].to_vec();
-                let result_vec = result[..len].to_vec();
-                let final_shape = if len == reference.len() {
-                    expected_shape.clone()
-                } else {
-                    vec![len]
-                };
-                let metrics = Self::compare_arrays(
-                    &reference_vec,
-                    final_shape.clone(),
-                    &result_vec,
-                    final_shape,
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                results.push(TracerValidationResult {
-                    name: path,
-                    metrics,
-                });
-            }
-        }
-    }
-
-    fn maybe_validate_moe_vec_u32(
-        results: &mut Vec<TracerValidationResult>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
-        path: String,
-        data: &[u32],
-    ) {
-        if let Ok(expected_array) = traces_view.leaf(path.as_str()) {
-            if let Ok(expected_slice) = expected_array.as_slice::<u32>() {
-                let expected_shape = expected_array.shape().to_vec();
-                let reference: Vec<f32> =
-                    expected_slice.iter().map(|&v| v as f32).collect();
-                let result: Vec<f32> = data.iter().map(|&v| v as f32).collect();
-                let len = reference.len().min(result.len());
-                if len == 0 {
-                    return;
-                }
-                let reference_vec = reference[..len].to_vec();
-                let result_vec = result[..len].to_vec();
-                let final_shape = if len == reference.len() {
-                    expected_shape.clone()
-                } else {
-                    vec![len]
-                };
-                let metrics = Self::compare_arrays(
-                    &reference_vec,
-                    final_shape.clone(),
-                    &result_vec,
-                    final_shape,
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                results.push(TracerValidationResult {
-                    name: path,
-                    metrics,
-                });
-            }
-        }
-    }
-
-    fn maybe_validate_moe_vec_f32(
-        results: &mut Vec<TracerValidationResult>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
-        path: String,
-        data: &[f32],
-    ) {
-        if let Ok(expected_array) = traces_view.leaf(path.as_str()) {
-            if let Some(reference) =
-                Self::metal_array_to_vec_f32(&expected_array)
-            {
-                let expected_shape = expected_array.shape().to_vec();
-                let len = reference.len().min(data.len());
-                if len == 0 {
-                    return;
-                }
-                let result = data[..len].to_vec();
-                let reference_trimmed = reference[..len].to_vec();
-                let final_shape = if len == reference.len() {
-                    expected_shape.clone()
-                } else {
-                    vec![len]
-                };
-                let metrics = Self::compare_arrays(
-                    &reference_trimmed,
-                    final_shape.clone(),
-                    &result,
-                    final_shape,
-                    1e-2,
-                    0.03,
-                    0.01,
-                );
-                results.push(TracerValidationResult {
-                    name: path,
-                    metrics,
-                });
-            }
-        }
-    }
-
-    fn metal_array_to_vec_f32(array: &MetalArray) -> Option<Vec<f32>> {
-        match array.data_type() {
-            DataType::BF16 => array
-                .as_slice::<bf16>()
-                .ok()
-                .map(|slice| slice.iter().map(|v| v.to_f32()).collect()),
-            DataType::F16 => array
-                .as_slice::<f16>()
-                .ok()
-                .map(|slice| slice.iter().map(|v| v.to_f32()).collect()),
-            DataType::F32 => {
-                array.as_slice::<f32>().ok().map(|slice| slice.to_vec())
-            },
-            _ => None,
-        }
-    }
-
-    fn dump_moe_traces(
-        dump_path: &Path,
-        traces: &DecoderActivationTrace,
-    ) -> std::io::Result<()> {
-        fs::create_dir_all(dump_path)?;
-
-        for (layer_index, layer_trace_rc) in
-            traces.layer_results.iter().enumerate()
-        {
-            let layer_trace = layer_trace_rc.borrow();
-            if let Some(moe) = &layer_trace.moe {
-                let layer_dir = dump_path.join(format!("layer_{layer_index}"));
-                fs::create_dir_all(&layer_dir)?;
-
-                Self::write_moe_meta(&layer_dir, moe)?;
-                Self::write_vec_to_file(
-                    layer_dir.join("topk_ids.txt"),
-                    &moe.topk_ids,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("counts.txt"),
-                    &moe.counts,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("offsets.txt"),
-                    &moe.offsets,
-                )?;
-                Self::write_vec_to_file(layer_dir.join("sumk.txt"), &moe.sumk)?;
-                Self::write_vec_to_file(
-                    layer_dir.join("bucketed_ids.txt"),
-                    &moe.bucketed_ids,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("tok2row.txt"),
-                    &moe.tok2row,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("topk_probs.txt"),
-                    &moe.topk_probs,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("bucketed_probs.txt"),
-                    &moe.bucketed_probs,
-                )?;
-                Self::write_vec_to_file(
-                    layer_dir.join("y_partial.txt"),
-                    &moe.y_partial,
-                )?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn write_moe_meta(
-        layer_dir: &Path,
-        moe: &crate::backends::metal::forward_pass::traces::MoeActivationTrace,
-    ) -> std::io::Result<()> {
-        let meta_path = layer_dir.join("meta.txt");
-        let mut file = File::create(meta_path)?;
-        writeln!(file, "suffix_length={}", moe.suffix_length)?;
-        writeln!(file, "mixture_size={}", moe.mixture_size)?;
-        writeln!(file, "k={}", moe.k)?;
-        writeln!(file, "model_dim={}", moe.model_dim)?;
-        Ok(())
-    }
-
-    fn write_vec_to_file<T: std::fmt::Display>(
-        path: impl AsRef<Path>,
-        data: &[T],
-    ) -> std::io::Result<()> {
-        let mut file = File::create(path)?;
-        for (index, value) in data.iter().enumerate() {
-            if index > 0 {
-                if index % 16 == 0 {
-                    file.write_all(b"\n")?;
-                } else {
-                    file.write_all(b" ")?;
-                }
-            }
-            write!(file, "{}", value)?;
-        }
-        file.write_all(b"\n")?;
-        Ok(())
     }
 
     fn load_array_as_vec<

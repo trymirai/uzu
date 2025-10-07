@@ -11,7 +11,7 @@ pub mod transformer_layer;
 pub use buffers::ForwardPassBuffers;
 pub use io_arrays::IOArrays;
 pub use kv_cache::{KVCache, KVCacheLayer, KVCacheLayerState};
-pub use model_shape::ModelShape;
+pub use model_shape::{MOE_TWO_PASS_K_TILE, ModelShape};
 pub use mpsgraph_block::MPSGraphBlock;
 pub use state::{
     ArrayId, ForwardPassState, HashMapId, RopeType, SharedBuffers,

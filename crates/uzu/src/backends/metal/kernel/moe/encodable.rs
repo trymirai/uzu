@@ -6,16 +6,17 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsKernel, MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel,
-    MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterKernels,
-    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
+    MoeExpertsKernel, MoeExpertsTwoPassArguments, MoeFinalizeKernel,
+    MoeGatherArguments, MoeGatherKernel, MoeOffsetsScanArguments,
+    MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeTopKArguments, MoeTopKKernel,
 };
 use crate::{
     DataType,
     backends::metal::{
         KernelDataType, MTLContext, MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, MOE_TWO_PASS_K_TILE,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::linear::QuantizedLinearKernelBlock,
@@ -60,6 +61,7 @@ pub struct MoeBlockEncodable {
     data_type: KernelDataType,
     shared_weights: SharedMoeWeights,
     layer_index: usize,
+    decode_two_pass: bool,
 }
 
 impl MoeBlockEncodable {
@@ -395,6 +397,10 @@ impl MoeBlockEncodable {
             )?
         };
 
+        let decode_two_pass = std::env::var_os("UZU_DEBUG_MOE_TWO_PASS")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+
         Ok(Self {
             router,
             router_data_type: router_kernel_data_type,
@@ -411,6 +417,7 @@ impl MoeBlockEncodable {
             data_type,
             shared_weights,
             layer_index,
+            decode_two_pass,
         })
     }
 
@@ -472,6 +479,8 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeScatterPartials,
             ArrayId::MoeScatterBlockBases,
             ArrayId::MoeBlockAlloc,
+            ArrayId::MoeHidden,
+            ArrayId::MoeTwoPassPartial,
         ]);
 
         let clone_buffer = |array: &RefCell<MetalArray>| -> metal::Buffer {
@@ -480,33 +489,37 @@ impl EncodableWithState for MoeBlockEncodable {
             buffer
         };
 
-        let main_buf = clone_buffer(&arrays[0]);
+        let mut array_iter = arrays.iter();
+        let main_buf = clone_buffer(array_iter.next().unwrap());
         if std::env::var_os("UZU_DEBUG_ROUTER").is_some() {
-            let dtype = arrays[1].borrow().data_type();
+            let dtype = array_iter.clone().next().unwrap().borrow().data_type();
             eprintln!(
                 "[RouterDebug] layer={} router logits dtype={:?}",
                 self.layer_index, dtype
             );
         }
-        let router_logits_buf = clone_buffer(&arrays[1]);
-        let topk_ids_buf = clone_buffer(&arrays[2]);
-        let topk_probs_buf = clone_buffer(&arrays[3]);
-        let counts_buf = clone_buffer(&arrays[4]);
-        let offsets_buf = clone_buffer(&arrays[5]);
-        let sumk_buf = clone_buffer(&arrays[6]);
-        let bucketed_ids_buf = clone_buffer(&arrays[7]);
-        let bucketed_probs_buf = clone_buffer(&arrays[8]);
-        let x_perm_buf = clone_buffer(&arrays[9]);
-        let tok2row_buf = clone_buffer(&arrays[10]);
-        let y_partial_buf = clone_buffer(&arrays[11]);
-        let tile_counts_buf = clone_buffer(&arrays[12]);
-        let tile_offsets_buf = clone_buffer(&arrays[13]);
-        let tile_map_buf = clone_buffer(&arrays[14]);
-        let total_tiles_buf = clone_buffer(&arrays[15]);
-        let dispatch_args_buf = clone_buffer(&arrays[16]);
-        let partials_buf = clone_buffer(&arrays[17]);
-        let block_bases_buf = clone_buffer(&arrays[18]);
-        let block_alloc_buf = clone_buffer(&arrays[19]);
+        let router_logits_buf = clone_buffer(array_iter.next().unwrap());
+        let topk_ids_buf = clone_buffer(array_iter.next().unwrap());
+        let topk_probs_buf = clone_buffer(array_iter.next().unwrap());
+        let counts_buf = clone_buffer(array_iter.next().unwrap());
+        let offsets_buf = clone_buffer(array_iter.next().unwrap());
+        let sumk_buf = clone_buffer(array_iter.next().unwrap());
+        let bucketed_ids_buf = clone_buffer(array_iter.next().unwrap());
+        let bucketed_probs_buf = clone_buffer(array_iter.next().unwrap());
+        let x_perm_buf = clone_buffer(array_iter.next().unwrap());
+        let tok2row_buf = clone_buffer(array_iter.next().unwrap());
+        let y_partial_buf = clone_buffer(array_iter.next().unwrap());
+        let tile_counts_buf = clone_buffer(array_iter.next().unwrap());
+        let tile_offsets_buf = clone_buffer(array_iter.next().unwrap());
+        let tile_map_buf = clone_buffer(array_iter.next().unwrap());
+        let total_tiles_buf = clone_buffer(array_iter.next().unwrap());
+        let dispatch_args_buf = clone_buffer(array_iter.next().unwrap());
+        let partials_buf = clone_buffer(array_iter.next().unwrap());
+        let block_bases_buf = clone_buffer(array_iter.next().unwrap());
+        let block_alloc_buf = clone_buffer(array_iter.next().unwrap());
+        let hidden_buf = clone_buffer(array_iter.next().unwrap());
+        let two_pass_partial_buf = clone_buffer(array_iter.next().unwrap());
+        debug_assert!(array_iter.next().is_none());
 
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
@@ -692,46 +705,83 @@ impl EncodableWithState for MoeBlockEncodable {
         const BN: usize = 64;
         let num_tiles_n = (self.model_dim + BN - 1) / BN;
 
-        self.experts_kernel
-            .encode(
-                root,
-                MoeExpertsArguments {
-                    x_perm_buffer: &x_perm_buf,
-                    expert_offsets: &offsets_buf,
-                    w13_all: &self.shared_weights.w13_buf,
-                    w2_all: &self.shared_weights.w2_buf,
-                    y_partial: &y_partial_buf,
-                    up_biases: &self.shared_weights.up_biases_buf,
-                    down_biases: &self.shared_weights.down_biases_buf,
-                    tile_counts: &tile_counts_buf,
-                    tile_row_offsets: &tile_offsets_buf,
-                    tile_map: &tile_map_buf,
-                    total_tiles: &total_tiles_buf,
-                    dispatch_args: &dispatch_args_buf,
-                    num_tiles_n,
-                    t: suffix_length,
-                    d_model: self.model_dim,
-                    d_ff: self.hidden_dim,
-                    e,
-                    k,
-                    gating_code,
-                    gate_clip_min: self.moe_config.expert_config.gate_clipping
-                        [0]
-                    .unwrap_or(f32::NEG_INFINITY),
-                    gate_clip_max: self.moe_config.expert_config.gate_clipping
-                        [1]
-                    .unwrap_or(f32::INFINITY),
-                    up_clip_min: self.moe_config.expert_config.up_clipping[0],
-                    up_clip_max: self.moe_config.expert_config.up_clipping[1],
-                    silu_alpha: self
-                        .moe_config
-                        .expert_config
-                        .activation
-                        .alpha(),
-                    data_type: self.data_type,
-                },
-            )
-            .expect("MoE experts failed");
+        let w2_buf = &self.shared_weights.w2_buf;
+
+        let experts_args = MoeExpertsArguments {
+            x_perm_buffer: &x_perm_buf,
+            expert_offsets: &offsets_buf,
+            w13_all: &self.shared_weights.w13_buf,
+            w2_all: w2_buf,
+            y_partial: &y_partial_buf,
+            up_biases: &self.shared_weights.up_biases_buf,
+            down_biases: &self.shared_weights.down_biases_buf,
+            tile_counts: &tile_counts_buf,
+            tile_row_offsets: &tile_offsets_buf,
+            tile_map: &tile_map_buf,
+            total_tiles: &total_tiles_buf,
+            dispatch_args: &dispatch_args_buf,
+            num_tiles_n,
+            t: suffix_length,
+            d_model: self.model_dim,
+            d_ff: self.hidden_dim,
+            e,
+            k,
+            gating_code,
+            gate_clip_min: self.moe_config.expert_config.gate_clipping[0]
+                .unwrap_or(f32::NEG_INFINITY),
+            gate_clip_max: self.moe_config.expert_config.gate_clipping[1]
+                .unwrap_or(f32::INFINITY),
+            up_clip_min: self.moe_config.expert_config.up_clipping[0],
+            up_clip_max: self.moe_config.expert_config.up_clipping[1],
+            silu_alpha: self.moe_config.expert_config.activation.alpha(),
+            data_type: self.data_type,
+        };
+
+        if suffix_length == 1 {
+            if self.decode_two_pass {
+                let total_rows = suffix_length * k;
+                let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
+                    / MOE_TWO_PASS_K_TILE)
+                    as u32;
+
+                self.experts_kernel
+                    .encode_two_pass_decode(
+                        root,
+                        MoeExpertsTwoPassArguments {
+                            x_perm_buffer: &x_perm_buf,
+                            expert_offsets: &offsets_buf,
+                            hidden_buffer: &hidden_buf,
+                            partial_buffer: &two_pass_partial_buf,
+                            output_buffer: &y_partial_buf,
+                            w13_all: &self.shared_weights.w13_buf,
+                            w2_all: &self.shared_weights.w2_buf,
+                            up_biases: &self.shared_weights.up_biases_buf,
+                            down_biases: &self.shared_weights.down_biases_buf,
+                            total_rows,
+                            d_model: self.model_dim,
+                            d_ff: self.hidden_dim,
+                            e,
+                            num_tiles_k,
+                            gating_code,
+                            gate_clip_min: experts_args.gate_clip_min,
+                            gate_clip_max: experts_args.gate_clip_max,
+                            up_clip_min: experts_args.up_clip_min,
+                            up_clip_max: experts_args.up_clip_max,
+                            silu_alpha: experts_args.silu_alpha,
+                            data_type: self.data_type,
+                        },
+                    )
+                    .expect("MoE experts two-pass failed");
+            } else {
+                self.experts_kernel
+                    .encode_gemv_decode(root, experts_args)
+                    .expect("MoE experts decode failed");
+            }
+        } else {
+            self.experts_kernel
+                .encode(root, experts_args)
+                .expect("MoE experts failed");
+        }
 
         self.finalize_kernel
             .encode(
@@ -752,125 +802,6 @@ impl EncodableWithState for MoeBlockEncodable {
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
-        }
-
-        if let Some(traces_rc) = state.traces.as_ref() {
-            let layer_trace_rc = {
-                let traces_borrow = traces_rc.borrow();
-                traces_borrow.layer_results[self.layer_index].clone()
-            };
-
-            let mut layer_trace = layer_trace_rc.borrow_mut();
-            let moe_trace = layer_trace.ensure_moe_trace(
-                suffix_length,
-                e,
-                k,
-                self.model_dim,
-            );
-
-            let routed_tokens = suffix_length * k;
-
-            unsafe {
-                let src_topk_ids = std::slice::from_raw_parts(
-                    topk_ids_buf.contents() as *const i32,
-                    routed_tokens,
-                );
-                moe_trace.topk_ids.copy_from_slice(src_topk_ids);
-
-                let src_counts = std::slice::from_raw_parts(
-                    counts_buf.contents() as *const u32,
-                    e,
-                );
-                moe_trace.counts.copy_from_slice(src_counts);
-
-                let src_offsets = std::slice::from_raw_parts(
-                    offsets_buf.contents() as *const u32,
-                    e + 1,
-                );
-                moe_trace.offsets.copy_from_slice(src_offsets);
-
-                let src_sumk = std::slice::from_raw_parts(
-                    sumk_buf.contents() as *const u32,
-                    1,
-                );
-                moe_trace.sumk.copy_from_slice(src_sumk);
-
-                let src_bucketed_ids = std::slice::from_raw_parts(
-                    bucketed_ids_buf.contents() as *const u32,
-                    routed_tokens,
-                );
-                moe_trace.bucketed_ids.copy_from_slice(src_bucketed_ids);
-
-                let src_tok2row = std::slice::from_raw_parts(
-                    tok2row_buf.contents() as *const i32,
-                    routed_tokens,
-                );
-                moe_trace.tok2row.copy_from_slice(src_tok2row);
-            }
-
-            Self::copy_probs_buffer(
-                self.data_type,
-                &topk_probs_buf,
-                &mut moe_trace.topk_probs,
-                routed_tokens,
-            );
-            Self::copy_probs_buffer(
-                self.data_type,
-                &bucketed_probs_buf,
-                &mut moe_trace.bucketed_probs,
-                routed_tokens,
-            );
-            Self::copy_probs_buffer(
-                self.data_type,
-                &y_partial_buf,
-                &mut moe_trace.y_partial,
-                routed_tokens * self.model_dim,
-            );
-        }
-    }
-}
-
-impl MoeBlockEncodable {
-    fn copy_probs_buffer(
-        data_type: KernelDataType,
-        buffer: &metal::Buffer,
-        destination: &mut [f32],
-        len: usize,
-    ) {
-        if len == 0 {
-            return;
-        }
-
-        unsafe {
-            match data_type {
-                KernelDataType::BFloat16 => {
-                    let src = std::slice::from_raw_parts(
-                        buffer.contents() as *const bf16,
-                        len,
-                    );
-                    destination
-                        .iter_mut()
-                        .zip(src.iter())
-                        .for_each(|(dst, value)| *dst = value.to_f32());
-                },
-                KernelDataType::Float16 => {
-                    let src = std::slice::from_raw_parts(
-                        buffer.contents() as *const f16,
-                        len,
-                    );
-                    destination
-                        .iter_mut()
-                        .zip(src.iter())
-                        .for_each(|(dst, value)| *dst = value.to_f32());
-                },
-                KernelDataType::Float32 => {
-                    let src = std::slice::from_raw_parts(
-                        buffer.contents() as *const f32,
-                        len,
-                    );
-                    destination.copy_from_slice(src);
-                },
-            }
         }
     }
 }

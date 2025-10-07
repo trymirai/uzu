@@ -11,6 +11,22 @@ use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 mod encodable;
 pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
 
+fn dtype_suffix(dtype: KernelDataType) -> &'static str {
+    match dtype {
+        KernelDataType::Float16 => "f16",
+        KernelDataType::BFloat16 => "bf16",
+        KernelDataType::Float32 => "f32",
+    }
+}
+
+fn dtype_index(dtype: KernelDataType) -> usize {
+    match dtype {
+        KernelDataType::Float16 => 0,
+        KernelDataType::BFloat16 => 1,
+        KernelDataType::Float32 => 2,
+    }
+}
+
 /// Arguments for standalone router encoder
 pub struct RouterEncoderArgs<'a> {
     pub input_buffer: &'a MTLBuffer,  // [T, d_model]
@@ -757,6 +773,9 @@ pub enum MoeExpertsError {
 pub struct MoeExpertsKernel {
     pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - tiled version
     gemv_pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - decode-specialized GEMV
+    two_pass_pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype][transposed]
+    two_pass_partial: Vec<MTLComputePipelineState>,     // [dtype]
+    two_pass_reduce: Vec<MTLComputePipelineState>,      // [dtype]
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
     tile_build_map_pipeline: MTLComputePipelineState,
@@ -792,26 +811,61 @@ pub struct MoeExpertsArguments<'a> {
     pub data_type: KernelDataType,
 }
 
+#[derive(Debug)]
+pub struct MoeExpertsTwoPassArguments<'a> {
+    pub x_perm_buffer: &'a MTLBuffer,
+    pub expert_offsets: &'a MTLBuffer,
+    pub hidden_buffer: &'a MTLBuffer,
+    pub partial_buffer: &'a MTLBuffer,
+    pub output_buffer: &'a MTLBuffer,
+    pub w13_all: &'a MTLBuffer,
+    pub w2_all: &'a MTLBuffer,
+    pub up_biases: &'a MTLBuffer,
+    pub down_biases: &'a MTLBuffer,
+    pub total_rows: usize,
+    pub d_model: usize,
+    pub d_ff: usize,
+    pub e: usize,
+    pub num_tiles_k: u32,
+    pub gating_code: u32,
+    pub gate_clip_min: f32,
+    pub gate_clip_max: f32,
+    pub up_clip_min: f32,
+    pub up_clip_max: f32,
+    pub silu_alpha: f32,
+    pub data_type: KernelDataType,
+}
+
 impl MoeExpertsKernel {
     pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let mut pipelines: Vec<Vec<MTLComputePipelineState>> =
-            vec![Vec::with_capacity(3); 4];
-
         let dtypes = [
-            (KernelDataType::Float16, "f16"),
-            (KernelDataType::BFloat16, "bf16"),
-            (KernelDataType::Float32, "f32"),
+            KernelDataType::Float16,
+            KernelDataType::BFloat16,
+            KernelDataType::Float32,
         ];
 
+        let mut pipelines: Vec<Vec<MTLComputePipelineState>> =
+            vec![Vec::with_capacity(dtypes.len()); 4];
+        let mut gemv_pipelines: Vec<Vec<MTLComputePipelineState>> =
+            vec![Vec::with_capacity(dtypes.len()); 4];
+        let mut two_pass_pass_a: Vec<Vec<MTLComputePipelineState>> =
+            vec![Vec::with_capacity(dtypes.len()); 4];
+        let mut two_pass_partial: Vec<MTLComputePipelineState> =
+            Vec::with_capacity(dtypes.len());
+        let mut two_pass_reduce: Vec<MTLComputePipelineState> =
+            Vec::with_capacity(dtypes.len());
+        let two_pass_k_tile: u32 = 64;
+
         for gate in 0u32..4u32 {
-            for (_, dtype_suffix) in &dtypes {
+            for dtype in &dtypes {
+                let dtype_suffix = dtype_suffix(*dtype);
+
                 let fcv = FunctionConstantValues::new();
                 fcv.set_constant_value_at_index(
                     &gate as *const u32 as *const std::ffi::c_void,
                     MTLDataType::UInt,
                     30,
                 );
-                // Multi-N fusion: set N_GROUP=8 for decode optimization
                 let n_group: u32 = 8;
                 fcv.set_constant_value_at_index(
                     &n_group as *const u32 as *const std::ffi::c_void,
@@ -823,8 +877,103 @@ impl MoeExpertsKernel {
                 let pipeline =
                     ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?;
                 pipelines[gate as usize].push(pipeline);
+
+                let gemv_fcv = FunctionConstantValues::new();
+                gemv_fcv.set_constant_value_at_index(
+                    &gate as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    30,
+                );
+                let tile_h: u32 = 512;
+                gemv_fcv.set_constant_value_at_index(
+                    &tile_h as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    32,
+                );
+                let gemv_kernel =
+                    format!("moe_experts_decode_fused_gemv_{}", dtype_suffix);
+                let gemv_pipeline =
+                    ctx.compute_pipeline_state(&gemv_kernel, Some(&gemv_fcv))?;
+                gemv_pipelines[gate as usize].push(gemv_pipeline);
+
+                let kernel =
+                    format!("moe_experts_decode_pass_a_{}", dtype_suffix);
+                let pass_a_fcv = FunctionConstantValues::new();
+                pass_a_fcv.set_constant_value_at_index(
+                    &gate as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    30,
+                );
+                let tile_h: u32 = 512;
+                pass_a_fcv.set_constant_value_at_index(
+                    &tile_h as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    32,
+                );
+                pass_a_fcv.set_constant_value_at_index(
+                    &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    33,
+                );
+                let pass_a_pipeline =
+                    ctx.compute_pipeline_state(&kernel, Some(&pass_a_fcv))?;
+                two_pass_pass_a[gate as usize].push(pass_a_pipeline);
             }
         }
+
+        for dtype in &dtypes {
+            let dtype_suffix = dtype_suffix(*dtype);
+
+            let partial_fcv = FunctionConstantValues::new();
+            let gate_zero: u32 = 0;
+            partial_fcv.set_constant_value_at_index(
+                &gate_zero as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                30,
+            );
+            let tile_h_one: u32 = 1;
+            partial_fcv.set_constant_value_at_index(
+                &tile_h_one as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                32,
+            );
+            partial_fcv.set_constant_value_at_index(
+                &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                33,
+            );
+            let partial_kernel =
+                format!("moe_experts_decode_down_partial_{}", dtype_suffix);
+            two_pass_partial.push(
+                ctx.compute_pipeline_state(
+                    &partial_kernel,
+                    Some(&partial_fcv),
+                )?,
+            );
+
+            let reduce_fcv = FunctionConstantValues::new();
+            reduce_fcv.set_constant_value_at_index(
+                &gate_zero as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                30,
+            );
+            reduce_fcv.set_constant_value_at_index(
+                &tile_h_one as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                32,
+            );
+            reduce_fcv.set_constant_value_at_index(
+                &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
+                MTLDataType::UInt,
+                33,
+            );
+            let reduce_kernel =
+                format!("moe_experts_decode_down_reduce_{}", dtype_suffix);
+            two_pass_reduce.push(
+                ctx.compute_pipeline_state(&reduce_kernel, Some(&reduce_fcv))?,
+            );
+        }
+
         let tile_counts =
             ctx.compute_pipeline_state("moe_tile_counts", None)?;
         let tile_scan = ctx.compute_pipeline_state("moe_tile_scan", None)?;
@@ -833,44 +982,12 @@ impl MoeExpertsKernel {
         let write_dispatch_args =
             ctx.compute_pipeline_state("moe_write_dispatch_args", None)?;
 
-        // Decode-specialized fused GEMV v2 pipelines (gate × dtype)
-        let mut gemv_pipelines: Vec<Vec<MTLComputePipelineState>> =
-            vec![Vec::with_capacity(3); 4];
-        for gate in 0u32..4u32 {
-            for (_, dtype_suffix) in &dtypes {
-                let fcv = FunctionConstantValues::new();
-                // WEIGHTS_ARE_TRANSPOSED (index 28) - set to false for now
-                let weights_transposed: bool = false;
-                fcv.set_constant_value_at_index(
-                    &weights_transposed as *const bool
-                        as *const std::ffi::c_void,
-                    MTLDataType::Bool,
-                    28,
-                );
-                // GATING_SEL (index 30)
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    30,
-                );
-                // TILE_H (index 32) - H tile size for tiled GEMV
-                let tile_h: u32 = 512;
-                fcv.set_constant_value_at_index(
-                    &tile_h as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    32,
-                );
-                let kernel_name =
-                    format!("moe_experts_decode_fused_gemv_{}", dtype_suffix);
-                let pipeline =
-                    ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?;
-                gemv_pipelines[gate as usize].push(pipeline);
-            }
-        }
-
         Ok(Self {
             pipelines,
             gemv_pipelines,
+            two_pass_pass_a,
+            two_pass_partial,
+            two_pass_reduce,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
             tile_build_map_pipeline: tile_build,
@@ -883,10 +1000,6 @@ impl MoeExpertsKernel {
         command_buffer: &CommandBufferRef,
         args: MoeExpertsArguments,
     ) -> Result<(), MoeExpertsError> {
-        if args.t == 1 {
-            return self.encode_gemv_decode(command_buffer, args);
-        }
-
         // Otherwise use tiled Multi-N fusion path
         let e_u32 = args.e as u32;
 
@@ -1053,6 +1166,159 @@ impl MoeExpertsKernel {
             threads_per_threadgroup,
         );
         encoder_e.end_encoding();
+
+        Ok(())
+    }
+
+    pub fn encode_two_pass_decode(
+        &self,
+        command_buffer: &CommandBufferRef,
+        args: MoeExpertsTwoPassArguments,
+    ) -> Result<(), MoeExpertsError> {
+        if args.total_rows == 0 {
+            return Ok(());
+        }
+
+        let gate_idx = (args.gating_code.min(3)) as usize;
+        let dtype_idx = dtype_index(args.data_type);
+        // Pass A: compute hidden activations per routed token/expert
+        let pass_a_pipeline = &self.two_pass_pass_a[gate_idx][dtype_idx];
+        let encoder_a = command_buffer.new_compute_command_encoder();
+        encoder_a.set_compute_pipeline_state(pass_a_pipeline);
+        encoder_a.set_buffer(0, Some(args.x_perm_buffer), 0);
+        encoder_a.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_a.set_buffer(2, Some(args.w13_all), 0);
+        encoder_a.set_buffer(3, Some(args.hidden_buffer), 0);
+        encoder_a.set_buffer(4, Some(args.up_biases), 0);
+        let d_model_u32 = args.d_model as u32;
+        let d_ff_u32 = args.d_ff as u32;
+        let e_u32 = args.e as u32;
+        encoder_a.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &d_model_u32 as *const u32 as *const _,
+        );
+        encoder_a.set_bytes(
+            6,
+            size_of::<u32>() as u64,
+            &d_ff_u32 as *const u32 as *const _,
+        );
+        encoder_a.set_bytes(
+            7,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_a.set_bytes(
+            8,
+            size_of::<f32>() as u64,
+            &args.gate_clip_min as *const f32 as *const _,
+        );
+        encoder_a.set_bytes(
+            9,
+            size_of::<f32>() as u64,
+            &args.gate_clip_max as *const f32 as *const _,
+        );
+        encoder_a.set_bytes(
+            10,
+            size_of::<f32>() as u64,
+            &args.up_clip_min as *const f32 as *const _,
+        );
+        encoder_a.set_bytes(
+            11,
+            size_of::<f32>() as u64,
+            &args.up_clip_max as *const f32 as *const _,
+        );
+        encoder_a.set_bytes(
+            12,
+            size_of::<f32>() as u64,
+            &args.silu_alpha as *const f32 as *const _,
+        );
+        encoder_a.dispatch_thread_groups(
+            MTLSize::new(1, args.e as u64, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_a.end_encoding();
+
+        // Pass B: compute split-K partial outputs
+        let partial_pipeline = &self.two_pass_partial[dtype_idx];
+        let encoder_p = command_buffer.new_compute_command_encoder();
+        encoder_p.set_compute_pipeline_state(partial_pipeline);
+        encoder_p.set_buffer(0, Some(args.hidden_buffer), 0);
+        encoder_p.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_p.set_buffer(2, Some(args.w2_all), 0);
+        encoder_p.set_buffer(3, Some(args.partial_buffer), 0);
+        let total_rows_u32 = args.total_rows as u32;
+        encoder_p.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &total_rows_u32 as *const u32 as *const _,
+        );
+        encoder_p.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &d_model_u32 as *const u32 as *const _,
+        );
+        encoder_p.set_bytes(
+            6,
+            size_of::<u32>() as u64,
+            &d_ff_u32 as *const u32 as *const _,
+        );
+        encoder_p.set_bytes(
+            7,
+            size_of::<u32>() as u64,
+            &args.num_tiles_k as *const u32 as *const _,
+        );
+        let e_u32 = args.e as u32;
+        encoder_p.set_bytes(
+            8,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        let col_groups = (args.d_model as u32 + 255) / 256;
+        encoder_p.dispatch_thread_groups(
+            MTLSize::new(
+                col_groups as u64,
+                args.total_rows as u64,
+                args.num_tiles_k as u64,
+            ),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_p.end_encoding();
+
+        // Pass C: reduce partials and add down projections
+        let reduce_pipeline = &self.two_pass_reduce[dtype_idx];
+        let encoder_r = command_buffer.new_compute_command_encoder();
+        encoder_r.set_compute_pipeline_state(reduce_pipeline);
+        encoder_r.set_buffer(0, Some(args.partial_buffer), 0);
+        encoder_r.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_r.set_buffer(2, Some(args.down_biases), 0);
+        encoder_r.set_buffer(3, Some(args.output_buffer), 0);
+        encoder_r.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &total_rows_u32 as *const u32 as *const _,
+        );
+        encoder_r.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &d_model_u32 as *const u32 as *const _,
+        );
+        encoder_r.set_bytes(
+            6,
+            size_of::<u32>() as u64,
+            &args.num_tiles_k as *const u32 as *const _,
+        );
+        encoder_r.set_bytes(
+            7,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        let col_groups = (args.d_model as u32 + 255) / 256;
+        encoder_r.dispatch_thread_groups(
+            MTLSize::new(col_groups as u64, args.total_rows as u64, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_r.end_encoding();
 
         Ok(())
     }

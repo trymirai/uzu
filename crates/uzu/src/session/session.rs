@@ -214,12 +214,6 @@ impl Session {
             let generated_text = tokenizer
                 .decode(&generated_tokens, true)
                 .map_err(|_| Error::UnableToDecodeText)?;
-            if std::env::var_os("UZU_DEBUG_TOKENS").is_some() {
-                eprintln!(
-                    "[DebugTokens] ids={:?} text=\"{}\"",
-                    generated_tokens, generated_text
-                );
-            }
             Ok(generated_text)
         };
 

@@ -127,33 +127,6 @@ impl DecoderLayerActivationTrace {
             }
         }
     }
-
-    pub fn ensure_moe_trace(
-        &mut self,
-        suffix_length: usize,
-        mixture_size: usize,
-        k: usize,
-        model_dim: usize,
-    ) -> &mut MoeActivationTrace {
-        let needs_init = self
-            .moe
-            .as_ref()
-            .map(|trace| {
-                !trace.matches(suffix_length, mixture_size, k, model_dim)
-            })
-            .unwrap_or(true);
-
-        if needs_init {
-            self.moe = Some(MoeActivationTrace::new(
-                suffix_length,
-                mixture_size,
-                k,
-                model_dim,
-            ));
-        }
-
-        self.moe.as_mut().unwrap()
-    }
 }
 
 pub struct DecoderActivationTrace {
