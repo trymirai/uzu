@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::speculators::speculator::Speculator;
+
 use super::{node::Node, speculated_suffix::SpeculatedSuffix};
 
 #[derive(Debug)]
@@ -18,6 +20,34 @@ impl TokenTrie {
         Self {
             root: Node::new(),
         }
+    }
+
+    pub fn from_speculator(
+        prefix: &[u64],
+        include_last_prefix_token: bool,
+        speculator: &dyn Speculator,
+        max_length: usize,
+    ) -> Self {
+        let mut trie = Self::new();
+        let mut current_node = &mut trie.root;
+        if include_last_prefix_token {
+            current_node =
+                current_node.get_or_insert_next(*prefix.last().unwrap());
+        }
+        let mut speculation_prefix = prefix.to_vec();
+        for _ in 1..max_length {
+            let speculation_result = speculator.speculate(&speculation_prefix);
+            let Some(speculation_token) = speculation_result
+                .iter()
+                .max_by(|a, b| f32::total_cmp(a.1, b.1))
+                .map(|(k, _)| *k)
+            else {
+                break;
+            };
+            current_node = current_node.get_or_insert_next(speculation_token);
+            speculation_prefix.push(speculation_token);
+        }
+        trie
     }
 
     pub fn from_sequences(sequences: &[Vec<u64>]) -> Self {
