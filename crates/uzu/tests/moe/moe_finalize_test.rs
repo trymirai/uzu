@@ -53,7 +53,6 @@ fn test_moe_finalize_end_to_end() {
     let e = 17usize;
     let k = 2usize;
     let d_model = 96usize;
-    let d_ff = 128usize;
 
     // Inputs
     let logits: Vec<f32> =

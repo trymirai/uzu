@@ -773,9 +773,9 @@ pub enum MoeExpertsError {
 pub struct MoeExpertsKernel {
     pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - tiled version
     gemv_pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - decode-specialized GEMV
-    two_pass_pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype][transposed]
-    two_pass_partial: Vec<MTLComputePipelineState>,     // [dtype]
-    two_pass_reduce: Vec<MTLComputePipelineState>,      // [dtype]
+    two_pass_partial: Vec<MTLComputePipelineState>,    // [dtype]
+    two_pass_reduce: Vec<MTLComputePipelineState>,     // [dtype]
+    two_pass_pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
     tile_build_map_pipeline: MTLComputePipelineState,
@@ -854,6 +854,7 @@ impl MoeExpertsKernel {
             Vec::with_capacity(dtypes.len());
         let mut two_pass_reduce: Vec<MTLComputePipelineState> =
             Vec::with_capacity(dtypes.len());
+
         let two_pass_k_tile: u32 = 64;
 
         for gate in 0u32..4u32 {
@@ -985,9 +986,9 @@ impl MoeExpertsKernel {
         Ok(Self {
             pipelines,
             gemv_pipelines,
-            two_pass_pass_a,
             two_pass_partial,
             two_pass_reduce,
+            two_pass_pass_a,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
             tile_build_map_pipeline: tile_build,
@@ -1003,7 +1004,6 @@ impl MoeExpertsKernel {
         // Otherwise use tiled Multi-N fusion path
         let e_u32 = args.e as u32;
 
-        // Pass A: per-expert tile counts
         let encoder_a = command_buffer.new_compute_command_encoder();
         encoder_a.set_compute_pipeline_state(&self.tile_counts_pipeline);
         encoder_a.set_buffer(0, Some(args.expert_offsets), 0);
@@ -1181,8 +1181,9 @@ impl MoeExpertsKernel {
 
         let gate_idx = (args.gating_code.min(3)) as usize;
         let dtype_idx = dtype_index(args.data_type);
-        // Pass A: compute hidden activations per routed token/expert
+
         let pass_a_pipeline = &self.two_pass_pass_a[gate_idx][dtype_idx];
+
         let encoder_a = command_buffer.new_compute_command_encoder();
         encoder_a.set_compute_pipeline_state(pass_a_pipeline);
         encoder_a.set_buffer(0, Some(args.x_perm_buffer), 0);
@@ -1233,10 +1234,18 @@ impl MoeExpertsKernel {
             size_of::<f32>() as u64,
             &args.silu_alpha as *const f32 as *const _,
         );
+
+        const BLOCK_M: u32 = 4; // BM * SM * TM = 1 * 1 * 4
+        let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
         encoder_a.dispatch_thread_groups(
-            MTLSize::new(1, args.e as u64, 1),
-            MTLSize::new(256, 1, 1),
+            MTLSize::new(
+                h_blocks as u64,
+                args.e as u64,
+                args.total_rows as u64,
+            ),
+            MTLSize::new(128, 1, 1), // BM * BN * 32 = 1 * 4 * 32
         );
+
         encoder_a.end_encoding();
 
         // Pass B: compute split-K partial outputs
@@ -1323,7 +1332,6 @@ impl MoeExpertsKernel {
         Ok(())
     }
 
-    // Decode-specialized GEMV path for small sum_k (typically T=1, K=1-2)
     fn encode_gemv_decode(
         &self,
         command_buffer: &CommandBufferRef,

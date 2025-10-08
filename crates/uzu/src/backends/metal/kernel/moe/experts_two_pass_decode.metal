@@ -18,14 +18,43 @@ static inline float silu(float x, float alpha) {
     return x / (1.0f + exp(-alpha * x));
 }
 
-// === Pass A: compute activated hidden states and store to hidden buffer ===
+#define MTL_CONST static constant constexpr const
+#define MTL_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
+
+// Tiling configuration (tunable)
+MTL_CONST uint BM = 1;   // Threadgroups in M dimension (usually 1 for GEMV)
+MTL_CONST uint BN = 4;   // Threadgroups in N dimension
+MTL_CONST uint SM = 1;   // Simdgroup rows
+MTL_CONST uint SN = 32;  // Simdgroup cols (must be power of 2, ≤32)
+MTL_CONST uint TM = 4;   // Thread work in M (output elements per thread)
+MTL_CONST uint TN = 4;   // Thread work in N (input elements per iteration)
+
+MTL_CONST uint THREADS_M = BM * SM;
+MTL_CONST uint THREADS_N = BN * SN;
+MTL_CONST uint BLOCK_M = THREADS_M * TM;
+MTL_CONST uint BLOCK_N = THREADS_N * TN;
+
+static_assert(SM * SN == 32, "simdgroup must have 32 threads");
+static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, or 32");
+
+template<uint SIMD_SIZE>
+static inline float simdgroup_sum(float val, uint simd_lid) {
+    MTL_PRAGMA_UNROLL
+    for (uint offset = SIMD_SIZE / 2; offset >= 1; offset >>= 1) {
+        val += simd_shuffle_down(val, offset);
+    }
+    return val;
+}
+
+// === Pass A: Optimized GEMV with hierarchical tiling ===
+// Computes: hidden[row, h] = activation(x[row, d] @ W13[d, 2*h])
 template<typename T>
 void moe_experts_decode_pass_a_impl(
-    device const T* X_perm,
-    device const uint* expert_offsets,
-    device const T* W13_all,
-    device const T* up_biases,
-    device T* hidden_out,
+    device const T* X_perm,              // [total_rows, d_model]
+    device const uint* expert_offsets,   // [E + 1]
+    device const T* W13_all,             // [E, d_model, 2*d_ff]
+    device const T* up_biases,           // [E, 2*d_ff]
+    device T* hidden_out,                // [total_rows, d_ff]
     uint d_model,
     uint d_ff,
     uint E,
@@ -34,77 +63,199 @@ void moe_experts_decode_pass_a_impl(
     float up_clip_min,
     float up_clip_max,
     float silu_alpha,
-    uint2 tgpig,
-    uint lid,
-    threadgroup float4* x_cache
+    uint expert_idx,
+    uint row_in_expert,
+    uint h_block_idx,
+    uint simd_gid,
+    uint simd_lid,
+    threadgroup float* tgp_memory
 ) {
-    constexpr uint THREADS_PER_TG = 256;
+    // Thread position within simdgroup
+    const uint thrM = SN != 32 ? simd_lid / SN : 0;
+    const uint thrN = SN != 32 ? simd_lid % SN : uint(simd_lid);
 
-    const uint expert_idx = tgpig.y;
-    if (expert_idx >= E) return;
+    // Simdgroup position within threadgroup
+    const uint sgN = BN != 1 ? (simd_gid % BN) : 0;
+    const uint simdM = BN != 1 ? SM * (simd_gid / BN) : uint(SM * simd_gid);
+    const uint simdN = BN != 1 ? SN * (simd_gid % BN) : 0;
 
+    // Thread's work block
+    int bm = (simdM + thrM) * TM;
+    int bn = (simdN + thrN) * TN;
+
+    // Output row position
     const uint seg_start = expert_offsets[expert_idx];
     const uint seg_end = expert_offsets[expert_idx + 1];
-    const uint seg_len = (seg_end > seg_start) ? (seg_end - seg_start) : 0u;
-    if (seg_len == 0u) return;
+    uint global_row = seg_start + row_in_expert;
 
-    const ulong w13_expert_base = (ulong)expert_idx * (ulong)d_model * (ulong)(2u * d_ff);
-    const ulong bias_base = (ulong)expert_idx * (ulong)(2u * d_ff);
+    if (global_row >= seg_end) return;
 
-    const uint num_vec4 = d_model / 4u;
+    // Calculate output h index
+    int h_row = h_block_idx * BLOCK_M + bm;
 
-    for (uint row_idx = 0; row_idx < seg_len; ++row_idx) {
-        const ulong x_row_offset = (ulong)(seg_start + row_idx) * (ulong)d_model;
-        for (uint i = lid; i < num_vec4; i += THREADS_PER_TG) {
-            x_cache[i] = float4(reinterpret_cast<const device typename metal::vec<T,4>*>(X_perm + x_row_offset)[i]);
+    // Adjust tail block to ensure in-bounds reads
+    if (h_row + TM > d_ff) {
+        h_row = d_ff > TM ? int(d_ff - TM) : 0;
+        bm = h_row - int(h_block_idx * BLOCK_M);
+    }
+
+    if (h_row >= int(d_ff)) return;
+
+    // Accumulation arrays for up and gate projections
+    thread float result_up[TM] = {0};
+    thread float result_gate[TM] = {0};
+    thread T weights_up[TN];
+    thread T weights_gate[TN];
+    thread float x_vals[TN];
+
+    // Expert weight base addresses
+    const ulong w13_base = (ulong)expert_idx * (ulong)d_model * (ulong)(2 * d_ff);
+    const ulong bias_base = (ulong)expert_idx * (ulong)(2 * d_ff);
+    const ulong x_row_base = (ulong)global_row * (ulong)d_model;
+
+    // Main accumulation loop over d_model in blocks of BLOCK_N
+    const uint n_iter = d_model / BLOCK_N;
+    const uint leftover = d_model - (n_iter * BLOCK_N);
+
+    for (uint i = 0; i < n_iter; ++i) {
+        // Load x values for this block
+        MTL_PRAGMA_UNROLL
+        for (uint tn = 0; tn < TN; tn++) {
+            uint d_idx = bn + tn;
+            x_vals[tn] = float(X_perm[x_row_base + d_idx]);
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        for (uint h_base = 0; h_base < d_ff; h_base += TILE_H) {
-            const uint h_chunk = min(TILE_H, d_ff - h_base);
-            for (uint h_local = lid; h_local < h_chunk; h_local += THREADS_PER_TG) {
-                const uint ff_idx = h_base + h_local;
+        // Accumulate for each output row
+        MTL_PRAGMA_UNROLL
+        for (uint tm = 0; tm < TM; tm++) {
+            uint h_idx = h_row + tm;
 
-                float up_acc = 0.0f;
-                float gate_acc = 0.0f;
+            // Load weights for up projection
+            MTL_PRAGMA_UNROLL
+            for (uint tn = 0; tn < TN; tn++) {
+                uint d_idx = bn + tn;
+                ulong w_idx = w13_base + (ulong)d_idx * (ulong)(2 * d_ff) + (ulong)h_idx;
+                weights_up[tn] = W13_all[w_idx];
+            }
 
-                for (uint d4 = 0; d4 < num_vec4; ++d4) {
-                    const float4 xv = x_cache[d4];
-                    const ulong w_base = w13_expert_base + (ulong)(d4 * 4u) * (ulong)(2u * d_ff) + (ulong)ff_idx;
-                    float4 w_up;
-                    w_up.x = float(W13_all[w_base + 0u * (ulong)(2u * d_ff)]);
-                    w_up.y = float(W13_all[w_base + 1u * (ulong)(2u * d_ff)]);
-                    w_up.z = float(W13_all[w_base + 2u * (ulong)(2u * d_ff)]);
-                    w_up.w = float(W13_all[w_base + 3u * (ulong)(2u * d_ff)]);
-                    up_acc += dot(xv, w_up);
-                    if (GATING_SEL > 1u) {
-                        const ulong gate_base = w_base + (ulong)d_ff;
-                        float4 w_gate;
-                        w_gate.x = float(W13_all[gate_base + 0u * (ulong)(2u * d_ff)]);
-                        w_gate.y = float(W13_all[gate_base + 1u * (ulong)(2u * d_ff)]);
-                        w_gate.z = float(W13_all[gate_base + 2u * (ulong)(2u * d_ff)]);
-                        w_gate.w = float(W13_all[gate_base + 3u * (ulong)(2u * d_ff)]);
-                        gate_acc += dot(xv, w_gate);
+            // Accumulate up projection
+            MTL_PRAGMA_UNROLL
+            for (uint tn = 0; tn < TN; tn++) {
+                result_up[tm] += x_vals[tn] * float(weights_up[tn]);
+            }
+
+            // Load and accumulate gate projection if needed
+            if (GATING_SEL > 1) {
+                MTL_PRAGMA_UNROLL
+                for (uint tn = 0; tn < TN; tn++) {
+                    uint d_idx = bn + tn;
+                    ulong w_gate_idx = w13_base + (ulong)d_idx * (ulong)(2 * d_ff) + (ulong)(d_ff + h_idx);
+                    weights_gate[tn] = W13_all[w_gate_idx];
+                }
+
+                MTL_PRAGMA_UNROLL
+                for (uint tn = 0; tn < TN; tn++) {
+                    result_gate[tm] += x_vals[tn] * float(weights_gate[tn]);
+                }
+            }
+        }
+
+        bn += BLOCK_N;
+    }
+
+    // Handle leftover elements
+    if (leftover > 0) {
+        MTL_PRAGMA_UNROLL
+        for (uint tn = 0; tn < TN; tn++) {
+            uint d_idx = bn + tn;
+            x_vals[tn] = (d_idx < d_model) ? float(X_perm[x_row_base + d_idx]) : 0.0f;
+        }
+
+        MTL_PRAGMA_UNROLL
+        for (uint tm = 0; tm < TM; tm++) {
+            uint h_idx = h_row + tm;
+
+            MTL_PRAGMA_UNROLL
+            for (uint tn = 0; tn < TN; tn++) {
+                uint d_idx = bn + tn;
+                if (d_idx < d_model) {
+                    ulong w_idx = w13_base + (ulong)d_idx * (ulong)(2 * d_ff) + (ulong)h_idx;
+                    weights_up[tn] = W13_all[w_idx];
+                    result_up[tm] += x_vals[tn] * float(weights_up[tn]);
+
+                    if (GATING_SEL > 1) {
+                        ulong w_gate_idx = w13_base + (ulong)d_idx * (ulong)(2 * d_ff) + (ulong)(d_ff + h_idx);
+                        weights_gate[tn] = W13_all[w_gate_idx];
+                        result_gate[tm] += x_vals[tn] * float(weights_gate[tn]);
                     }
                 }
+            }
+        }
+    }
 
-                up_acc += float(up_biases[bias_base + ff_idx]);
-                up_acc = clamp(up_acc, up_clip_min, up_clip_max);
+    // Simdgroup reduction across thrN dimension
+    MTL_PRAGMA_UNROLL
+    for (uint tm = 0; tm < TM; tm++) {
+        result_up[tm] = simd_sum(result_up[tm]);
+        if (GATING_SEL > 1) {
+            result_gate[tm] = simd_sum(result_gate[tm]);
+        }
+    }
+
+    // Threadgroup reduction if BN > 1
+    if (BN > 1) {
+        threadgroup float* tgp_up = tgp_memory;
+        threadgroup float* tgp_gate = tgp_memory + BN * (BLOCK_M + TM);
+
+        if (thrN == 0) {
+            MTL_PRAGMA_UNROLL
+            for (uint tm = 0; tm < TM; tm++) {
+                tgp_up[sgN * (BLOCK_M + TM) + bm + tm] = result_up[tm];
+                if (GATING_SEL > 1) {
+                    tgp_gate[sgN * (BLOCK_M + TM) + bm + tm] = result_gate[tm];
+                }
+            }
+
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            if (sgN == 0) {
+                MTL_PRAGMA_UNROLL
+                for (uint sgn = 1; sgn < BN; sgn++) {
+                    MTL_PRAGMA_UNROLL
+                    for (uint tm = 0; tm < TM; tm++) {
+                        result_up[tm] += tgp_up[sgn * (BLOCK_M + TM) + bm + tm];
+                        if (GATING_SEL > 1) {
+                            result_gate[tm] += tgp_gate[sgn * (BLOCK_M + TM) + bm + tm];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply activation and write output (only first thread in simdgroup width)
+    if (simdN == 0 && thrN == 0) {
+        MTL_PRAGMA_UNROLL
+        for (uint tm = 0; tm < TM; tm++) {
+            uint h_idx = h_row + tm;
+            if (h_idx < d_ff) {
+                // Add bias and clip
+                float up_val = result_up[tm] + float(up_biases[bias_base + h_idx]);
+                up_val = clamp(up_val, up_clip_min, up_clip_max);
 
                 float activated_val;
-                if (GATING_SEL <= 1u) {
-                    activated_val = (GATING_SEL == 0u) ? gelu_approx(up_acc) : silu(up_acc, silu_alpha);
+                if (GATING_SEL <= 1) {
+                    activated_val = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
                 } else {
-                    gate_acc += float(up_biases[bias_base + d_ff + ff_idx]);
-                    gate_acc = clamp(gate_acc, gate_clip_min, gate_clip_max);
-                    const float gate_val = (GATING_SEL == 2u) ? silu(gate_acc, silu_alpha) : gelu_approx(gate_acc);
-                    activated_val = gate_val * up_acc;
+                    float gate_val = result_gate[tm] + float(up_biases[bias_base + d_ff + h_idx]);
+                    gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
+                    float gate_activated = (GATING_SEL == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
+                    activated_val = gate_activated * up_val;
                 }
 
-                const ulong hidden_idx = (ulong)(seg_start + row_idx) * (ulong)d_ff + (ulong)ff_idx;
+                ulong hidden_idx = (ulong)global_row * (ulong)d_ff + (ulong)h_idx;
                 hidden_out[hidden_idx] = T(activated_val);
             }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
         }
     }
 }
@@ -124,20 +275,26 @@ kernel void moe_experts_decode_pass_a_##SUFFIX( \
     constant float& up_clip_min [[buffer(10)]], \
     constant float& up_clip_max [[buffer(11)]], \
     constant float& silu_alpha [[buffer(12)]], \
-    uint2 tgpig [[threadgroup_position_in_grid]], \
-    uint lid [[thread_index_in_threadgroup]]) \
+    uint3 tgpig [[threadgroup_position_in_grid]], \
+    uint simd_gid [[simdgroup_index_in_threadgroup]], \
+    uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    threadgroup float4 x_cache_local[1024]; \
+    constexpr uint tgp_mem_size = (BN > 1) ? 2 * BN * (BLOCK_M + TM) : 1; \
+    threadgroup float tgp_memory[tgp_mem_size]; \
+    \
     moe_experts_decode_pass_a_impl<DTYPE>( \
         X_perm, expert_offsets, W13_all, up_biases, hidden_out, \
         d_model, d_ff, E, gate_clip_min, gate_clip_max, \
         up_clip_min, up_clip_max, silu_alpha, \
-        tgpig, lid, x_cache_local); \
+        tgpig.y, tgpig.z, tgpig.x, \
+        simd_gid, simd_lid, \
+        (BN > 1) ? tgp_memory : nullptr); \
 }
 
 MOE_PASS_A_KERNEL(bfloat, bf16)
 MOE_PASS_A_KERNEL(half, f16)
 MOE_PASS_A_KERNEL(float, f32)
+
 
 // === Pass B: compute partial down projections (split-K) ===
 template<typename T>
