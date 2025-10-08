@@ -267,10 +267,15 @@ fn run_decode_case(
         (3 * size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
+    let row_expert_map_buf = ctx.device.new_buffer(
+        (sum_k * size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
 
     let make_two_pass_args = || MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
+        row_expert_map: &row_expert_map_buf,
         hidden_buffer: &hidden_buf,
         partial_buffer: &partial_buf,
         output_buffer: &output_buf,

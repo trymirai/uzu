@@ -110,12 +110,13 @@ impl MoeBlockEncodable {
         let d_model_size = up_shape[1];
         let two_d_ff = up_shape[2];
 
-        let transpose_err = |err: crate::device::array::ArrayConversionError| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "W13 transpose failed: {}",
-                err
-            ))
-        };
+        let transpose_err =
+            |err: crate::device::array::ArrayConversionError| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "W13 transpose failed: {}",
+                    err
+                ))
+            };
 
         let total_size = e * d_model_size * two_d_ff;
         let w13_transposed = match up_arr.data_type() {
@@ -129,7 +130,8 @@ impl MoeBlockEncodable {
                         for ff in 0..two_d_ff {
                             // src: [E, d_model, 2*d_ff] -> index: expert_offset + dm * two_d_ff + ff
                             // dst: [E, 2*d_ff, d_model] -> index: expert_offset + ff * d_model + dm
-                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                            dst[expert_offset + ff * d_model_size + dm] =
+                                src[expert_offset + dm * two_d_ff + ff];
                         }
                     }
                 }
@@ -148,7 +150,8 @@ impl MoeBlockEncodable {
                     let expert_offset = expert * d_model_size * two_d_ff;
                     for dm in 0..d_model_size {
                         for ff in 0..two_d_ff {
-                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                            dst[expert_offset + ff * d_model_size + dm] =
+                                src[expert_offset + dm * two_d_ff + ff];
                         }
                     }
                 }
@@ -167,7 +170,8 @@ impl MoeBlockEncodable {
                     let expert_offset = expert * d_model_size * two_d_ff;
                     for dm in 0..d_model_size {
                         for ff in 0..two_d_ff {
-                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                            dst[expert_offset + ff * d_model_size + dm] =
+                                src[expert_offset + dm * two_d_ff + ff];
                         }
                     }
                 }
@@ -200,6 +204,8 @@ impl MoeBlockEncodable {
                     e
                 ))
             })?;
+
+        // Use W2 in original layout [E, d_ff, d_model] - no transpose needed
         let w2_src = unsafe { w2_arr.mtl_buffer().clone() };
 
         let mut up_biases_arr = experts_tree
@@ -559,6 +565,7 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeBlockAlloc,
             ArrayId::MoeHidden,
             ArrayId::MoeTwoPassPartial,
+            ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
         let clone_buffer = |array: &RefCell<MetalArray>| -> metal::Buffer {
@@ -597,6 +604,7 @@ impl EncodableWithState for MoeBlockEncodable {
         let block_alloc_buf = clone_buffer(array_iter.next().unwrap());
         let hidden_buf = clone_buffer(array_iter.next().unwrap());
         let two_pass_partial_buf = clone_buffer(array_iter.next().unwrap());
+        let row_expert_map_buf = clone_buffer(array_iter.next().unwrap());
         debug_assert!(array_iter.next().is_none());
 
         let e = self.moe_config.mixture_size;
@@ -828,6 +836,7 @@ impl EncodableWithState for MoeBlockEncodable {
                         MoeExpertsTwoPassArguments {
                             x_perm_buffer: &x_perm_buf,
                             expert_offsets: &offsets_buf,
+                            row_expert_map: &row_expert_map_buf,
                             hidden_buffer: &hidden_buf,
                             partial_buffer: &two_pass_partial_buf,
                             output_buffer: &y_partial_buf,

@@ -45,10 +45,10 @@ fn moe_cpu_reference(
     x: &[bf16],
     router_weight: &[f32], // [E, d_model] - kept as F32 for router (computed before BF16 conversion)
     router_bias: &[f32],   // [E]
-    w13: &[bf16],          // source layout [E, d_model, 2*d_ff] (GPU transposes to [E, 2*d_ff, d_model])
-    w2: &[bf16],           // [E, d_ff, d_model]
-    up_biases: &[bf16],    // [E, 2*d_ff]
-    down_biases: &[bf16],  // [E, d_model]
+    w13: &[bf16], // source layout [E, d_model, 2*d_ff] (GPU transposes to [E, 2*d_ff, d_model])
+    w2: &[bf16],  // [E, d_ff, d_model]
+    up_biases: &[bf16], // [E, 2*d_ff]
+    down_biases: &[bf16], // [E, d_model]
     t: usize,
     e: usize,
     k: usize,
@@ -256,9 +256,13 @@ fn run_moe_parity_test(
         }
     }
 
-    let w2: Vec<bf16> = (0..w2_len)
+    // Generate W2 in layout [E, d_ff, d_model] for both CPU reference and GPU
+    let w2_cpu: Vec<bf16> = (0..w2_len)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();
+
+    // GPU uses same layout [E, d_ff, d_model] - no transpose needed
+    let w2_gpu = w2_cpu.clone();
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
         .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
         .collect();
@@ -283,8 +287,8 @@ fn run_moe_parity_test(
         MTLResourceOptions::StorageModeShared,
     );
     let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * std::mem::size_of::<bf16>()) as u64,
+        w2_gpu.as_ptr() as *const _,
+        (w2_gpu.len() * std::mem::size_of::<bf16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
     let up_biases_buf = ctx.device.new_buffer_with_data(
@@ -574,7 +578,7 @@ fn run_moe_parity_test(
             "[E2E] Large-scale debug: x[0]={:.6}, w13[0]={:.6}, w2[0]={:.6}",
             f32::from(x[0]),
             f32::from(w13_cpu[0]),
-            f32::from(w2[0])
+            f32::from(w2_cpu[0])
         );
 
         // Probe tile bookkeeping
@@ -706,7 +710,7 @@ fn run_moe_parity_test(
         &router_weight_f32,
         &router_bias_f32,
         &w13_cpu,
-        &w2,
+        &w2_cpu,
         &up_biases,
         &down_biases,
         t,

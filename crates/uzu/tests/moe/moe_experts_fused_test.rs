@@ -158,7 +158,9 @@ fn run_decode_parity_case(
 
     // Generate W13 in original layout [E, d_model, 2*d_ff]
     let mut base_w13_original = vec![bf16::from_f32(0.0); elem_w13];
-    for (expert, chunk) in base_w13_original.chunks_mut(d_model * 2 * d_ff).enumerate() {
+    for (expert, chunk) in
+        base_w13_original.chunks_mut(d_model * 2 * d_ff).enumerate()
+    {
         for dm in 0..d_model {
             for ch in 0..(2 * d_ff) {
                 let idx = dm * 2 * d_ff + ch;
@@ -184,8 +186,11 @@ fn run_decode_parity_case(
         }
     }
 
-    let mut base_w2 = vec![bf16::from_f32(0.0); elem_w2];
-    for (expert, chunk) in base_w2.chunks_mut(d_ff * d_model).enumerate() {
+    // Generate W2 in layout [E, d_ff, d_model] for both CPU reference and GPU
+    let mut base_w2_original = vec![bf16::from_f32(0.0); elem_w2];
+    for (expert, chunk) in
+        base_w2_original.chunks_mut(d_ff * d_model).enumerate()
+    {
         for ff in 0..d_ff {
             for dm in 0..d_model {
                 let idx = ff * d_model + dm;
@@ -196,6 +201,9 @@ fn run_decode_parity_case(
             }
         }
     }
+
+    // GPU uses same layout [E, d_ff, d_model] - no transpose needed
+    let base_w2 = base_w2_original.clone();
 
     let mut base_up_bias = vec![bf16::from_f32(0.0); elem_up_bias];
     for (expert, chunk) in base_up_bias.chunks_mut(2 * d_ff).enumerate() {
@@ -396,6 +404,10 @@ fn run_decode_parity_case(
             (3 * size_of::<u32>()) as u64,
             MTLResourceOptions::StorageModeShared,
         );
+        let row_expert_map_buf = ctx.device.new_buffer(
+            (sum_k * size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
 
         let experts_kernel =
             MoeExpertsKernel::new(ctx).expect("experts kernel");
@@ -403,6 +415,7 @@ fn run_decode_parity_case(
         let args = MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
+            row_expert_map: &row_expert_map_buf,
             hidden_buffer: &hidden_buf,
             partial_buffer: &partial_buf,
             output_buffer: &output_buf,
@@ -457,8 +470,8 @@ fn run_decode_parity_case(
         // base_w13 is in transposed layout [E, 2*d_ff, d_model], so stride is 2*d_ff*d_model
         let w13_slice = &base_w13
             [base * 2 * d_ff * d_model..(base + 1) * 2 * d_ff * d_model];
-        let w2_slice =
-            &base_w2[base * d_ff * d_model..(base + 1) * d_ff * d_model];
+        let w2_slice = &base_w2_original
+            [base * d_ff * d_model..(base + 1) * d_ff * d_model];
         let up_bias_slice =
             &base_up_bias[base * 2 * d_ff..(base + 1) * 2 * d_ff];
         let down_bias_slice =

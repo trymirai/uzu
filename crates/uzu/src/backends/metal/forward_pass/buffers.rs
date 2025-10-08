@@ -55,6 +55,7 @@ pub struct ForwardPassBuffers {
     pub moe_y_partial: Option<MTLBuffer>,
     pub moe_hidden: Option<MTLBuffer>,
     pub moe_two_pass_partial: Option<MTLBuffer>,
+    pub moe_two_pass_row_expert_map: Option<MTLBuffer>,
     pub moe_tile_counts: Option<MTLBuffer>,
     pub moe_tile_offsets: Option<MTLBuffer>,
     pub moe_tile_map: Option<MTLBuffer>,
@@ -257,6 +258,16 @@ impl ForwardPassBuffers {
                         MOE_TWO_PASS_K_TILE,
                     );
                     Some(alloc(&shape, DataType::F32))
+                },
+                _ => None,
+            },
+            moe_two_pass_row_expert_map: match &decoder_config
+                .layer_config
+                .mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    Some(alloc(&[max_routed], DataType::U32))
                 },
                 _ => None,
             },

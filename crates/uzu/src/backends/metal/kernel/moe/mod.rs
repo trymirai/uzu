@@ -784,7 +784,12 @@ impl MoeGatherKernel {
         let threadgroups = match dtype {
             KernelDataType::BFloat16 => {
                 const BF16_ROWS_PER_TG: usize = 8;
-                MTLSize::new(((max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG) as u64, 1, 1)
+                MTLSize::new(
+                    ((max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG)
+                        as u64,
+                    1,
+                    1,
+                )
             },
             _ => MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
         };
@@ -810,16 +815,16 @@ pub enum MoeExpertsError {
 pub struct MoeExpertsKernel {
     pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - tiled version
     gemv_pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - decode-specialized GEMV
-    two_pass_partial: Vec<MTLComputePipelineState>,    // [dtype]
-    two_pass_reduce: Vec<MTLComputePipelineState>,     // [dtype]
-    two_pass_pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
-    two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - indirect dispatch version
+    two_pass_partial: Vec<MTLComputePipelineState>, // [dtype] - Pass B partial
+    two_pass_reduce: Vec<MTLComputePipelineState>,  // [dtype] - Pass B reduce
+    two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - Pass A with indirect dispatch
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
     tile_build_map_pipeline: MTLComputePipelineState,
     write_dispatch_args_pipeline: MTLComputePipelineState,
     pass_a_tile_counts_pipeline: MTLComputePipelineState,
     pass_a_tile_scan_pipeline: MTLComputePipelineState,
+    pass_a_row_map_pipeline: MTLComputePipelineState,
     pass_a_tile_build_map_pipeline: MTLComputePipelineState,
     pass_a_write_dispatch_args_pipeline: MTLComputePipelineState,
 }
@@ -828,15 +833,15 @@ pub struct MoeExpertsKernel {
 pub struct MoeExpertsArguments<'a> {
     pub x_perm_buffer: &'a MTLBuffer, // [sum_k, d_model]
     pub expert_offsets: &'a MTLBuffer, // [E+1]
-    pub w13_all: &'a MTLBuffer,       // transposed weights [E * 2*d_ff * d_model]
-    pub w2_all: &'a MTLBuffer,        // [E*d_model*d_ff]
-    pub y_partial: &'a MTLBuffer,     // [sum_k,d_model]
-    pub up_biases: &'a MTLBuffer,     // [E*2*d_ff] if fused, [E*d_ff] otherwise
-    pub down_biases: &'a MTLBuffer,   // [E*d_model]
-    pub tile_counts: &'a MTLBuffer,   // [E]
+    pub w13_all: &'a MTLBuffer, // transposed weights [E * 2*d_ff * d_model]
+    pub w2_all: &'a MTLBuffer,  // [E*d_model*d_ff]
+    pub y_partial: &'a MTLBuffer, // [sum_k,d_model]
+    pub up_biases: &'a MTLBuffer, // [E*2*d_ff] if fused, [E*d_ff] otherwise
+    pub down_biases: &'a MTLBuffer, // [E*d_model]
+    pub tile_counts: &'a MTLBuffer, // [E]
     pub tile_row_offsets: &'a MTLBuffer, // [E+1]
-    pub tile_map: &'a MTLBuffer,      // [max_tiles * 3]
-    pub total_tiles: &'a MTLBuffer,   // [2]
+    pub tile_map: &'a MTLBuffer, // [max_tiles * 3]
+    pub total_tiles: &'a MTLBuffer, // [2]
     pub dispatch_args: &'a MTLBuffer, // [3] u32 for indirect dispatch
     pub num_tiles_n: usize,
     pub t: usize,
@@ -857,18 +862,19 @@ pub struct MoeExpertsArguments<'a> {
 pub struct MoeExpertsTwoPassArguments<'a> {
     pub x_perm_buffer: &'a MTLBuffer,
     pub expert_offsets: &'a MTLBuffer,
+    pub row_expert_map: &'a MTLBuffer, // [total_rows]
     pub hidden_buffer: &'a MTLBuffer,
-    pub partial_buffer: &'a MTLBuffer,
+    pub partial_buffer: &'a MTLBuffer, // [num_tiles_k, total_rows, d_model]
     pub output_buffer: &'a MTLBuffer,
     pub w13_all: &'a MTLBuffer,
     pub w2_all: &'a MTLBuffer,
     pub up_biases: &'a MTLBuffer,
     pub down_biases: &'a MTLBuffer,
-    pub tile_counts: &'a MTLBuffer,        // [E]
-    pub tile_offsets: &'a MTLBuffer,       // [E+1]
-    pub tile_map: &'a MTLBuffer,           // [max_tiles * 3]
-    pub total_tiles: &'a MTLBuffer,        // [1]
-    pub dispatch_args: &'a MTLBuffer,      // [3]
+    pub tile_counts: &'a MTLBuffer,   // [E]
+    pub tile_offsets: &'a MTLBuffer,  // [E+1]
+    pub tile_map: &'a MTLBuffer,      // [max_tiles * 3]
+    pub total_tiles: &'a MTLBuffer,   // [1]
+    pub dispatch_args: &'a MTLBuffer, // [3]
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
@@ -894,8 +900,6 @@ impl MoeExpertsKernel {
         let mut pipelines: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
         let mut gemv_pipelines: Vec<Vec<MTLComputePipelineState>> =
-            vec![Vec::with_capacity(dtypes.len()); 4];
-        let mut two_pass_pass_a: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
         let mut two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
@@ -946,32 +950,11 @@ impl MoeExpertsKernel {
                     ctx.compute_pipeline_state(&gemv_kernel, Some(&gemv_fcv))?;
                 gemv_pipelines[gate as usize].push(gemv_pipeline);
 
-                let kernel =
-                    format!("moe_experts_decode_pass_a_{}", dtype_suffix);
-                let pass_a_fcv = FunctionConstantValues::new();
-                pass_a_fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    30,
+                // Pass A with indirect dispatch
+                let kernel_indirect = format!(
+                    "moe_experts_decode_pass_a_indirect_{}",
+                    dtype_suffix
                 );
-                let tile_h: u32 = 512;
-                pass_a_fcv.set_constant_value_at_index(
-                    &tile_h as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    32,
-                );
-                pass_a_fcv.set_constant_value_at_index(
-                    &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    33,
-                );
-                let pass_a_pipeline =
-                    ctx.compute_pipeline_state(&kernel, Some(&pass_a_fcv))?;
-                two_pass_pass_a[gate as usize].push(pass_a_pipeline);
-
-                // Indirect dispatch version
-                let kernel_indirect =
-                    format!("moe_experts_decode_pass_a_indirect_{}", dtype_suffix);
                 let pass_a_indirect_fcv = FunctionConstantValues::new();
                 pass_a_indirect_fcv.set_constant_value_at_index(
                     &gate as *const u32 as *const std::ffi::c_void,
@@ -988,28 +971,20 @@ impl MoeExpertsKernel {
                     MTLDataType::UInt,
                     33,
                 );
-                let pass_a_indirect_pipeline =
-                    ctx.compute_pipeline_state(&kernel_indirect, Some(&pass_a_indirect_fcv))?;
-                two_pass_pass_a_indirect[gate as usize].push(pass_a_indirect_pipeline);
+                let pass_a_indirect_pipeline = ctx.compute_pipeline_state(
+                    &kernel_indirect,
+                    Some(&pass_a_indirect_fcv),
+                )?;
+                two_pass_pass_a_indirect[gate as usize]
+                    .push(pass_a_indirect_pipeline);
             }
         }
 
         for dtype in &dtypes {
             let dtype_suffix = dtype_suffix(*dtype);
 
+            // Pass B: partial (split-K)
             let partial_fcv = FunctionConstantValues::new();
-            let gate_zero: u32 = 0;
-            partial_fcv.set_constant_value_at_index(
-                &gate_zero as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                30,
-            );
-            let tile_h_one: u32 = 1;
-            partial_fcv.set_constant_value_at_index(
-                &tile_h_one as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                32,
-            );
             partial_fcv.set_constant_value_at_index(
                 &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
                 MTLDataType::UInt,
@@ -1024,27 +999,11 @@ impl MoeExpertsKernel {
                 )?,
             );
 
-            let reduce_fcv = FunctionConstantValues::new();
-            reduce_fcv.set_constant_value_at_index(
-                &gate_zero as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                30,
-            );
-            reduce_fcv.set_constant_value_at_index(
-                &tile_h_one as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                32,
-            );
-            reduce_fcv.set_constant_value_at_index(
-                &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                33,
-            );
+            // Pass C: reduce
             let reduce_kernel =
                 format!("moe_experts_decode_down_reduce_{}", dtype_suffix);
-            two_pass_reduce.push(
-                ctx.compute_pipeline_state(&reduce_kernel, Some(&reduce_fcv))?,
-            );
+            two_pass_reduce
+                .push(ctx.compute_pipeline_state(&reduce_kernel, None)?);
         }
 
         let tile_counts =
@@ -1060,6 +1019,8 @@ impl MoeExpertsKernel {
             ctx.compute_pipeline_state("moe_pass_a_tile_counts", None)?;
         let pass_a_tile_scan =
             ctx.compute_pipeline_state("moe_pass_a_tile_scan", None)?;
+        let pass_a_row_map =
+            ctx.compute_pipeline_state("moe_pass_a_build_row_map", None)?;
         let pass_a_tile_build =
             ctx.compute_pipeline_state("moe_pass_a_build_tile_map", None)?;
         let pass_a_write_dispatch_args =
@@ -1070,7 +1031,6 @@ impl MoeExpertsKernel {
             gemv_pipelines,
             two_pass_partial,
             two_pass_reduce,
-            two_pass_pass_a,
             two_pass_pass_a_indirect,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
@@ -1078,6 +1038,7 @@ impl MoeExpertsKernel {
             write_dispatch_args_pipeline: write_dispatch_args,
             pass_a_tile_counts_pipeline: pass_a_tile_counts,
             pass_a_tile_scan_pipeline: pass_a_tile_scan,
+            pass_a_row_map_pipeline: pass_a_row_map,
             pass_a_tile_build_map_pipeline: pass_a_tile_build,
             pass_a_write_dispatch_args_pipeline: pass_a_write_dispatch_args,
         })
@@ -1277,7 +1238,8 @@ impl MoeExpertsKernel {
 
         // Step 1: Count tiles per expert
         let encoder_counts = command_buffer.new_compute_command_encoder();
-        encoder_counts.set_compute_pipeline_state(&self.pass_a_tile_counts_pipeline);
+        encoder_counts
+            .set_compute_pipeline_state(&self.pass_a_tile_counts_pipeline);
         encoder_counts.set_buffer(0, Some(args.expert_offsets), 0);
         encoder_counts.set_buffer(1, Some(args.tile_counts), 0);
         encoder_counts.set_bytes(
@@ -1298,7 +1260,8 @@ impl MoeExpertsKernel {
 
         // Step 2: Exclusive scan for tile offsets
         let encoder_scan = command_buffer.new_compute_command_encoder();
-        encoder_scan.set_compute_pipeline_state(&self.pass_a_tile_scan_pipeline);
+        encoder_scan
+            .set_compute_pipeline_state(&self.pass_a_tile_scan_pipeline);
         encoder_scan.set_buffer(0, Some(args.tile_counts), 0);
         encoder_scan.set_buffer(1, Some(args.tile_offsets), 0);
         encoder_scan.set_buffer(2, Some(args.total_tiles), 0);
@@ -1308,39 +1271,68 @@ impl MoeExpertsKernel {
             &e_u32 as *const u32 as *const _,
         );
         // Allocate threadgroup memory for scan scratch buffer
-        encoder_scan.set_threadgroup_memory_length(0, (1024 * size_of::<u32>()) as u64);
+        encoder_scan
+            .set_threadgroup_memory_length(0, (1024 * size_of::<u32>()) as u64);
         encoder_scan.dispatch_thread_groups(
             MTLSize::new(1, 1, 1),
             MTLSize::new(1024, 1, 1),
         );
         encoder_scan.end_encoding();
 
-        // Step 3: Build tile map
+        // Step 3: Build row→expert map (one thread per routed row)
+        let encoder_row = command_buffer.new_compute_command_encoder();
+        encoder_row.set_compute_pipeline_state(&self.pass_a_row_map_pipeline);
+        encoder_row.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder_row.set_buffer(1, Some(args.row_expert_map), 0);
+        let total_rows_u32 = args.total_rows as u32;
+        encoder_row.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &total_rows_u32 as *const u32 as *const _,
+        );
+        encoder_row.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_row.dispatch_thread_groups(
+            MTLSize::new(((args.total_rows + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_row.end_encoding();
+
+        // Step 4: Build tile map entries using row map
         let encoder_build = command_buffer.new_compute_command_encoder();
-        encoder_build.set_compute_pipeline_state(&self.pass_a_tile_build_map_pipeline);
+        encoder_build
+            .set_compute_pipeline_state(&self.pass_a_tile_build_map_pipeline);
         encoder_build.set_buffer(0, Some(args.expert_offsets), 0);
         encoder_build.set_buffer(1, Some(args.tile_offsets), 0);
-        encoder_build.set_buffer(2, Some(args.tile_counts), 0);
+        encoder_build.set_buffer(2, Some(args.row_expert_map), 0);
         encoder_build.set_buffer(3, Some(args.tile_map), 0);
         encoder_build.set_bytes(
             4,
             size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
+            &total_rows_u32 as *const u32 as *const _,
         );
         encoder_build.set_bytes(
             5,
             size_of::<u32>() as u64,
             &h_blocks as *const u32 as *const _,
         );
+        let total_tiles_linear =
+            (total_rows_u32 as u64).saturating_mul(h_blocks as u64);
         encoder_build.dispatch_thread_groups(
-            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(((total_tiles_linear + 255) / 256) as u64, 1, 1),
             MTLSize::new(256, 1, 1),
         );
         encoder_build.end_encoding();
 
-        // Step 4: Write dispatch args
-        let encoder_dispatch_args = command_buffer.new_compute_command_encoder();
-        encoder_dispatch_args.set_compute_pipeline_state(&self.pass_a_write_dispatch_args_pipeline);
+        // Step 5: Write dispatch args
+        let encoder_dispatch_args =
+            command_buffer.new_compute_command_encoder();
+        encoder_dispatch_args.set_compute_pipeline_state(
+            &self.pass_a_write_dispatch_args_pipeline,
+        );
         encoder_dispatch_args.set_buffer(0, Some(args.total_tiles), 0);
         encoder_dispatch_args.set_buffer(1, Some(args.dispatch_args), 0);
         let num_tiles_y: u32 = 1;
@@ -1356,7 +1348,8 @@ impl MoeExpertsKernel {
         encoder_dispatch_args.end_encoding();
 
         // Step 5: Pass A with indirect dispatch
-        let pass_a_pipeline = &self.two_pass_pass_a_indirect[gate_idx][dtype_idx];
+        let pass_a_pipeline =
+            &self.two_pass_pass_a_indirect[gate_idx][dtype_idx];
 
         let encoder_a = command_buffer.new_compute_command_encoder();
         encoder_a.set_compute_pipeline_state(pass_a_pipeline);
@@ -1420,10 +1413,9 @@ impl MoeExpertsKernel {
         let encoder_p = command_buffer.new_compute_command_encoder();
         encoder_p.set_compute_pipeline_state(partial_pipeline);
         encoder_p.set_buffer(0, Some(args.hidden_buffer), 0);
-        encoder_p.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_p.set_buffer(1, Some(args.row_expert_map), 0);
         encoder_p.set_buffer(2, Some(args.w2_all), 0);
         encoder_p.set_buffer(3, Some(args.partial_buffer), 0);
-        let total_rows_u32 = args.total_rows as u32;
         encoder_p.set_bytes(
             4,
             size_of::<u32>() as u64,
@@ -1444,7 +1436,6 @@ impl MoeExpertsKernel {
             size_of::<u32>() as u64,
             &args.num_tiles_k as *const u32 as *const _,
         );
-        let e_u32 = args.e as u32;
         encoder_p.set_bytes(
             8,
             size_of::<u32>() as u64,
@@ -1466,7 +1457,7 @@ impl MoeExpertsKernel {
         let encoder_r = command_buffer.new_compute_command_encoder();
         encoder_r.set_compute_pipeline_state(reduce_pipeline);
         encoder_r.set_buffer(0, Some(args.partial_buffer), 0);
-        encoder_r.set_buffer(1, Some(args.expert_offsets), 0);
+        encoder_r.set_buffer(1, Some(args.row_expert_map), 0);
         encoder_r.set_buffer(2, Some(args.down_biases), 0);
         encoder_r.set_buffer(3, Some(args.output_buffer), 0);
         encoder_r.set_bytes(

@@ -362,37 +362,58 @@ kernel void moe_pass_a_tile_scan(
     }
 }
 
-// Build tile map: for each expert with rows, add (h_block, expert, row) entries
+// Build row→expert map: one thread per routed row
+kernel void moe_pass_a_build_row_map(
+    device const uint* expert_offsets [[buffer(0)]] , // [E+1]
+    device uint* row_expert_map [[buffer(1)]] ,       // [total_rows]
+    constant uint& total_rows [[buffer(2)]],
+    constant uint& E [[buffer(3)]],
+    uint tid [[thread_position_in_grid]]
+) {
+    if (tid >= total_rows) return;
+
+    uint left = 0u;
+    uint right = E;
+    const uint row = tid;
+
+    while (left + 1u < right) {
+        const uint mid = (left + right) >> 1;
+        if (row < expert_offsets[mid]) {
+            right = mid;
+        } else {
+            left = mid;
+        }
+    }
+
+    row_expert_map[row] = left;
+}
+
+// Build tile map entries from row→expert map
 kernel void moe_pass_a_build_tile_map(
     device const uint* expert_offsets [[buffer(0)]],  // [E+1]
     device const uint* tile_offsets [[buffer(1)]],    // [E+1]
-    device const uint* tile_counts [[buffer(2)]],     // [E]
+    device const uint* row_expert_map [[buffer(2)]],  // [total_rows]
     device uint* tile_map [[buffer(3)]],              // [total_tiles * 3]
-    constant uint& E [[buffer(4)]],
+    constant uint& total_rows [[buffer(4)]],
     constant uint& h_blocks [[buffer(5)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    if (tid >= E) return;
+    const uint total_tiles = total_rows * h_blocks;
+    if (tid >= total_tiles) return;
 
-    const uint num_tiles = tile_counts[tid];
-    if (num_tiles == 0) return;
+    const uint row_idx = tid / h_blocks;
+    const uint h_block = tid % h_blocks;
 
-    const uint start_row = expert_offsets[tid];
-    const uint end_row = expert_offsets[tid + 1];
-    const uint num_rows = end_row - start_row;
-    const uint tile_base = tile_offsets[tid];
+    if (row_idx >= total_rows) return;
 
-    // Fill tile map: each tile is (h_block, expert, row_in_expert)
-    uint tile_idx = 0;
-    for (uint row_in_expert = 0; row_in_expert < num_rows; ++row_in_expert) {
-        for (uint h = 0; h < h_blocks; ++h) {
-            const uint global_tile_idx = tile_base + tile_idx;
-            tile_map[global_tile_idx * 3 + 0] = h;              // h_block_idx
-            tile_map[global_tile_idx * 3 + 1] = tid;            // expert_idx
-            tile_map[global_tile_idx * 3 + 2] = row_in_expert;  // row_in_expert
-            ++tile_idx;
-        }
-    }
+    const uint expert_idx = row_expert_map[row_idx];
+    const uint row_start = expert_offsets[expert_idx];
+    const uint row_in_expert = row_idx - row_start;
+    const uint tile_base = tile_offsets[expert_idx] + row_in_expert * h_blocks + h_block;
+
+    tile_map[tile_base * 3 + 0] = h_block;
+    tile_map[tile_base * 3 + 1] = expert_idx;
+    tile_map[tile_base * 3 + 2] = row_in_expert;
 }
 
 // Write dispatch args for indirect dispatch (reusable from tiled version)
@@ -486,8 +507,8 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 template<typename T>
 void moe_experts_decode_down_partial_impl(
     device const T* hidden,               // [total_rows, d_ff]
-    device const uint* expert_offsets,    // [E + 1]
-    device const T* w2_all,               // [E, d_ff, d_model]
+    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
+    device const T* w2_all,               // [E, d_ff, d_model] - original layout
     device float* partial_out,            // [num_tiles_k, total_rows, d_model]
     uint total_rows,
     uint d_model,
@@ -510,31 +531,28 @@ void moe_experts_decode_down_partial_impl(
     const uint my_col = col0 + lid;
     if (my_col >= d_model) return;
 
-    uint expert_idx = 0u;
-    for (uint expert = 0u; expert < E; ++expert) {
-        const uint start = expert_offsets[expert];
-        const uint end = expert_offsets[expert + 1u];
-        if (row_idx >= start && row_idx < end) {
-            expert_idx = expert;
-            break;
-        }
-    }
+    // Direct lookup - no binary search!
+    const uint expert_idx = row_expert_map[row_idx];
 
     const uint k_start = tile_idx * K_TILE;
     if (k_start >= d_ff) return;
     const uint k_chunk = min(K_TILE, d_ff - k_start);
 
-    const ulong hidden_row_base = (ulong)row_idx * (ulong)d_ff + (ulong)k_start;
+    // Hoist address calculation outside loop for hidden (contiguous access)
+    const ulong hidden_base = (ulong)row_idx * (ulong)d_ff + (ulong)k_start;
+    device const T* h_ptr = hidden + hidden_base;
+
+    // Compute W2 base: [E, d_ff, d_model] layout
+    // For (expert_idx, ff_idx, my_col): index = expert_idx * d_ff * d_model + ff_idx * d_model + my_col
+    const ulong w2_expert_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
+    const ulong w2_col_offset = (ulong)my_col;
 
     float acc = 0.0f;
     for (uint k = 0; k < k_chunk; ++k) {
-        const float h_val = float(hidden[hidden_row_base + k]);
+        const float h_val = float(h_ptr[k]);
         const uint ff_idx = k_start + k;
-        const ulong base =
-            (ulong)expert_idx * (ulong)d_ff * (ulong)d_model +
-            (ulong)ff_idx * (ulong)d_model +
-            (ulong)my_col;
-        const float w_val = float(w2_all[base]);
+        const ulong w_idx = w2_expert_base + (ulong)ff_idx * (ulong)d_model + w2_col_offset;
+        const float w_val = float(w2_all[w_idx]);
         acc = fma(h_val, w_val, acc);
     }
 
@@ -545,7 +563,7 @@ void moe_experts_decode_down_partial_impl(
 #define MOE_PASS_B_PARTIAL_KERNEL(DTYPE, SUFFIX) \
 kernel void moe_experts_decode_down_partial_##SUFFIX( \
     device const DTYPE* hidden [[buffer(0)]], \
-    device const uint* expert_offsets [[buffer(1)]], \
+    device const uint* row_expert_map [[buffer(1)]], \
     device const DTYPE* w2_all [[buffer(2)]], \
     device float* partial_out [[buffer(3)]], \
     constant uint& total_rows [[buffer(4)]], \
@@ -557,7 +575,7 @@ kernel void moe_experts_decode_down_partial_##SUFFIX( \
     uint lid [[thread_index_in_threadgroup]]) \
 { \
     moe_experts_decode_down_partial_impl<DTYPE>( \
-        hidden, expert_offsets, w2_all, partial_out, \
+        hidden, row_expert_map, w2_all, partial_out, \
         total_rows, d_model, d_ff, num_tiles_k, \
         E, \
         tgpig, lid); \
@@ -571,7 +589,7 @@ MOE_PASS_B_PARTIAL_KERNEL(float, f32)
 template<typename T>
 void moe_experts_decode_down_reduce_impl(
     device const float* partial_in,       // [num_tiles_k, total_rows, d_model]
-    device const uint* expert_offsets,    // [E + 1]
+    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
     device const T* down_biases,          // [E, d_model]
     device T* y_out,                      // [total_rows, d_model]
     uint total_rows,
@@ -592,21 +610,19 @@ void moe_experts_decode_down_reduce_impl(
     const uint my_col = col0 + lid;
     if (my_col >= d_model) return;
 
+    // Partial layout: [num_tiles_k, total_rows, d_model]
+    // Stride between tiles for same (row, col) is (total_rows * d_model)
+    const ulong stride = (ulong)total_rows * (ulong)d_model;
+    const ulong row_col_offset = (ulong)row_idx * (ulong)d_model + (ulong)my_col;
+
     float sum = 0.0f;
     for (uint tile = 0; tile < num_tiles_k; ++tile) {
-        const ulong partial_idx = ((ulong)tile * (ulong)total_rows + (ulong)row_idx) * (ulong)d_model + (ulong)my_col;
+        const ulong partial_idx = (ulong)tile * stride + row_col_offset;
         sum += partial_in[partial_idx];
     }
 
-    uint expert_idx = 0u;
-    for (uint expert = 0u; expert < E; ++expert) {
-        const uint start = expert_offsets[expert];
-        const uint end = expert_offsets[expert + 1u];
-        if (row_idx >= start && row_idx < end) {
-            expert_idx = expert;
-            break;
-        }
-    }
+    // Direct lookup - no binary search!
+    const uint expert_idx = row_expert_map[row_idx];
     const ulong bias_idx = (ulong)expert_idx * (ulong)d_model_stride + (ulong)my_col;
     sum += float(down_biases[bias_idx]);
 
@@ -617,7 +633,7 @@ void moe_experts_decode_down_reduce_impl(
 #define MOE_PASS_B_REDUCE_KERNEL(DTYPE, SUFFIX) \
 kernel void moe_experts_decode_down_reduce_##SUFFIX( \
     device const float* partial_in [[buffer(0)]], \
-    device const uint* expert_offsets [[buffer(1)]], \
+    device const uint* row_expert_map [[buffer(1)]], \
     device const DTYPE* down_biases [[buffer(2)]], \
     device DTYPE* y_out [[buffer(3)]], \
     constant uint& total_rows [[buffer(4)]], \
@@ -628,7 +644,7 @@ kernel void moe_experts_decode_down_reduce_##SUFFIX( \
     uint lid [[thread_index_in_threadgroup]]) \
 { \
     moe_experts_decode_down_reduce_impl<DTYPE>( \
-        partial_in, expert_offsets, down_biases, y_out, \
+        partial_in, row_expert_map, down_biases, y_out, \
         total_rows, d_model, num_tiles_k, d_model, E, \
         tgpig, lid); \
 }

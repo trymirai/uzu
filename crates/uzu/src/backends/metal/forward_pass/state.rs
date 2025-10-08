@@ -333,6 +333,7 @@ struct AuxBuffers {
     moe_y_partial: Option<ArrayCell>,
     moe_hidden: Option<ArrayCell>,
     moe_two_pass_partial: Option<ArrayCell>,
+    moe_two_pass_row_expert_map: Option<ArrayCell>,
     moe_tile_counts: Option<ArrayCell>,
     moe_tile_offsets: Option<ArrayCell>,
     moe_tile_map: Option<ArrayCell>,
@@ -605,6 +606,25 @@ impl AuxBuffers {
                                 DataType::F32,
                             ))
                         })
+                    },
+                    _ => None,
+                },
+                moe_two_pass_row_expert_map: match &decoder_config
+                    .layer_config
+                    .mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_two_pass_row_expert_map.as_ref().map(
+                            |buf| {
+                                RefCell::new(MetalArray::new(
+                                    buf.clone(),
+                                    &[max_routed],
+                                    DataType::U32,
+                                ))
+                            },
+                        )
                     },
                     _ => None,
                 },
@@ -1012,6 +1032,7 @@ impl ForwardPassState {
             ArrayId::MoeYPartial => self.aux_buffers.moe_y_partial.as_ref().expect("MoE y_partial buffer not initialized").clone(),
             ArrayId::MoeHidden => self.aux_buffers.moe_hidden.as_ref().expect("MoE hidden buffer not initialized").clone(),
             ArrayId::MoeTwoPassPartial => self.aux_buffers.moe_two_pass_partial.as_ref().expect("MoE two-pass partial buffer not initialized").clone(),
+            ArrayId::MoeTwoPassRowExpertMap => self.aux_buffers.moe_two_pass_row_expert_map.as_ref().expect("MoE two-pass row expert map buffer not initialized").clone(),
             ArrayId::MoeTileCounts => self.aux_buffers.moe_tile_counts.as_ref().expect("MoE tile counts buffer not initialized").clone(),
             ArrayId::MoeTileOffsets => self.aux_buffers.moe_tile_offsets.as_ref().expect("MoE tile offsets buffer not initialized").clone(),
             ArrayId::MoeTileMap => self.aux_buffers.moe_tile_map.as_ref().expect("MoE tile map buffer not initialized").clone(),
@@ -1150,6 +1171,7 @@ pub enum ArrayId {
     MoeYPartial,
     MoeHidden,
     MoeTwoPassPartial,
+    MoeTwoPassRowExpertMap,
     MoeTileCounts,
     MoeTileOffsets,
     MoeTileMap,
