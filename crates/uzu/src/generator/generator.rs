@@ -398,8 +398,8 @@ impl Generator {
             }
 
             root_command_buffer.wait_until_completed();
-
             let run_time = run_start.elapsed().as_secs_f64();
+
             (state, run_time)
         })
     }
@@ -417,14 +417,10 @@ impl Generator {
             .map_err(|_| Error::SamplingFailed)?;
         let batch_size = output_buffer.shape()[0];
 
-        if std::env::var_os("UZU_DEBUG_LOGITS").is_some() {}
-
         let mut result = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             result.push(output_view[[i]] as u64);
         }
-
-        if std::env::var_os("UZU_DEBUG_MOE").is_some() {}
 
         Ok(result)
     }

@@ -11,6 +11,8 @@ use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 mod encodable;
 pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
 
+use crate::backends::metal::forward_pass::MOE_TWO_PASS_K_TILE;
+
 fn dtype_suffix(dtype: KernelDataType) -> &'static str {
     match dtype {
         KernelDataType::Float16 => "f16",
@@ -855,7 +857,7 @@ impl MoeExpertsKernel {
         let mut two_pass_reduce: Vec<MTLComputePipelineState> =
             Vec::with_capacity(dtypes.len());
 
-        let two_pass_k_tile: u32 = 64;
+        let two_pass_k_tile: u32 = MOE_TWO_PASS_K_TILE as u32;
 
         for gate in 0u32..4u32 {
             for dtype in &dtypes {

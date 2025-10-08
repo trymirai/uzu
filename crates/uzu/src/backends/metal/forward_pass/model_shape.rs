@@ -1,6 +1,6 @@
 use crate::{DataType, config::DecoderConfig};
 
-pub const MOE_TWO_PASS_K_TILE: usize = 64;
+pub const MOE_TWO_PASS_K_TILE: usize = 128;
 
 #[derive(Debug)]
 pub struct ModelShape {

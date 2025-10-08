@@ -74,8 +74,6 @@ impl DecoderExecutables {
             .activation_precision()
             .into();
 
-        // STEP 1: Transform MOE expert weights once (initialization only)
-        // Previously printed detailed layer compilation logs; removed to reduce noisy stdout.
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
                 let mut rope = global_rope.clone();
