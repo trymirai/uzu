@@ -144,12 +144,16 @@ void moe_fused_expert_mlp_impl(
                 T up_val = T(0.0f);
                 T gate_val = T(0.0f);
                 if (kk < k_chunk && r < ff_chunk && rows_active) {
+                        // Transposed layout: [E, 2*d_ff, d_model] - d_model is contiguous
                         const ulong fused_idx = W13_base
-                            + (ulong)(k0 + kk) * (ulong)(2u * d_ff)
-                            + (ulong)(ff0 + r);
+                            + (ulong)(ff0 + r) * (ulong)d_model
+                            + (ulong)(k0 + kk);
                     up_val = W13_all[fused_idx];
                             if (GATING_SEL > 1u) {
-                        gate_val = W13_all[fused_idx + d_ff];
+                        const ulong gate_idx = W13_base
+                            + (ulong)(d_ff + ff0 + r) * (ulong)d_model
+                            + (ulong)(k0 + kk);
+                        gate_val = W13_all[gate_idx];
                     }
                     }
                     Wk_up[kk * BK + r] = up_val;

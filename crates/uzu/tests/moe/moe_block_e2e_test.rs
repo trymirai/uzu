@@ -45,7 +45,7 @@ fn moe_cpu_reference(
     x: &[bf16],
     router_weight: &[f32], // [E, d_model] - kept as F32 for router (computed before BF16 conversion)
     router_bias: &[f32],   // [E]
-    w13: &[bf16],          // [E, d_model, 2*d_ff] - BF16 to match GPU precision
+    w13: &[bf16],          // source layout [E, d_model, 2*d_ff] (GPU transposes to [E, 2*d_ff, d_model])
     w2: &[bf16],           // [E, d_ff, d_model]
     up_biases: &[bf16],    // [E, 2*d_ff]
     down_biases: &[bf16],  // [E, d_model]
@@ -99,7 +99,7 @@ fn moe_cpu_reference(
         for (expert_idx, &weight) in top_k_indices.iter().zip(weights.iter()) {
             let x_start = token_idx * d_model;
 
-            // Expert MLP weights layout: W13[E, d_model, 2*d_ff], W2[E, d_ff, d_model]
+            // Expert MLP weights layout: CPU uses W13[E, d_model, 2*d_ff], GPU stores as [E, 2*d_ff, d_model]; W2[E, d_ff, d_model]
             let w13_offset = expert_idx * d_model * 2 * d_ff;
             let w2_offset = expert_idx * d_ff * d_model;
             let bias_up_offset = expert_idx * 2 * d_ff;
@@ -236,9 +236,26 @@ fn run_moe_parity_test(
     // Generate random expert weights and biases
     let w13_len = e * d_model * 2 * d_ff;
     let w2_len = e * d_ff * d_model;
-    let w13: Vec<bf16> = (0..w13_len)
+
+    // Generate W13 in original layout [E, d_model, 2*d_ff] for CPU reference
+    let w13_cpu: Vec<bf16> = (0..w13_len)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();
+
+    // Transpose to GPU layout [E, 2*d_ff, d_model]
+    let mut w13_gpu = vec![bf16::from_f32(0.0); w13_len];
+    for expert in 0..e {
+        let src_offset = expert * d_model * 2 * d_ff;
+        let dst_offset = expert * 2 * d_ff * d_model;
+        for dm in 0..d_model {
+            for ff in 0..(2 * d_ff) {
+                let src_idx = src_offset + dm * 2 * d_ff + ff;
+                let dst_idx = dst_offset + ff * d_model + dm;
+                w13_gpu[dst_idx] = w13_cpu[src_idx];
+            }
+        }
+    }
+
     let w2: Vec<bf16> = (0..w2_len)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();
@@ -261,8 +278,8 @@ fn run_moe_parity_test(
         MTLResourceOptions::StorageModeShared,
     );
     let w13_buf = ctx.device.new_buffer_with_data(
-        w13.as_ptr() as *const _,
-        (w13.len() * std::mem::size_of::<bf16>()) as u64,
+        w13_gpu.as_ptr() as *const _,
+        (w13_gpu.len() * std::mem::size_of::<bf16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
     let w2_buf = ctx.device.new_buffer_with_data(
@@ -556,7 +573,7 @@ fn run_moe_parity_test(
         eprintln!(
             "[E2E] Large-scale debug: x[0]={:.6}, w13[0]={:.6}, w2[0]={:.6}",
             f32::from(x[0]),
-            f32::from(w13[0]),
+            f32::from(w13_cpu[0]),
             f32::from(w2[0])
         );
 
@@ -688,7 +705,7 @@ fn run_moe_parity_test(
         &x,
         &router_weight_f32,
         &router_bias_f32,
-        &w13,
+        &w13_cpu,
         &w2,
         &up_biases,
         &down_biases,

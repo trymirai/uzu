@@ -20,7 +20,6 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::linear::QuantizedLinearKernelBlock,
-        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
     },
     config::{Activation, LinearConfig, MixtureOfExpertsConfig},
     device::Array,
@@ -67,9 +66,9 @@ pub struct MoeBlockEncodable {
 
 impl MoeBlockEncodable {
     pub fn load_shared_expert_weights(
-        _context: &MTLContext,
+        context: &MTLContext,
         _moe_config: &MixtureOfExpertsConfig,
-        _model_dim: usize,
+        model_dim: usize,
         hidden_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<SharedMoeWeights, crate::backends::metal::MTLError> {
@@ -101,12 +100,90 @@ impl MoeBlockEncodable {
 
         if !fused_up_weights {
             return Err(crate::backends::metal::MTLError::Generic(
-                "MoE experts require fused gate+up weights (shape [E, d_model, 2*d_ff])"
+                "MoE experts require fused gate+up weights (input shape [E, d_model, 2*d_ff])"
                     .to_string(),
             ));
         }
 
-        let w13_src = unsafe { up_arr.mtl_buffer().clone() };
+        // Transpose W13 from source layout [E, d_model, 2*d_ff] to GPU layout [E, 2*d_ff, d_model]
+        let e = up_shape[0];
+        let d_model_size = up_shape[1];
+        let two_d_ff = up_shape[2];
+
+        let transpose_err = |err: crate::device::array::ArrayConversionError| {
+            crate::backends::metal::MTLError::Generic(format!(
+                "W13 transpose failed: {}",
+                err
+            ))
+        };
+
+        let total_size = e * d_model_size * two_d_ff;
+        let w13_transposed = match up_arr.data_type() {
+            DataType::BF16 => {
+                let src = up_arr.as_slice::<bf16>().map_err(transpose_err)?;
+                let mut dst = vec![bf16::from_f32(0.0); total_size];
+
+                for expert in 0..e {
+                    let expert_offset = expert * d_model_size * two_d_ff;
+                    for dm in 0..d_model_size {
+                        for ff in 0..two_d_ff {
+                            // src: [E, d_model, 2*d_ff] -> index: expert_offset + dm * two_d_ff + ff
+                            // dst: [E, 2*d_ff, d_model] -> index: expert_offset + ff * d_model + dm
+                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (total_size * size_of::<bf16>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            DataType::F16 => {
+                let src = up_arr.as_slice::<f16>().map_err(transpose_err)?;
+                let mut dst = vec![f16::from_f32(0.0); total_size];
+
+                for expert in 0..e {
+                    let expert_offset = expert * d_model_size * two_d_ff;
+                    for dm in 0..d_model_size {
+                        for ff in 0..two_d_ff {
+                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (total_size * size_of::<f16>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            DataType::F32 => {
+                let src = up_arr.as_slice::<f32>().map_err(transpose_err)?;
+                let mut dst = vec![0.0f32; total_size];
+
+                for expert in 0..e {
+                    let expert_offset = expert * d_model_size * two_d_ff;
+                    for dm in 0..d_model_size {
+                        for ff in 0..two_d_ff {
+                            dst[expert_offset + ff * d_model_size + dm] = src[expert_offset + dm * two_d_ff + ff];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (total_size * size_of::<f32>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            other => {
+                return Err(crate::backends::metal::MTLError::Generic(
+                    format!("Unsupported W13 weight dtype {:?}", other),
+                ));
+            },
+        };
 
         let mut w2_arr = experts_tree
             .subtree("down_projection")
@@ -159,7 +236,7 @@ impl MoeBlockEncodable {
             })?;
         let down_biases_src = unsafe { down_biases_arr.mtl_buffer().clone() };
 
-        let w13_buf = w13_src;
+        let w13_buf = w13_transposed;
         let w2_buf = w2_src;
         let up_biases_buf = up_biases_src;
         let down_biases_buf = down_biases_src;
@@ -738,58 +815,55 @@ impl EncodableWithState for MoeBlockEncodable {
             data_type: self.data_type,
         };
 
-        // EXPERIMENT: Skip experts kernel to measure router+scatter+finalize cost
-        let skip_experts = std::env::var_os("UZU_DEBUG_SKIP_EXPERTS").is_some();
+        if suffix_length == 1 {
+            if self.decode_two_pass {
+                let total_rows = suffix_length * k;
+                let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
+                    / MOE_TWO_PASS_K_TILE)
+                    as u32;
 
-        if !skip_experts {
-            if suffix_length == 1 {
-                if self.decode_two_pass {
-                    let total_rows = suffix_length * k;
-                    let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE
-                        - 1)
-                        / MOE_TWO_PASS_K_TILE)
-                        as u32;
-
-                    self.experts_kernel
-                        .encode_two_pass_decode(
-                            root,
-                            MoeExpertsTwoPassArguments {
-                                x_perm_buffer: &x_perm_buf,
-                                expert_offsets: &offsets_buf,
-                                hidden_buffer: &hidden_buf,
-                                partial_buffer: &two_pass_partial_buf,
-                                output_buffer: &y_partial_buf,
-                                w13_all: &self.shared_weights.w13_buf,
-                                w2_all: &self.shared_weights.w2_buf,
-                                up_biases: &self.shared_weights.up_biases_buf,
-                                down_biases: &self
-                                    .shared_weights
-                                    .down_biases_buf,
-                                total_rows,
-                                d_model: self.model_dim,
-                                d_ff: self.hidden_dim,
-                                e,
-                                num_tiles_k,
-                                gating_code,
-                                gate_clip_min: experts_args.gate_clip_min,
-                                gate_clip_max: experts_args.gate_clip_max,
-                                up_clip_min: experts_args.up_clip_min,
-                                up_clip_max: experts_args.up_clip_max,
-                                silu_alpha: experts_args.silu_alpha,
-                                data_type: self.data_type,
-                            },
-                        )
-                        .expect("MoE experts two-pass failed");
-                } else {
-                    self.experts_kernel
-                        .encode_gemv_decode(root, experts_args)
-                        .expect("MoE experts decode failed");
-                }
+                self.experts_kernel
+                    .encode_two_pass_decode(
+                        root,
+                        MoeExpertsTwoPassArguments {
+                            x_perm_buffer: &x_perm_buf,
+                            expert_offsets: &offsets_buf,
+                            hidden_buffer: &hidden_buf,
+                            partial_buffer: &two_pass_partial_buf,
+                            output_buffer: &y_partial_buf,
+                            w13_all: &self.shared_weights.w13_buf,
+                            w2_all: &self.shared_weights.w2_buf,
+                            up_biases: &self.shared_weights.up_biases_buf,
+                            down_biases: &self.shared_weights.down_biases_buf,
+                            tile_counts: &tile_counts_buf,
+                            tile_offsets: &tile_offsets_buf,
+                            tile_map: &tile_map_buf,
+                            total_tiles: &total_tiles_buf,
+                            dispatch_args: &dispatch_args_buf,
+                            total_rows,
+                            d_model: self.model_dim,
+                            d_ff: self.hidden_dim,
+                            e,
+                            num_tiles_k,
+                            gating_code,
+                            gate_clip_min: experts_args.gate_clip_min,
+                            gate_clip_max: experts_args.gate_clip_max,
+                            up_clip_min: experts_args.up_clip_min,
+                            up_clip_max: experts_args.up_clip_max,
+                            silu_alpha: experts_args.silu_alpha,
+                            data_type: self.data_type,
+                        },
+                    )
+                    .expect("MoE experts two-pass failed");
             } else {
                 self.experts_kernel
-                    .encode(root, experts_args)
-                    .expect("MoE experts failed");
+                    .encode_gemv_decode(root, experts_args)
+                    .expect("MoE experts decode failed");
             }
+        } else {
+            self.experts_kernel
+                .encode(root, experts_args)
+                .expect("MoE experts failed");
         }
 
         self.finalize_kernel

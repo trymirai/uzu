@@ -89,22 +89,23 @@ void moe_experts_decode_fused_gemv_impl(
             
             for (uint d4 = 0; d4 < num_vec4; ++d4) {
                 const float4 xv = x_cache[d4];
-                
-                const ulong w_base = w13_expert_base + (ulong)(d4 * 4) * (ulong)(2 * d_ff) + (ulong)ff_idx;
+
+                // Transposed layout: [E, 2*d_ff, d_model] - d_model is contiguous
+                const ulong w_base = w13_expert_base + (ulong)ff_idx * (ulong)d_model + (ulong)(d4 * 4);
                 float4 w_up;
-                w_up.x = float(W13_all[w_base + 0u * (ulong)(2 * d_ff)]);
-                w_up.y = float(W13_all[w_base + 1u * (ulong)(2 * d_ff)]);
-                w_up.z = float(W13_all[w_base + 2u * (ulong)(2 * d_ff)]);
-                w_up.w = float(W13_all[w_base + 3u * (ulong)(2 * d_ff)]);
+                w_up.x = float(W13_all[w_base + 0u]);
+                w_up.y = float(W13_all[w_base + 1u]);
+                w_up.z = float(W13_all[w_base + 2u]);
+                w_up.w = float(W13_all[w_base + 3u]);
                 up_acc += dot(xv, w_up);
 
                 if (GATING_SEL > 1u) {
-                    const ulong gate_base = w_base + (ulong)d_ff;
+                    const ulong gate_base = w13_expert_base + (ulong)(d_ff + ff_idx) * (ulong)d_model + (ulong)(d4 * 4);
                     float4 w_gate;
-                    w_gate.x = float(W13_all[gate_base + 0u * (ulong)(2 * d_ff)]);
-                    w_gate.y = float(W13_all[gate_base + 1u * (ulong)(2 * d_ff)]);
-                    w_gate.z = float(W13_all[gate_base + 2u * (ulong)(2 * d_ff)]);
-                    w_gate.w = float(W13_all[gate_base + 3u * (ulong)(2 * d_ff)]);
+                    w_gate.x = float(W13_all[gate_base + 0u]);
+                    w_gate.y = float(W13_all[gate_base + 1u]);
+                    w_gate.z = float(W13_all[gate_base + 2u]);
+                    w_gate.w = float(W13_all[gate_base + 3u]);
                     gate_acc += dot(xv, w_gate);
                 }
             }

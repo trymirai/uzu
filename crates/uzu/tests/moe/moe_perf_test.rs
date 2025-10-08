@@ -837,9 +837,25 @@ fn test_moe_pipeline_breakdown_decode() {
     );
 
     // Expert weights buffers
-    let w13: Vec<bf16> = (0..e * d_model * 2 * d_ff)
+    // Generate W13 in original layout [E, d_model, 2*d_ff]
+    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();
+
+    // Transpose to GPU layout [E, 2*d_ff, d_model]
+    let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
+    for expert in 0..e {
+        let src_offset = expert * d_model * 2 * d_ff;
+        let dst_offset = expert * 2 * d_ff * d_model;
+        for dm in 0..d_model {
+            for ff in 0..(2 * d_ff) {
+                let src_idx = src_offset + dm * 2 * d_ff + ff;
+                let dst_idx = dst_offset + ff * d_model + dm;
+                w13[dst_idx] = w13_original[src_idx];
+            }
+        }
+    }
+
     let w2: Vec<bf16> = (0..e * d_ff * d_model)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();

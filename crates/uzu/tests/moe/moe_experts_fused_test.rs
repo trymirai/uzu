@@ -74,10 +74,11 @@ fn cpu_expert_forward(
         let mut up_sum = up_bias[ff];
         let mut gate_sum = up_bias[d_ff + ff];
         for dm in 0..d_model {
-            let base = dm * 2 * d_ff;
-            up_sum = bf16_add(up_sum, bf16_mul(x[dm], w13[base + ff]));
-            gate_sum =
-                bf16_add(gate_sum, bf16_mul(x[dm], w13[base + d_ff + ff]));
+            // Transposed layout: [E, 2*d_ff, d_model]
+            let up_idx = ff * d_model + dm;
+            let gate_idx = (d_ff + ff) * d_model + dm;
+            up_sum = bf16_add(up_sum, bf16_mul(x[dm], w13[up_idx]));
+            gate_sum = bf16_add(gate_sum, bf16_mul(x[dm], w13[gate_idx]));
         }
         up[ff] = bf16_clamp(up_sum, up_clip.0, up_clip.1);
         gate[ff] = bf16_clamp(gate_sum, gate_clip.0, gate_clip.1);
@@ -155,8 +156,9 @@ fn run_decode_parity_case(
     let elem_up_bias = e * 2 * d_ff;
     let elem_down_bias = e * d_model;
 
-    let mut base_w13 = vec![bf16::from_f32(0.0); elem_w13];
-    for (expert, chunk) in base_w13.chunks_mut(d_model * 2 * d_ff).enumerate() {
+    // Generate W13 in original layout [E, d_model, 2*d_ff]
+    let mut base_w13_original = vec![bf16::from_f32(0.0); elem_w13];
+    for (expert, chunk) in base_w13_original.chunks_mut(d_model * 2 * d_ff).enumerate() {
         for dm in 0..d_model {
             for ch in 0..(2 * d_ff) {
                 let idx = dm * 2 * d_ff + ch;
@@ -164,6 +166,20 @@ fn run_decode_parity_case(
                     + dm as f32 * 0.003
                     + ch as f32 * 0.001;
                 chunk[idx] = bf16::from_f32(value);
+            }
+        }
+    }
+
+    // Transpose to GPU layout [E, 2*d_ff, d_model]
+    let mut base_w13 = vec![bf16::from_f32(0.0); elem_w13];
+    for expert in 0..e {
+        let src_offset = expert * d_model * 2 * d_ff;
+        let dst_offset = expert * 2 * d_ff * d_model;
+        for dm in 0..d_model {
+            for ff in 0..(2 * d_ff) {
+                let src_idx = src_offset + dm * 2 * d_ff + ff;
+                let dst_idx = dst_offset + ff * d_model + dm;
+                base_w13[dst_idx] = base_w13_original[src_idx];
             }
         }
     }
@@ -358,6 +374,29 @@ fn run_decode_parity_case(
             MTLResourceOptions::StorageModeShared,
         );
 
+        // Buffers for indirect dispatch
+        let tile_counts_buf = ctx.device.new_buffer(
+            (e * size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let tile_offsets_buf = ctx.device.new_buffer(
+            ((e + 1) * size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let max_tiles = e * sum_k * 16384; // Conservative upper bound
+        let tile_map_buf = ctx.device.new_buffer(
+            (max_tiles * 3 * size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let total_tiles_buf = ctx.device.new_buffer(
+            size_of::<u32>() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let dispatch_args_buf = ctx.device.new_buffer(
+            (3 * size_of::<u32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let experts_kernel =
             MoeExpertsKernel::new(ctx).expect("experts kernel");
 
@@ -371,6 +410,11 @@ fn run_decode_parity_case(
             w2_all: &w2_buf,
             up_biases: &up_bias_buf,
             down_biases: &down_bias_buf,
+            tile_counts: &tile_counts_buf,
+            tile_offsets: &tile_offsets_buf,
+            tile_map: &tile_map_buf,
+            total_tiles: &total_tiles_buf,
+            dispatch_args: &dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
@@ -410,8 +454,9 @@ fn run_decode_parity_case(
     let mut expected = Vec::with_capacity(sum_k * d_model);
     for (row_idx, &expert_idx) in active_experts.iter().enumerate() {
         let base = expert_idx;
+        // base_w13 is in transposed layout [E, 2*d_ff, d_model], so stride is 2*d_ff*d_model
         let w13_slice = &base_w13
-            [base * d_model * 2 * d_ff..(base + 1) * d_model * 2 * d_ff];
+            [base * 2 * d_ff * d_model..(base + 1) * 2 * d_ff * d_model];
         let w2_slice =
             &base_w2[base * d_ff * d_model..(base + 1) * d_ff * d_model];
         let up_bias_slice =

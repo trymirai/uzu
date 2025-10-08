@@ -274,7 +274,17 @@ impl ModelShape {
         &self,
         max_routed_tokens: usize,
     ) -> [usize; 1] {
-        [max_routed_tokens * 3]
+        // For tiled GEMM: max_routed_tokens * 3
+        // For two-pass decode indirect dispatch: max_routed_tokens * h_blocks * 3
+        // where h_blocks = (d_ff + 3) / 4
+        // We size for the larger (two-pass decode)
+        let d_ff = self.hidden_dim;
+        if d_ff > 0 {
+            let h_blocks = (d_ff + 3) / 4;
+            [max_routed_tokens * h_blocks * 3]
+        } else {
+            [max_routed_tokens * 3]
+        }
     }
 
     pub fn moe_dispatch_args_shape(&self) -> [usize; 1] {

@@ -778,17 +778,22 @@ pub struct MoeExpertsKernel {
     two_pass_partial: Vec<MTLComputePipelineState>,    // [dtype]
     two_pass_reduce: Vec<MTLComputePipelineState>,     // [dtype]
     two_pass_pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
+    two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - indirect dispatch version
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
     tile_build_map_pipeline: MTLComputePipelineState,
     write_dispatch_args_pipeline: MTLComputePipelineState,
+    pass_a_tile_counts_pipeline: MTLComputePipelineState,
+    pass_a_tile_scan_pipeline: MTLComputePipelineState,
+    pass_a_tile_build_map_pipeline: MTLComputePipelineState,
+    pass_a_write_dispatch_args_pipeline: MTLComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeExpertsArguments<'a> {
     pub x_perm_buffer: &'a MTLBuffer, // [sum_k, d_model]
     pub expert_offsets: &'a MTLBuffer, // [E+1]
-    pub w13_all: &'a MTLBuffer,       // [E*d_model*2*d_ff]
+    pub w13_all: &'a MTLBuffer,       // transposed weights [E * 2*d_ff * d_model]
     pub w2_all: &'a MTLBuffer,        // [E*d_model*d_ff]
     pub y_partial: &'a MTLBuffer,     // [sum_k,d_model]
     pub up_biases: &'a MTLBuffer,     // [E*2*d_ff] if fused, [E*d_ff] otherwise
@@ -824,6 +829,11 @@ pub struct MoeExpertsTwoPassArguments<'a> {
     pub w2_all: &'a MTLBuffer,
     pub up_biases: &'a MTLBuffer,
     pub down_biases: &'a MTLBuffer,
+    pub tile_counts: &'a MTLBuffer,        // [E]
+    pub tile_offsets: &'a MTLBuffer,       // [E+1]
+    pub tile_map: &'a MTLBuffer,           // [max_tiles * 3]
+    pub total_tiles: &'a MTLBuffer,        // [1]
+    pub dispatch_args: &'a MTLBuffer,      // [3]
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
@@ -851,6 +861,8 @@ impl MoeExpertsKernel {
         let mut gemv_pipelines: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
         let mut two_pass_pass_a: Vec<Vec<MTLComputePipelineState>> =
+            vec![Vec::with_capacity(dtypes.len()); 4];
+        let mut two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
         let mut two_pass_partial: Vec<MTLComputePipelineState> =
             Vec::with_capacity(dtypes.len());
@@ -921,6 +933,29 @@ impl MoeExpertsKernel {
                 let pass_a_pipeline =
                     ctx.compute_pipeline_state(&kernel, Some(&pass_a_fcv))?;
                 two_pass_pass_a[gate as usize].push(pass_a_pipeline);
+
+                // Indirect dispatch version
+                let kernel_indirect =
+                    format!("moe_experts_decode_pass_a_indirect_{}", dtype_suffix);
+                let pass_a_indirect_fcv = FunctionConstantValues::new();
+                pass_a_indirect_fcv.set_constant_value_at_index(
+                    &gate as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    30,
+                );
+                pass_a_indirect_fcv.set_constant_value_at_index(
+                    &tile_h as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    32,
+                );
+                pass_a_indirect_fcv.set_constant_value_at_index(
+                    &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
+                    MTLDataType::UInt,
+                    33,
+                );
+                let pass_a_indirect_pipeline =
+                    ctx.compute_pipeline_state(&kernel_indirect, Some(&pass_a_indirect_fcv))?;
+                two_pass_pass_a_indirect[gate as usize].push(pass_a_indirect_pipeline);
             }
         }
 
@@ -985,16 +1020,31 @@ impl MoeExpertsKernel {
         let write_dispatch_args =
             ctx.compute_pipeline_state("moe_write_dispatch_args", None)?;
 
+        // Pass A indirect dispatch helper pipelines
+        let pass_a_tile_counts =
+            ctx.compute_pipeline_state("moe_pass_a_tile_counts", None)?;
+        let pass_a_tile_scan =
+            ctx.compute_pipeline_state("moe_pass_a_tile_scan", None)?;
+        let pass_a_tile_build =
+            ctx.compute_pipeline_state("moe_pass_a_build_tile_map", None)?;
+        let pass_a_write_dispatch_args =
+            ctx.compute_pipeline_state("moe_pass_a_write_dispatch_args", None)?;
+
         Ok(Self {
             pipelines,
             gemv_pipelines,
             two_pass_partial,
             two_pass_reduce,
             two_pass_pass_a,
+            two_pass_pass_a_indirect,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
             tile_build_map_pipeline: tile_build,
             write_dispatch_args_pipeline: write_dispatch_args,
+            pass_a_tile_counts_pipeline: pass_a_tile_counts,
+            pass_a_tile_scan_pipeline: pass_a_tile_scan,
+            pass_a_tile_build_map_pipeline: pass_a_tile_build,
+            pass_a_write_dispatch_args_pipeline: pass_a_write_dispatch_args,
         })
     }
 
@@ -1184,7 +1234,94 @@ impl MoeExpertsKernel {
         let gate_idx = (args.gating_code.min(3)) as usize;
         let dtype_idx = dtype_index(args.data_type);
 
-        let pass_a_pipeline = &self.two_pass_pass_a[gate_idx][dtype_idx];
+        const BLOCK_M: u32 = 4; // BM * SM * TM = 1 * 1 * 4
+        let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
+        let e_u32 = args.e as u32;
+        let d_model_u32 = args.d_model as u32;
+        let d_ff_u32 = args.d_ff as u32;
+
+        // Step 1: Count tiles per expert
+        let encoder_counts = command_buffer.new_compute_command_encoder();
+        encoder_counts.set_compute_pipeline_state(&self.pass_a_tile_counts_pipeline);
+        encoder_counts.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder_counts.set_buffer(1, Some(args.tile_counts), 0);
+        encoder_counts.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_counts.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &h_blocks as *const u32 as *const _,
+        );
+        encoder_counts.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_counts.end_encoding();
+
+        // Step 2: Exclusive scan for tile offsets
+        let encoder_scan = command_buffer.new_compute_command_encoder();
+        encoder_scan.set_compute_pipeline_state(&self.pass_a_tile_scan_pipeline);
+        encoder_scan.set_buffer(0, Some(args.tile_counts), 0);
+        encoder_scan.set_buffer(1, Some(args.tile_offsets), 0);
+        encoder_scan.set_buffer(2, Some(args.total_tiles), 0);
+        encoder_scan.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        // Allocate threadgroup memory for scan scratch buffer
+        encoder_scan.set_threadgroup_memory_length(0, (1024 * size_of::<u32>()) as u64);
+        encoder_scan.dispatch_thread_groups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1024, 1, 1),
+        );
+        encoder_scan.end_encoding();
+
+        // Step 3: Build tile map
+        let encoder_build = command_buffer.new_compute_command_encoder();
+        encoder_build.set_compute_pipeline_state(&self.pass_a_tile_build_map_pipeline);
+        encoder_build.set_buffer(0, Some(args.expert_offsets), 0);
+        encoder_build.set_buffer(1, Some(args.tile_offsets), 0);
+        encoder_build.set_buffer(2, Some(args.tile_counts), 0);
+        encoder_build.set_buffer(3, Some(args.tile_map), 0);
+        encoder_build.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &e_u32 as *const u32 as *const _,
+        );
+        encoder_build.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &h_blocks as *const u32 as *const _,
+        );
+        encoder_build.dispatch_thread_groups(
+            MTLSize::new(((args.e + 255) / 256) as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+        encoder_build.end_encoding();
+
+        // Step 4: Write dispatch args
+        let encoder_dispatch_args = command_buffer.new_compute_command_encoder();
+        encoder_dispatch_args.set_compute_pipeline_state(&self.pass_a_write_dispatch_args_pipeline);
+        encoder_dispatch_args.set_buffer(0, Some(args.total_tiles), 0);
+        encoder_dispatch_args.set_buffer(1, Some(args.dispatch_args), 0);
+        let num_tiles_y: u32 = 1;
+        encoder_dispatch_args.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &num_tiles_y as *const u32 as *const _,
+        );
+        encoder_dispatch_args.dispatch_thread_groups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1, 1, 1),
+        );
+        encoder_dispatch_args.end_encoding();
+
+        // Step 5: Pass A with indirect dispatch
+        let pass_a_pipeline = &self.two_pass_pass_a_indirect[gate_idx][dtype_idx];
 
         let encoder_a = command_buffer.new_compute_command_encoder();
         encoder_a.set_compute_pipeline_state(pass_a_pipeline);
@@ -1193,9 +1330,6 @@ impl MoeExpertsKernel {
         encoder_a.set_buffer(2, Some(args.w13_all), 0);
         encoder_a.set_buffer(3, Some(args.hidden_buffer), 0);
         encoder_a.set_buffer(4, Some(args.up_biases), 0);
-        let d_model_u32 = args.d_model as u32;
-        let d_ff_u32 = args.d_ff as u32;
-        let e_u32 = args.e as u32;
         encoder_a.set_bytes(
             5,
             size_of::<u32>() as u64,
@@ -1236,15 +1370,11 @@ impl MoeExpertsKernel {
             size_of::<f32>() as u64,
             &args.silu_alpha as *const f32 as *const _,
         );
+        encoder_a.set_buffer(13, Some(args.tile_map), 0);
 
-        const BLOCK_M: u32 = 4; // BM * SM * TM = 1 * 1 * 4
-        let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
-        encoder_a.dispatch_thread_groups(
-            MTLSize::new(
-                h_blocks as u64,
-                args.e as u64,
-                args.total_rows as u64,
-            ),
+        encoder_a.dispatch_thread_groups_indirect(
+            args.dispatch_args,
+            0,
             MTLSize::new(128, 1, 1), // BM * BN * 32 = 1 * 4 * 32
         );
 

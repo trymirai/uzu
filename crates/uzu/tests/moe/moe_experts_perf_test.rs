@@ -74,9 +74,24 @@ fn run_decode_case(
         .collect();
     let offsets = build_offsets(e, sum_k);
 
-    let w13: Vec<bf16> = (0..e * d_model * 2 * d_ff)
+    // Generate W13 in original layout [E, d_model, 2*d_ff]
+    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
         .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
         .collect();
+
+    // Transpose to GPU layout [E, 2*d_ff, d_model]
+    let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
+    for expert in 0..e {
+        let src_offset = expert * d_model * 2 * d_ff;
+        let dst_offset = expert * 2 * d_ff * d_model;
+        for dm in 0..d_model {
+            for ff in 0..(2 * d_ff) {
+                let src_idx = src_offset + dm * 2 * d_ff + ff;
+                let dst_idx = dst_offset + ff * d_model + dm;
+                w13[dst_idx] = w13_original[src_idx];
+            }
+        }
+    }
     let w2: Vec<bf16> = (0..e * d_ff * d_model)
         .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
         .collect();
@@ -230,6 +245,29 @@ fn run_decode_case(
         MTLResourceOptions::StorageModeShared,
     );
 
+    // Buffers for indirect dispatch
+    let tile_counts_buf = ctx.device.new_buffer(
+        (e * size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let tile_offsets_buf = ctx.device.new_buffer(
+        ((e + 1) * size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let max_tiles = e * sum_k * 16384; // Conservative upper bound
+    let tile_map_buf = ctx.device.new_buffer(
+        (max_tiles * 3 * size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let total_tiles_buf = ctx.device.new_buffer(
+        size_of::<u32>() as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let dispatch_args_buf = ctx.device.new_buffer(
+        (3 * size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
     let make_two_pass_args = || MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
@@ -240,6 +278,11 @@ fn run_decode_case(
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
+        tile_counts: &tile_counts_buf,
+        tile_offsets: &tile_offsets_buf,
+        tile_map: &tile_map_buf,
+        total_tiles: &total_tiles_buf,
+        dispatch_args: &dispatch_args_buf,
         total_rows: sum_k,
         d_model,
         d_ff,
@@ -315,9 +358,24 @@ fn run_prefill_case(
         .collect();
     let offsets = build_offsets(e, sum_k);
 
-    let w13: Vec<bf16> = (0..e * d_model * 2 * d_ff)
+    // Generate W13 in original layout [E, d_model, 2*d_ff]
+    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
         .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
         .collect();
+
+    // Transpose to GPU layout [E, 2*d_ff, d_model]
+    let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
+    for expert in 0..e {
+        let src_offset = expert * d_model * 2 * d_ff;
+        let dst_offset = expert * 2 * d_ff * d_model;
+        for dm in 0..d_model {
+            for ff in 0..(2 * d_ff) {
+                let src_idx = src_offset + dm * 2 * d_ff + ff;
+                let dst_idx = dst_offset + ff * d_model + dm;
+                w13[dst_idx] = w13_original[src_idx];
+            }
+        }
+    }
     let w2: Vec<bf16> = (0..e * d_ff * d_model)
         .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
         .collect();

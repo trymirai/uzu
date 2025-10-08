@@ -1,5 +1,10 @@
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{
+    collections::HashMap,
+    path::Path,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
+use metal::{CaptureDescriptor, CaptureManager, MTLCaptureDestination};
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -31,6 +36,7 @@ pub struct Generator {
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
     pending_kv_update: Option<u64>,
+    first_decode_done: bool,
 }
 
 impl Generator {
@@ -38,6 +44,13 @@ impl Generator {
         model_path: &Path,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
+        // IMPORTANT: Enable Metal capture layer BEFORE device creation
+        if std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some() {
+            unsafe {
+                std::env::set_var("METAL_CAPTURE_ENABLED", "1");
+            }
+        }
+
         let context = GeneratorContext::new(model_path, &decoding_config)?;
 
         let prefill_step_size =
@@ -51,6 +64,7 @@ impl Generator {
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
             pending_kv_update: None,
+            first_decode_done: false,
         };
 
         //Warmup
@@ -314,6 +328,7 @@ impl Generator {
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
         self.pending_kv_update = None;
+        self.first_decode_done = false;
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -346,7 +361,52 @@ impl Generator {
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
 
+            // Capture first decode if requested
+            let is_first_decode =
+                !warmup && !self.first_decode_done && task.token_ids.len() == 1;
+            let should_capture = is_first_decode
+                && std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some();
+
+            if should_capture {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                let trace_path = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(format!("uzu_first_decode-{timestamp}.gputrace"));
+
+                let capture_manager = CaptureManager::shared();
+                let capture_descriptor = CaptureDescriptor::new();
+                capture_descriptor
+                    .set_destination(MTLCaptureDestination::GpuTraceDocument);
+                capture_descriptor.set_output_url(&trace_path);
+                self.context
+                    .mtl_context
+                    .command_queue
+                    .set_label("uzu_command_queue");
+                capture_descriptor.set_capture_command_queue(
+                    &self.context.mtl_context.command_queue,
+                );
+
+                if let Err(err) =
+                    capture_manager.start_capture(&capture_descriptor)
+                {
+                    eprintln!("⚠️  Failed to start GPU capture: {err}");
+                } else {
+                    println!(
+                        "🔍 GPU capture started for first decode: {:?}",
+                        trace_path
+                    );
+                }
+            }
+
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
+
+            // Force fresh encoding if capturing (don't use cached)
+            if should_capture {
+                self.encoded_tasks.remove(&encoded_task_key);
+            }
 
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
@@ -399,6 +459,16 @@ impl Generator {
 
             root_command_buffer.wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
+
+            if should_capture {
+                CaptureManager::shared().stop_capture();
+                println!("✅ GPU capture stopped");
+                self.first_decode_done = true;
+            }
+
+            if is_first_decode {
+                self.first_decode_done = true;
+            }
 
             (state, run_time)
         })
