@@ -421,10 +421,21 @@ pub fn encode_moe_gather(
     dtype: KernelDataType,
     args: &MoeGatherArguments,
 ) -> Result<(), MTLError> {
-    let kernel_name = match dtype {
-        KernelDataType::BFloat16 => "moe_gather_x_perm_bf16",
-        KernelDataType::Float16 => "moe_gather_x_perm_f16",
-        KernelDataType::Float32 => "moe_gather_x_perm_f32",
+    // Select kernel based on d_model size
+    const USE_2D_THRESHOLD: usize = 512;
+    const BF16_ROWS_PER_TG: usize = 8;
+    let (kernel_name, use_2d) = if args.d_model >= USE_2D_THRESHOLD {
+        match dtype {
+            KernelDataType::BFloat16 => ("moe_gather_x_perm_bf16_2d", true),
+            KernelDataType::Float16 => ("moe_gather_x_perm_f16_2d", true),
+            KernelDataType::Float32 => ("moe_gather_x_perm_f32_2d", true),
+        }
+    } else {
+        match dtype {
+            KernelDataType::BFloat16 => ("moe_gather_x_perm_bf16", false),
+            KernelDataType::Float16 => ("moe_gather_x_perm_f16", false),
+            KernelDataType::Float32 => ("moe_gather_x_perm_f32", false),
+        }
     };
 
     let pipeline = ctx.compute_pipeline_state(kernel_name, None)?;
@@ -443,8 +454,13 @@ pub fn encode_moe_gather(
 
     let max_rows = args.t * args.k;
     if max_rows > 0 {
+        let tg_x = if use_2d {
+            (max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG
+        } else {
+            (max_rows + 255) / 256
+        };
         encoder.dispatch_thread_groups(
-            MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
+            MTLSize::new(tg_x as u64, 1, 1),
             MTLSize::new(256, 1, 1),
         );
     }
@@ -471,10 +487,23 @@ pub fn encode_moe_gather_with_pipeline(
     );
     let max_rows = args.t * args.k;
     if max_rows > 0 {
-        encoder.dispatch_thread_groups(
-            MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
-            MTLSize::new(256, 1, 1),
-        );
+        // Choose dispatch based on d_model: 2D tiled for large d_model, 1D for small
+        const USE_2D_THRESHOLD: usize = 512;
+        if args.d_model >= USE_2D_THRESHOLD {
+            // 2D tiled dispatch: 8 rows per threadgroup
+            const ROWS_PER_TG: u64 = 8;
+            let num_tgs = ((max_rows as u64 + ROWS_PER_TG - 1) / ROWS_PER_TG);
+            encoder.dispatch_thread_groups(
+                MTLSize::new(num_tgs, 1, 1),
+                MTLSize::new(256, 1, 1),
+            );
+        } else {
+            // 1D dispatch (baseline)
+            encoder.dispatch_thread_groups(
+                MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
+                MTLSize::new(256, 1, 1),
+            );
+        }
     }
     encoder.end_encoding();
 }
@@ -708,7 +737,7 @@ impl MoeGatherKernel {
         let pipeline_f32 =
             ctx.compute_pipeline_state("moe_gather_x_perm_f32", None)?;
         let pipeline_bf16 =
-            ctx.compute_pipeline_state("moe_gather_x_perm_bf16", None)?;
+            ctx.compute_pipeline_state("moe_gather_x_perm_bf16_2d", None)?;
         Ok(Self {
             pipeline_f16,
             pipeline_f32,
@@ -752,7 +781,13 @@ impl MoeGatherKernel {
             return Ok(());
         }
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let threadgroups = MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1);
+        let threadgroups = match dtype {
+            KernelDataType::BFloat16 => {
+                const BF16_ROWS_PER_TG: usize = 8;
+                MTLSize::new(((max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG) as u64, 1, 1)
+            },
+            _ => MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
+        };
         encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         encoder.end_encoding();
         Ok(())
