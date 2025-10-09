@@ -651,7 +651,8 @@ impl MoeExpertsTwoPassPrefillKernel {
             &args.silu_alpha as *const f32 as *const _,
         );
         encoder_a.set_buffer(13, Some(args.tile_map), 0);
-        const SIMDGROUPS_PER_TG: u32 = 8;
+        // Match kernel config: WM=2, WN=2 => 4 SIMDgroups => 128 threads
+        const SIMDGROUPS_PER_TG: u32 = 4;
         const THREADS_PER_TG: u32 = SIMDGROUPS_PER_TG * 32;
         encoder_a.dispatch_thread_groups_indirect(
             args.dispatch_args,

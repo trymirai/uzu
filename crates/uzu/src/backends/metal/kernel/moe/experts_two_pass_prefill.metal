@@ -42,7 +42,7 @@ static inline float silu(float x, float alpha) {
 // ============================================================================
 // Computes: hidden[m, n] = activation(X[m, k] @ W13_up[expert, n, k] ⊙ gate(X[m, k] @ W13_gate[expert, n, k]))
 //
-// Tile sizes: BM=16, BN=64, BK=32
+// Tile sizes: BM=16, BN=64, BK=64
 // Each threadgroup computes a [BM, BN] tile of output
 
 template<typename T, typename AccumT = float>
@@ -72,7 +72,7 @@ void moe_two_pass_prefill_pass_a_impl(
     // Tile configuration
     constexpr short BM = 16;
     constexpr short BN = 64;
-    constexpr short BK = 32;
+    constexpr short BK = 48;
     constexpr short WM = 2;  // Warps in M
     constexpr short WN = 2;  // Warps in N
     constexpr short tgp_size = WM * WN * 32;
@@ -310,7 +310,7 @@ kernel void moe_two_pass_prefill_pass_a_##SUFFIX( \
 { \
     constexpr short BM = 16; \
     constexpr short BN = 64; \
-    constexpr short BK = 32; \
+    constexpr short BK = 48; \
     \
     threadgroup DTYPE Xs_local[BM * BK]; \
     threadgroup DTYPE Wk_up_local[BK * BN]; \
@@ -406,9 +406,9 @@ kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX( \
     ushort simd_gid [[simdgroup_index_in_threadgroup]], \
     ushort simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    threadgroup DTYPE Xs_local[16 * 32]; \
-    threadgroup DTYPE Wk_up_local[32 * 64]; \
-    threadgroup DTYPE Wk_gate_local[32 * 64]; \
+    threadgroup DTYPE Xs_local[16 * 48]; \
+    threadgroup DTYPE Wk_up_local[48 * 64]; \
+    threadgroup DTYPE Wk_gate_local[48 * 64]; \
     \
     moe_two_pass_prefill_pass_a_indirect_impl<DTYPE>( \
         X_perm, expert_offsets, W13_all, up_biases, hidden_out, tile_map, \
@@ -426,7 +426,7 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 // ============================================================================
 // Computes: output[m, n] = hidden[m, k] @ W2[expert, k, n] + bias[n]
 //
-// Tile sizes: BM=16, BN=64, BK=32
+// Tile sizes: BM=16, BN=64, BK=64
 // Each threadgroup computes a [BM, BN] tile of output
 
 template<typename T, typename AccumT = float>
@@ -450,7 +450,7 @@ void moe_two_pass_prefill_pass_b_impl(
     // Tile configuration
     constexpr short BM = 16;
     constexpr short BN = 64;
-    constexpr short BK = 32;
+    constexpr short BK = 48;
     constexpr short WM = 2;  // Warps in M
     constexpr short WN = 2;  // Warps in N
     constexpr short tgp_size = WM * WN * 32;
@@ -614,7 +614,7 @@ kernel void moe_two_pass_prefill_pass_b_##SUFFIX( \
 { \
     constexpr short BM = 16; \
     constexpr short BN = 64; \
-    constexpr short BK = 32; \
+    constexpr short BK = 48; \
     \
     threadgroup DTYPE Hs_local[BM * BK]; \
     threadgroup DTYPE Wk_local[BK * BN]; \
@@ -690,8 +690,8 @@ kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX( \
     ushort simd_gid [[simdgroup_index_in_threadgroup]], \
     ushort simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    threadgroup DTYPE Hs_local[16 * 32]; \
-    threadgroup DTYPE Wk_local[32 * 64]; \
+    threadgroup DTYPE Hs_local[16 * 48]; \
+    threadgroup DTYPE Wk_local[48 * 64]; \
     \
     moe_two_pass_prefill_pass_b_indirect_impl<DTYPE>( \
         hidden, expert_offsets, W2_all, down_biases, output, tile_map, \

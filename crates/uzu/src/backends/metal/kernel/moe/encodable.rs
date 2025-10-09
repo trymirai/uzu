@@ -920,6 +920,7 @@ impl EncodableWithState for MoeBlockEncodable {
             data_type: self.data_type,
         };
 
+        println!("suffix_length={}", suffix_length);
         if suffix_length == 1 {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
