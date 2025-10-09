@@ -13,11 +13,7 @@ use uzu::backends::metal::{
     },
 };
 
-fn create_ctx() -> MTLContext {
-    let device = metal::Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
-    MTLContext::new(device, queue).expect("ctx")
-}
+use super::test_utils::create_ctx;
 
 fn silu(
     x: f32,
@@ -176,7 +172,42 @@ fn moe_cpu_reference(
     output
 }
 
+// Main entry point - automatically tests both modes for T>1
 fn run_moe_parity_test(
+    ctx: &MTLContext,
+    t: usize,
+    e: usize,
+    k: usize,
+    d_model: usize,
+    d_ff: usize,
+    gating_code: u32,
+    silu_alpha: f32,
+    gate_clip: (f32, f32),
+    up_clip: (f32, f32),
+    seed: u64,
+    test_name: &str,
+) {
+    if t > 1 {
+        // Test 1-pass prefill (default, stable)
+        run_moe_parity_test_internal(
+            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
+            gate_clip, up_clip, seed, &format!("{}_1pass", test_name), false
+        );
+        // Test 2-pass prefill (experimental)
+        run_moe_parity_test_internal(
+            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
+            gate_clip, up_clip, seed, &format!("{}_2pass", test_name), true
+        );
+    } else {
+        // Decode mode (T=1) - no prefill variants
+        run_moe_parity_test_internal(
+            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
+            gate_clip, up_clip, seed, test_name, false
+        );
+    }
+}
+
+fn run_moe_parity_test_internal(
     ctx: &MTLContext,
     t: usize,
     e: usize,
@@ -189,12 +220,29 @@ fn run_moe_parity_test(
     up_clip: (f32, f32),
     seed: u64,
     test_name: &str,
+    two_pass_prefill: bool, // If true, enable 2-pass prefill via env var
 ) {
+    // Set environment variable for 2-pass prefill if requested
+    if two_pass_prefill && t > 1 {
+        unsafe {
+            std::env::set_var("UZU_MOE_TWO_PASS_PREFILL", "1");
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("UZU_MOE_TWO_PASS_PREFILL");
+        }
+    }
     let mut rng = StdRng::seed_from_u64(seed);
 
+    let prefill_mode = if t > 1 {
+        if two_pass_prefill { "2-pass" } else { "1-pass" }
+    } else {
+        "decode"
+    };
+
     eprintln!(
-        "\n[{}] T={}, E={}, K={}, d_model={}, d_ff={}, alpha={}, gate_clip={:?}, up_clip={:?}",
-        test_name, t, e, k, d_model, d_ff, silu_alpha, gate_clip, up_clip
+        "\n[{}] T={}, E={}, K={}, d_model={}, d_ff={}, alpha={}, gate_clip={:?}, up_clip={:?}, mode={}",
+        test_name, t, e, k, d_model, d_ff, silu_alpha, gate_clip, up_clip, prefill_mode
     );
 
     // Random BF16 inputs
@@ -374,8 +422,9 @@ fn run_moe_parity_test(
         (t * d_model * std::mem::size_of::<bf16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    const BM: usize = 16;
-    let max_tiles = e * ((max_sumk + BM - 1) / BM);
+    const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
+    let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
+    let max_tiles = max_sumk * h_blocks_decode;
     let tile_counts_buf = ctx.device.new_buffer(
         (e * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
@@ -904,14 +953,15 @@ fn run_moe_parity_test(
     let product = k0_iters * ff0_iters;
     let sqrt_product = (product as f32).sqrt();
 
+    // Tightened thresholds with f32 accumulation: expect better accuracy
     let mean_abs_threshold = if k > 1 || gate_clip.1 < f32::INFINITY {
-        // Multi-expert accumulations exhibit modest extra drift; 0.02 factor still flags
-        // runaway error but lets decode GEMV pass at production scale.
-        let multi_expert_drift = 0.02 * sqrt_product * (k as f32 / 2.0);
-        0.1f32.max(multi_expert_drift * 1.1) // retain modest guard band for variance
+        // Multi-expert accumulations with f32 accumulation
+        // Tighter threshold: 0.015 factor (was 0.02)
+        let multi_expert_drift = 0.015 * sqrt_product * (k as f32 / 2.0);
+        0.08f32.max(multi_expert_drift) // tightened from 0.1 and 1.1x guard
     } else {
-        // Single-expert: negligible drift even at production scale
-        0.02 // Tight threshold for K=1
+        // Single-expert with f32 accumulation: very tight threshold
+        0.01 // tightened from 0.02
     };
 
     if mean_abs_error >= mean_abs_threshold {

@@ -1,13 +1,9 @@
 use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::MTLContext;
+use uzu::backends::metal::kernel::{KernelDataType, moe::{MoeRouterKernel, MoeRouterArguments}};
 
-fn create_ctx() -> MTLContext {
-    let device = metal::Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
-    MTLContext::new(device, queue).expect("ctx")
-}
+use super::test_utils::create_ctx;
 
 fn router_cpu_reference(
     x: &[bf16],      // [T, d_model]
@@ -33,16 +29,22 @@ fn router_cpu_reference(
 }
 
 #[test]
-fn test_router_simple() {
+fn test_router_correctness() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(0xA0073);
 
-    // Start with minimal size to verify kernel works at all
-    let t = 2;
-    let e = 4;
-    let d_model = 64; // Small, safe size
+    // Test multiple shapes: (T, E, d_model)
+    let shapes = vec![
+        (1, 4, 64),    // Single token, small
+        (2, 4, 64),    // Minimal batch
+        (8, 8, 128),   // Balanced
+        (32, 16, 256), // Larger batch
+        (1, 64, 512),  // Many experts
+        (64, 8, 1024), // Large model
+    ];
 
-    eprintln!("[RouterTest] T={}, E={}, d_model={}", t, e, d_model);
+    for (t, e, d_model) in shapes {
+        eprintln!("[RouterTest] T={}, E={}, d_model={}", t, e, d_model);
 
     // Generate random data
     let x: Vec<bf16> = (0..t * d_model)
@@ -78,46 +80,23 @@ fn test_router_simple() {
         MTLResourceOptions::StorageModeShared,
     );
 
-    // Execute
+    // Execute using kernel struct API
+    let router = MoeRouterKernel::new(&ctx).expect("MoeRouterKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
-    let encoder = cb.new_compute_command_encoder();
-
-    let pipeline = ctx
-        .compute_pipeline_state("moe_router_bf16", None)
-        .expect("router kernel not found");
-    encoder.set_compute_pipeline_state(&pipeline);
-    encoder.set_buffer(0, Some(&x_buf), 0);
-    encoder.set_buffer(1, Some(&weight_buf), 0);
-    encoder.set_buffer(2, Some(&bias_buf), 0);
-    encoder.set_buffer(3, Some(&logits_buf), 0);
-
-    let t_u32 = t as u32;
-    let d_model_u32 = d_model as u32;
-    let e_u32 = e as u32;
-    encoder.set_bytes(
-        4,
-        std::mem::size_of::<u32>() as u64,
-        &t_u32 as *const u32 as *const _,
-    );
-    encoder.set_bytes(
-        5,
-        std::mem::size_of::<u32>() as u64,
-        &d_model_u32 as *const u32 as *const _,
-    );
-    encoder.set_bytes(
-        6,
-        std::mem::size_of::<u32>() as u64,
-        &e_u32 as *const u32 as *const _,
-    );
-
-    // MV-style dispatch: tile E across simdgroups per TG (S=4)
-    let num_simdgroups: u64 = 4;
-    let tg_x = (e as u64 + num_simdgroups - 1) / num_simdgroups;
-    encoder.dispatch_thread_groups(
-        metal::MTLSize::new(tg_x, t as u64, 1),
-        metal::MTLSize::new(32 * num_simdgroups, 1, 1),
-    );
-    encoder.end_encoding();
+    router.encode(
+        &cb,
+        KernelDataType::BFloat16,
+        MoeRouterArguments {
+            input_buffer: &x_buf,
+            weight_buffer: &weight_buf,
+            bias_buffer: &bias_buf,
+            output_buffer: &logits_buf,
+            t,
+            d_model,
+            e,
+        },
+    )
+    .expect("encode router");
     cb.commit();
     cb.wait_until_completed();
 
@@ -160,5 +139,6 @@ fn test_router_simple() {
         d_model
     );
 
-    eprintln!("[RouterTest] ✓ PASSED (threshold={:.6})", threshold);
+        eprintln!("[RouterTest] ✓ PASSED (threshold={:.6})", threshold);
+    }
 }

@@ -1,22 +1,15 @@
 use half::f16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    MTLContext,
-    kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
-        MoeBucketCountsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-        MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterArguments,
-        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
-        MoeTopKKernel,
-    },
+use uzu::backends::metal::kernel::{
+    KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
+    MoeBucketCountsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+    MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterArguments,
+    MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+    MoeTopKKernel,
 };
 
-fn create_ctx() -> MTLContext {
-    let device = metal::Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
-    MTLContext::new(device, queue).expect("ctx")
-}
+use super::test_utils::create_ctx;
 
 fn cpu_finalize(
     tok2row: &[i32],

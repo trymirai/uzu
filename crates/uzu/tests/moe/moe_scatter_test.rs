@@ -13,6 +13,8 @@ use uzu::backends::metal::{
     },
 };
 
+use super::test_utils::create_ctx;
+
 fn create_test_context() -> Option<MTLContext> {
     let device = Device::system_default()?;
     let command_queue = device.new_command_queue();
@@ -286,12 +288,6 @@ fn test_scatter_buckets_parity() {
 
 const BLOCK_SIZE: usize = 256;
 const TILE_E: usize = 512;
-
-fn create_ctx() -> MTLContext {
-    let device = Device::system_default().expect("No Metal device");
-    let command_queue = device.new_command_queue();
-    MTLContext::new(device, command_queue).expect("ctx")
-}
 
 fn compile(
     ctx: &MTLContext,

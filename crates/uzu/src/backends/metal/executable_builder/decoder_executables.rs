@@ -97,7 +97,6 @@ impl DecoderExecutables {
                             crate::backends::metal::kernel::moe::MoeBlockEncodable::load_shared_expert_weights(
                                 &mtl_context,
                                 moe_config,
-                                decoder_config.model_dim,
                                 decoder_config.hidden_dim,
                                 &layer_mlp_tree,
                             )

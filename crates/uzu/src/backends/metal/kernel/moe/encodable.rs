@@ -61,14 +61,12 @@ pub struct MoeBlockEncodable {
     data_type: KernelDataType,
     shared_weights: SharedMoeWeights,
     layer_index: usize,
-    decode_two_pass: bool,
 }
 
 impl MoeBlockEncodable {
     pub fn load_shared_expert_weights(
         context: &MTLContext,
         _moe_config: &MixtureOfExpertsConfig,
-        model_dim: usize,
         hidden_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<SharedMoeWeights, crate::backends::metal::MTLError> {
@@ -79,7 +77,7 @@ impl MoeBlockEncodable {
             ))
         })?;
 
-        let mut up_arr = experts_tree
+        let up_arr = experts_tree
             .subtree("up_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -189,7 +187,7 @@ impl MoeBlockEncodable {
             },
         };
 
-        let mut w2_arr = experts_tree
+        let w2_arr = experts_tree
             .subtree("down_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -222,7 +220,8 @@ impl MoeBlockEncodable {
 
         let w2_transposed = match w2_arr.data_type() {
             DataType::BF16 => {
-                let src = w2_arr.as_slice::<bf16>().map_err(w2_transpose_err)?;
+                let src =
+                    w2_arr.as_slice::<bf16>().map_err(w2_transpose_err)?;
                 let mut dst = vec![bf16::from_f32(0.0); w2_total_size];
 
                 for expert in 0..w2_e {
@@ -559,15 +558,10 @@ impl MoeBlockEncodable {
             Self::load_shared_expert_weights(
                 context,
                 moe_config,
-                model_dim,
                 hidden_dim,
                 parameter_tree,
             )?
         };
-
-        let decode_two_pass = std::env::var_os("UZU_DEBUG_MOE_TWO_PASS")
-            .map(|v| v != "0")
-            .unwrap_or(false);
 
         Ok(Self {
             router,
@@ -585,7 +579,6 @@ impl MoeBlockEncodable {
             data_type,
             shared_weights,
             layer_index,
-            decode_two_pass,
         })
     }
 
@@ -908,14 +901,59 @@ impl EncodableWithState for MoeBlockEncodable {
         };
 
         if suffix_length == 1 {
-            if self.decode_two_pass {
+            let total_rows = suffix_length * k;
+            let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
+                / MOE_TWO_PASS_K_TILE) as u32;
+
+            self.experts_kernel
+                .encode_two_pass_decode(
+                    root,
+                    MoeExpertsTwoPassArguments {
+                        x_perm_buffer: &x_perm_buf,
+                        expert_offsets: &offsets_buf,
+                        row_expert_map: &row_expert_map_buf,
+                        hidden_buffer: &hidden_buf,
+                        partial_buffer: &two_pass_partial_buf,
+                        output_buffer: &y_partial_buf,
+                        w13_all: &self.shared_weights.w13_buf,
+                        w2_all: &self.shared_weights.w2_buf,
+                        up_biases: &self.shared_weights.up_biases_buf,
+                        down_biases: &self.shared_weights.down_biases_buf,
+                        tile_counts: &tile_counts_buf,
+                        tile_offsets: &tile_offsets_buf,
+                        tile_map: &tile_map_buf,
+                        total_tiles: &total_tiles_buf,
+                        dispatch_args: &dispatch_args_buf,
+                        total_rows,
+                        d_model: self.model_dim,
+                        d_ff: self.hidden_dim,
+                        e,
+                        num_tiles_k,
+                        gating_code,
+                        gate_clip_min: experts_args.gate_clip_min,
+                        gate_clip_max: experts_args.gate_clip_max,
+                        up_clip_min: experts_args.up_clip_min,
+                        up_clip_max: experts_args.up_clip_max,
+                        silu_alpha: experts_args.silu_alpha,
+                        data_type: self.data_type,
+                    },
+                )
+                .expect("MoE experts two-pass failed");
+        } else {
+            // Prefill case (suffix_length > 1)
+            // Check env flag to decide between 1-pass and 2-pass prefill
+            let use_two_pass_prefill =
+                std::env::var_os("UZU_MOE_TWO_PASS_PREFILL").is_some();
+
+            if use_two_pass_prefill {
+                // Use 2-pass prefill (currently has accuracy issues)
                 let total_rows = suffix_length * k;
                 let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
                     / MOE_TWO_PASS_K_TILE)
                     as u32;
 
                 self.experts_kernel
-                    .encode_two_pass_decode(
+                    .encode_two_pass_prefill(
                         root,
                         MoeExpertsTwoPassArguments {
                             x_perm_buffer: &x_perm_buf,
@@ -947,16 +985,13 @@ impl EncodableWithState for MoeBlockEncodable {
                             data_type: self.data_type,
                         },
                     )
-                    .expect("MoE experts two-pass failed");
+                    .expect("MoE experts two-pass prefill failed");
             } else {
+                // Use 1-pass prefill (default, stable)
                 self.experts_kernel
-                    .encode_gemv_decode(root, experts_args)
-                    .expect("MoE experts decode failed");
+                    .encode(root, experts_args)
+                    .expect("MoE experts single-pass failed");
             }
-        } else {
-            self.experts_kernel
-                .encode(root, experts_args)
-                .expect("MoE experts failed");
         }
 
         self.finalize_kernel
@@ -974,6 +1009,60 @@ impl EncodableWithState for MoeBlockEncodable {
                 self.data_type,
             )
             .expect("MoE finalize failed");
+
+        // Clear all internal MoE buffers using GPU blit encoder
+        let dtype_size = match self.data_type {
+            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
+            KernelDataType::Float32 => 4,
+        };
+
+        let blit_encoder = root.new_blit_command_encoder();
+
+        // Clear hidden buffer
+        let hidden_bytes =
+            (suffix_length * k * self.hidden_dim * dtype_size) as u64;
+        if hidden_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &hidden_buf,
+                metal::NSRange::new(0, hidden_bytes),
+                0,
+            );
+        }
+
+        // Clear two-pass partial buffer
+        let two_pass_partial_bytes =
+            (suffix_length * k * self.model_dim * 4) as u64; // f32 accumulator
+        if two_pass_partial_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &two_pass_partial_buf,
+                metal::NSRange::new(0, two_pass_partial_bytes),
+                0,
+            );
+        }
+
+        // Clear y_partial buffer
+        let y_partial_bytes =
+            (suffix_length * k * self.model_dim * dtype_size) as u64;
+        if y_partial_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &y_partial_buf,
+                metal::NSRange::new(0, y_partial_bytes),
+                0,
+            );
+        }
+
+        // Clear x_perm buffer
+        let x_perm_bytes =
+            (suffix_length * k * self.model_dim * dtype_size) as u64;
+        if x_perm_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &x_perm_buf,
+                metal::NSRange::new(0, x_perm_bytes),
+                0,
+            );
+        }
+
+        blit_encoder.end_encoding();
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

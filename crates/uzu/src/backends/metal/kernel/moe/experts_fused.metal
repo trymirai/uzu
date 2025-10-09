@@ -27,7 +27,7 @@ static inline float silu(float x, float alpha) {
     return x / (1.0f + exp(-alpha * x));
 }
 
-template<typename T>
+template<typename T, typename AccumT = float>
 void moe_fused_expert_mlp_impl(
     device const T* X_perm,
     device const uint* expert_offsets,
@@ -57,9 +57,9 @@ void moe_fused_expert_mlp_impl(
     threadgroup T* Xs,
     threadgroup T* Wk_up,
     threadgroup T* Wk_gate,
-    threadgroup float* Htile,
-    threadgroup float* W2sf,
-    threadgroup float* Hs)
+    threadgroup AccumT* Htile,
+    threadgroup AccumT* W2sf,
+    threadgroup AccumT* Hs)
 {
     (void)gating_code_val;
     (void)tile_row_offsets;
@@ -98,7 +98,7 @@ void moe_fused_expert_mlp_impl(
 
     // ===== FC1: Compute once, reuse for N_GROUP tiles =====
     // For simplicity with N_GROUP=8, unroll manually (Metal doesn't support VLA with function constants)
-    using mma_fc2_t = matmul_utils::BlockMMA<float, T, BM, BN, BK, 2, 2, false, false, BK, BN, float>;
+    using mma_fc2_t = matmul_utils::BlockMMA<AccumT, T, BM, BN, BK, 2, 2, false, false, BK, BN, AccumT>;
     mma_fc2_t mma_fc2_0(simd_gid, simd_lid);
     mma_fc2_t mma_fc2_1(simd_gid, simd_lid);
     mma_fc2_t mma_fc2_2(simd_gid, simd_lid);
@@ -118,8 +118,8 @@ void moe_fused_expert_mlp_impl(
 
         for (uint ff0 = 0; ff0 < d_ff; ff0 += BK) {
             const uint ff_chunk = min((uint)BK, d_ff - ff0);
-        matmul_utils::BlockMMA<T, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_up(simd_gid, simd_lid);
-        matmul_utils::BlockMMA<T, float, BM, BK, BK, 2, 2, false, false, BK, BK, float> mma_fc1_gate(simd_gid, simd_lid);
+        matmul_utils::BlockMMA<T, AccumT, BM, BK, BK, 2, 2, false, false, BK, BK, AccumT> mma_fc1_up(simd_gid, simd_lid);
+        matmul_utils::BlockMMA<T, AccumT, BM, BK, BK, 2, 2, false, false, BK, BK, AccumT> mma_fc1_gate(simd_gid, simd_lid);
             mma_fc1_up.Ctile.clear();
             if (GATING_SEL > 1u) {
                 mma_fc1_gate.Ctile.clear();
@@ -357,7 +357,7 @@ kernel void moe_fused_expert_mlp_f16 outerArguments(half) {
     threadgroup float Htile[BM * BK];
     threadgroup float W2sf[BK * BN];
     threadgroup float Hs[BM * BK];
-    moe_fused_expert_mlp_impl<half> innerArguments;
+    moe_fused_expert_mlp_impl<half, float> innerArguments;
 }
 
 kernel void moe_fused_expert_mlp_bf16 outerArguments(bfloat) {
@@ -367,7 +367,7 @@ kernel void moe_fused_expert_mlp_bf16 outerArguments(bfloat) {
     threadgroup float Htile[BM * BK];
     threadgroup float W2sf[BK * BN];
     threadgroup float Hs[BM * BK];
-    moe_fused_expert_mlp_impl<bfloat> innerArguments;
+    moe_fused_expert_mlp_impl<bfloat, float> innerArguments;
 }
 
 kernel void moe_fused_expert_mlp_f32 outerArguments(float) {
@@ -377,5 +377,5 @@ kernel void moe_fused_expert_mlp_f32 outerArguments(float) {
     threadgroup float Htile[BM * BK];
     threadgroup float W2sf[BK * BN];
     threadgroup float Hs[BM * BK];
-    moe_fused_expert_mlp_impl<float> innerArguments;
+    moe_fused_expert_mlp_impl<float, float> innerArguments;
 }

@@ -46,7 +46,8 @@ static inline float simdgroup_sum_shuffle(float val) {
 
 // === Pass A: Optimized GEMV with hierarchical tiling ===
 // Computes: hidden[row, h] = activation(x[row, d] @ W13[d, 2*h])
-template<typename T>
+// AccumT is used for internal accumulations, output still stored as T
+template<typename T, typename AccumT = float>
 void moe_experts_decode_pass_a_impl(
     device const T* X_perm,              // [total_rows, d_model]
     device const uint* expert_offsets,   // [E + 1]
@@ -282,7 +283,7 @@ kernel void moe_experts_decode_pass_a_##SUFFIX( \
     constexpr uint tgp_mem_size = (BN > 1) ? 2 * BN * (BLOCK_M + TM) : 1; \
     threadgroup float tgp_memory[tgp_mem_size]; \
     \
-    moe_experts_decode_pass_a_impl<DTYPE>( \
+    moe_experts_decode_pass_a_impl<DTYPE, float>( \
         X_perm, expert_offsets, W13_all, up_biases, hidden_out, \
         d_model, d_ff, E, gate_clip_min, gate_clip_max, \
         up_clip_min, up_clip_max, silu_alpha, \
@@ -455,7 +456,7 @@ void moe_experts_decode_pass_a_indirect_impl(
     const uint row_in_expert = tile_map[tile_idx * 3 + 2];
 
     // Call original implementation
-    moe_experts_decode_pass_a_impl<T>(
+    moe_experts_decode_pass_a_impl<T, float>(
         X_perm, expert_offsets, W13_all, up_biases, hidden_out,
         d_model, d_ff, E,
         gate_clip_min, gate_clip_max,
@@ -504,8 +505,9 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 // === Pass B: Simdgroup cooperation along K for coalescing ===
 // W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading consecutive K elements
 // Exploits transposed layout for stride-1 memory access across threads
+// AccumT is used for internal accumulations
 
-template<typename T>
+template<typename T, typename AccumT = float>
 void moe_experts_decode_down_fused_2d_impl(
     device const T* hidden,               // [total_rows, d_ff]
     device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
@@ -620,7 +622,7 @@ kernel void moe_experts_decode_down_fused_2d_##SUFFIX( \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    moe_experts_decode_down_fused_2d_impl<DTYPE>( \
+    moe_experts_decode_down_fused_2d_impl<DTYPE, float>( \
         hidden, row_expert_map, w2_all, down_biases, y_out, \
         total_rows, d_model, d_ff, E, \
         tgpig, simd_gid, simd_lid); \

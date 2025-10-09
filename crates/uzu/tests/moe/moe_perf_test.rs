@@ -4,7 +4,7 @@ use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
-    KernelDataType, MTLContext,
+    KernelDataType,
     kernel::moe::{
         MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
         MoeExpertsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
@@ -15,11 +15,7 @@ use uzu::backends::metal::{
     },
 };
 
-fn create_ctx() -> MTLContext {
-    let device = metal::Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
-    MTLContext::new(device, queue).expect("ctx")
-}
+use super::test_utils::create_ctx;
 
 struct PerfResult {
     name: String,
