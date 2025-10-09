@@ -7,7 +7,7 @@ use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
         MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-        MoeExpertsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+        MoeExpertsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
         MoeGatherArguments, MoeGatherKernel, MoeOffsetsScanArguments,
         MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
         MoeTopKArguments, MoeTopKKernel, RouterEncoderArgs, encode_moe_router,
@@ -931,7 +931,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let offsets_kernel = MoeOffsetsScanKernel::new(&ctx).expect("offsets");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsKernel::new(&ctx).expect("experts");
+    let experts_kernel = MoeExpertsFusedKernel::new(&ctx).expect("experts");
     let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
 
     // Time each kernel (reduced iterations for isolation)

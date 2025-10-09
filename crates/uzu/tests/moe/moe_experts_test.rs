@@ -13,7 +13,10 @@ use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
-    kernel::moe::{MoeExpertsKernel, MoeExpertsTwoPassArguments},
+    kernel::moe::{
+        MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
+        MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+    },
 };
 
 #[path = "moe_test_utils.rs"]
@@ -320,7 +323,7 @@ fn test_one_pass_fused_correctness() {
 
     // Execute 1-pass fused kernel
     let experts_kernel =
-        MoeExpertsKernel::new(&ctx).expect("MoeExpertsKernel::new");
+        MoeExpertsFusedKernel::new(&ctx).expect("MoeExpertsFusedKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
 
     use uzu::backends::metal::kernel::moe::MoeExpertsArguments;
@@ -512,15 +515,15 @@ fn test_two_pass_decode_correctness() {
     );
 
     // Execute 2-pass decode kernel
-    let experts_kernel =
-        MoeExpertsKernel::new(&ctx).expect("MoeExpertsKernel::new");
+    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
+        .expect("MoeExpertsTwoPassDecodeKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
 
     const K_TILE: usize = 64;
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
 
     experts_kernel
-        .encode_two_pass_decode(
+        .encode(
             &cb,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
@@ -564,6 +567,50 @@ fn test_two_pass_decode_correctness() {
             sum_k * d_model,
         )
     };
+
+    // Compute error metrics
+    let mut max_abs_error = 0.0f32;
+    let mut max_rel_error = 0.0f32;
+    let mut max_abs_idx = 0;
+    let mut max_rel_idx = 0;
+
+    for (i, (&gpu_val, &cpu_val)) in
+        output_gpu.iter().zip(expected.iter()).enumerate()
+    {
+        let gpu_f = f32::from(gpu_val);
+        let cpu_f = f32::from(cpu_val);
+        let abs_error = (gpu_f - cpu_f).abs();
+        let rel_error = if cpu_f.abs() > 1e-6 {
+            abs_error / cpu_f.abs()
+        } else {
+            0.0
+        };
+
+        if abs_error > max_abs_error {
+            max_abs_error = abs_error;
+            max_abs_idx = i;
+        }
+        if rel_error > max_rel_error {
+            max_rel_error = rel_error;
+            max_rel_idx = i;
+        }
+    }
+
+    eprintln!(
+        "[2-pass decode] Max absolute error: {:.6} at index {} (GPU={:.6}, CPU={:.6})",
+        max_abs_error,
+        max_abs_idx,
+        f32::from(output_gpu[max_abs_idx]),
+        f32::from(expected[max_abs_idx])
+    );
+    eprintln!(
+        "[2-pass decode] Max relative error: {:.6} ({:.2}%) at index {} (GPU={:.6}, CPU={:.6})",
+        max_rel_error,
+        max_rel_error * 100.0,
+        max_rel_idx,
+        f32::from(output_gpu[max_rel_idx]),
+        f32::from(expected[max_rel_idx])
+    );
 
     // Verify correctness with tight tolerance (same as 1-pass)
     let tolerance = 0.01;
@@ -704,15 +751,15 @@ fn test_two_pass_prefill_correctness() {
     );
 
     // Execute 2-pass prefill kernel
-    let experts_kernel =
-        MoeExpertsKernel::new(&ctx).expect("MoeExpertsKernel::new");
+    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(&ctx)
+        .expect("MoeExpertsTwoPassPrefillKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
 
     const K_TILE: usize = 64;
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
 
     experts_kernel
-        .encode_two_pass_prefill(
+        .encode(
             &cb,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
@@ -757,33 +804,52 @@ fn test_two_pass_prefill_correctness() {
         )
     };
 
-    // Verify correctness with tight tolerance; print diagnostics on failure.
-    let tolerance = 0.01;
+    // Compute error metrics
+    let mut max_abs_error = 0.0f32;
+    let mut max_rel_error = 0.0f32;
+    let mut max_abs_idx = 0;
+    let mut max_rel_idx = 0;
 
-    let mut max_diff = 0.0f32;
-    let mut max_idx = 0usize;
-    for (idx, (&gpu, &cpu)) in
+    for (i, (&gpu_val, &cpu_val)) in
         output_gpu.iter().zip(expected.iter()).enumerate()
     {
-        let diff = (f32::from(gpu) - f32::from(cpu)).abs();
-        if diff > max_diff {
-            max_diff = diff;
-            max_idx = idx;
+        let gpu_f = f32::from(gpu_val);
+        let cpu_f = f32::from(cpu_val);
+        let abs_error = (gpu_f - cpu_f).abs();
+        let rel_error = if cpu_f.abs() > 1e-6 {
+            abs_error / cpu_f.abs()
+        } else {
+            0.0
+        };
+
+        if abs_error > max_abs_error {
+            max_abs_error = abs_error;
+            max_abs_idx = i;
+        }
+        if rel_error > max_rel_error {
+            max_rel_error = rel_error;
+            max_rel_idx = i;
         }
     }
 
-    if max_diff > tolerance {
-        let row = max_idx / d_model;
-        let col = max_idx % d_model;
-        eprintln!(
-            "[2-pass prefill] mismatch row={} col={} gpu={} cpu={} diff={}",
-            row,
-            col,
-            f32::from(output_gpu[max_idx]),
-            f32::from(expected[max_idx]),
-            max_diff
-        );
-    }
+    eprintln!(
+        "[2-pass prefill] Max absolute error: {:.6} at index {} (GPU={:.6}, CPU={:.6})",
+        max_abs_error,
+        max_abs_idx,
+        f32::from(output_gpu[max_abs_idx]),
+        f32::from(expected[max_abs_idx])
+    );
+    eprintln!(
+        "[2-pass prefill] Max relative error: {:.6} ({:.2}%) at index {} (GPU={:.6}, CPU={:.6})",
+        max_rel_error,
+        max_rel_error * 100.0,
+        max_rel_idx,
+        f32::from(output_gpu[max_rel_idx]),
+        f32::from(expected[max_rel_idx])
+    );
+
+    // Verify correctness with tight tolerance
+    let tolerance = 0.01;
 
     let hidden_gpu = unsafe {
         std::slice::from_raw_parts(

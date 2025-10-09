@@ -6,10 +6,11 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsKernel, MoeExpertsTwoPassArguments, MoeFinalizeKernel,
-    MoeGatherArguments, MoeGatherKernel, MoeOffsetsScanArguments,
-    MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
-    MoeTopKArguments, MoeTopKKernel,
+    MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
+    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel,
+    MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterKernels,
+    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
 };
 use crate::{
     DataType,
@@ -53,7 +54,9 @@ pub struct MoeBlockEncodable {
     offsets_kernel: MoeOffsetsScanKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernel: MoeGatherKernel,
-    experts_kernel: MoeExpertsKernel,
+    experts_fused_kernel: MoeExpertsFusedKernel,
+    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
+    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
     finalize_kernel: MoeFinalizeKernel,
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
@@ -539,12 +542,27 @@ impl MoeBlockEncodable {
                 e
             ))
         })?;
-        let experts_kernel = MoeExpertsKernel::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "Experts kernel error: {:?}",
-                e
-            ))
-        })?;
+        let experts_fused_kernel = MoeExpertsFusedKernel::new(context)
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "Experts fused kernel error: {:?}",
+                    e
+                ))
+            })?;
+        let experts_two_pass_decode_kernel =
+            MoeExpertsTwoPassDecodeKernel::new(context).map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "Experts two-pass decode kernel error: {:?}",
+                    e
+                ))
+            })?;
+        let experts_two_pass_prefill_kernel =
+            MoeExpertsTwoPassPrefillKernel::new(context).map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "Experts two-pass prefill kernel error: {:?}",
+                    e
+                ))
+            })?;
         let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Finalize kernel error: {:?}",
@@ -571,7 +589,9 @@ impl MoeBlockEncodable {
             offsets_kernel,
             scatter_kernels,
             gather_kernel,
-            experts_kernel,
+            experts_fused_kernel,
+            experts_two_pass_decode_kernel,
+            experts_two_pass_prefill_kernel,
             finalize_kernel,
             moe_config: moe_config.clone(),
             model_dim,
@@ -905,8 +925,8 @@ impl EncodableWithState for MoeBlockEncodable {
             let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
                 / MOE_TWO_PASS_K_TILE) as u32;
 
-            self.experts_kernel
-                .encode_two_pass_decode(
+            self.experts_two_pass_decode_kernel
+                .encode(
                     root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
@@ -952,8 +972,8 @@ impl EncodableWithState for MoeBlockEncodable {
                     / MOE_TWO_PASS_K_TILE)
                     as u32;
 
-                self.experts_kernel
-                    .encode_two_pass_prefill(
+                self.experts_two_pass_prefill_kernel
+                    .encode(
                         root,
                         MoeExpertsTwoPassArguments {
                             x_perm_buffer: &x_perm_buf,
@@ -988,7 +1008,7 @@ impl EncodableWithState for MoeBlockEncodable {
                     .expect("MoE experts two-pass prefill failed");
             } else {
                 // Use 1-pass prefill (default, stable)
-                self.experts_kernel
+                self.experts_fused_kernel
                     .encode(root, experts_args)
                     .expect("MoE experts single-pass failed");
             }

@@ -17,7 +17,10 @@ pub fn create_ctx() -> MTLContext {
 }
 
 /// Helper to allocate buffer with data
-pub fn alloc_buffer_with_data<T>(ctx: &MTLContext, data: &[T]) -> MTLBuffer {
+pub fn alloc_buffer_with_data<T>(
+    ctx: &MTLContext,
+    data: &[T],
+) -> MTLBuffer {
     ctx.device.new_buffer_with_data(
         data.as_ptr() as *const _,
         (data.len() * std::mem::size_of::<T>()) as u64,
@@ -26,7 +29,10 @@ pub fn alloc_buffer_with_data<T>(ctx: &MTLContext, data: &[T]) -> MTLBuffer {
 }
 
 /// Helper to allocate empty buffer
-pub fn alloc_buffer<T>(ctx: &MTLContext, count: usize) -> MTLBuffer {
+pub fn alloc_buffer<T>(
+    ctx: &MTLContext,
+    count: usize,
+) -> MTLBuffer {
     ctx.device.new_buffer(
         (count * std::mem::size_of::<T>()) as u64,
         MTLResourceOptions::StorageModeShared,
@@ -35,27 +41,33 @@ pub fn alloc_buffer<T>(ctx: &MTLContext, count: usize) -> MTLBuffer {
 
 /// MoE test buffers fixture
 pub struct MoeBuffers {
-    pub x: MTLBuffer,                    // [T, d_model]
-    pub logits: MTLBuffer,               // [T, E]
-    pub topk_ids: MTLBuffer,             // [T, K]
-    pub topk_probs: MTLBuffer,           // [T, K]
-    pub bucket_counts: MTLBuffer,        // [E]
-    pub expert_offsets: MTLBuffer,       // [E+1]
-    pub bucketed_ids: MTLBuffer,         // [sum_k]
-    pub x_perm: MTLBuffer,               // [sum_k, d_model]
-    pub y_partial: MTLBuffer,            // [sum_k, d_model]
-    pub y_out: MTLBuffer,                // [T, d_model]
-    pub scales: MTLBuffer,               // [sum_k]
-    pub tile_counts: MTLBuffer,          // [E]
-    pub tile_offsets: MTLBuffer,         // [E+1]
-    pub tile_map: MTLBuffer,             // [max_tiles * 3]
-    pub total_tiles: MTLBuffer,          // [1]
-    pub sumk: MTLBuffer,                 // [1]
+    pub x: MTLBuffer,              // [T, d_model]
+    pub logits: MTLBuffer,         // [T, E]
+    pub topk_ids: MTLBuffer,       // [T, K]
+    pub topk_probs: MTLBuffer,     // [T, K]
+    pub bucket_counts: MTLBuffer,  // [E]
+    pub expert_offsets: MTLBuffer, // [E+1]
+    pub bucketed_ids: MTLBuffer,   // [sum_k]
+    pub x_perm: MTLBuffer,         // [sum_k, d_model]
+    pub y_partial: MTLBuffer,      // [sum_k, d_model]
+    pub y_out: MTLBuffer,          // [T, d_model]
+    pub scales: MTLBuffer,         // [sum_k]
+    pub tile_counts: MTLBuffer,    // [E]
+    pub tile_offsets: MTLBuffer,   // [E+1]
+    pub tile_map: MTLBuffer,       // [max_tiles * 3]
+    pub total_tiles: MTLBuffer,    // [1]
+    pub sumk: MTLBuffer,           // [1]
 }
 
 impl MoeBuffers {
     /// Create all buffers needed for MoE pipeline
-    pub fn new(ctx: &MTLContext, t: usize, e: usize, k: usize, d_model: usize) -> Self {
+    pub fn new(
+        ctx: &MTLContext,
+        t: usize,
+        e: usize,
+        k: usize,
+        d_model: usize,
+    ) -> Self {
         let sum_k = t * k;
         let max_tiles = sum_k * 4; // Conservative estimate
 
@@ -164,7 +176,10 @@ pub fn cpu_gather(
 ///
 /// # Returns
 /// Tile counts per expert [E]
-pub fn cpu_tile_counts(offsets: &[u32], bm: usize) -> Vec<u32> {
+pub fn cpu_tile_counts(
+    offsets: &[u32],
+    bm: usize,
+) -> Vec<u32> {
     let e = offsets.len() - 1;
     let mut tile_counts = vec![0u32; e];
     for expert in 0..e {
@@ -247,7 +262,12 @@ pub fn cpu_finalize(
 ///
 /// # Panics
 /// Panics if any element differs by more than tolerance
-pub fn assert_bf16_close(a: &[bf16], b: &[bf16], tolerance: f32, name: &str) {
+pub fn assert_bf16_close(
+    a: &[bf16],
+    b: &[bf16],
+    tolerance: f32,
+    name: &str,
+) {
     assert_eq!(a.len(), b.len(), "{}: length mismatch", name);
 
     let mut max_diff = 0.0f32;
@@ -264,8 +284,12 @@ pub fn assert_bf16_close(a: &[bf16], b: &[bf16], tolerance: f32, name: &str) {
     assert!(
         max_diff <= tolerance,
         "{}: max difference {:.6} at index {} exceeds tolerance {:.6} (a={:.6}, b={:.6})",
-        name, max_diff, max_idx, tolerance,
-        f32::from(a[max_idx]), f32::from(b[max_idx])
+        name,
+        max_diff,
+        max_idx,
+        tolerance,
+        f32::from(a[max_idx]),
+        f32::from(b[max_idx])
     );
 }
 
@@ -277,12 +301,20 @@ mod tests {
     fn test_cpu_matmul_ref() {
         // Simple 2x3 @ 2x3^T test
         let x = vec![
-            bf16::from_f32(1.0), bf16::from_f32(2.0), bf16::from_f32(3.0),
-            bf16::from_f32(4.0), bf16::from_f32(5.0), bf16::from_f32(6.0),
+            bf16::from_f32(1.0),
+            bf16::from_f32(2.0),
+            bf16::from_f32(3.0),
+            bf16::from_f32(4.0),
+            bf16::from_f32(5.0),
+            bf16::from_f32(6.0),
         ];
         let w = vec![
-            bf16::from_f32(1.0), bf16::from_f32(0.0), bf16::from_f32(0.0),
-            bf16::from_f32(0.0), bf16::from_f32(1.0), bf16::from_f32(0.0),
+            bf16::from_f32(1.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(1.0),
+            bf16::from_f32(0.0),
         ];
 
         let result = cpu_matmul_ref(&x, &w, None, 2, 2, 3);

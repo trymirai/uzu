@@ -1,7 +1,10 @@
 use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{KernelDataType, moe::{MoeRouterKernel, MoeRouterArguments}};
+use uzu::backends::metal::kernel::{
+    KernelDataType,
+    moe::{MoeRouterArguments, MoeRouterKernel},
+};
 
 use super::test_utils::create_ctx;
 
@@ -46,98 +49,104 @@ fn test_router_correctness() {
     for (t, e, d_model) in shapes {
         eprintln!("[RouterTest] T={}, E={}, d_model={}", t, e, d_model);
 
-    // Generate random data
-    let x: Vec<bf16> = (0..t * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
-    let weight: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
-        .collect();
-    let bias: Vec<bf16> =
-        (0..e).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
+        // Generate random data
+        let x: Vec<bf16> = (0..t * d_model)
+            .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
+            .collect();
+        let weight: Vec<bf16> = (0..e * d_model)
+            .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
+            .collect();
+        let bias: Vec<bf16> = (0..e)
+            .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
+            .collect();
 
-    // CPU reference
-    let logits_cpu = router_cpu_reference(&x, &weight, &bias, t, e, d_model);
+        // CPU reference
+        let logits_cpu =
+            router_cpu_reference(&x, &weight, &bias, t, e, d_model);
 
-    // GPU buffers
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let weight_buf = ctx.device.new_buffer_with_data(
-        weight.as_ptr() as *const _,
-        (weight.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let bias_buf = ctx.device.new_buffer_with_data(
-        bias.as_ptr() as *const _,
-        (bias.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let logits_buf = ctx.device.new_buffer(
-        (t * e * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+        // GPU buffers
+        let x_buf = ctx.device.new_buffer_with_data(
+            x.as_ptr() as *const _,
+            (x.len() * std::mem::size_of::<bf16>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let weight_buf = ctx.device.new_buffer_with_data(
+            weight.as_ptr() as *const _,
+            (weight.len() * std::mem::size_of::<bf16>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let bias_buf = ctx.device.new_buffer_with_data(
+            bias.as_ptr() as *const _,
+            (bias.len() * std::mem::size_of::<bf16>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let logits_buf = ctx.device.new_buffer(
+            (t * e * std::mem::size_of::<bf16>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
 
-    // Execute using kernel struct API
-    let router = MoeRouterKernel::new(&ctx).expect("MoeRouterKernel::new");
-    let cb = ctx.command_queue.new_command_buffer();
-    router.encode(
-        &cb,
-        KernelDataType::BFloat16,
-        MoeRouterArguments {
-            input_buffer: &x_buf,
-            weight_buffer: &weight_buf,
-            bias_buffer: &bias_buf,
-            output_buffer: &logits_buf,
-            t,
-            d_model,
-            e,
-        },
-    )
-    .expect("encode router");
-    cb.commit();
-    cb.wait_until_completed();
+        // Execute using kernel struct API
+        let router = MoeRouterKernel::new(&ctx).expect("MoeRouterKernel::new");
+        let cb = ctx.command_queue.new_command_buffer();
+        router
+            .encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeRouterArguments {
+                    input_buffer: &x_buf,
+                    weight_buffer: &weight_buf,
+                    bias_buffer: &bias_buf,
+                    output_buffer: &logits_buf,
+                    t,
+                    d_model,
+                    e,
+                },
+            )
+            .expect("encode router");
+        cb.commit();
+        cb.wait_until_completed();
 
-    // Read GPU output
-    let logits_gpu = unsafe {
-        std::slice::from_raw_parts(logits_buf.contents() as *const bf16, t * e)
-    };
+        // Read GPU output
+        let logits_gpu = unsafe {
+            std::slice::from_raw_parts(
+                logits_buf.contents() as *const bf16,
+                t * e,
+            )
+        };
 
-    // Compare
-    let mut max_abs_diff = 0.0f32;
-    let mut total_abs_error = 0.0f32;
-    for i in 0..(t * e) {
-        let gpu_val = f32::from(logits_gpu[i]);
-        let cpu_val = logits_cpu[i];
-        let abs_diff = (gpu_val - cpu_val).abs();
-        max_abs_diff = max_abs_diff.max(abs_diff);
-        total_abs_error += abs_diff;
+        // Compare
+        let mut max_abs_diff = 0.0f32;
+        let mut total_abs_error = 0.0f32;
+        for i in 0..(t * e) {
+            let gpu_val = f32::from(logits_gpu[i]);
+            let cpu_val = logits_cpu[i];
+            let abs_diff = (gpu_val - cpu_val).abs();
+            max_abs_diff = max_abs_diff.max(abs_diff);
+            total_abs_error += abs_diff;
 
-        if abs_diff > 0.01 {
-            eprintln!(
-                "[RouterTest] Mismatch [{}]: GPU={:.6}, CPU={:.6}, diff={:.6}",
-                i, gpu_val, cpu_val, abs_diff
-            );
+            if abs_diff > 0.01 {
+                eprintln!(
+                    "[RouterTest] Mismatch [{}]: GPU={:.6}, CPU={:.6}, diff={:.6}",
+                    i, gpu_val, cpu_val, abs_diff
+                );
+            }
         }
-    }
-    let mean_abs_error = total_abs_error / (t * e) as f32;
+        let mean_abs_error = total_abs_error / (t * e) as f32;
 
-    eprintln!(
-        "[RouterTest] Error: max_abs={:.6}, mean_abs={:.6}",
-        max_abs_diff, mean_abs_error
-    );
+        eprintln!(
+            "[RouterTest] Error: max_abs={:.6}, mean_abs={:.6}",
+            max_abs_diff, mean_abs_error
+        );
 
-    // Router matmul: error scales with sqrt(d_model) accumulation depth
-    let threshold = 0.002 * (d_model as f32).sqrt();
-    assert!(
-        mean_abs_error < threshold,
-        "Router mean_abs={:.6} exceeds threshold={:.6} for d_model={}",
-        mean_abs_error,
-        threshold,
-        d_model
-    );
+        // Router matmul: error scales with sqrt(d_model) accumulation depth
+        let threshold = 0.002 * (d_model as f32).sqrt();
+        assert!(
+            mean_abs_error < threshold,
+            "Router mean_abs={:.6} exceeds threshold={:.6} for d_model={}",
+            mean_abs_error,
+            threshold,
+            d_model
+        );
 
         eprintln!("[RouterTest] ✓ PASSED (threshold={:.6})", threshold);
     }

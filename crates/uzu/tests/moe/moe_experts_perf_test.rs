@@ -6,7 +6,8 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::moe::{
-        MoeExpertsArguments, MoeExpertsKernel, MoeExpertsTwoPassArguments,
+        MoeExpertsArguments, MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
+        MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     },
 };
 
@@ -86,7 +87,8 @@ fn run_decode_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let experts_kernel = MoeExpertsKernel::new(ctx).expect("experts kernel");
+    let experts_kernel =
+        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("experts decode kernel");
 
     let x_perm_buf = ctx.device.new_buffer_with_data(
         x_perm.as_ptr() as *const _,
@@ -197,7 +199,7 @@ fn run_decode_case(
     for _ in 0..warmup {
         let cb = ctx.command_queue.new_command_buffer();
         experts_kernel
-            .encode_two_pass_decode(&cb, make_two_pass_args())
+            .encode(&cb, make_two_pass_args())
             .expect("two-pass encode");
         cb.commit();
         cb.wait_until_completed();
@@ -208,7 +210,7 @@ fn run_decode_case(
         let start = Instant::now();
         let cb = ctx.command_queue.new_command_buffer();
         experts_kernel
-            .encode_two_pass_decode(&cb, make_two_pass_args())
+            .encode(&cb, make_two_pass_args())
             .expect("two-pass encode");
         cb.commit();
         cb.wait_until_completed();
@@ -343,7 +345,8 @@ fn run_prefill_case(
         MTLResourceOptions::StorageModeShared,
     );
 
-    let experts_kernel = MoeExpertsKernel::new(ctx).expect("experts kernel");
+    let experts_kernel =
+        MoeExpertsFusedKernel::new(ctx).expect("experts kernel");
 
     let make_args = || MoeExpertsArguments {
         x_perm_buffer: &x_perm_buf,
@@ -492,7 +495,8 @@ fn run_two_pass_prefill_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let experts_kernel = MoeExpertsKernel::new(ctx).expect("experts kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(ctx)
+        .expect("experts prefill kernel");
 
     let x_perm_buf = ctx.device.new_buffer_with_data(
         x_perm.as_ptr() as *const _,
@@ -599,7 +603,7 @@ fn run_two_pass_prefill_case(
     for _ in 0..warmup {
         let cb = ctx.command_queue.new_command_buffer();
         experts_kernel
-            .encode_two_pass_prefill(&cb, make_two_pass_args())
+            .encode(&cb, make_two_pass_args())
             .expect("two-pass prefill encode");
         cb.commit();
         cb.wait_until_completed();
@@ -610,7 +614,7 @@ fn run_two_pass_prefill_case(
         let start = Instant::now();
         let cb = ctx.command_queue.new_command_buffer();
         experts_kernel
-            .encode_two_pass_prefill(&cb, make_two_pass_args())
+            .encode(&cb, make_two_pass_args())
             .expect("two-pass prefill encode");
         cb.commit();
         cb.wait_until_completed();

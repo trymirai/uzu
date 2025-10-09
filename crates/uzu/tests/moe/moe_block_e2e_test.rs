@@ -5,7 +5,7 @@ use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
-        MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsKernel,
+        MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsFusedKernel,
         MoeFinalizeArguments, MoeFinalizeKernel, MoeOffsetsScanArguments,
         MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
         MoeTopKArguments, MoeTopKKernel,
@@ -190,19 +190,52 @@ fn run_moe_parity_test(
     if t > 1 {
         // Test 1-pass prefill (default, stable)
         run_moe_parity_test_internal(
-            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
-            gate_clip, up_clip, seed, &format!("{}_1pass", test_name), false
+            ctx,
+            t,
+            e,
+            k,
+            d_model,
+            d_ff,
+            gating_code,
+            silu_alpha,
+            gate_clip,
+            up_clip,
+            seed,
+            &format!("{}_1pass", test_name),
+            false,
         );
         // Test 2-pass prefill (experimental)
         run_moe_parity_test_internal(
-            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
-            gate_clip, up_clip, seed, &format!("{}_2pass", test_name), true
+            ctx,
+            t,
+            e,
+            k,
+            d_model,
+            d_ff,
+            gating_code,
+            silu_alpha,
+            gate_clip,
+            up_clip,
+            seed,
+            &format!("{}_2pass", test_name),
+            true,
         );
     } else {
         // Decode mode (T=1) - no prefill variants
         run_moe_parity_test_internal(
-            ctx, t, e, k, d_model, d_ff, gating_code, silu_alpha,
-            gate_clip, up_clip, seed, test_name, false
+            ctx,
+            t,
+            e,
+            k,
+            d_model,
+            d_ff,
+            gating_code,
+            silu_alpha,
+            gate_clip,
+            up_clip,
+            seed,
+            test_name,
+            false,
         );
     }
 }
@@ -235,14 +268,27 @@ fn run_moe_parity_test_internal(
     let mut rng = StdRng::seed_from_u64(seed);
 
     let prefill_mode = if t > 1 {
-        if two_pass_prefill { "2-pass" } else { "1-pass" }
+        if two_pass_prefill {
+            "2-pass"
+        } else {
+            "1-pass"
+        }
     } else {
         "decode"
     };
 
     eprintln!(
         "\n[{}] T={}, E={}, K={}, d_model={}, d_ff={}, alpha={}, gate_clip={:?}, up_clip={:?}, mode={}",
-        test_name, t, e, k, d_model, d_ff, silu_alpha, gate_clip, up_clip, prefill_mode
+        test_name,
+        t,
+        e,
+        k,
+        d_model,
+        d_ff,
+        silu_alpha,
+        gate_clip,
+        up_clip,
+        prefill_mode
     );
 
     // Random BF16 inputs
@@ -552,7 +598,7 @@ fn run_moe_parity_test_internal(
         )
         .expect("gather");
 
-    let experts = MoeExpertsKernel::new(&ctx).expect("experts");
+    let experts = MoeExpertsFusedKernel::new(&ctx).expect("experts");
     const BN: usize = 64;
     let num_tiles_n = (d_model + BN - 1) / BN;
     experts

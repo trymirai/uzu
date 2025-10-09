@@ -329,6 +329,98 @@ MOE_PASS_A_KERNEL(bfloat, bf16)
 MOE_PASS_A_KERNEL(half, f16)
 MOE_PASS_A_KERNEL(float, f32)
 
+// Indirect variant (consumes tile map)
+template<typename T>
+void moe_two_pass_prefill_pass_a_indirect_impl(
+    device const T* X_perm,
+    device const uint* expert_offsets,
+    device const T* W13_all,
+    device const T* up_biases,
+    device T* hidden_out,
+    device const uint* tile_map, // [total_tiles * 3] -> [expert, seg_start, tile_row_offset]
+    uint d_model,
+    uint d_ff,
+    uint E,
+    float gate_clip_min,
+    float gate_clip_max,
+    float up_clip_min,
+    float up_clip_max,
+    float silu_alpha,
+    uint row_tile_idx,
+    uint n_tile_idx,
+    ushort simd_gid,
+    ushort simd_lid,
+    threadgroup T* Xs,
+    threadgroup T* Wk_up,
+    threadgroup T* Wk_gate) {
+    constexpr uint ROW_TILE = 16;
+    const uint base = row_tile_idx * 3u;
+    const uint expert_idx = tile_map[base + 0u];
+    if (expert_idx >= E) {
+        return;
+    }
+    const uint tile_m0 = tile_map[base + 2u];
+    const uint tile_m = tile_m0 / ROW_TILE;
+
+    moe_two_pass_prefill_pass_a_impl<T, float>(
+        X_perm,
+        expert_offsets,
+        W13_all,
+        up_biases,
+        hidden_out,
+        d_model,
+        d_ff,
+        E,
+        gate_clip_min,
+        gate_clip_max,
+        up_clip_min,
+        up_clip_max,
+        silu_alpha,
+        expert_idx,
+        tile_m,
+        n_tile_idx,
+        simd_gid,
+        simd_lid,
+        Xs,
+        Wk_up,
+        Wk_gate);
+}
+
+#define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, SUFFIX) \
+kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX( \
+    device const DTYPE* X_perm [[buffer(0)]], \
+    device const uint* expert_offsets [[buffer(1)]], \
+    device const DTYPE* W13_all [[buffer(2)]], \
+    device const DTYPE* up_biases [[buffer(3)]], \
+    device DTYPE* hidden_out [[buffer(4)]], \
+    constant uint& d_model [[buffer(5)]], \
+    constant uint& d_ff [[buffer(6)]], \
+    constant uint& E [[buffer(7)]], \
+    constant float& gate_clip_min [[buffer(8)]], \
+    constant float& gate_clip_max [[buffer(9)]], \
+    constant float& up_clip_min [[buffer(10)]], \
+    constant float& up_clip_max [[buffer(11)]], \
+    constant float& silu_alpha [[buffer(12)]], \
+    device const uint* tile_map [[buffer(13)]], \
+    uint3 tgpig [[threadgroup_position_in_grid]], \
+    ushort simd_gid [[simdgroup_index_in_threadgroup]], \
+    ushort simd_lid [[thread_index_in_simdgroup]]) \
+{ \
+    threadgroup DTYPE Xs_local[16 * 32]; \
+    threadgroup DTYPE Wk_up_local[32 * 64]; \
+    threadgroup DTYPE Wk_gate_local[32 * 64]; \
+    \
+    moe_two_pass_prefill_pass_a_indirect_impl<DTYPE>( \
+        X_perm, expert_offsets, W13_all, up_biases, hidden_out, tile_map, \
+        d_model, d_ff, E, gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, \
+        silu_alpha, tgpig.y, tgpig.x, simd_gid, simd_lid, \
+        Xs_local, Wk_up_local, Wk_gate_local); \
+}
+
+MOE_PASS_A_INDIRECT_KERNEL(bfloat, bf16)
+MOE_PASS_A_INDIRECT_KERNEL(half, f16)
+MOE_PASS_A_INDIRECT_KERNEL(float, f32)
+
 // ============================================================================
 // Pass B: FC2 - Compute output from hidden states
 // ============================================================================
@@ -538,3 +630,75 @@ kernel void moe_two_pass_prefill_pass_b_##SUFFIX( \
 MOE_PASS_B_KERNEL(bfloat, bf16)
 MOE_PASS_B_KERNEL(half, f16)
 MOE_PASS_B_KERNEL(float, f32)
+
+template<typename T>
+void moe_two_pass_prefill_pass_b_indirect_impl(
+    device const T* hidden,
+    device const uint* expert_offsets,
+    device const T* W2_all,
+    device const T* down_biases,
+    device T* output,
+    device const uint* tile_map,
+    uint d_model,
+    uint d_ff,
+    uint E,
+    uint row_tile_idx,
+    uint n_tile_idx,
+    ushort simd_gid,
+    ushort simd_lid,
+    threadgroup T* Hs,
+    threadgroup T* Wk) {
+    constexpr uint ROW_TILE = 16;
+    const uint base = row_tile_idx * 3u;
+    const uint expert_idx = tile_map[base + 0u];
+    if (expert_idx >= E) {
+        return;
+    }
+    const uint tile_m0 = tile_map[base + 2u];
+    const uint tile_m = tile_m0 / ROW_TILE;
+
+    moe_two_pass_prefill_pass_b_impl<T, float>(
+        hidden,
+        expert_offsets,
+        W2_all,
+        down_biases,
+        output,
+        d_model,
+        d_ff,
+        E,
+        expert_idx,
+        tile_m,
+        n_tile_idx,
+        simd_gid,
+        simd_lid,
+        Hs,
+        Wk);
+}
+
+#define MOE_PASS_B_INDIRECT_KERNEL(DTYPE, SUFFIX) \
+kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX( \
+    device const DTYPE* hidden [[buffer(0)]], \
+    device const uint* expert_offsets [[buffer(1)]], \
+    device const DTYPE* W2_all [[buffer(2)]], \
+    device const DTYPE* down_biases [[buffer(3)]], \
+    device DTYPE* output [[buffer(4)]], \
+    constant uint& d_model [[buffer(5)]], \
+    constant uint& d_ff [[buffer(6)]], \
+    constant uint& E [[buffer(7)]], \
+    device const uint* tile_map [[buffer(8)]], \
+    uint3 tgpig [[threadgroup_position_in_grid]], \
+    ushort simd_gid [[simdgroup_index_in_threadgroup]], \
+    ushort simd_lid [[thread_index_in_simdgroup]]) \
+{ \
+    threadgroup DTYPE Hs_local[16 * 32]; \
+    threadgroup DTYPE Wk_local[32 * 64]; \
+    \
+    moe_two_pass_prefill_pass_b_indirect_impl<DTYPE>( \
+        hidden, expert_offsets, W2_all, down_biases, output, tile_map, \
+        d_model, d_ff, E, tgpig.y, tgpig.x, simd_gid, simd_lid, \
+        Hs_local, Wk_local); \
+}
+
+MOE_PASS_B_INDIRECT_KERNEL(bfloat, bf16)
+MOE_PASS_B_INDIRECT_KERNEL(half, f16)
+MOE_PASS_B_INDIRECT_KERNEL(float, f32)

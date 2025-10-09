@@ -37,6 +37,7 @@ pub struct Generator {
     registered_prefix_len: usize,
     pending_kv_update: Option<u64>,
     first_decode_done: bool,
+    first_prefill_done: bool,
 }
 
 impl Generator {
@@ -45,7 +46,9 @@ impl Generator {
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
         // IMPORTANT: Enable Metal capture layer BEFORE device creation
-        if std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some() {
+        if std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some()
+            || std::env::var_os("UZU_CAPTURE_FIRST_PREFILL").is_some()
+        {
             unsafe {
                 std::env::set_var("METAL_CAPTURE_ENABLED", "1");
             }
@@ -65,6 +68,7 @@ impl Generator {
             registered_prefix_len: 0,
             pending_kv_update: None,
             first_decode_done: false,
+            first_prefill_done: false,
         };
 
         //Warmup
@@ -136,6 +140,45 @@ impl Generator {
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
 
+            // Capture first prefill chunk if requested
+            let is_first_prefill = !self.first_prefill_done && step == 0;
+            let should_capture = is_first_prefill
+                && std::env::var_os("UZU_CAPTURE_FIRST_PREFILL").is_some();
+
+            if should_capture {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                let trace_path = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(format!("uzu_first_prefill-{timestamp}.gputrace"));
+
+                let capture_manager = CaptureManager::shared();
+                let capture_descriptor = CaptureDescriptor::new();
+                capture_descriptor
+                    .set_destination(MTLCaptureDestination::GpuTraceDocument);
+                capture_descriptor.set_output_url(&trace_path);
+                self.context
+                    .mtl_context
+                    .command_queue
+                    .set_label("uzu_command_queue");
+                capture_descriptor.set_capture_command_queue(
+                    &self.context.mtl_context.command_queue,
+                );
+
+                if let Err(err) =
+                    capture_manager.start_capture(&capture_descriptor)
+                {
+                    eprintln!("⚠️  Failed to start GPU capture: {err}");
+                } else {
+                    println!(
+                        "🔍 GPU capture started for first prefill chunk: {:?}",
+                        trace_path
+                    );
+                }
+            }
+
             objc2::rc::autoreleasepool(|_pool| {
                 let _ = last_state.take();
             });
@@ -152,6 +195,16 @@ impl Generator {
                 self.allow_pre_encode(),
                 sampling_method,
             );
+
+            if should_capture {
+                CaptureManager::shared().stop_capture();
+                println!("✅ GPU capture stopped");
+                self.first_prefill_done = true;
+            }
+
+            if is_first_prefill {
+                self.first_prefill_done = true;
+            }
 
             // Register the *accepted* real tokens from this step (exclude the
             // padding token at the very end of the overall prefill).
@@ -329,6 +382,7 @@ impl Generator {
         self.encoded_tasks.clear();
         self.pending_kv_update = None;
         self.first_decode_done = false;
+        self.first_prefill_done = false;
     }
 
     pub fn prefix_len(&self) -> usize {

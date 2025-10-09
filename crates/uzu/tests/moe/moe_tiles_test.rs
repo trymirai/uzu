@@ -2,9 +2,11 @@
 
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::moe::{MoeTileCountsKernel, MoeTileScanKernel, MoeTileCountsArguments, MoeTileScanArguments};
+use uzu::backends::metal::kernel::moe::{
+    MoeTileCountsArguments, MoeTileMapKernel, MoeTileScanArguments,
+};
 
-use super::test_utils::{create_ctx, cpu_tile_counts, cpu_tile_scan};
+use super::test_utils::{cpu_tile_counts, cpu_tile_scan, create_ctx};
 
 #[test]
 fn test_tile_counts_correctness() {
@@ -38,16 +40,19 @@ fn test_tile_counts_correctness() {
         );
 
         // Execute kernel using kernel struct
-        let tile_counts_kernel = MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
+        let tile_kernel =
+            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.new_command_buffer();
-        tile_counts_kernel.encode(
-            &cb,
-            &MoeTileCountsArguments {
-                offsets_buffer: &offsets_buf,
-                tile_counts_buffer: &tile_counts_buf,
-                e,
-            },
-        ).expect("encode tile counts");
+        tile_kernel
+            .encode_counts(
+                &cb,
+                &MoeTileCountsArguments {
+                    offsets_buffer: &offsets_buf,
+                    tile_counts_buffer: &tile_counts_buf,
+                    e,
+                },
+            )
+            .expect("encode tile counts");
         cb.commit();
         cb.wait_until_completed();
 
@@ -60,7 +65,8 @@ fn test_tile_counts_correctness() {
         };
 
         assert_eq!(
-            tile_counts_gpu, &tile_counts_cpu[..],
+            tile_counts_gpu,
+            &tile_counts_cpu[..],
             "Tile counts mismatch for E={}",
             e
         );
@@ -81,9 +87,8 @@ fn test_tile_scan_correctness() {
         eprintln!("[TileScanTest] E={}", e);
 
         // Generate random tile counts
-        let tile_counts: Vec<u32> = (0..e)
-            .map(|_| rng.random_range(0..20))
-            .collect();
+        let tile_counts: Vec<u32> =
+            (0..e).map(|_| rng.random_range(0..20)).collect();
 
         let (tile_offsets_cpu, total_tiles_cpu) = cpu_tile_scan(&tile_counts);
 
@@ -103,17 +108,20 @@ fn test_tile_scan_correctness() {
         );
 
         // Execute kernel using kernel struct
-        let tile_scan_kernel = MoeTileScanKernel::new(&ctx).expect("MoeTileScanKernel::new");
+        let tile_kernel =
+            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.new_command_buffer();
-        tile_scan_kernel.encode(
-            &cb,
-            &MoeTileScanArguments {
-                tile_counts_buffer: &tile_counts_buf,
-                tile_offsets_buffer: &tile_offsets_buf,
-                total_tiles_buffer: &total_tiles_buf,
-                e,
-            },
-        ).expect("encode tile scan");
+        tile_kernel
+            .encode_scan(
+                &cb,
+                &MoeTileScanArguments {
+                    tile_counts_buffer: &tile_counts_buf,
+                    tile_offsets_buffer: &tile_offsets_buf,
+                    total_tiles_buffer: &total_tiles_buf,
+                    e,
+                },
+            )
+            .expect("encode tile scan");
         cb.commit();
         cb.wait_until_completed();
 
@@ -124,12 +132,12 @@ fn test_tile_scan_correctness() {
                 e + 1,
             )
         };
-        let total_tiles_gpu = unsafe {
-            *(total_tiles_buf.contents() as *const u32)
-        };
+        let total_tiles_gpu =
+            unsafe { *(total_tiles_buf.contents() as *const u32) };
 
         assert_eq!(
-            tile_offsets_gpu, &tile_offsets_cpu[..],
+            tile_offsets_gpu,
+            &tile_offsets_cpu[..],
             "Tile offsets mismatch for E={}",
             e
         );
@@ -164,16 +172,19 @@ fn test_tile_edge_cases() {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let tile_counts_kernel = MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
+        let tile_kernel =
+            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.new_command_buffer();
-        tile_counts_kernel.encode(
-            &cb,
-            &MoeTileCountsArguments {
-                offsets_buffer: &offsets_buf,
-                tile_counts_buffer: &tile_counts_buf,
-                e,
-            },
-        ).expect("encode tile counts");
+        tile_kernel
+            .encode_counts(
+                &cb,
+                &MoeTileCountsArguments {
+                    offsets_buffer: &offsets_buf,
+                    tile_counts_buffer: &tile_counts_buf,
+                    e,
+                },
+            )
+            .expect("encode tile counts");
         cb.commit();
         cb.wait_until_completed();
 
@@ -206,16 +217,19 @@ fn test_tile_edge_cases() {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let tile_counts_kernel = MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
+        let tile_kernel =
+            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.new_command_buffer();
-        tile_counts_kernel.encode(
-            &cb,
-            &MoeTileCountsArguments {
-                offsets_buffer: &offsets_buf,
-                tile_counts_buffer: &tile_counts_buf,
-                e,
-            },
-        ).expect("encode tile counts");
+        tile_kernel
+            .encode_counts(
+                &cb,
+                &MoeTileCountsArguments {
+                    offsets_buffer: &offsets_buf,
+                    tile_counts_buffer: &tile_counts_buf,
+                    e,
+                },
+            )
+            .expect("encode tile counts");
         cb.commit();
         cb.wait_until_completed();
 

@@ -3,9 +3,12 @@
 use half::bf16;
 use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{KernelDataType, moe::{MoeGatherKernel, MoeGatherArguments}};
+use uzu::backends::metal::kernel::{
+    KernelDataType,
+    moe::{MoeGatherArguments, MoeGatherKernel},
+};
 
-use super::test_utils::{create_ctx, cpu_gather};
+use super::test_utils::{cpu_gather, create_ctx};
 
 #[test]
 fn test_gather_correctness() {
@@ -29,9 +32,8 @@ fn test_gather_correctness() {
             .collect();
 
         // Random bucketed_ids with valid token indices
-        let bucketed_ids: Vec<i32> = (0..sum_k)
-            .map(|_| rng.random_range(0..t as i32))
-            .collect();
+        let bucketed_ids: Vec<i32> =
+            (0..sum_k).map(|_| rng.random_range(0..t as i32)).collect();
 
         let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
 
@@ -62,19 +64,21 @@ fn test_gather_correctness() {
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
         let cb = ctx.command_queue.new_command_buffer();
-        gather.encode(
-            &cb,
-            KernelDataType::BFloat16,
-            MoeGatherArguments {
-                x_buffer: &x_buf,
-                bucketed_ids_buffer: &ids_buf,
-                x_perm_buffer: &x_perm_buf,
-                sumk_buffer: &sumk_buf,
-                t: t,
-                k: sum_k / t,  // Decompose sum_k into k per token
-                d_model,
-            },
-        ).expect("encode gather");
+        gather
+            .encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeGatherArguments {
+                    x_buffer: &x_buf,
+                    bucketed_ids_buffer: &ids_buf,
+                    x_perm_buffer: &x_perm_buf,
+                    sumk_buffer: &sumk_buf,
+                    t: t,
+                    k: sum_k / t, // Decompose sum_k into k per token
+                    d_model,
+                },
+            )
+            .expect("encode gather");
         cb.commit();
         cb.wait_until_completed();
 
@@ -111,16 +115,15 @@ fn test_gather_edge_cases() {
     let sum_k = 16;
     let d_model = 64;
 
-    let x: Vec<bf16> = (0..t * d_model)
-        .map(|i| bf16::from_f32((i % 10) as f32))
-        .collect();
+    let x: Vec<bf16> =
+        (0..t * d_model).map(|i| bf16::from_f32((i % 10) as f32)).collect();
 
     // Mix of valid and invalid IDs
     let bucketed_ids: Vec<i32> = (0..sum_k)
         .map(|i| {
             match i % 4 {
-                0 => -1,                 // Invalid
-                1 => (t + 10) as i32,    // Out of bounds
+                0 => -1,                   // Invalid
+                1 => (t + 10) as i32,      // Out of bounds
                 _ => ((i / 2) % t) as i32, // Valid
             }
         })
@@ -154,19 +157,21 @@ fn test_gather_edge_cases() {
     // Execute gather kernel using kernel struct
     let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
-    gather.encode(
-        &cb,
-        KernelDataType::BFloat16,
-        MoeGatherArguments {
-            x_buffer: &x_buf,
-            bucketed_ids_buffer: &ids_buf,
-            x_perm_buffer: &x_perm_buf,
-            sumk_buffer: &sumk_buf,
-            t: t,
-            k: sum_k / t,  // Decompose sum_k into k per token
-            d_model,
-        },
-    ).expect("encode gather");
+    gather
+        .encode(
+            &cb,
+            KernelDataType::BFloat16,
+            MoeGatherArguments {
+                x_buffer: &x_buf,
+                bucketed_ids_buffer: &ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t: t,
+                k: sum_k / t, // Decompose sum_k into k per token
+                d_model,
+            },
+        )
+        .expect("encode gather");
     cb.commit();
     cb.wait_until_completed();
 
