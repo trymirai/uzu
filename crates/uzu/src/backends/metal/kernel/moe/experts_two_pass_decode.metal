@@ -652,3 +652,132 @@ kernel void moe_experts_decode_down_reduce_##SUFFIX( \
 MOE_PASS_B_REDUCE_KERNEL(bfloat, bf16)
 MOE_PASS_B_REDUCE_KERNEL(half, f16)
 MOE_PASS_B_REDUCE_KERNEL(float, f32)
+
+// === Decode-specific Pass B: Simdgroup cooperation along K for coalescing ===
+// W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading consecutive K elements
+// Exploits transposed layout for stride-1 memory access across threads
+
+template<typename T>
+void moe_experts_decode_down_fused_2d_impl(
+    device const T* hidden,               // [total_rows, d_ff]
+    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
+    device const T* w2_all,               // [E, d_model, d_ff] - TRANSPOSED layout
+    device const T* down_biases,          // [E, d_model]
+    device T* y_out,                      // [total_rows, d_model]
+    uint total_rows,
+    uint d_model,
+    uint d_ff,
+    uint E,
+    uint2 tgpig,
+    uint simd_gid,
+    uint simd_lid
+) {
+    // Thin kernel: 32 threads per output (1 simdgroup), 8 simdgroups per TG = 8 outputs/TG
+    constexpr uint THREADS_PER_SIMD = 32;
+    constexpr uint SIMDGROUPS_PER_TG = 8;
+
+    const uint row_idx = tgpig.y;
+    if (row_idx >= total_rows) return;
+
+    // Each simdgroup computes one output column
+    const uint my_col = tgpig.x * SIMDGROUPS_PER_TG + simd_gid;
+    if (my_col >= d_model) return;
+
+    const uint expert_idx = row_expert_map[row_idx];
+
+    // Base addresses for this output column
+    const ulong hidden_base = (ulong)row_idx * (ulong)d_ff;
+    const ulong w2_col_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff + (ulong)my_col * (ulong)d_ff;
+
+    // Each thread in simdgroup handles every 32nd element along K
+    // With transposed W2, simd_lid gives consecutive memory locations → perfect coalescing!
+    float acc = 0.0f;
+
+    // Main loop: stride-32 with vec8 loads for ILP
+    const uint k_iters = d_ff / THREADS_PER_SIMD;
+    const uint k_vec_iters = k_iters / 8;
+
+    #pragma clang loop unroll_count(4)
+    for (uint iter = 0; iter < k_vec_iters; ++iter) {
+        const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd_lid;
+
+        // Load 8 values with stride-32
+        float h0 = float(hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD]);
+        float h1 = float(hidden[hidden_base + k_base + 1 * THREADS_PER_SIMD]);
+        float h2 = float(hidden[hidden_base + k_base + 2 * THREADS_PER_SIMD]);
+        float h3 = float(hidden[hidden_base + k_base + 3 * THREADS_PER_SIMD]);
+        float h4 = float(hidden[hidden_base + k_base + 4 * THREADS_PER_SIMD]);
+        float h5 = float(hidden[hidden_base + k_base + 5 * THREADS_PER_SIMD]);
+        float h6 = float(hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD]);
+        float h7 = float(hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD]);
+
+        // W2 loads: COALESCED - consecutive threads read consecutive addresses!
+        float w0 = float(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+        float w1 = float(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+        float w2 = float(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+        float w3 = float(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+        float w4 = float(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+        float w5 = float(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+        float w6 = float(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+        float w7 = float(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+
+        acc = fma(h0, w0, acc);
+        acc = fma(h1, w1, acc);
+        acc = fma(h2, w2, acc);
+        acc = fma(h3, w3, acc);
+        acc = fma(h4, w4, acc);
+        acc = fma(h5, w5, acc);
+        acc = fma(h6, w6, acc);
+        acc = fma(h7, w7, acc);
+    }
+
+    // Handle remaining full iterations
+    for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
+        const uint k = iter * THREADS_PER_SIMD + simd_lid;
+        acc = fma(float(hidden[hidden_base + k]), float(w2_all[w2_col_base + k]), acc);
+    }
+
+    // Handle leftover elements (d_ff % 32)
+    const uint leftover_start = k_iters * THREADS_PER_SIMD;
+    if (leftover_start + simd_lid < d_ff) {
+        const uint k = leftover_start + simd_lid;
+        acc = fma(float(hidden[hidden_base + k]), float(w2_all[w2_col_base + k]), acc);
+    }
+
+    // Simdgroup reduction
+    float result = simd_sum(acc);
+
+    // Lane 0 writes result
+    if (simd_lid == 0) {
+        const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
+        result += float(down_biases[bias_idx]);
+
+        const ulong out_idx = (ulong)row_idx * (ulong)d_model + (ulong)my_col;
+        y_out[out_idx] = T(result);
+    }
+}
+
+#define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX) \
+kernel void moe_experts_decode_down_fused_2d_##SUFFIX( \
+    device const DTYPE* hidden [[buffer(0)]], \
+    device const uint* row_expert_map [[buffer(1)]], \
+    device const DTYPE* w2_all [[buffer(2)]], \
+    device const DTYPE* down_biases [[buffer(3)]], \
+    device DTYPE* y_out [[buffer(4)]], \
+    constant uint& total_rows [[buffer(5)]], \
+    constant uint& d_model [[buffer(6)]], \
+    constant uint& d_ff [[buffer(7)]], \
+    constant uint& E [[buffer(8)]], \
+    uint2 tgpig [[threadgroup_position_in_grid]], \
+    uint simd_gid [[simdgroup_index_in_threadgroup]], \
+    uint simd_lid [[thread_index_in_simdgroup]]) \
+{ \
+    moe_experts_decode_down_fused_2d_impl<DTYPE>( \
+        hidden, row_expert_map, w2_all, down_biases, y_out, \
+        total_rows, d_model, d_ff, E, \
+        tgpig, simd_gid, simd_lid); \
+}
+
+MOE_PASS_B_FUSED_2D_KERNEL(bfloat, bf16)
+MOE_PASS_B_FUSED_2D_KERNEL(half, f16)
+MOE_PASS_B_FUSED_2D_KERNEL(float, f32)

@@ -186,7 +186,7 @@ fn run_decode_parity_case(
         }
     }
 
-    // Generate W2 in layout [E, d_ff, d_model] for both CPU reference and GPU
+    // Generate W2 in original layout [E, d_ff, d_model] for CPU reference
     let mut base_w2_original = vec![bf16::from_f32(0.0); elem_w2];
     for (expert, chunk) in
         base_w2_original.chunks_mut(d_ff * d_model).enumerate()
@@ -202,8 +202,19 @@ fn run_decode_parity_case(
         }
     }
 
-    // GPU uses same layout [E, d_ff, d_model] - no transpose needed
-    let base_w2 = base_w2_original.clone();
+    // Transpose W2 to GPU layout [E, d_model, d_ff]
+    let mut base_w2 = vec![bf16::from_f32(0.0); elem_w2];
+    for expert in 0..e {
+        let expert_offset = expert * d_ff * d_model;
+        for ff in 0..d_ff {
+            for dm in 0..d_model {
+                // src: [E, d_ff, d_model] -> index: expert_offset + ff * d_model + dm
+                // dst: [E, d_model, d_ff] -> index: expert_offset + dm * d_ff + ff
+                base_w2[expert_offset + dm * d_ff + ff] =
+                    base_w2_original[expert_offset + ff * d_model + dm];
+            }
+        }
+    }
 
     let mut base_up_bias = vec![bf16::from_f32(0.0); elem_up_bias];
     for (expert, chunk) in base_up_bias.chunks_mut(2 * d_ff).enumerate() {

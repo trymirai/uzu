@@ -92,7 +92,8 @@ void moe_fused_expert_mlp_impl(
     const bool rows_active = rows_ok;
 
         const ulong W13_base = (ulong)expert_idx * (ulong)d_model * (ulong)(d_ff * 2);
-        const ulong W2_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
+        // W2 is now in transposed layout [E, d_model, d_ff]
+        const ulong W2_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff;
         const ulong x_block_base = (ulong)(seg_start + tile_m0) * (ulong)d_model;
 
     // ===== FC1: Compute once, reuse for N_GROUP tiles =====
@@ -236,7 +237,8 @@ void moe_fused_expert_mlp_impl(
                     const uint nj = idx % BN; \
                     float v = 0.0f; \
                     if (r < ff_chunk && nj < n_cols && is_active) { \
-                        const ulong w2g = W2_base + (ulong)(ff0 + r) * (ulong)d_model + (ulong)(tile_n0 + nj); \
+                        /* W2 transposed layout [E, d_model, d_ff]: col_idx * d_ff + ff_idx */ \
+                        const ulong w2g = W2_base + (ulong)(tile_n0 + nj) * (ulong)d_ff + (ulong)(ff0 + r); \
                         v = float(W2_all[w2g]); \
                         v = isfinite(v) ? v : 0.0f; \
                     } \

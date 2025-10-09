@@ -256,13 +256,24 @@ fn run_moe_parity_test(
         }
     }
 
-    // Generate W2 in layout [E, d_ff, d_model] for both CPU reference and GPU
+    // Generate W2 in original layout [E, d_ff, d_model] for CPU reference
     let w2_cpu: Vec<bf16> = (0..w2_len)
         .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
         .collect();
 
-    // GPU uses same layout [E, d_ff, d_model] - no transpose needed
-    let w2_gpu = w2_cpu.clone();
+    // Transpose W2 to GPU layout [E, d_model, d_ff]
+    let mut w2_gpu = vec![bf16::from_f32(0.0); w2_len];
+    for expert in 0..e {
+        let expert_offset = expert * d_ff * d_model;
+        for ff in 0..d_ff {
+            for dm in 0..d_model {
+                // src: [E, d_ff, d_model] -> index: expert_offset + ff * d_model + dm
+                // dst: [E, d_model, d_ff] -> index: expert_offset + dm * d_ff + ff
+                w2_gpu[expert_offset + dm * d_ff + ff] =
+                    w2_cpu[expert_offset + ff * d_model + dm];
+            }
+        }
+    }
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
         .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
         .collect();

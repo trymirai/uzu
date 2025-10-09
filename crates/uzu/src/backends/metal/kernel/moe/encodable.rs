@@ -205,8 +205,92 @@ impl MoeBlockEncodable {
                 ))
             })?;
 
-        // Use W2 in original layout [E, d_ff, d_model] - no transpose needed
-        let w2_src = unsafe { w2_arr.mtl_buffer().clone() };
+        // Transpose W2 from source layout [E, d_ff, d_model] to GPU layout [E, d_model, d_ff]
+        let w2_shape = w2_arr.shape().to_vec();
+        let w2_e = w2_shape[0];
+        let w2_d_ff = w2_shape[1];
+        let w2_d_model = w2_shape[2];
+
+        let w2_total_size = w2_e * w2_d_ff * w2_d_model;
+        let w2_transpose_err =
+            |err: crate::device::array::ArrayConversionError| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "W2 transpose failed: {}",
+                    err
+                ))
+            };
+
+        let w2_transposed = match w2_arr.data_type() {
+            DataType::BF16 => {
+                let src = w2_arr.as_slice::<bf16>().map_err(w2_transpose_err)?;
+                let mut dst = vec![bf16::from_f32(0.0); w2_total_size];
+
+                for expert in 0..w2_e {
+                    let expert_offset = expert * w2_d_ff * w2_d_model;
+                    for ff in 0..w2_d_ff {
+                        for dm in 0..w2_d_model {
+                            // src: [E, d_ff, d_model] -> index: expert_offset + ff * d_model + dm
+                            // dst: [E, d_model, d_ff] -> index: expert_offset + dm * d_ff + ff
+                            dst[expert_offset + dm * w2_d_ff + ff] =
+                                src[expert_offset + ff * w2_d_model + dm];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (w2_total_size * size_of::<bf16>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            DataType::F16 => {
+                let src = w2_arr.as_slice::<f16>().map_err(w2_transpose_err)?;
+                let mut dst = vec![f16::from_f32(0.0); w2_total_size];
+
+                for expert in 0..w2_e {
+                    let expert_offset = expert * w2_d_ff * w2_d_model;
+                    for ff in 0..w2_d_ff {
+                        for dm in 0..w2_d_model {
+                            dst[expert_offset + dm * w2_d_ff + ff] =
+                                src[expert_offset + ff * w2_d_model + dm];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (w2_total_size * size_of::<f16>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            DataType::F32 => {
+                let src = w2_arr.as_slice::<f32>().map_err(w2_transpose_err)?;
+                let mut dst = vec![0.0f32; w2_total_size];
+
+                for expert in 0..w2_e {
+                    let expert_offset = expert * w2_d_ff * w2_d_model;
+                    for ff in 0..w2_d_ff {
+                        for dm in 0..w2_d_model {
+                            dst[expert_offset + dm * w2_d_ff + ff] =
+                                src[expert_offset + ff * w2_d_model + dm];
+                        }
+                    }
+                }
+
+                context.device.new_buffer_with_data(
+                    dst.as_ptr() as *const _,
+                    (w2_total_size * size_of::<f32>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            },
+            other => {
+                return Err(crate::backends::metal::MTLError::Generic(
+                    format!("Unsupported W2 weight dtype {:?}", other),
+                ));
+            },
+        };
+
+        let w2_src = w2_transposed;
 
         let mut up_biases_arr = experts_tree
             .subtree("up_projection")

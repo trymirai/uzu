@@ -815,8 +815,9 @@ pub enum MoeExpertsError {
 pub struct MoeExpertsKernel {
     pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - tiled version
     gemv_pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - decode-specialized GEMV
-    two_pass_partial: Vec<MTLComputePipelineState>, // [dtype] - Pass B partial
-    two_pass_reduce: Vec<MTLComputePipelineState>,  // [dtype] - Pass B reduce
+    two_pass_partial: Vec<MTLComputePipelineState>, // [dtype] - Pass B partial (DEPRECATED)
+    two_pass_reduce: Vec<MTLComputePipelineState>,  // [dtype] - Pass B reduce (DEPRECATED)
+    two_pass_fused_2d: Vec<MTLComputePipelineState>, // [dtype] - Pass B fused 2D kernel
     two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - Pass A with indirect dispatch
     tile_counts_pipeline: MTLComputePipelineState,
     tile_scan_pipeline: MTLComputePipelineState,
@@ -831,13 +832,13 @@ pub struct MoeExpertsKernel {
 
 #[derive(Debug)]
 pub struct MoeExpertsArguments<'a> {
-    pub x_perm_buffer: &'a MTLBuffer, // [sum_k, d_model]
-    pub expert_offsets: &'a MTLBuffer, // [E+1]
-    pub w13_all: &'a MTLBuffer, // transposed weights [E * 2*d_ff * d_model]
-    pub w2_all: &'a MTLBuffer,  // [E*d_model*d_ff]
-    pub y_partial: &'a MTLBuffer, // [sum_k,d_model]
-    pub up_biases: &'a MTLBuffer, // [E*2*d_ff] if fused, [E*d_ff] otherwise
-    pub down_biases: &'a MTLBuffer, // [E*d_model]
+    pub x_perm_buffer: &'a MTLBuffer,      // [sum_k, d_model] - permuted input
+    pub expert_offsets: &'a MTLBuffer,     // [E+1] - expert segment offsets
+    pub w13_all: &'a MTLBuffer,            // [E, 2*d_ff, d_model] - transposed up projection weights
+    pub w2_all: &'a MTLBuffer,             // [E, d_model, d_ff] - transposed down projection weights
+    pub y_partial: &'a MTLBuffer,          // [sum_k, d_model] - output buffer
+    pub up_biases: &'a MTLBuffer,          // [E, 2*d_ff] - up projection biases
+    pub down_biases: &'a MTLBuffer,        // [E, d_model] - down projection biases
     pub tile_counts: &'a MTLBuffer, // [E]
     pub tile_row_offsets: &'a MTLBuffer, // [E+1]
     pub tile_map: &'a MTLBuffer, // [max_tiles * 3]
@@ -860,16 +861,16 @@ pub struct MoeExpertsArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoeExpertsTwoPassArguments<'a> {
-    pub x_perm_buffer: &'a MTLBuffer,
-    pub expert_offsets: &'a MTLBuffer,
-    pub row_expert_map: &'a MTLBuffer, // [total_rows]
-    pub hidden_buffer: &'a MTLBuffer,
-    pub partial_buffer: &'a MTLBuffer, // [num_tiles_k, total_rows, d_model]
-    pub output_buffer: &'a MTLBuffer,
-    pub w13_all: &'a MTLBuffer,
-    pub w2_all: &'a MTLBuffer,
-    pub up_biases: &'a MTLBuffer,
-    pub down_biases: &'a MTLBuffer,
+    pub x_perm_buffer: &'a MTLBuffer,      // [total_rows, d_model] - permuted input
+    pub expert_offsets: &'a MTLBuffer,     // [E+1] - expert segment offsets
+    pub row_expert_map: &'a MTLBuffer,     // [total_rows] - maps each row to its expert
+    pub hidden_buffer: &'a MTLBuffer,      // [total_rows, d_ff] - Pass A output
+    pub partial_buffer: &'a MTLBuffer,     // DEPRECATED: kept for API compatibility
+    pub output_buffer: &'a MTLBuffer,      // [total_rows, d_model] - final output
+    pub w13_all: &'a MTLBuffer,            // [E, 2*d_ff, d_model] - transposed up projection weights
+    pub w2_all: &'a MTLBuffer,             // [E, d_model, d_ff] - transposed down projection weights
+    pub up_biases: &'a MTLBuffer,          // [E, 2*d_ff] - up projection biases
+    pub down_biases: &'a MTLBuffer,        // [E, d_model] - down projection biases
     pub tile_counts: &'a MTLBuffer,   // [E]
     pub tile_offsets: &'a MTLBuffer,  // [E+1]
     pub tile_map: &'a MTLBuffer,      // [max_tiles * 3]
@@ -980,10 +981,13 @@ impl MoeExpertsKernel {
             }
         }
 
+        let mut two_pass_fused_2d: Vec<MTLComputePipelineState> =
+            Vec::with_capacity(dtypes.len());
+
         for dtype in &dtypes {
             let dtype_suffix = dtype_suffix(*dtype);
 
-            // Pass B: partial (split-K)
+            // Pass B: partial (split-K) - DEPRECATED, kept for compatibility
             let partial_fcv = FunctionConstantValues::new();
             partial_fcv.set_constant_value_at_index(
                 &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
@@ -999,11 +1003,18 @@ impl MoeExpertsKernel {
                 )?,
             );
 
-            // Pass C: reduce
+            // Pass C: reduce - DEPRECATED, kept for compatibility
             let reduce_kernel =
                 format!("moe_experts_decode_down_reduce_{}", dtype_suffix);
             two_pass_reduce
                 .push(ctx.compute_pipeline_state(&reduce_kernel, None)?);
+
+            // Pass B fused: direct down projection with transposed W2 (no function constants needed)
+            let fused_2d_kernel =
+                format!("moe_experts_decode_down_fused_2d_{}", dtype_suffix);
+            two_pass_fused_2d.push(
+                ctx.compute_pipeline_state(&fused_2d_kernel, None)?,
+            );
         }
 
         let tile_counts =
@@ -1031,6 +1042,7 @@ impl MoeExpertsKernel {
             gemv_pipelines,
             two_pass_partial,
             two_pass_reduce,
+            two_pass_fused_2d,
             two_pass_pass_a_indirect,
             tile_counts_pipeline: tile_counts,
             tile_scan_pipeline: tile_scan,
@@ -1408,84 +1420,47 @@ impl MoeExpertsKernel {
 
         encoder_a.end_encoding();
 
-        // Pass B: compute split-K partial outputs
-        let partial_pipeline = &self.two_pass_partial[dtype_idx];
-        let encoder_p = command_buffer.new_compute_command_encoder();
-        encoder_p.set_compute_pipeline_state(partial_pipeline);
-        encoder_p.set_buffer(0, Some(args.hidden_buffer), 0);
-        encoder_p.set_buffer(1, Some(args.row_expert_map), 0);
-        encoder_p.set_buffer(2, Some(args.w2_all), 0);
-        encoder_p.set_buffer(3, Some(args.partial_buffer), 0);
-        encoder_p.set_bytes(
-            4,
+        // Pass B: optimized down projection with transposed W2 (no shared memory)
+        let fused_2d_pipeline = &self.two_pass_fused_2d[dtype_idx];
+        let encoder_b = command_buffer.new_compute_command_encoder();
+        encoder_b.set_compute_pipeline_state(fused_2d_pipeline);
+        encoder_b.set_buffer(0, Some(args.hidden_buffer), 0);
+        encoder_b.set_buffer(1, Some(args.row_expert_map), 0);
+        encoder_b.set_buffer(2, Some(args.w2_all), 0);
+        encoder_b.set_buffer(3, Some(args.down_biases), 0);
+        encoder_b.set_buffer(4, Some(args.output_buffer), 0);
+        encoder_b.set_bytes(
+            5,
             size_of::<u32>() as u64,
             &total_rows_u32 as *const u32 as *const _,
         );
-        encoder_p.set_bytes(
-            5,
+        encoder_b.set_bytes(
+            6,
             size_of::<u32>() as u64,
             &d_model_u32 as *const u32 as *const _,
         );
-        encoder_p.set_bytes(
-            6,
+        encoder_b.set_bytes(
+            7,
             size_of::<u32>() as u64,
             &d_ff_u32 as *const u32 as *const _,
         );
-        encoder_p.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &args.num_tiles_k as *const u32 as *const _,
-        );
-        encoder_p.set_bytes(
+        encoder_b.set_bytes(
             8,
             size_of::<u32>() as u64,
             &e_u32 as *const u32 as *const _,
         );
-        let col_groups = (args.d_model as u32 + 255) / 256;
-        encoder_p.dispatch_thread_groups(
-            MTLSize::new(
-                col_groups as u64,
-                args.total_rows as u64,
-                args.num_tiles_k as u64,
-            ),
-            MTLSize::new(256, 1, 1),
-        );
-        encoder_p.end_encoding();
 
-        // Pass C: reduce partials and add down projections
-        let reduce_pipeline = &self.two_pass_reduce[dtype_idx];
-        let encoder_r = command_buffer.new_compute_command_encoder();
-        encoder_r.set_compute_pipeline_state(reduce_pipeline);
-        encoder_r.set_buffer(0, Some(args.partial_buffer), 0);
-        encoder_r.set_buffer(1, Some(args.row_expert_map), 0);
-        encoder_r.set_buffer(2, Some(args.down_biases), 0);
-        encoder_r.set_buffer(3, Some(args.output_buffer), 0);
-        encoder_r.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &total_rows_u32 as *const u32 as *const _,
+        // Dispatch: Thin decode kernel with simdgroup cooperation along K
+        // Each TG has 8 simdgroups, each simdgroup computes one output (32 threads cooperate)
+        const SIMDGROUPS_PER_TG: u32 = 8;
+        const THREADS_PER_TG: u32 = 256; // 8 × 32
+        let col_blocks = (args.d_model as u32 + SIMDGROUPS_PER_TG - 1) / SIMDGROUPS_PER_TG;
+
+        encoder_b.dispatch_thread_groups(
+            MTLSize::new(col_blocks as u64, args.total_rows as u64, 1),
+            MTLSize::new(THREADS_PER_TG as u64, 1, 1),
         );
-        encoder_r.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
-        encoder_r.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &args.num_tiles_k as *const u32 as *const _,
-        );
-        encoder_r.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
-        let col_groups = (args.d_model as u32 + 255) / 256;
-        encoder_r.dispatch_thread_groups(
-            MTLSize::new(col_groups as u64, args.total_rows as u64, 1),
-            MTLSize::new(256, 1, 1),
-        );
-        encoder_r.end_encoding();
+        encoder_b.end_encoding();
 
         Ok(())
     }
