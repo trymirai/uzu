@@ -4,7 +4,6 @@ using namespace metal;
 
 constant uint GATING_SEL [[function_constant(30)]]; // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
 constant uint TILE_H [[function_constant(32)]];    // tile size for hidden dimension in Pass A
-constant uint K_TILE [[function_constant(33)]];    // split-K tile size for Pass B
 
 static inline float gelu_approx(float x) {
     const float k0 = 0.7978845608f;
@@ -37,10 +36,9 @@ MTL_CONST uint BLOCK_N = THREADS_N * TN;
 static_assert(SM * SN == 32, "simdgroup must have 32 threads");
 static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, or 32");
 
-template<uint SIMD_SIZE>
-static inline float simdgroup_sum(float val, uint simd_lid) {
+static inline float simdgroup_sum_shuffle(float val) {
     MTL_PRAGMA_UNROLL
-    for (uint offset = SIMD_SIZE / 2; offset >= 1; offset >>= 1) {
+    for (ushort offset = 16; offset >= 1; offset >>= 1) {
         val += simd_shuffle_down(val, offset);
     }
     return val;
@@ -198,9 +196,9 @@ void moe_experts_decode_pass_a_impl(
     // Simdgroup reduction across thrN dimension
     MTL_PRAGMA_UNROLL
     for (uint tm = 0; tm < TM; tm++) {
-        result_up[tm] = simd_sum(result_up[tm]);
+        result_up[tm] = simdgroup_sum_shuffle(result_up[tm]);
         if (GATING_SEL > 1) {
-            result_gate[tm] = simd_sum(result_gate[tm]);
+            result_gate[tm] = simdgroup_sum_shuffle(result_gate[tm]);
         }
     }
 
@@ -503,157 +501,7 @@ MOE_PASS_A_INDIRECT_KERNEL(half, f16)
 MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 
 
-// === Pass B: compute partial down projections (split-K) ===
-template<typename T>
-void moe_experts_decode_down_partial_impl(
-    device const T* hidden,               // [total_rows, d_ff]
-    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
-    device const T* w2_all,               // [E, d_ff, d_model] - original layout
-    device float* partial_out,            // [num_tiles_k, total_rows, d_model]
-    uint total_rows,
-    uint d_model,
-    uint d_ff,
-    uint num_tiles_k,
-    uint E,
-    uint3 tgpig,
-    uint lid
-) {
-    constexpr uint THREADS_PER_TG = 256;
-
-    const uint col_group = tgpig.x;
-    const uint row_idx = tgpig.y;
-    const uint tile_idx = tgpig.z;
-
-    if (row_idx >= total_rows) return;
-    if (tile_idx >= num_tiles_k) return;
-
-    const uint col0 = col_group * THREADS_PER_TG;
-    const uint my_col = col0 + lid;
-    if (my_col >= d_model) return;
-
-    // Direct lookup - no binary search!
-    const uint expert_idx = row_expert_map[row_idx];
-
-    const uint k_start = tile_idx * K_TILE;
-    if (k_start >= d_ff) return;
-    const uint k_chunk = min(K_TILE, d_ff - k_start);
-
-    // Hoist address calculation outside loop for hidden (contiguous access)
-    const ulong hidden_base = (ulong)row_idx * (ulong)d_ff + (ulong)k_start;
-    device const T* h_ptr = hidden + hidden_base;
-
-    // Compute W2 base: [E, d_ff, d_model] layout
-    // For (expert_idx, ff_idx, my_col): index = expert_idx * d_ff * d_model + ff_idx * d_model + my_col
-    const ulong w2_expert_base = (ulong)expert_idx * (ulong)d_ff * (ulong)d_model;
-    const ulong w2_col_offset = (ulong)my_col;
-
-    float acc = 0.0f;
-    for (uint k = 0; k < k_chunk; ++k) {
-        const float h_val = float(h_ptr[k]);
-        const uint ff_idx = k_start + k;
-        const ulong w_idx = w2_expert_base + (ulong)ff_idx * (ulong)d_model + w2_col_offset;
-        const float w_val = float(w2_all[w_idx]);
-        acc = fma(h_val, w_val, acc);
-    }
-
-    const ulong partial_idx = ((ulong)tile_idx * (ulong)total_rows + (ulong)row_idx) * (ulong)d_model + (ulong)my_col;
-    partial_out[partial_idx] = acc;
-}
-
-#define MOE_PASS_B_PARTIAL_KERNEL(DTYPE, SUFFIX) \
-kernel void moe_experts_decode_down_partial_##SUFFIX( \
-    device const DTYPE* hidden [[buffer(0)]], \
-    device const uint* row_expert_map [[buffer(1)]], \
-    device const DTYPE* w2_all [[buffer(2)]], \
-    device float* partial_out [[buffer(3)]], \
-    constant uint& total_rows [[buffer(4)]], \
-    constant uint& d_model [[buffer(5)]], \
-    constant uint& d_ff [[buffer(6)]], \
-    constant uint& num_tiles_k [[buffer(7)]], \
-    constant uint& E [[buffer(8)]], \
-    uint3 tgpig [[threadgroup_position_in_grid]], \
-    uint lid [[thread_index_in_threadgroup]]) \
-{ \
-    moe_experts_decode_down_partial_impl<DTYPE>( \
-        hidden, row_expert_map, w2_all, partial_out, \
-        total_rows, d_model, d_ff, num_tiles_k, \
-        E, \
-        tgpig, lid); \
-}
-
-MOE_PASS_B_PARTIAL_KERNEL(bfloat, bf16)
-MOE_PASS_B_PARTIAL_KERNEL(half, f16)
-MOE_PASS_B_PARTIAL_KERNEL(float, f32)
-
-// === Pass C: reduce split-K partials, add bias, and cast to output type ===
-template<typename T>
-void moe_experts_decode_down_reduce_impl(
-    device const float* partial_in,       // [num_tiles_k, total_rows, d_model]
-    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
-    device const T* down_biases,          // [E, d_model]
-    device T* y_out,                      // [total_rows, d_model]
-    uint total_rows,
-    uint d_model,
-    uint num_tiles_k,
-    uint d_model_stride,
-    uint E,
-    uint2 tgpig,
-    uint lid
-) {
-    constexpr uint THREADS_PER_TG = 256;
-
-    const uint col_group = tgpig.x;
-    const uint row_idx = tgpig.y;
-    if (row_idx >= total_rows) return;
-
-    const uint col0 = col_group * THREADS_PER_TG;
-    const uint my_col = col0 + lid;
-    if (my_col >= d_model) return;
-
-    // Partial layout: [num_tiles_k, total_rows, d_model]
-    // Stride between tiles for same (row, col) is (total_rows * d_model)
-    const ulong stride = (ulong)total_rows * (ulong)d_model;
-    const ulong row_col_offset = (ulong)row_idx * (ulong)d_model + (ulong)my_col;
-
-    float sum = 0.0f;
-    for (uint tile = 0; tile < num_tiles_k; ++tile) {
-        const ulong partial_idx = (ulong)tile * stride + row_col_offset;
-        sum += partial_in[partial_idx];
-    }
-
-    // Direct lookup - no binary search!
-    const uint expert_idx = row_expert_map[row_idx];
-    const ulong bias_idx = (ulong)expert_idx * (ulong)d_model_stride + (ulong)my_col;
-    sum += float(down_biases[bias_idx]);
-
-    const ulong out_idx = (ulong)row_idx * (ulong)d_model_stride + (ulong)my_col;
-    y_out[out_idx] = T(sum);
-}
-
-#define MOE_PASS_B_REDUCE_KERNEL(DTYPE, SUFFIX) \
-kernel void moe_experts_decode_down_reduce_##SUFFIX( \
-    device const float* partial_in [[buffer(0)]], \
-    device const uint* row_expert_map [[buffer(1)]], \
-    device const DTYPE* down_biases [[buffer(2)]], \
-    device DTYPE* y_out [[buffer(3)]], \
-    constant uint& total_rows [[buffer(4)]], \
-    constant uint& d_model [[buffer(5)]], \
-    constant uint& num_tiles_k [[buffer(6)]], \
-    constant uint& E [[buffer(7)]], \
-    uint2 tgpig [[threadgroup_position_in_grid]], \
-    uint lid [[thread_index_in_threadgroup]]) \
-{ \
-    moe_experts_decode_down_reduce_impl<DTYPE>( \
-        partial_in, row_expert_map, down_biases, y_out, \
-        total_rows, d_model, num_tiles_k, d_model, E, \
-        tgpig, lid); \
-}
-
-MOE_PASS_B_REDUCE_KERNEL(bfloat, bf16)
-MOE_PASS_B_REDUCE_KERNEL(half, f16)
-MOE_PASS_B_REDUCE_KERNEL(float, f32)
-
-// === Decode-specific Pass B: Simdgroup cooperation along K for coalescing ===
+// === Pass B: Simdgroup cooperation along K for coalescing ===
 // W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading consecutive K elements
 // Exploits transposed layout for stride-1 memory access across threads
 
@@ -672,7 +520,6 @@ void moe_experts_decode_down_fused_2d_impl(
     uint simd_gid,
     uint simd_lid
 ) {
-    // Thin kernel: 32 threads per output (1 simdgroup), 8 simdgroups per TG = 8 outputs/TG
     constexpr uint THREADS_PER_SIMD = 32;
     constexpr uint SIMDGROUPS_PER_TG = 8;
 
@@ -732,6 +579,7 @@ void moe_experts_decode_down_fused_2d_impl(
     }
 
     // Handle remaining full iterations
+    MTL_PRAGMA_UNROLL
     for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
         const uint k = iter * THREADS_PER_SIMD + simd_lid;
         acc = fma(float(hidden[hidden_base + k]), float(w2_all[w2_col_base + k]), acc);
@@ -745,7 +593,7 @@ void moe_experts_decode_down_fused_2d_impl(
     }
 
     // Simdgroup reduction
-    float result = simd_sum(acc);
+    float result = simdgroup_sum_shuffle(acc);
 
     // Lane 0 writes result
     if (simd_lid == 0) {

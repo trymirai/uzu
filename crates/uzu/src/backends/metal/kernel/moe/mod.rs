@@ -11,7 +11,6 @@ use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 mod encodable;
 pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
 
-use crate::backends::metal::forward_pass::MOE_TWO_PASS_K_TILE;
 
 fn dtype_suffix(dtype: KernelDataType) -> &'static str {
     match dtype {
@@ -815,8 +814,6 @@ pub enum MoeExpertsError {
 pub struct MoeExpertsKernel {
     pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - tiled version
     gemv_pipelines: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - decode-specialized GEMV
-    two_pass_partial: Vec<MTLComputePipelineState>, // [dtype] - Pass B partial (DEPRECATED)
-    two_pass_reduce: Vec<MTLComputePipelineState>,  // [dtype] - Pass B reduce (DEPRECATED)
     two_pass_fused_2d: Vec<MTLComputePipelineState>, // [dtype] - Pass B fused 2D kernel
     two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype] - Pass A with indirect dispatch
     tile_counts_pipeline: MTLComputePipelineState,
@@ -904,12 +901,6 @@ impl MoeExpertsKernel {
             vec![Vec::with_capacity(dtypes.len()); 4];
         let mut two_pass_pass_a_indirect: Vec<Vec<MTLComputePipelineState>> =
             vec![Vec::with_capacity(dtypes.len()); 4];
-        let mut two_pass_partial: Vec<MTLComputePipelineState> =
-            Vec::with_capacity(dtypes.len());
-        let mut two_pass_reduce: Vec<MTLComputePipelineState> =
-            Vec::with_capacity(dtypes.len());
-
-        let two_pass_k_tile: u32 = MOE_TWO_PASS_K_TILE as u32;
 
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
@@ -967,11 +958,6 @@ impl MoeExpertsKernel {
                     MTLDataType::UInt,
                     32,
                 );
-                pass_a_indirect_fcv.set_constant_value_at_index(
-                    &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
-                    MTLDataType::UInt,
-                    33,
-                );
                 let pass_a_indirect_pipeline = ctx.compute_pipeline_state(
                     &kernel_indirect,
                     Some(&pass_a_indirect_fcv),
@@ -987,29 +973,7 @@ impl MoeExpertsKernel {
         for dtype in &dtypes {
             let dtype_suffix = dtype_suffix(*dtype);
 
-            // Pass B: partial (split-K) - DEPRECATED, kept for compatibility
-            let partial_fcv = FunctionConstantValues::new();
-            partial_fcv.set_constant_value_at_index(
-                &two_pass_k_tile as *const u32 as *const std::ffi::c_void,
-                MTLDataType::UInt,
-                33,
-            );
-            let partial_kernel =
-                format!("moe_experts_decode_down_partial_{}", dtype_suffix);
-            two_pass_partial.push(
-                ctx.compute_pipeline_state(
-                    &partial_kernel,
-                    Some(&partial_fcv),
-                )?,
-            );
-
-            // Pass C: reduce - DEPRECATED, kept for compatibility
-            let reduce_kernel =
-                format!("moe_experts_decode_down_reduce_{}", dtype_suffix);
-            two_pass_reduce
-                .push(ctx.compute_pipeline_state(&reduce_kernel, None)?);
-
-            // Pass B fused: direct down projection with transposed W2 (no function constants needed)
+            // Pass B fused: direct down projection with transposed W2
             let fused_2d_kernel =
                 format!("moe_experts_decode_down_fused_2d_{}", dtype_suffix);
             two_pass_fused_2d.push(
@@ -1040,8 +1004,6 @@ impl MoeExpertsKernel {
         Ok(Self {
             pipelines,
             gemv_pipelines,
-            two_pass_partial,
-            two_pass_reduce,
             two_pass_fused_2d,
             two_pass_pass_a_indirect,
             tile_counts_pipeline: tile_counts,
@@ -1150,7 +1112,7 @@ impl MoeExpertsKernel {
         let dm_u = args.d_model as u32;
         let dff_u = args.d_ff as u32;
         let gate = args.gating_code as u32;
-        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1); // BM * BN * 32 = 1 * 4 * 32
         let encoder_e = command_buffer.new_compute_command_encoder();
         encoder_e.set_compute_pipeline_state(pipeline);
         encoder_e.set_buffer(0, Some(args.x_perm_buffer), 0);
@@ -2083,7 +2045,7 @@ impl MoeFinalizeKernel {
         const BN: usize = 64;
         let num_tiles_n = (args.d_model + BN - 1) / BN;
         let num_tiles_m = (args.t + BM - 1) / BM;
-        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1); // BM * BN * 32 = 1 * 4 * 32
         if num_tiles_m > 0 && num_tiles_n > 0 {
             let threadgroups =
                 MTLSize::new(num_tiles_n as u64, num_tiles_m as u64, 1);
