@@ -127,6 +127,7 @@ pub fn handle_chat_completions(
                             suffix_length: 0,
                             tokens_count: 0,
                             tokens_per_second: 0.0,
+                            processed_tokens_per_second: 0.0,
                             model_run: RunStats {
                                 count: 0,
                                 average_duration: 0.0,
@@ -172,6 +173,7 @@ pub fn handle_chat_completions(
                             suffix_length: 0,
                             tokens_count: 0,
                             tokens_per_second: 0.0,
+                            processed_tokens_per_second: 0.0,
                             model_run: RunStats {
                                 count: 0,
                                 average_duration: 0.0,

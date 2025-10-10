@@ -920,7 +920,6 @@ impl EncodableWithState for MoeBlockEncodable {
             data_type: self.data_type,
         };
 
-        println!("suffix_length={}", suffix_length);
         if suffix_length == 1 {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
@@ -961,58 +960,44 @@ impl EncodableWithState for MoeBlockEncodable {
                 )
                 .expect("MoE experts two-pass failed");
         } else {
-            // Prefill case (suffix_length > 1)
-            // Check env flag to decide between 1-pass and 2-pass prefill
-            let use_two_pass_prefill =
-                std::env::var_os("UZU_MOE_TWO_PASS_PREFILL").is_some();
+            let total_rows = suffix_length * k;
+            let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
+                / MOE_TWO_PASS_K_TILE) as u32;
 
-            if use_two_pass_prefill {
-                // Use 2-pass prefill (currently has accuracy issues)
-                let total_rows = suffix_length * k;
-                let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
-                    / MOE_TWO_PASS_K_TILE)
-                    as u32;
-
-                self.experts_two_pass_prefill_kernel
-                    .encode(
-                        root,
-                        MoeExpertsTwoPassArguments {
-                            x_perm_buffer: &x_perm_buf,
-                            expert_offsets: &offsets_buf,
-                            row_expert_map: &row_expert_map_buf,
-                            hidden_buffer: &hidden_buf,
-                            partial_buffer: &two_pass_partial_buf,
-                            output_buffer: &y_partial_buf,
-                            w13_all: &self.shared_weights.w13_buf,
-                            w2_all: &self.shared_weights.w2_buf,
-                            up_biases: &self.shared_weights.up_biases_buf,
-                            down_biases: &self.shared_weights.down_biases_buf,
-                            tile_counts: &tile_counts_buf,
-                            tile_offsets: &tile_offsets_buf,
-                            tile_map: &tile_map_buf,
-                            total_tiles: &total_tiles_buf,
-                            dispatch_args: &dispatch_args_buf,
-                            total_rows,
-                            d_model: self.model_dim,
-                            d_ff: self.hidden_dim,
-                            e,
-                            num_tiles_k,
-                            gating_code,
-                            gate_clip_min: experts_args.gate_clip_min,
-                            gate_clip_max: experts_args.gate_clip_max,
-                            up_clip_min: experts_args.up_clip_min,
-                            up_clip_max: experts_args.up_clip_max,
-                            silu_alpha: experts_args.silu_alpha,
-                            data_type: self.data_type,
-                        },
-                    )
-                    .expect("MoE experts two-pass prefill failed");
-            } else {
-                // Use 1-pass prefill (default, stable)
-                self.experts_fused_kernel
-                    .encode(root, experts_args)
-                    .expect("MoE experts single-pass failed");
-            }
+            self.experts_two_pass_prefill_kernel
+                .encode(
+                    root,
+                    MoeExpertsTwoPassArguments {
+                        x_perm_buffer: &x_perm_buf,
+                        expert_offsets: &offsets_buf,
+                        row_expert_map: &row_expert_map_buf,
+                        hidden_buffer: &hidden_buf,
+                        partial_buffer: &two_pass_partial_buf,
+                        output_buffer: &y_partial_buf,
+                        w13_all: &self.shared_weights.w13_buf,
+                        w2_all: &self.shared_weights.w2_buf,
+                        up_biases: &self.shared_weights.up_biases_buf,
+                        down_biases: &self.shared_weights.down_biases_buf,
+                        tile_counts: &tile_counts_buf,
+                        tile_offsets: &tile_offsets_buf,
+                        tile_map: &tile_map_buf,
+                        total_tiles: &total_tiles_buf,
+                        dispatch_args: &dispatch_args_buf,
+                        total_rows,
+                        d_model: self.model_dim,
+                        d_ff: self.hidden_dim,
+                        e,
+                        num_tiles_k,
+                        gating_code,
+                        gate_clip_min: experts_args.gate_clip_min,
+                        gate_clip_max: experts_args.gate_clip_max,
+                        up_clip_min: experts_args.up_clip_min,
+                        up_clip_max: experts_args.up_clip_max,
+                        silu_alpha: experts_args.silu_alpha,
+                        data_type: self.data_type,
+                    },
+                )
+                .expect("MoE experts two-pass prefill failed");
         }
 
         self.finalize_kernel

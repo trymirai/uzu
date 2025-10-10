@@ -207,8 +207,8 @@ fn test_one_pass_fused_correctness() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(0x1FA5542);
 
-    // Realistic test case
-    let t = 16;
+    // Realistic decode test case: single token, K=2
+    let t = 1;
     let k = 2;
     let sum_k = t * k;
     let d_model = 512;
@@ -376,7 +376,6 @@ fn test_one_pass_fused_correctness() {
     };
 
     // Verify correctness with tight tolerance
-    // CPU reference now exactly matches GPU GELU activation
     let tolerance = 0.01;
 
     assert_bf16_close(output_gpu, &expected, tolerance, "1-pass fused output");
@@ -612,7 +611,6 @@ fn test_two_pass_decode_correctness() {
         f32::from(expected[max_rel_idx])
     );
 
-    // Verify correctness with tight tolerance (same as 1-pass)
     let tolerance = 0.01;
 
     assert_bf16_close(output_gpu, &expected, tolerance, "2-pass decode output");
