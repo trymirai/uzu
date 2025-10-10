@@ -1,5 +1,4 @@
 use half::f16;
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
@@ -9,7 +8,7 @@ use uzu::backends::metal::kernel::{
     MoeTopKKernel,
 };
 
-use super::test_utils::create_ctx;
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_finalize(
     tok2row: &[i32],
@@ -52,19 +51,9 @@ fn test_moe_finalize_end_to_end() {
         (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
 
     // Buffers
-    let logits_buf = ctx.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<f16>(&ctx, t * k);
 
     let topk = MoeTopKKernel::new(&ctx).expect("topk");
     let cb = ctx.command_queue.new_command_buffer();
@@ -86,10 +75,7 @@ fn test_moe_finalize_end_to_end() {
     cb.wait_until_completed();
 
     // Bucket counts -> offsets -> sumk
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     unsafe {
         std::ptr::write_bytes(
             counts_buf.contents(),
@@ -99,10 +85,7 @@ fn test_moe_finalize_end_to_end() {
     }
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
     let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
     bucket
@@ -121,14 +104,8 @@ fn test_moe_finalize_end_to_end() {
     cb.commit();
     cb.wait_until_completed();
 
-    let offsets_buf = ctx.device.new_buffer(
-        ((e + 1) * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let sumk_buf = ctx.device.new_buffer(
-        (1 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let scan = MoeOffsetsScanKernel::new(&ctx).expect("scan");
     let cb = ctx.command_queue.new_command_buffer();
     scan.encode(
@@ -145,23 +122,14 @@ fn test_moe_finalize_end_to_end() {
     cb.wait_until_completed();
 
     let sumk = unsafe { *(sumk_buf.contents() as *const u32) } as usize;
-    let out_ids_buf = ctx.device.new_buffer(
-        (sumk * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let out_probs_buf = ctx.device.new_buffer(
-        (sumk * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
+    let out_probs_buf = alloc_buffer::<f16>(&ctx, sumk);
 
     // Partials (Pass A) to get block_bases
     let num_blocks = (t + 256 - 1) / 256;
     let num_tiles = (e + 512 - 1) / 512;
     let entries = num_blocks * num_tiles * 512usize;
-    let partials = ctx.device.new_buffer(
-        (entries * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials = alloc_buffer::<u32>(&ctx, entries);
     let k_partials = ctx
         .compute_pipeline_state("moe_bucket_partials", None)
         .expect("partials");
@@ -202,16 +170,10 @@ fn test_moe_finalize_end_to_end() {
     cb.wait_until_completed();
 
     // Block bases
-    let block_bases_buf = ctx.device.new_buffer(
-        (entries * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
     let cb = ctx.command_queue.new_command_buffer();
-    let block_alloc_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let block_alloc_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
     scatter
         .encode_block_bases(
             &cb,
@@ -230,10 +192,7 @@ fn test_moe_finalize_end_to_end() {
 
     // tok2row map buffer
     let tok2row_len = t * k;
-    let tok2row_buf = ctx.device.new_buffer(
-        (tok2row_len * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let tok2row_buf = alloc_buffer::<i32>(&ctx, tok2row_len);
     unsafe {
         std::ptr::write_bytes(
             tok2row_buf.contents(),
@@ -271,10 +230,7 @@ fn test_moe_finalize_end_to_end() {
     cb.wait_until_completed();
 
     // Finalize
-    let y_partial_buf = ctx.device.new_buffer(
-        (sumk * d_model * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let y_partial_buf = alloc_buffer::<f16>(&ctx, sumk * d_model);
     let mut y_partial = vec![f16::from_f32(0.0); sumk * d_model];
     for item in &mut y_partial {
         *item = f16::from_f32(rng.random_range(-2.0..2.0));
@@ -287,10 +243,7 @@ fn test_moe_finalize_end_to_end() {
         );
     }
 
-    let y_out_buf = ctx.device.new_buffer(
-        (t * d_model * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let y_out_buf = alloc_buffer::<f16>(&ctx, t * d_model);
     let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize");
     let cb = ctx.command_queue.new_command_buffer();
     finalize

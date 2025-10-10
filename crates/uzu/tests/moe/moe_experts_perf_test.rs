@@ -11,7 +11,7 @@ use uzu::backends::metal::{
     },
 };
 
-use super::test_utils::create_ctx;
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn build_offsets(
     e: usize,
@@ -90,39 +90,15 @@ fn run_decode_case(
     let experts_kernel =
         MoeExpertsTwoPassDecodeKernel::new(ctx).expect("experts decode kernel");
 
-    let x_perm_buf = ctx.device.new_buffer_with_data(
-        x_perm.as_ptr() as *const _,
-        (x_perm.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let offsets_buf = ctx.device.new_buffer_with_data(
-        offsets.as_ptr() as *const _,
-        (offsets.len() * size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
 
-    let w13_buf = ctx.device.new_buffer_with_data(
-        w13.as_ptr() as *const _,
-        (w13.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
 
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
 
-    let up_biases_buf = ctx.device.new_buffer_with_data(
-        up_biases.as_ptr() as *const _,
-        (up_biases.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let down_biases_buf = ctx.device.new_buffer_with_data(
-        down_biases.as_ptr() as *const _,
-        (down_biases.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
@@ -285,65 +261,26 @@ fn run_prefill_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let x_perm_buf = ctx.device.new_buffer_with_data(
-        x_perm.as_ptr() as *const _,
-        (x_perm.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let offsets_buf = ctx.device.new_buffer_with_data(
-        offsets.as_ptr() as *const _,
-        (offsets.len() * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w13_buf = ctx.device.new_buffer_with_data(
-        w13.as_ptr() as *const _,
-        (w13.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let up_biases_buf = ctx.device.new_buffer_with_data(
-        up_biases.as_ptr() as *const _,
-        (up_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let down_biases_buf = ctx.device.new_buffer_with_data(
-        down_biases.as_ptr() as *const _,
-        (down_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
+    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
+    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
-    let y_partial_buf = ctx.device.new_buffer(
-        (sum_k * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     const BN: usize = 64;
     let num_tiles_n = (d_model + BN - 1) / BN;
     let max_tiles = sum_k * e * num_tiles_n;
-    let tile_counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
     let tile_offsets_buf = ctx.device.new_buffer(
         ((e + 1) * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let tile_map_buf = ctx.device.new_buffer(
-        (max_tiles * 3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let total_tiles_buf = ctx.device.new_buffer(
-        (8 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dispatch_args_buf = ctx.device.new_buffer(
-        (3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel =
         MoeExpertsFusedKernel::new(ctx).expect("experts kernel");
@@ -498,36 +435,12 @@ fn run_two_pass_prefill_case(
     let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(ctx)
         .expect("experts prefill kernel");
 
-    let x_perm_buf = ctx.device.new_buffer_with_data(
-        x_perm.as_ptr() as *const _,
-        (x_perm.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let offsets_buf = ctx.device.new_buffer_with_data(
-        offsets.as_ptr() as *const _,
-        (offsets.len() * size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w13_buf = ctx.device.new_buffer_with_data(
-        w13.as_ptr() as *const _,
-        (w13.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let up_biases_buf = ctx.device.new_buffer_with_data(
-        up_biases.as_ptr() as *const _,
-        (up_biases.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let down_biases_buf = ctx.device.new_buffer_with_data(
-        down_biases.as_ptr() as *const _,
-        (down_biases.len() * size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
+    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
+    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 

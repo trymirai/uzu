@@ -1,7 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::f16;
-use metal::{Device, MTLResourceOptions};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
@@ -12,11 +11,7 @@ use uzu::backends::metal::{
     },
 };
 
-fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
-    MTLContext::new(device, command_queue).ok()
-}
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_exclusive_scan(counts: &[u32]) -> (Vec<u32>, u32) {
     let mut offsets: Vec<u32> = Vec::with_capacity(counts.len() + 1);
@@ -39,19 +34,9 @@ fn gen_counts_via_gpu(
     let mut rng = StdRng::seed_from_u64(2025);
     let logits: Vec<f32> =
         (0..t * e).map(|_| rng.random_range(-3.0..3.0)).collect();
-    let logits_buf = ctx.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<f16>(&ctx, t * k);
     let topk = MoeTopKKernel::new(ctx).expect("topk");
     let cb = ctx.command_queue.new_command_buffer();
     let args = MoeTopKArguments {
@@ -67,10 +52,7 @@ fn gen_counts_via_gpu(
     cb.commit();
     cb.wait_until_completed();
 
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     unsafe {
         std::ptr::write_bytes(
             counts_buf.contents(),
@@ -80,10 +62,7 @@ fn gen_counts_via_gpu(
     }
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
     let bucket = MoeBucketCountsKernel::new(ctx).expect("bucket");
     let cb = ctx.command_queue.new_command_buffer();
     let bargs = MoeBucketCountsArguments {
@@ -102,13 +81,7 @@ fn gen_counts_via_gpu(
 
 #[test]
 fn test_offsets_scan_parity() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping");
-            return;
-        },
-    };
+    let ctx = create_ctx();
     let shapes =
         vec![(1usize, 4usize, 1usize), (7, 16, 2), (64, 64, 2), (128, 128, 4)];
     for (t, e, k) in shapes {
@@ -118,14 +91,8 @@ fn test_offsets_scan_parity() {
         };
         let (offsets_cpu, sumk_cpu) = cpu_exclusive_scan(counts);
 
-        let offsets_buf = ctx.device.new_buffer(
-            ((e + 1) * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let sumk_buf = ctx.device.new_buffer(
-            (1 * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+        let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
 
         let kernel = MoeOffsetsScanKernel::new(&ctx).expect("scan");
         let cb = ctx.command_queue.new_command_buffer();
@@ -155,25 +122,12 @@ fn test_offsets_scan_parity() {
 
 #[test]
 fn test_offsets_scan_edge_cases() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping");
-            return;
-        },
-    };
+    let ctx = create_ctx();
 
     // E=0
-    let counts_buf =
-        ctx.device.new_buffer(0, MTLResourceOptions::StorageModeShared);
-    let offsets_buf = ctx.device.new_buffer(
-        (1 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let sumk_buf = ctx.device.new_buffer(
-        (1 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let counts_buf = alloc_buffer::<u32>(&ctx, 0);
+    let offsets_buf = alloc_buffer::<u32>(&ctx, 1);
+    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let kernel = MoeOffsetsScanKernel::new(&ctx).expect("scan");
     let cb = ctx.command_queue.new_command_buffer();
     let args = MoeOffsetsScanArguments {

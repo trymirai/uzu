@@ -1,7 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::f16;
-use metal::{Device, MTLResourceOptions};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
@@ -11,11 +10,7 @@ use uzu::backends::metal::{
     },
 };
 
-fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
-    MTLContext::new(device, command_queue).ok()
-}
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(
     topk_ids: &[i32],
@@ -48,20 +43,10 @@ fn gen_topk_ids_from_logits(
     let logits: Vec<f32> =
         (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
 
-    let logits_buf = ctx.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = alloc_buffer_with_data(ctx, &logits);
 
-    let topk_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let topk_ids_buf = alloc_buffer::<i32>(ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<f16>(ctx, t * k);
 
     let topk = MoeTopKKernel::new(ctx).expect("topk kernel");
     let cb = ctx.command_queue.new_command_buffer();
@@ -85,13 +70,7 @@ fn gen_topk_ids_from_logits(
 
 #[test]
 fn test_bucket_counts_parity_random() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping");
-            return;
-        },
-    };
+    let ctx = create_ctx();
     let shapes = vec![(1usize, 4usize), (7, 16), (64, 64), (1024, 128)];
     let ks = vec![1usize, 2usize, 4usize];
     for &(t, e) in &shapes {
@@ -103,10 +82,7 @@ fn test_bucket_counts_parity_random() {
                 gen_topk_ids_from_logits(&ctx, t, e, k);
             let counts_cpu = cpu_bucket_counts(&topk_ids, t, k, e);
 
-            let counts_buf = ctx.device.new_buffer(
-                (e * std::mem::size_of::<u32>()) as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            let counts_buf = alloc_buffer::<u32>(&ctx, e);
             unsafe {
                 std::ptr::write_bytes(
                     counts_buf.contents(),
@@ -117,11 +93,7 @@ fn test_bucket_counts_parity_random() {
 
             let num_blocks = ((t + 255) / 256).max(1);
             let num_tiles = ((e + 512 - 1) / 512).max(1);
-            let partials_buf = ctx.device.new_buffer(
-                (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>())
-                    as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
 
             let kernel =
                 MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
@@ -155,13 +127,7 @@ fn test_bucket_counts_parity_random() {
 
 #[test]
 fn test_bucket_counts_edge_cases() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping");
-            return;
-        },
-    };
+    let ctx = create_ctx();
     // All tokens to one expert
     let (t, e, k) = (16usize, 8usize, 2usize);
     let mut topk_ids = vec![-1i32; t * k];
@@ -170,15 +136,8 @@ fn test_bucket_counts_edge_cases() {
             topk_ids[ti * k + kk] = 3;
         }
     }
-    let topk_ids_buf = ctx.device.new_buffer_with_data(
-        topk_ids.as_ptr() as *const _,
-        (topk_ids.len() * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     unsafe {
         std::ptr::write_bytes(
             counts_buf.contents(),
@@ -189,10 +148,7 @@ fn test_bucket_counts_edge_cases() {
 
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
@@ -217,15 +173,8 @@ fn test_bucket_counts_edge_cases() {
     // T=0
     let (t, e, k) = (0usize, 8usize, 2usize);
     let topk_ids: Vec<i32> = vec![];
-    let topk_ids_buf = ctx.device.new_buffer_with_data(
-        topk_ids.as_ptr() as *const _,
-        0,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     unsafe {
         std::ptr::write_bytes(
             counts_buf.contents(),
@@ -236,10 +185,7 @@ fn test_bucket_counts_edge_cases() {
 
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();
@@ -271,15 +217,8 @@ fn test_bucket_counts_edge_cases() {
             };
         }
     }
-    let topk_ids_buf = ctx.device.new_buffer_with_data(
-        topk_ids.as_ptr() as *const _,
-        (topk_ids.len() * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     unsafe {
         std::ptr::write_bytes(
             counts_buf.contents(),
@@ -290,10 +229,7 @@ fn test_bucket_counts_edge_cases() {
 
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * 512 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
 
     let kernel = MoeBucketCountsKernel::new(&ctx).expect("bucket kernel");
     let cb = ctx.command_queue.new_command_buffer();

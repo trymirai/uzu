@@ -1,12 +1,11 @@
 use half::bf16;
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType,
     moe::{MoeRouterArguments, MoeRouterKernel},
 };
 
-use super::test_utils::create_ctx;
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn router_cpu_reference(
     x: &[bf16],      // [T, d_model]
@@ -65,25 +64,10 @@ fn test_router_correctness() {
             router_cpu_reference(&x, &weight, &bias, t, e, d_model);
 
         // GPU buffers
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let weight_buf = ctx.device.new_buffer_with_data(
-            weight.as_ptr() as *const _,
-            (weight.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let bias_buf = ctx.device.new_buffer_with_data(
-            bias.as_ptr() as *const _,
-            (bias.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let logits_buf = ctx.device.new_buffer(
-            (t * e * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
+        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
+        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
 
         // Execute using kernel struct API
         let router = MoeRouterKernel::new(&ctx).expect("MoeRouterKernel::new");

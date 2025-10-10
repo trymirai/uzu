@@ -6,11 +6,11 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
-    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel,
-    MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterKernels,
-    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+    MoeExpertsTwoPassPrefillKernel, MoeFinalizeKernel, MoeGatherArguments,
+    MoeGatherKernel, MoeOffsetsScanArguments, MoeOffsetsScanKernel,
+    MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+    MoeTopKKernel,
 };
 use crate::{
     DataType,
@@ -54,7 +54,6 @@ pub struct MoeBlockEncodable {
     offsets_kernel: MoeOffsetsScanKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernel: MoeGatherKernel,
-    experts_fused_kernel: MoeExpertsFusedKernel,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
     finalize_kernel: MoeFinalizeKernel,
@@ -542,13 +541,6 @@ impl MoeBlockEncodable {
                 e
             ))
         })?;
-        let experts_fused_kernel = MoeExpertsFusedKernel::new(context)
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Experts fused kernel error: {:?}",
-                    e
-                ))
-            })?;
         let experts_two_pass_decode_kernel =
             MoeExpertsTwoPassDecodeKernel::new(context).map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -589,7 +581,6 @@ impl MoeBlockEncodable {
             offsets_kernel,
             scatter_kernels,
             gather_kernel,
-            experts_fused_kernel,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
             finalize_kernel,
@@ -707,32 +698,85 @@ impl EncodableWithState for MoeBlockEncodable {
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let root = &*mtl_command_buffer;
+
+        // Clear all internal MoE buffers
+        let dtype_size = match self.data_type {
+            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
+            KernelDataType::Float32 => 4,
+        };
+
+        let blit_encoder = root.new_blit_command_encoder();
+
         if suffix_length > 0 && k > 0 {
             let entries = suffix_length * k;
             let topk_bytes = entries * std::mem::size_of::<u32>();
             let tok2row_bytes = entries * std::mem::size_of::<i32>();
 
-            unsafe {
-                if topk_bytes > 0 {
-                    std::ptr::write_bytes(
-                        topk_ids_buf.contents() as *mut u8,
-                        0xFF,
-                        topk_bytes,
-                    );
-                }
-                if tok2row_bytes > 0 {
-                    std::ptr::write_bytes(
-                        tok2row_buf.contents() as *mut u8,
-                        0xFF,
-                        tok2row_bytes,
-                    );
-                }
+            // Clear topk_ids and tok2row buffers
+            if topk_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &topk_ids_buf,
+                    metal::NSRange::new(0, topk_bytes as u64),
+                    0xFF,
+                );
+            }
+            if tok2row_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &tok2row_buf,
+                    metal::NSRange::new(0, tok2row_bytes as u64),
+                    0xFF,
+                );
+            }
+
+            // Clear hidden buffer
+            let hidden_bytes =
+                (suffix_length * k * self.hidden_dim * dtype_size) as u64;
+            if hidden_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &hidden_buf,
+                    metal::NSRange::new(0, hidden_bytes),
+                    0,
+                );
+            }
+
+            // Clear two-pass partial buffer (f32 accumulator)
+            let two_pass_partial_bytes =
+                (suffix_length * k * self.model_dim * 4) as u64;
+            if two_pass_partial_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &two_pass_partial_buf,
+                    metal::NSRange::new(0, two_pass_partial_bytes),
+                    0,
+                );
+            }
+
+            // Clear y_partial buffer
+            let y_partial_bytes =
+                (suffix_length * k * self.model_dim * dtype_size) as u64;
+            if y_partial_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &y_partial_buf,
+                    metal::NSRange::new(0, y_partial_bytes),
+                    0,
+                );
+            }
+
+            // Clear x_perm buffer
+            let x_perm_bytes =
+                (suffix_length * k * self.model_dim * dtype_size) as u64;
+            if x_perm_bytes > 0 {
+                blit_encoder.fill_buffer(
+                    &x_perm_buf,
+                    metal::NSRange::new(0, x_perm_bytes),
+                    0,
+                );
             }
         }
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let root = &*mtl_command_buffer;
+        blit_encoder.end_encoding();
 
         match &self.router {
             RouterBlock::Quantized(block) => {
@@ -1015,60 +1059,6 @@ impl EncodableWithState for MoeBlockEncodable {
                 self.data_type,
             )
             .expect("MoE finalize failed");
-
-        // Clear all internal MoE buffers using GPU blit encoder
-        let dtype_size = match self.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-
-        let blit_encoder = root.new_blit_command_encoder();
-
-        // Clear hidden buffer
-        let hidden_bytes =
-            (suffix_length * k * self.hidden_dim * dtype_size) as u64;
-        if hidden_bytes > 0 {
-            blit_encoder.fill_buffer(
-                &hidden_buf,
-                metal::NSRange::new(0, hidden_bytes),
-                0,
-            );
-        }
-
-        // Clear two-pass partial buffer
-        let two_pass_partial_bytes =
-            (suffix_length * k * self.model_dim * 4) as u64; // f32 accumulator
-        if two_pass_partial_bytes > 0 {
-            blit_encoder.fill_buffer(
-                &two_pass_partial_buf,
-                metal::NSRange::new(0, two_pass_partial_bytes),
-                0,
-            );
-        }
-
-        // Clear y_partial buffer
-        let y_partial_bytes =
-            (suffix_length * k * self.model_dim * dtype_size) as u64;
-        if y_partial_bytes > 0 {
-            blit_encoder.fill_buffer(
-                &y_partial_buf,
-                metal::NSRange::new(0, y_partial_bytes),
-                0,
-            );
-        }
-
-        // Clear x_perm buffer
-        let x_perm_bytes =
-            (suffix_length * k * self.model_dim * dtype_size) as u64;
-        if x_perm_bytes > 0 {
-            blit_encoder.fill_buffer(
-                &x_perm_buf,
-                metal::NSRange::new(0, x_perm_bytes),
-                0,
-            );
-        }
-
-        blit_encoder.end_encoding();
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

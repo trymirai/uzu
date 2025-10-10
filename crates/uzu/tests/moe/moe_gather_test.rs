@@ -1,14 +1,13 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType,
     moe::{MoeGatherArguments, MoeGatherKernel},
 };
 
-use super::test_utils::{cpu_gather, create_ctx};
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_gather, create_ctx};
 
 #[test]
 fn test_gather_correctness() {
@@ -38,28 +37,13 @@ fn test_gather_correctness() {
         let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
 
         // GPU buffers
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let ids_buf = ctx.device.new_buffer_with_data(
-            bucketed_ids.as_ptr() as *const _,
-            (bucketed_ids.len() * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let x_perm_buf = ctx.device.new_buffer(
-            (sum_k * d_model * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let ids_buf = alloc_buffer_with_data(&ctx, &bucketed_ids);
+        let x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
         // Create sumk_buffer for API (kernel reads sumk_buf[0])
-        let sum_k_u32 = sum_k as u32;
-        let sumk_buf = ctx.device.new_buffer_with_data(
-            &sum_k_u32 as *const u32 as *const _,
-            std::mem::size_of::<u32>() as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let sum_k_u32 = vec![sum_k as u32];
+        let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
@@ -131,28 +115,13 @@ fn test_gather_edge_cases() {
 
     let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
 
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let ids_buf = ctx.device.new_buffer_with_data(
-        bucketed_ids.as_ptr() as *const _,
-        (bucketed_ids.len() * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let x_perm_buf = ctx.device.new_buffer(
-        (sum_k * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_buf = alloc_buffer_with_data(&ctx, &x);
+    let ids_buf = alloc_buffer_with_data(&ctx, &bucketed_ids);
+    let x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Create sumk_buffer for API (kernel reads sumk_buf[0])
-    let sum_k_u32 = sum_k as u32;
-    let sumk_buf = ctx.device.new_buffer_with_data(
-        &sum_k_u32 as *const u32 as *const _,
-        std::mem::size_of::<u32>() as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let sum_k_u32 = vec![sum_k as u32];
+    let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
 
     // Execute gather kernel using kernel struct
     let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");

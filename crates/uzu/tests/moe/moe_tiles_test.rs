@@ -1,12 +1,11 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::moe::{
     MoeTileCountsArguments, MoeTileMapKernel, MoeTileScanArguments,
 };
 
-use super::test_utils::{cpu_tile_counts, cpu_tile_scan, create_ctx};
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_tile_counts, cpu_tile_scan, create_ctx};
 
 #[test]
 fn test_tile_counts_correctness() {
@@ -29,15 +28,8 @@ fn test_tile_counts_correctness() {
         let tile_counts_cpu = cpu_tile_counts(&offsets, 16);
 
         // GPU buffers
-        let offsets_buf = ctx.device.new_buffer_with_data(
-            offsets.as_ptr() as *const _,
-            (offsets.len() * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let tile_counts_buf = ctx.device.new_buffer(
-            (e * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
+        let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         // Execute kernel using kernel struct
         let tile_kernel =
@@ -93,19 +85,9 @@ fn test_tile_scan_correctness() {
         let (tile_offsets_cpu, total_tiles_cpu) = cpu_tile_scan(&tile_counts);
 
         // GPU buffers
-        let tile_counts_buf = ctx.device.new_buffer_with_data(
-            tile_counts.as_ptr() as *const _,
-            (tile_counts.len() * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let tile_offsets_buf = ctx.device.new_buffer(
-            ((e + 1) * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let total_tiles_buf = ctx.device.new_buffer(
-            std::mem::size_of::<u32>() as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let tile_counts_buf = alloc_buffer_with_data(&ctx, &tile_counts);
+        let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+        let total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
 
         // Execute kernel using kernel struct
         let tile_kernel =
@@ -162,15 +144,8 @@ fn test_tile_edge_cases() {
 
         let tile_counts_cpu = cpu_tile_counts(&offsets, 16);
 
-        let offsets_buf = ctx.device.new_buffer_with_data(
-            offsets.as_ptr() as *const _,
-            (offsets.len() * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let tile_counts_buf = ctx.device.new_buffer(
-            (e * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
+        let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
@@ -207,15 +182,8 @@ fn test_tile_edge_cases() {
 
         let tile_counts_cpu = cpu_tile_counts(&offsets, 16);
 
-        let offsets_buf = ctx.device.new_buffer_with_data(
-            offsets.as_ptr() as *const _,
-            (offsets.len() * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let tile_counts_buf = ctx.device.new_buffer(
-            (e * std::mem::size_of::<u32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
+        let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");

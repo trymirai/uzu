@@ -1,18 +1,13 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::f16;
-use metal::{Device, MTLResourceOptions};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::{MoeTopKArguments, MoeTopKError, MoeTopKKernel},
 };
 
-fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
-    MTLContext::new(device, command_queue).ok()
-}
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_topk_select(
     logits: &[f32],
@@ -91,21 +86,13 @@ fn run_topk_once(
 
     let (logits_buf, probs_elem_count) = match dtype {
         KernelDataType::Float32 => {
-            let buf = ctx.device.new_buffer_with_data(
-                logits_f32.as_ptr() as *const _,
-                (logits_f32.len() * std::mem::size_of::<f32>()) as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            let buf = alloc_buffer_with_data(ctx, logits_f32);
             (buf, t * k)
         },
         KernelDataType::Float16 => {
             let logits_f16: Vec<f16> =
                 logits_f32.iter().map(|&v| f16::from_f32(v)).collect();
-            let buf = ctx.device.new_buffer_with_data(
-                logits_f16.as_ptr() as *const _,
-                (logits_f16.len() * std::mem::size_of::<f16>()) as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            let buf = alloc_buffer_with_data(ctx, &logits_f16);
             (buf, t * k)
         },
         KernelDataType::BFloat16 => {
@@ -113,14 +100,8 @@ fn run_topk_once(
         },
     };
 
-    let ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let probs_buf = ctx.device.new_buffer(
-        (probs_elem_count * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let ids_buf = alloc_buffer::<i32>(ctx, t * k);
+    let probs_buf = alloc_buffer::<f16>(ctx, probs_elem_count);
 
     let cb = ctx.command_queue.new_command_buffer();
 
@@ -149,13 +130,7 @@ fn run_topk_once(
 
 #[test]
 fn test_topk_correctness_random() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping MoE topk test");
-            return;
-        },
-    };
+    let ctx = create_ctx();
 
     let mut rng = StdRng::seed_from_u64(42);
     let shapes = vec![(1usize, 4usize), (4, 16), (32, 64), (32, 257)];
@@ -218,13 +193,7 @@ fn test_topk_correctness_random() {
 
 #[test]
 fn test_topk_ties_and_ordering() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping MoE topk ties test");
-            return;
-        },
-    };
+    let ctx = create_ctx();
 
     // T=2, E=5, K=2 with crafted ties
     let t = 2usize;
@@ -262,13 +231,7 @@ fn test_topk_ties_and_ordering() {
 
 #[test]
 fn test_topk_edge_cases_and_determinism() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping MoE topk edge test");
-            return;
-        },
-    };
+    let ctx = create_ctx();
 
     // T==0 no-op
     {
@@ -316,19 +279,9 @@ fn test_topk_edge_cases_and_determinism() {
         let k = 2usize;
         let logits: Vec<f32> = vec![0.0];
         let kernel = MoeTopKKernel::new(&ctx).expect("kernel");
-        let logits_buf = ctx.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<f32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let ids_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let probs_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<f16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+        let ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let probs_buf = alloc_buffer::<f16>(&ctx, t * k);
         let cb = ctx.command_queue.new_command_buffer();
         let args = MoeTopKArguments {
             logits_buffer: &logits_buf,
