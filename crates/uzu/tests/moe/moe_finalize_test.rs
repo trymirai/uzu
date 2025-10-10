@@ -1,11 +1,10 @@
 use half::f16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
-    MoeBucketCountsKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-    MoeOffsetsScanArguments, MoeOffsetsScanKernel, MoeScatterArguments,
-    MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
-    MoeTopKKernel,
+    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
+    MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+    MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeTopKArguments, MoeTopKKernel,
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -74,50 +73,31 @@ fn test_moe_finalize_end_to_end() {
     cb.commit();
     cb.wait_until_completed();
 
-    // Bucket counts -> offsets -> sumk
+    // Bucket counts -> offsets -> sumk (fused)
     let counts_buf = alloc_buffer::<u32>(&ctx, e);
-    unsafe {
-        std::ptr::write_bytes(
-            counts_buf.contents(),
-            0,
-            e * std::mem::size_of::<u32>(),
-        );
-    }
-    let num_blocks = ((t + 255) / 256).max(1);
-    let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
-    let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
+    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
+    let num_tiles = ((e + 511) / 512).max(1);
+    let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
+
+    let fused_kernel =
+        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    bucket
+    fused_kernel
         .encode(
             &cb,
-            MoeBucketCountsArguments {
-                partials_buffer: &partials_buf,
+            MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
                 counts_buffer: &counts_buf,
+                offsets_buffer: &offsets_buf,
+                sum_k_buffer: &sumk_buf,
+                partials_buffer: &partials_buf,
                 t,
                 e,
                 k,
             },
         )
-        .expect("encode bucket");
-    cb.commit();
-    cb.wait_until_completed();
-
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
-    let scan = MoeOffsetsScanKernel::new(&ctx).expect("scan");
-    let cb = ctx.command_queue.new_command_buffer();
-    scan.encode(
-        &cb,
-        MoeOffsetsScanArguments {
-            counts_buffer: &counts_buf,
-            offsets_buffer: &offsets_buf,
-            sumk_buffer: &sumk_buf,
-            e,
-        },
-    )
-    .expect("encode scan");
+        .expect("fused encode");
     cb.commit();
     cb.wait_until_completed();
 
@@ -125,60 +105,21 @@ fn test_moe_finalize_end_to_end() {
     let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
     let out_probs_buf = alloc_buffer::<f16>(&ctx, sumk);
 
-    // Partials (Pass A) to get block_bases
-    let num_blocks = (t + 256 - 1) / 256;
-    let num_tiles = (e + 512 - 1) / 512;
-    let entries = num_blocks * num_tiles * 512usize;
-    let partials = alloc_buffer::<u32>(&ctx, entries);
-    let k_partials = ctx
-        .compute_pipeline_state("moe_bucket_partials", None)
-        .expect("partials");
-    let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
-    enc.set_compute_pipeline_state(&k_partials);
-    enc.set_buffer(0, Some(&topk_ids_buf), 0);
-    enc.set_buffer(1, Some(&partials), 0);
-    let t_u = t as u32;
-    let e_u = e as u32;
-    let k_u = k as u32;
-    let nb_u = num_blocks as u32;
-    enc.set_bytes(
-        2,
-        std::mem::size_of::<u32>() as u64,
-        &t_u as *const u32 as *const _,
-    );
-    enc.set_bytes(
-        3,
-        std::mem::size_of::<u32>() as u64,
-        &e_u as *const u32 as *const _,
-    );
-    enc.set_bytes(
-        4,
-        std::mem::size_of::<u32>() as u64,
-        &k_u as *const u32 as *const _,
-    );
-    enc.set_bytes(
-        5,
-        std::mem::size_of::<u32>() as u64,
-        &nb_u as *const u32 as *const _,
-    );
-    let tg = metal::MTLSize::new(num_blocks as u64, 1, 1);
-    let tpt = metal::MTLSize::new(256, 1, 1);
-    enc.dispatch_thread_groups(tg, tpt);
-    enc.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    // Use partials from fused kernel (already computed above)
+    let num_blocks = 1; // Fused kernel uses single block
+    let entries = num_tiles * 512usize;
 
     // Block bases
     let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
     let cb = ctx.command_queue.new_command_buffer();
-    let block_alloc_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
+    let block_alloc_buf =
+        alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
     scatter
         .encode_block_bases(
             &cb,
             MoeBlockBasesArguments {
-                partials_buffer: &partials,
+                partials_buffer: &partials_buf,
                 block_bases_buffer: &block_bases_buf,
                 block_alloc_buffer: &block_alloc_buf,
                 e,

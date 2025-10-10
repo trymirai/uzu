@@ -540,7 +540,7 @@ void moe_experts_decode_down_fused_2d_impl(
 
     // Each thread in simdgroup handles every 32nd element along K
     // With transposed W2, simd_lid gives consecutive memory locations → perfect coalescing!
-    float acc = 0.0f;
+    AccumT acc = 0.0;
 
     // Main loop: stride-32 with vec8 loads for ILP
     const uint k_iters = d_ff / THREADS_PER_SIMD;
@@ -551,24 +551,24 @@ void moe_experts_decode_down_fused_2d_impl(
         const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd_lid;
 
         // Load 8 values with stride-32
-        float h0 = float(hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD]);
-        float h1 = float(hidden[hidden_base + k_base + 1 * THREADS_PER_SIMD]);
-        float h2 = float(hidden[hidden_base + k_base + 2 * THREADS_PER_SIMD]);
-        float h3 = float(hidden[hidden_base + k_base + 3 * THREADS_PER_SIMD]);
-        float h4 = float(hidden[hidden_base + k_base + 4 * THREADS_PER_SIMD]);
-        float h5 = float(hidden[hidden_base + k_base + 5 * THREADS_PER_SIMD]);
-        float h6 = float(hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD]);
-        float h7 = float(hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD]);
+        AccumT h0 = AccumT(hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD]);
+        AccumT h1 = AccumT(hidden[hidden_base + k_base + 1 * THREADS_PER_SIMD]);
+        AccumT h2 = AccumT(hidden[hidden_base + k_base + 2 * THREADS_PER_SIMD]);
+        AccumT h3 = AccumT(hidden[hidden_base + k_base + 3 * THREADS_PER_SIMD]);
+        AccumT h4 = AccumT(hidden[hidden_base + k_base + 4 * THREADS_PER_SIMD]);
+        AccumT h5 = AccumT(hidden[hidden_base + k_base + 5 * THREADS_PER_SIMD]);
+        AccumT h6 = AccumT(hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD]);
+        AccumT h7 = AccumT(hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD]);
 
         // W2 loads: COALESCED - consecutive threads read consecutive addresses!
-        float w0 = float(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
-        float w1 = float(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
-        float w2 = float(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
-        float w3 = float(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
-        float w4 = float(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
-        float w5 = float(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
-        float w6 = float(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
-        float w7 = float(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+        AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+        AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+        AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+        AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+        AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+        AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+        AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+        AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
 
         acc = fma(h0, w0, acc);
         acc = fma(h1, w1, acc);
@@ -584,23 +584,23 @@ void moe_experts_decode_down_fused_2d_impl(
     MTL_PRAGMA_UNROLL
     for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
         const uint k = iter * THREADS_PER_SIMD + simd_lid;
-        acc = fma(float(hidden[hidden_base + k]), float(w2_all[w2_col_base + k]), acc);
+        acc = fma(AccumT(hidden[hidden_base + k]), AccumT(w2_all[w2_col_base + k]), acc);
     }
 
     // Handle leftover elements (d_ff % 32)
     const uint leftover_start = k_iters * THREADS_PER_SIMD;
     if (leftover_start + simd_lid < d_ff) {
         const uint k = leftover_start + simd_lid;
-        acc = fma(float(hidden[hidden_base + k]), float(w2_all[w2_col_base + k]), acc);
+        acc = fma(AccumT(hidden[hidden_base + k]), AccumT(w2_all[w2_col_base + k]), acc);
     }
 
     // Simdgroup reduction
-    float result = simdgroup_sum_shuffle(acc);
+    AccumT result = simdgroup_sum_shuffle(acc);
 
     // Lane 0 writes result
     if (simd_lid == 0) {
         const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
-        result += float(down_biases[bias_idx]);
+        result += AccumT(down_biases[bias_idx]);
 
         const ulong out_idx = (ulong)row_idx * (ulong)d_model + (ulong)my_col;
         y_out[out_idx] = T(result);

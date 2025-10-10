@@ -24,7 +24,8 @@ fn router_cpu_reference(
                 let w_val = f32::from(weight[expert_idx * d_model + d]);
                 logit += x_val * w_val;
             }
-            logits[token_idx * e + expert_idx] = logit;
+            logits[token_idx * e + expert_idx] =
+                f32::from(bf16::from_f32(logit));
         }
     }
     logits
@@ -122,16 +123,18 @@ fn test_router_correctness() {
             max_abs_diff, mean_abs_error
         );
 
-        // Router matmul: error scales with sqrt(d_model) accumulation depth
-        let threshold = 0.002 * (d_model as f32).sqrt();
+        let threshold = 0.001;
         assert!(
-            mean_abs_error < threshold,
-            "Router mean_abs={:.6} exceeds threshold={:.6} for d_model={}",
-            mean_abs_error,
+            max_abs_diff < threshold,
+            "Router max_abs={:.6} exceeds threshold={:.6} for d_model={}",
+            max_abs_diff,
             threshold,
             d_model
         );
 
-        eprintln!("[RouterTest] ✓ PASSED (threshold={:.6})", threshold);
+        eprintln!(
+            "[RouterTest] ✓ PASSED (max_err={:.6}, threshold={:.6})",
+            max_abs_diff, threshold
+        );
     }
 }

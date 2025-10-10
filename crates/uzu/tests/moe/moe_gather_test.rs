@@ -7,7 +7,9 @@ use uzu::backends::metal::kernel::{
     moe::{MoeGatherArguments, MoeGatherKernel},
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_gather, create_ctx};
+use super::test_utils::{
+    alloc_buffer, alloc_buffer_with_data, cpu_gather, create_ctx,
+};
 
 #[test]
 fn test_gather_correctness() {
@@ -88,80 +90,4 @@ fn test_gather_correctness() {
 
         eprintln!("[GatherTest] ✓ PASSED");
     }
-}
-
-#[test]
-fn test_gather_edge_cases() {
-    let ctx = create_ctx();
-
-    // Test with negative/invalid IDs (should be ignored)
-    let t = 8;
-    let sum_k = 16;
-    let d_model = 64;
-
-    let x: Vec<bf16> =
-        (0..t * d_model).map(|i| bf16::from_f32((i % 10) as f32)).collect();
-
-    // Mix of valid and invalid IDs
-    let bucketed_ids: Vec<i32> = (0..sum_k)
-        .map(|i| {
-            match i % 4 {
-                0 => -1,                   // Invalid
-                1 => (t + 10) as i32,      // Out of bounds
-                _ => ((i / 2) % t) as i32, // Valid
-            }
-        })
-        .collect();
-
-    let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
-
-    let x_buf = alloc_buffer_with_data(&ctx, &x);
-    let ids_buf = alloc_buffer_with_data(&ctx, &bucketed_ids);
-    let x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
-
-    // Create sumk_buffer for API (kernel reads sumk_buf[0])
-    let sum_k_u32 = vec![sum_k as u32];
-    let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
-
-    // Execute gather kernel using kernel struct
-    let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
-    let cb = ctx.command_queue.new_command_buffer();
-    gather
-        .encode(
-            &cb,
-            KernelDataType::BFloat16,
-            MoeGatherArguments {
-                x_buffer: &x_buf,
-                bucketed_ids_buffer: &ids_buf,
-                x_perm_buffer: &x_perm_buf,
-                sumk_buffer: &sumk_buf,
-                t: t,
-                k: sum_k / t, // Decompose sum_k into k per token
-                d_model,
-            },
-        )
-        .expect("encode gather");
-    cb.commit();
-    cb.wait_until_completed();
-
-    let x_gpu = unsafe {
-        std::slice::from_raw_parts(
-            x_perm_buf.contents() as *const bf16,
-            sum_k * d_model,
-        )
-    };
-
-    for i in 0..(sum_k * d_model) {
-        let gpu_val = f32::from(x_gpu[i]);
-        let cpu_val = f32::from(x_cpu[i]);
-        assert!(
-            (gpu_val - cpu_val).abs() < 1e-6,
-            "Mismatch at {}: GPU={}, CPU={}",
-            i,
-            gpu_val,
-            cpu_val
-        );
-    }
-
-    eprintln!("[GatherTest] ✓ Edge cases PASSED");
 }

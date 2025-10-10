@@ -16,6 +16,40 @@ pub fn create_ctx() -> MTLContext {
     MTLContext::new(device, queue).expect("Failed to create MTLContext")
 }
 
+/// CPU ground truth: compute bucket counts from topk_ids
+pub fn cpu_bucket_counts(
+    topk_ids: &[i32],
+    t: usize,
+    k: usize,
+    e: usize,
+) -> Vec<u32> {
+    let mut counts = vec![0u32; e];
+    for ti in 0..t {
+        for kk in 0..k {
+            let id = topk_ids[ti * k + kk];
+            if id >= 0 {
+                let ue = id as usize;
+                if ue < e {
+                    counts[ue] += 1;
+                }
+            }
+        }
+    }
+    counts
+}
+
+/// CPU ground truth: compute exclusive prefix scan (offsets) from counts
+pub fn cpu_offsets_from_counts(counts: &[u32]) -> (Vec<u32>, u32) {
+    let mut offsets = vec![0u32; counts.len() + 1];
+    let mut sum = 0u32;
+    for (i, &c) in counts.iter().enumerate() {
+        offsets[i] = sum;
+        sum += c;
+    }
+    offsets[counts.len()] = sum;
+    (offsets, sum)
+}
+
 /// Helper to allocate buffer with data
 pub fn alloc_buffer_with_data<T>(
     ctx: &MTLContext,

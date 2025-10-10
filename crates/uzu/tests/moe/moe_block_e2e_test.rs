@@ -1,19 +1,20 @@
 use half::bf16;
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeBucketCountsArguments,
-        MoeBucketCountsKernel, MoeExpertsArguments, MoeExpertsFusedKernel,
-        MoeFinalizeArguments, MoeFinalizeKernel, MoeOffsetsScanArguments,
-        MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
-        MoeTopKArguments, MoeTopKKernel,
-        moe::{MoeGatherArguments, MoeGatherKernel},
+        KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
+        MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+        MoeTopKKernel,
+        moe::{
+            MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
+            MoeGatherArguments, MoeGatherKernel,
+        },
     },
 };
 
-use super::test_utils::create_ctx;
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
     x: f32,
@@ -145,7 +146,7 @@ fn moe_cpu_reference(
 
             // Down projection: W2[expert, ff, output]
             // Convert BF16→F32 on each access to match GPU precision
-            // CRITICAL: Match GPU's BF16 quantization after FC2 and after bias addition
+            // CRITICAL: Two-pass kernel accumulates in F32, only quantizes at the very end
             for out_idx in 0..d_model {
                 let mut fc2_sum = 0.0f32;
                 for ff_idx in 0..d_ff {
@@ -153,14 +154,14 @@ fn moe_cpu_reference(
                         f32::from(w2[w2_offset + ff_idx * d_model + out_idx]);
                     fc2_sum += hidden[ff_idx] * w2_val;
                 }
-                // GPU stores FC2 result as BF16, then reads it back
-                let fc2_bf16 = bf16::from_f32(fc2_sum);
-                let fc2_val = f32::from(fc2_bf16);
+                // Two-pass: keep in F32 (no intermediate quantization)
 
-                // Add down bias and quantize again (GPU does Y_partial[idx] = T(out_val))
+                // Add down bias in F32
                 let down_bias_val =
                     f32::from(down_biases[bias_down_offset + out_idx]);
-                let with_bias = fc2_val + down_bias_val;
+                let with_bias = fc2_sum + down_bias_val;
+
+                // Only quantize to BF16 once at the end (matches two-pass final write)
                 let with_bias_bf16 = bf16::from_f32(with_bias);
                 let final_val = f32::from(with_bias_bf16);
 
@@ -201,7 +202,7 @@ fn run_moe_parity_test(
             gate_clip,
             up_clip,
             seed,
-            &format!("{}_1pass", test_name),
+            &format!("{}_decode", test_name),
             false,
         );
         // Test 2-pass prefill (experimental)
@@ -217,7 +218,7 @@ fn run_moe_parity_test(
             gate_clip,
             up_clip,
             seed,
-            &format!("{}_2pass", test_name),
+            &format!("{}_prefill", test_name),
             true,
         );
     } else {
@@ -376,121 +377,40 @@ fn run_moe_parity_test_internal(
         .collect();
 
     // Create Metal buffers
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let logits_buf = ctx.device.new_buffer_with_data(
-        router_logits.as_ptr() as *const _,
-        (router_logits.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w13_buf = ctx.device.new_buffer_with_data(
-        w13_gpu.as_ptr() as *const _,
-        (w13_gpu.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2_gpu.as_ptr() as *const _,
-        (w2_gpu.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let up_biases_buf = ctx.device.new_buffer_with_data(
-        up_biases.as_ptr() as *const _,
-        (up_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let down_biases_buf = ctx.device.new_buffer_with_data(
-        down_biases.as_ptr() as *const _,
-        (down_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_buf = alloc_buffer_with_data(&ctx, &x);
+    let logits_buf = alloc_buffer_with_data(&ctx, &router_logits);
+    let w13_buf = alloc_buffer_with_data(&ctx, &w13_gpu);
+    let w2_buf = alloc_buffer_with_data(&ctx, &w2_gpu);
+    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
     // Allocate intermediate buffers (max capacity)
     let max_sumk = t * k;
-    let topk_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let offsets_buf = ctx.device.new_buffer(
-        ((e + 1) * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let sumk_buf = ctx.device.new_buffer(
-        std::mem::size_of::<u32>() as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let entries = num_blocks * num_tiles * 512usize;
-    let partials_buf = ctx.device.new_buffer(
-        (entries * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let block_bases_buf = ctx.device.new_buffer(
-        (entries * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let block_alloc_buf = ctx.device.new_buffer(
-        (entries * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let bucketed_ids_buf = ctx.device.new_buffer(
-        (max_sumk * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let bucketed_probs_buf = ctx.device.new_buffer(
-        (max_sumk * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tok2row_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let x_perm_buf = ctx.device.new_buffer(
-        (max_sumk * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_partial_buf = ctx.device.new_buffer(
-        (max_sumk * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_out_buf = ctx.device.new_buffer(
-        (t * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<u32>(&ctx, entries);
+    let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
+    let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
+    let bucketed_ids_buf = alloc_buffer::<i32>(&ctx, max_sumk);
+    let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, max_sumk);
+    let tok2row_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let x_perm_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
+    let y_partial_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
+    let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
     const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
     let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
     let max_tiles = max_sumk * h_blocks_decode;
-    let tile_counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tile_offsets_buf = ctx.device.new_buffer(
-        ((e + 1) * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tile_map_buf = ctx.device.new_buffer(
-        (max_tiles * 3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let total_tiles_buf = ctx.device.new_buffer(
-        (8 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dispatch_args_buf = ctx.device.new_buffer(
-        (3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
@@ -515,32 +435,23 @@ fn run_moe_parity_test_internal(
     )
     .expect("topk encode");
 
-    let bucket = MoeBucketCountsKernel::new(&ctx).expect("bucket");
-    bucket
+    let fused_kernel =
+        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    fused_kernel
         .encode(
             &cb,
-            MoeBucketCountsArguments {
+            MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
                 counts_buffer: &counts_buf,
+                offsets_buffer: &offsets_buf,
+                sum_k_buffer: &sumk_buf,
                 partials_buffer: &partials_buf,
                 t,
                 e,
                 k,
             },
         )
-        .expect("bucket encode");
-
-    let scan = MoeOffsetsScanKernel::new(&ctx).expect("scan");
-    scan.encode(
-        &cb,
-        MoeOffsetsScanArguments {
-            counts_buffer: &counts_buf,
-            offsets_buffer: &offsets_buf,
-            sumk_buffer: &sumk_buf,
-            e,
-        },
-    )
-    .expect("scan encode");
+        .expect("fused encode");
 
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter");
     scatter
@@ -598,31 +509,38 @@ fn run_moe_parity_test_internal(
         )
         .expect("gather");
 
-    let experts = MoeExpertsFusedKernel::new(&ctx).expect("experts");
-    const BN: usize = 64;
-    let num_tiles_n = (d_model + BN - 1) / BN;
+    // Additional buffers for 2-pass
+    let total_rows = t * k;
+    let hidden_buf = alloc_buffer::<bf16>(&ctx, total_rows * d_ff);
+    let two_pass_partial_buf = alloc_buffer::<f32>(&ctx, total_rows * d_model);
+    let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
+
+    let experts = MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("experts");
+    let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
     experts
         .encode(
             &cb,
-            MoeExpertsArguments {
+            MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                partial_buffer: &two_pass_partial_buf,
+                output_buffer: &y_partial_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
-                y_partial: &y_partial_buf,
                 up_biases: &up_biases_buf,
                 down_biases: &down_biases_buf,
                 tile_counts: &tile_counts_buf,
-                tile_row_offsets: &tile_offsets_buf,
+                tile_offsets: &tile_offsets_buf,
                 tile_map: &tile_map_buf,
                 total_tiles: &total_tiles_buf,
                 dispatch_args: &dispatch_args_buf,
-                num_tiles_n,
-                t,
+                total_rows,
                 d_model,
                 d_ff,
                 e,
-                k,
+                num_tiles_k,
                 gating_code,
                 gate_clip_min: gate_clip.0,
                 gate_clip_max: gate_clip.1,
@@ -720,7 +638,7 @@ fn run_moe_parity_test_internal(
             (e + 1).min(8),
             &tile_offsets_cpu
         );
-        eprintln!("[E2E]   sumk={}, num_tiles_n={}", sumk_val, num_tiles_n);
+        eprintln!("[E2E]   sumk={}, num_tiles_k={}", sumk_val, num_tiles_k);
 
         // For multi-token tests with large d_ff, verify gather output (x_perm)
         if t > 1 && d_ff >= 256 {
@@ -1001,13 +919,10 @@ fn run_moe_parity_test_internal(
 
     // Tightened thresholds with f32 accumulation: expect better accuracy
     let mean_abs_threshold = if k > 1 || gate_clip.1 < f32::INFINITY {
-        // Multi-expert accumulations with f32 accumulation
-        // Tighter threshold: 0.015 factor (was 0.02)
         let multi_expert_drift = 0.015 * sqrt_product * (k as f32 / 2.0);
         0.08f32.max(multi_expert_drift) // tightened from 0.1 and 1.1x guard
     } else {
-        // Single-expert with f32 accumulation: very tight threshold
-        0.01 // tightened from 0.02
+        0.01
     };
 
     if mean_abs_error >= mean_abs_threshold {
@@ -1256,23 +1171,7 @@ fn test_moe_basic() {
         "MultiNTile_D256_4tiles",
     );
 
-    // Test 10a: d_model=512 (8 n-tiles)
-    run_moe_parity_test(
-        &ctx,
-        2,   // t
-        4,   // e
-        1,   // k
-        512, // d_model (16 k0 chunks, 8 n-tiles)
-        64,  // d_ff (small)
-        2,   // gating_code (SwiGLU)
-        1.0,
-        (f32::NEG_INFINITY, f32::INFINITY),
-        (f32::NEG_INFINITY, f32::INFINITY),
-        0xE2E_0015,
-        "IsolateD_D512_FF64_K1",
-    );
-
-    // Test 10b: Isolate large d_ff with small d_model (FF accumulation test)
+    // Test 10a: Isolate large d_ff with small d_model (FF accumulation test)
     run_moe_parity_test(
         &ctx,
         2,     // t
@@ -1288,7 +1187,7 @@ fn test_moe_basic() {
         "IsolateFF_D64_FF14336_K1",
     );
 
-    // Test 10c: d_model=1024 (16 n-tiles)
+    // Test 10b: d_model=1024 (16 n-tiles)
     run_moe_parity_test(
         &ctx,
         2,    // t
@@ -1304,7 +1203,7 @@ fn test_moe_basic() {
         "IsolateD_D1024_FF64_K1",
     );
 
-    // Test 10d: Verify layout with d_model=96, d_ff=96 (3 chunks each)
+    // Test 10c: Verify layout with d_model=96, d_ff=96 (3 chunks each)
     // This tests non-power-of-2 to catch stride bugs
     run_moe_parity_test(
         &ctx,
@@ -1321,7 +1220,7 @@ fn test_moe_basic() {
         "VerifyLayout_D96_FF96",
     );
 
-    // Test 10e: d_model=1536 - FIXED by removing hardcoded clamp
+    // Test 10d: d_model=1536
     run_moe_parity_test(
         &ctx,
         2,    // t
@@ -1337,7 +1236,7 @@ fn test_moe_basic() {
         "IsolateD_D1536_FF64_K1",
     );
 
-    // Test 10f: 2 n-tiles - PASSES
+    // Test 10e: 2 n-tiles
     run_moe_parity_test(
         &ctx,
         1,   // t

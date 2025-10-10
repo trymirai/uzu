@@ -7,43 +7,6 @@ use metal::{
 
 use crate::backends::metal::{MTLContext, MTLError};
 
-/// Arguments for tile counts encoder
-pub struct MoeTileCountsArguments<'a> {
-    pub offsets_buffer: &'a MTLBuffer,     // [E+1]
-    pub tile_counts_buffer: &'a MTLBuffer, // [E]
-    pub e: usize,
-}
-
-/// Encode MoE tile counts kernel (standalone, reusable)
-pub fn encode_moe_tile_counts(
-    ctx: &MTLContext,
-    command_buffer: &CommandBufferRef,
-    args: &MoeTileCountsArguments,
-) -> Result<(), MTLError> {
-    MoeTileMapKernel::new(ctx)?
-        .encode_counts(command_buffer, args)
-        .map_err(Into::into)
-}
-
-/// Arguments for tile scan encoder
-pub struct MoeTileScanArguments<'a> {
-    pub tile_counts_buffer: &'a MTLBuffer, // [E]
-    pub tile_offsets_buffer: &'a MTLBuffer, // [E+1]
-    pub total_tiles_buffer: &'a MTLBuffer, // [>=2]
-    pub e: usize,
-}
-
-/// Encode MoE tile scan kernel (standalone, reusable)
-pub fn encode_moe_tile_scan(
-    ctx: &MTLContext,
-    command_buffer: &CommandBufferRef,
-    args: &MoeTileScanArguments,
-) -> Result<(), MTLError> {
-    MoeTileMapKernel::new(ctx)?
-        .encode_scan(command_buffer, args)
-        .map_err(Into::into)
-}
-
 // ---- Tile Kernels ----
 
 #[derive(Debug, thiserror::Error)]
@@ -52,12 +15,19 @@ pub enum MoeTileError {
     MetalError(#[from] MTLError),
 }
 
-impl From<MoeTileError> for MTLError {
-    fn from(err: MoeTileError) -> Self {
-        match err {
-            MoeTileError::MetalError(inner) => inner,
-        }
-    }
+/// Arguments for tile counts encoder
+pub struct MoeTileCountsArguments<'a> {
+    pub offsets_buffer: &'a MTLBuffer,     // [E+1]
+    pub tile_counts_buffer: &'a MTLBuffer, // [E]
+    pub e: usize,
+}
+
+/// Arguments for tile scan encoder
+pub struct MoeTileScanArguments<'a> {
+    pub tile_counts_buffer: &'a MTLBuffer, // [E]
+    pub tile_offsets_buffer: &'a MTLBuffer, // [E+1]
+    pub total_tiles_buffer: &'a MTLBuffer, // [>=2]
+    pub e: usize,
 }
 
 #[derive(Debug)]

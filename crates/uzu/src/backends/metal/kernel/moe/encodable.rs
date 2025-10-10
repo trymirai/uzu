@@ -5,12 +5,11 @@ use metal::MTLResourceOptions;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
-    MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-    MoeExpertsTwoPassPrefillKernel, MoeFinalizeKernel, MoeGatherArguments,
-    MoeGatherKernel, MoeOffsetsScanArguments, MoeOffsetsScanKernel,
-    MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
-    MoeTopKKernel,
+    MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
+    MoeExpertsArguments, MoeExpertsTwoPassArguments,
+    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel, MoeScatterKernels,
+    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
 };
 use crate::{
     DataType,
@@ -50,8 +49,7 @@ pub struct MoeBlockEncodable {
     router: RouterBlock,
     router_data_type: KernelDataType,
     topk_kernel: MoeTopKKernel,
-    counts_kernel: MoeBucketCountsKernel,
-    offsets_kernel: MoeOffsetsScanKernel,
+    counts_offsets_kernel: MoeCountsOffsetsFusedKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernel: MoeGatherKernel,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
@@ -515,20 +513,13 @@ impl MoeBlockEncodable {
                 e
             ))
         })?;
-        let counts_kernel =
-            MoeBucketCountsKernel::new(context).map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Counts kernel error: {:?}",
-                    e
-                ))
-            })?;
-        let offsets_kernel =
-            MoeOffsetsScanKernel::new(context).map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Offsets kernel error: {:?}",
-                    e
-                ))
-            })?;
+        let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context)
+            .map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!(
+                "Counts+offsets kernel error: {:?}",
+                e
+            ))
+        })?;
         let scatter_kernels = MoeScatterKernels::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Scatter kernels error: {:?}",
@@ -577,8 +568,7 @@ impl MoeBlockEncodable {
             router,
             router_data_type: router_kernel_data_type,
             topk_kernel,
-            counts_kernel,
-            offsets_kernel,
+            counts_offsets_kernel,
             scatter_kernels,
             gather_kernel,
             experts_two_pass_decode_kernel,
@@ -843,31 +833,21 @@ impl EncodableWithState for MoeBlockEncodable {
             )
             .expect("MoE TopK failed");
 
-        self.counts_kernel
+        self.counts_offsets_kernel
             .encode(
                 root,
-                MoeBucketCountsArguments {
+                MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
                     counts_buffer: &counts_buf,
+                    offsets_buffer: &offsets_buf,
+                    sum_k_buffer: &sumk_buf,
                     partials_buffer: &partials_buf,
                     t: suffix_length,
                     e,
                     k,
                 },
             )
-            .expect("MoE counts failed");
-
-        self.offsets_kernel
-            .encode(
-                root,
-                MoeOffsetsScanArguments {
-                    counts_buffer: &counts_buf,
-                    offsets_buffer: &offsets_buf,
-                    sumk_buffer: &sumk_buf,
-                    e,
-                },
-            )
-            .expect("MoE offsets scan failed");
+            .expect("MoE counts+offsets failed");
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);

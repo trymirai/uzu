@@ -13,8 +13,8 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
-        MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
-        MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+        MoeExpertsTwoPassPrefillKernel,
     },
 };
 
@@ -200,145 +200,6 @@ fn cpu_expert_ffn(
         silu_alpha,
     )
     .1
-}
-
-#[test]
-fn test_one_pass_fused_correctness() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(0x1FA5542);
-
-    // Realistic decode test case: single token, K=2
-    let t = 1;
-    let k = 2;
-    let sum_k = t * k;
-    let d_model = 512;
-    let d_ff = 2048;
-    let e = 8;
-
-    eprintln!(
-        "[1-pass fused] T={}, K={}, sum_k={}, d_model={}, d_ff={}, E={}",
-        t, k, sum_k, d_model, d_ff, e
-    );
-
-    // Generate test data
-    let x_perm: Vec<bf16> = (0..sum_k * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
-
-    let offsets = build_offsets(e, sum_k);
-
-    // Generate weights (W13 in GPU transposed layout [E, 2*d_ff, d_model])
-    let w13: Vec<bf16> = (0..e * 2 * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let w2: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-
-    // CPU reference (gating_code=0 means GELU)
-    let (_hidden_expected, expected) = cpu_expert_ffn_full(
-        &x_perm,
-        &offsets,
-        &w13,
-        &w2,
-        &up_biases,
-        &down_biases,
-        d_model,
-        d_ff,
-        0,
-        1.0,
-    );
-
-    // Prepare GPU buffers
-    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
-    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
-    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
-
-    // Intermediate and output buffers
-    let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
-
-    // Tile infrastructure
-    // Allocate tile buffers large enough for two-pass decode.
-    // Each routed row expands into ceil(d_ff / 4) tiles (BLOCK_M = 4 in decode kernel).
-    let h_blocks_decode = (d_ff + 3) / 4;
-    let max_total_tiles = sum_k * h_blocks_decode;
-
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    // Matches forward-pass allocation (stores total tiles plus diagnostics slots).
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
-
-    // Execute 1-pass fused kernel
-    let experts_kernel =
-        MoeExpertsFusedKernel::new(&ctx).expect("MoeExpertsFusedKernel::new");
-    let cb = ctx.command_queue.new_command_buffer();
-
-    use uzu::backends::metal::kernel::moe::MoeExpertsArguments;
-
-    const BN: usize = 64;
-    let num_tiles_n = (d_model + BN - 1) / BN;
-
-    experts_kernel
-        .encode(
-            &cb,
-            MoeExpertsArguments {
-                x_perm_buffer: &x_perm_buf,
-                expert_offsets: &offsets_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                y_partial: &y_partial_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_row_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
-                num_tiles_n,
-                t,
-                d_model,
-                d_ff,
-                e,
-                k,
-                gating_code: 0, // GELU activation
-                gate_clip_min: -1e6,
-                gate_clip_max: 1e6,
-                up_clip_min: -1e6,
-                up_clip_max: 1e6,
-                silu_alpha: 1.0,
-                data_type: KernelDataType::BFloat16,
-            },
-        )
-        .expect("encode 1-pass");
-
-    cb.commit();
-    cb.wait_until_completed();
-
-    // Read GPU output
-    let output_gpu = unsafe {
-        std::slice::from_raw_parts(
-            y_partial_buf.contents() as *const bf16,
-            sum_k * d_model,
-        )
-    };
-
-    // Verify correctness with tight tolerance
-    let tolerance = 0.01;
-
-    assert_bf16_close(output_gpu, &expected, tolerance, "1-pass fused output");
-
-    eprintln!("[1-pass fused] ✓ PASSED (tolerance={:.4})", tolerance);
 }
 
 #[test]

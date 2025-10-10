@@ -17,12 +17,11 @@ pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use moe::{
-    MoeBlockBasesArguments, MoeBlockEncodable, MoeBucketCountsArguments,
-    MoeBucketCountsError, MoeBucketCountsKernel, MoeExpertsArguments,
-    MoeExpertsError, MoeExpertsFusedKernel, MoeExpertsTwoPassArguments,
+    MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
+    MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel,
-    MoeOffsetsScanArguments, MoeOffsetsScanError, MoeOffsetsScanKernel,
     MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKError, MoeTopKKernel,
 };

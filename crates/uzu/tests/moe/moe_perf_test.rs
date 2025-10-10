@@ -1,21 +1,20 @@
 use std::time::Instant;
 
 use half::bf16;
-use metal::MTLResourceOptions;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
-        MoeBucketCountsArguments, MoeBucketCountsKernel, MoeExpertsArguments,
-        MoeExpertsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-        MoeGatherArguments, MoeGatherKernel, MoeOffsetsScanArguments,
-        MoeOffsetsScanKernel, MoeScatterKernels, MoeScatterWithMapArguments,
-        MoeTopKArguments, MoeTopKKernel, RouterEncoderArgs, encode_moe_router,
-        encode_moe_router_with_pipeline,
+        MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
+        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+        MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
+        MoeGatherKernel, MoeRouterArguments, MoeRouterKernel,
+        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
+        MoeTopKKernel,
     },
 };
 
-use super::test_utils::create_ctx;
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
     name: String,
@@ -122,25 +121,13 @@ fn test_router_decode_perf() {
             .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
             .collect();
 
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let weight_buf = ctx.device.new_buffer_with_data(
-            weight.as_ptr() as *const _,
-            (weight.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let bias_buf = ctx.device.new_buffer_with_data(
-            bias.as_ptr() as *const _,
-            (bias.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let logits_buf = ctx.device.new_buffer(
-            (t * e * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
+        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
+        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
+
+        let router_kernel =
+            MoeRouterKernel::new(&ctx).expect("router kernel");
 
         let perf = time_kernel(
             &format!("{} (T={}, E={}, D={})", name, t, e, d_model),
@@ -148,21 +135,21 @@ fn test_router_decode_perf() {
             20,
             || {
                 let cb = ctx.command_queue.new_command_buffer();
-                encode_moe_router(
-                    &ctx,
-                    &cb,
-                    KernelDataType::BFloat16,
-                    RouterEncoderArgs {
-                        input_buffer: &x_buf,
-                        weight_buffer: &weight_buf,
-                        bias_buffer: &bias_buf,
-                        output_buffer: &logits_buf,
-                        t,
-                        d_model,
-                        e,
-                    },
-                )
-                .expect("router encode failed");
+                router_kernel
+                    .encode(
+                        &cb,
+                        KernelDataType::BFloat16,
+                        MoeRouterArguments {
+                            input_buffer: &x_buf,
+                            weight_buffer: &weight_buf,
+                            bias_buffer: &bias_buf,
+                            output_buffer: &logits_buf,
+                            t,
+                            d_model,
+                            e,
+                        },
+                    )
+                    .expect("router encode failed");
                 cb.commit();
                 cb.wait_until_completed();
             },
@@ -204,65 +191,24 @@ fn test_router_prefill_perf() {
             .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
             .collect();
 
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let weight_buf = ctx.device.new_buffer_with_data(
-            weight.as_ptr() as *const _,
-            (weight.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let bias_buf = ctx.device.new_buffer_with_data(
-            bias.as_ptr() as *const _,
-            (bias.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let logits_buf = ctx.device.new_buffer(
-            (t * e * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
+        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
+        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
 
-        let pipeline = ctx
-            .compute_pipeline_state("moe_router_bf16", None)
-            .expect("router kernel not found");
+        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
 
         let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&pipeline);
-            encoder.set_buffer(0, Some(&x_buf), 0);
-            encoder.set_buffer(1, Some(&weight_buf), 0);
-            encoder.set_buffer(2, Some(&bias_buf), 0);
-            encoder.set_buffer(3, Some(&logits_buf), 0);
-
-            let t_u32 = t as u32;
-            let d_model_u32 = d_model as u32;
-            let e_u32 = e as u32;
-            encoder.set_bytes(
-                4,
-                std::mem::size_of::<u32>() as u64,
-                &t_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                5,
-                std::mem::size_of::<u32>() as u64,
-                &d_model_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                6,
-                std::mem::size_of::<u32>() as u64,
-                &e_u32 as *const u32 as *const _,
-            );
-
-            let num_simdgroups: u64 = 8; // Optimized: 8 simdgroups per TG (256 threads)
-            let tg_x = (e as u64 + num_simdgroups - 1) / num_simdgroups;
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(tg_x, t as u64, 1),
-                metal::MTLSize::new(32 * num_simdgroups, 1, 1),
-            );
-            encoder.end_encoding();
+            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
+                input_buffer: &x_buf,
+                weight_buffer: &weight_buf,
+                bias_buffer: &bias_buf,
+                output_buffer: &logits_buf,
+                t,
+                d_model,
+                e,
+            }).expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -303,23 +249,11 @@ fn test_topk_decode_perf() {
             .map(|_| bf16::from_f32(rng.random_range(-5.0..5.0)))
             .collect();
 
-        let logits_buf = ctx.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_ids_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_probs_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let pipeline = ctx
-            .compute_pipeline_state("moe_topk_select_bf16", None)
-            .expect("topk kernel not found");
+        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
 
         let perf = time_kernel(
             &format!("{} (T={}, E={}, K={})", name, t, e, k),
@@ -327,42 +261,15 @@ fn test_topk_decode_perf() {
             20,
             || {
                 let cb = ctx.command_queue.new_command_buffer();
-                let encoder = cb.new_compute_command_encoder();
-                encoder.set_compute_pipeline_state(&pipeline);
-                encoder.set_buffer(0, Some(&logits_buf), 0);
-                encoder.set_buffer(1, Some(&topk_ids_buf), 0);
-                encoder.set_buffer(2, Some(&topk_probs_buf), 0);
-
-                let t_u32 = t as u32;
-                let e_u32 = e as u32;
-                let k_u32 = k as u32;
-                let renorm_u32 = 1u32;
-                encoder.set_bytes(
-                    3,
-                    std::mem::size_of::<u32>() as u64,
-                    &t_u32 as *const u32 as *const _,
-                );
-                encoder.set_bytes(
-                    4,
-                    std::mem::size_of::<u32>() as u64,
-                    &e_u32 as *const u32 as *const _,
-                );
-                encoder.set_bytes(
-                    5,
-                    std::mem::size_of::<u32>() as u64,
-                    &k_u32 as *const u32 as *const _,
-                );
-                encoder.set_bytes(
-                    6,
-                    std::mem::size_of::<u32>() as u64,
-                    &renorm_u32 as *const u32 as *const _,
-                );
-
-                encoder.dispatch_thread_groups(
-                    metal::MTLSize::new(t as u64, 1, 1),
-                    metal::MTLSize::new(256, 1, 1),
-                );
-                encoder.end_encoding();
+                topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
+                    logits_buffer: &logits_buf,
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    t,
+                    e,
+                    k,
+                    renorm: true,
+                }).expect("encode topk");
                 cb.commit();
                 cb.wait_until_completed();
             },
@@ -397,62 +304,23 @@ fn test_topk_prefill_perf() {
             .map(|_| bf16::from_f32(rng.random_range(-5.0..5.0)))
             .collect();
 
-        let logits_buf = ctx.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_ids_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_probs_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let pipeline = ctx
-            .compute_pipeline_state("moe_topk_select_bf16", None)
-            .expect("topk kernel not found");
+        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
 
         let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&pipeline);
-            encoder.set_buffer(0, Some(&logits_buf), 0);
-            encoder.set_buffer(1, Some(&topk_ids_buf), 0);
-            encoder.set_buffer(2, Some(&topk_probs_buf), 0);
-
-            let t_u32 = t as u32;
-            let e_u32 = e as u32;
-            let k_u32 = k as u32;
-            let renorm_u32 = 1u32;
-            encoder.set_bytes(
-                3,
-                std::mem::size_of::<u32>() as u64,
-                &t_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                4,
-                std::mem::size_of::<u32>() as u64,
-                &e_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                5,
-                std::mem::size_of::<u32>() as u64,
-                &k_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                6,
-                std::mem::size_of::<u32>() as u64,
-                &renorm_u32 as *const u32 as *const _,
-            );
-
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(t as u64, 1, 1),
-                metal::MTLSize::new(256, 1, 1),
-            );
-            encoder.end_encoding();
+            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
+                logits_buffer: &logits_buf,
+                topk_ids_buffer: &topk_ids_buf,
+                topk_probs_buffer: &topk_probs_buf,
+                t,
+                e,
+                k,
+                renorm: true,
+            }).expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -501,63 +369,28 @@ fn test_moe_e2e_decode_perf() {
             .collect();
 
         // Buffers (simplified - just key buffers for timing)
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let router_w_buf = ctx.device.new_buffer_with_data(
-            router_w.as_ptr() as *const _,
-            (router_w.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let router_b_buf = ctx.device.new_buffer_with_data(
-            router_b.as_ptr() as *const _,
-            (router_b.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let logits_buf = ctx.device.new_buffer(
-            (t * e * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_ids_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_probs_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
+        let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
+        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
+        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_pipeline =
-            ctx.compute_pipeline_state("moe_router_bf16", None).unwrap();
-        let topk_pipeline =
-            ctx.compute_pipeline_state("moe_topk_select_bf16", None).unwrap();
+        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
+        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
 
         // Time router
         let router_perf = time_kernel("Router", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&router_pipeline);
-            encoder.set_buffer(0, Some(&x_buf), 0);
-            encoder.set_buffer(1, Some(&router_w_buf), 0);
-            encoder.set_buffer(2, Some(&router_b_buf), 0);
-            encoder.set_buffer(3, Some(&logits_buf), 0);
-
-            let t_u32 = t as u32;
-            let d_u32 = d_model as u32;
-            let e_u32 = e as u32;
-            encoder.set_bytes(4, 4, &t_u32 as *const u32 as *const _);
-            encoder.set_bytes(5, 4, &d_u32 as *const u32 as *const _);
-            encoder.set_bytes(6, 4, &e_u32 as *const u32 as *const _);
-
-            let num_sg: u64 = 4;
-            let tg_x = (e as u64 + num_sg - 1) / num_sg;
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(tg_x, t as u64, 1),
-                metal::MTLSize::new(32 * num_sg, 1, 1),
-            );
-            encoder.end_encoding();
+            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
+                input_buffer: &x_buf,
+                weight_buffer: &router_w_buf,
+                bias_buffer: &router_b_buf,
+                output_buffer: &logits_buf,
+                t,
+                d_model,
+                e,
+            }).expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -565,26 +398,15 @@ fn test_moe_e2e_decode_perf() {
         // Time TopK
         let topk_perf = time_kernel("TopK", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&topk_pipeline);
-            encoder.set_buffer(0, Some(&logits_buf), 0);
-            encoder.set_buffer(1, Some(&topk_ids_buf), 0);
-            encoder.set_buffer(2, Some(&topk_probs_buf), 0);
-
-            let t_u32 = t as u32;
-            let e_u32 = e as u32;
-            let k_u32 = k as u32;
-            let renorm = 1u32;
-            encoder.set_bytes(3, 4, &t_u32 as *const u32 as *const _);
-            encoder.set_bytes(4, 4, &e_u32 as *const u32 as *const _);
-            encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const _);
-            encoder.set_bytes(6, 4, &renorm as *const u32 as *const _);
-
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(t as u64, 1, 1),
-                metal::MTLSize::new(256, 1, 1),
-            );
-            encoder.end_encoding();
+            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
+                logits_buffer: &logits_buf,
+                topk_ids_buffer: &topk_ids_buf,
+                topk_probs_buffer: &topk_probs_buf,
+                t,
+                e,
+                k,
+                renorm: true,
+            }).expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -636,63 +458,28 @@ fn test_moe_e2e_prefill_perf() {
             .collect();
 
         // Buffers (simplified - just key buffers for timing)
-        let x_buf = ctx.device.new_buffer_with_data(
-            x.as_ptr() as *const _,
-            (x.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let router_w_buf = ctx.device.new_buffer_with_data(
-            router_w.as_ptr() as *const _,
-            (router_w.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let router_b_buf = ctx.device.new_buffer_with_data(
-            router_b.as_ptr() as *const _,
-            (router_b.len() * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let logits_buf = ctx.device.new_buffer(
-            (t * e * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_ids_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<i32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let topk_probs_buf = ctx.device.new_buffer(
-            (t * k * std::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let x_buf = alloc_buffer_with_data(&ctx, &x);
+        let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
+        let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
+        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
+        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_pipeline =
-            ctx.compute_pipeline_state("moe_router_bf16", None).unwrap();
-        let topk_pipeline =
-            ctx.compute_pipeline_state("moe_topk_select_bf16", None).unwrap();
+        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
+        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
 
         // Time router
         let router_perf = time_kernel("Router", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&router_pipeline);
-            encoder.set_buffer(0, Some(&x_buf), 0);
-            encoder.set_buffer(1, Some(&router_w_buf), 0);
-            encoder.set_buffer(2, Some(&router_b_buf), 0);
-            encoder.set_buffer(3, Some(&logits_buf), 0);
-
-            let t_u32 = t as u32;
-            let d_u32 = d_model as u32;
-            let e_u32 = e as u32;
-            encoder.set_bytes(4, 4, &t_u32 as *const u32 as *const _);
-            encoder.set_bytes(5, 4, &d_u32 as *const u32 as *const _);
-            encoder.set_bytes(6, 4, &e_u32 as *const u32 as *const _);
-
-            let num_sg: u64 = 4;
-            let tg_x = (e as u64 + num_sg - 1) / num_sg;
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(tg_x, t as u64, 1),
-                metal::MTLSize::new(32 * num_sg, 1, 1),
-            );
-            encoder.end_encoding();
+            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
+                input_buffer: &x_buf,
+                weight_buffer: &router_w_buf,
+                bias_buffer: &router_b_buf,
+                output_buffer: &logits_buf,
+                t,
+                d_model,
+                e,
+            }).expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -700,26 +487,15 @@ fn test_moe_e2e_prefill_perf() {
         // Time TopK
         let topk_perf = time_kernel("TopK", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            let encoder = cb.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&topk_pipeline);
-            encoder.set_buffer(0, Some(&logits_buf), 0);
-            encoder.set_buffer(1, Some(&topk_ids_buf), 0);
-            encoder.set_buffer(2, Some(&topk_probs_buf), 0);
-
-            let t_u32 = t as u32;
-            let e_u32 = e as u32;
-            let k_u32 = k as u32;
-            let renorm = 1u32;
-            encoder.set_bytes(3, 4, &t_u32 as *const u32 as *const _);
-            encoder.set_bytes(4, 4, &e_u32 as *const u32 as *const _);
-            encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const _);
-            encoder.set_bytes(6, 4, &renorm as *const u32 as *const _);
-
-            encoder.dispatch_thread_groups(
-                metal::MTLSize::new(t as u64, 1, 1),
-                metal::MTLSize::new(256, 1, 1),
-            );
-            encoder.end_encoding();
+            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
+                logits_buffer: &logits_buf,
+                topk_ids_buffer: &topk_ids_buf,
+                topk_probs_buffer: &topk_probs_buf,
+                t,
+                e,
+                k,
+                renorm: true,
+            }).expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -766,71 +542,23 @@ fn test_moe_pipeline_breakdown_decode() {
     let router_b: Vec<bf16> =
         (0..e).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
 
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let router_w_buf = ctx.device.new_buffer_with_data(
-        router_w.as_ptr() as *const _,
-        (router_w.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let router_b_buf = ctx.device.new_buffer_with_data(
-        router_b.as_ptr() as *const _,
-        (router_b.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let logits_buf = ctx.device.new_buffer(
-        (t * e * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let topk_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_buf = alloc_buffer_with_data(&ctx, &x);
+    let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
+    let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
+    let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
+    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
+    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
-    let partials_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * e * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let offsets_buf = ctx.device.new_buffer(
-        ((e + 1) * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let sumk_buf = ctx.device.new_buffer(
-        std::mem::size_of::<i32>() as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let bucketed_ids_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let x_perm_buf = ctx.device.new_buffer(
-        (t * k * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_partial_buf = ctx.device.new_buffer(
-        (t * k * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tok2row_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<i32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_out_buf = ctx.device.new_buffer(
-        (t * d_model * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let partials_buf = alloc_buffer::<i32>(&ctx, num_blocks * num_tiles * e);
+    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
+    let bucketed_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let x_perm_buf = alloc_buffer::<bf16>(&ctx, t * k * d_model);
+    let y_partial_buf = alloc_buffer::<bf16>(&ctx, t * k * d_model);
+    let tok2row_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
 
     // Expert weights buffers
     // Generate W13 in original layout [E, d_model, 2*d_ff]
@@ -862,94 +590,62 @@ fn test_moe_pipeline_breakdown_decode() {
         .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
         .collect();
 
-    let w13_buf = ctx.device.new_buffer_with_data(
-        w13.as_ptr() as *const _,
-        (w13.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let w2_buf = ctx.device.new_buffer_with_data(
-        w2.as_ptr() as *const _,
-        (w2.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let up_biases_buf = ctx.device.new_buffer_with_data(
-        up_biases.as_ptr() as *const _,
-        (up_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let down_biases_buf = ctx.device.new_buffer_with_data(
-        down_biases.as_ptr() as *const _,
-        (down_biases.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
+    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
-    // Experts tiling buffers
-    const BN: usize = 64;
-    let num_tiles_n = (d_model + BN - 1) / BN;
-    let max_tiles = t * k * e * num_tiles_n;
-    let tile_counts_buf = ctx.device.new_buffer(
-        (e * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tile_offsets_buf = ctx.device.new_buffer(
-        ((e + 1) * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let tile_map_buf = ctx.device.new_buffer(
-        (max_tiles * 3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let total_tiles_buf = ctx.device.new_buffer(
-        (8 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dispatch_args_buf = ctx.device.new_buffer(
-        (3 * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    // Experts tiling buffers for two-pass
+    const K_TILE: usize = 64;
+    let sum_k = t * k;
+    let num_tiles_k = (d_ff + K_TILE - 1) / K_TILE;
+    let max_tiles = t * k * e * num_tiles_k;
+    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
+    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+
+    // Two-pass specific buffers
+    let hidden_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_ff);
+    let two_pass_partial_buf =
+        alloc_buffer::<f32>(&ctx, num_tiles_k * sum_k * d_model);
+    let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     // Scatter block bases buffers
-    let block_bases_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let block_alloc_buf = ctx.device.new_buffer(
-        (num_blocks * num_tiles * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let bucketed_probs_buf = ctx.device.new_buffer(
-        (t * k * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let block_bases_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles);
+    let block_alloc_buf = alloc_buffer::<u32>(&ctx, num_blocks * num_tiles);
+    let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
     // Create kernel structs (use production-validated encoding logic)
-    let router_pipeline = ctx
-        .compute_pipeline_state("moe_router_bf16", None)
-        .expect("router pipeline");
+    let router_kernel = MoeRouterKernel::new(&ctx).expect("router");
     let topk_kernel = MoeTopKKernel::new(&ctx).expect("topk");
-    let counts_kernel = MoeBucketCountsKernel::new(&ctx).expect("counts");
-    let offsets_kernel = MoeOffsetsScanKernel::new(&ctx).expect("offsets");
+    let fused_kernel =
+        MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsFusedKernel::new(&ctx).expect("experts");
+    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
+        .expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
 
     // Time each kernel (reduced iterations for isolation)
     let router_perf = time_kernel("Router", 2, 5, || {
         let cb = ctx.command_queue.new_command_buffer();
-        encode_moe_router_with_pipeline(
-            &router_pipeline,
-            &cb,
-            RouterEncoderArgs {
-                input_buffer: &x_buf,
-                weight_buffer: &router_w_buf,
-                bias_buffer: &router_b_buf,
-                output_buffer: &logits_buf,
-                t,
-                d_model,
-                e,
-            },
-        );
+        router_kernel
+            .encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeRouterArguments {
+                    input_buffer: &x_buf,
+                    weight_buffer: &router_w_buf,
+                    bias_buffer: &router_b_buf,
+                    output_buffer: &logits_buf,
+                    t,
+                    d_model,
+                    e,
+                },
+            )
+            .expect("router");
         cb.commit();
         cb.wait_until_completed();
     });
@@ -975,39 +671,24 @@ fn test_moe_pipeline_breakdown_decode() {
         cb.wait_until_completed();
     });
 
-    // Testing: Router + TopK + Counts
-    let counts_perf = time_kernel("Counts", 2, 5, || {
+    // Testing: Router + TopK + Counts+Offsets (FUSED)
+    let fused_perf = time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
         let cb = ctx.command_queue.new_command_buffer();
-        counts_kernel
+        fused_kernel
             .encode(
                 &cb,
-                MoeBucketCountsArguments {
+                MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
                     counts_buffer: &counts_buf,
+                    offsets_buffer: &offsets_buf,
+                    sum_k_buffer: &sumk_buf,
                     partials_buffer: &partials_buf,
                     t,
                     e,
                     k,
                 },
             )
-            .expect("counts");
-        cb.commit();
-        cb.wait_until_completed();
-    });
-
-    let offsets_perf = time_kernel("Offsets", 2, 5, || {
-        let cb = ctx.command_queue.new_command_buffer();
-        offsets_kernel
-            .encode(
-                &cb,
-                MoeOffsetsScanArguments {
-                    counts_buffer: &counts_buf,
-                    offsets_buffer: &offsets_buf,
-                    sumk_buffer: &sumk_buf,
-                    e,
-                },
-            )
-            .expect("offsets");
+            .expect("counts+offsets fused");
         cb.commit();
         cb.wait_until_completed();
     });
@@ -1081,25 +762,27 @@ fn test_moe_pipeline_breakdown_decode() {
         experts_kernel
             .encode(
                 &cb,
-                MoeExpertsArguments {
+                MoeExpertsTwoPassArguments {
                     x_perm_buffer: &x_perm_buf,
                     expert_offsets: &offsets_buf,
+                    row_expert_map: &row_expert_map_buf,
+                    hidden_buffer: &hidden_buf,
+                    partial_buffer: &two_pass_partial_buf,
+                    output_buffer: &y_partial_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
-                    y_partial: &y_partial_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
                     tile_counts: &tile_counts_buf,
-                    tile_row_offsets: &tile_offsets_buf,
+                    tile_offsets: &tile_offsets_buf,
                     tile_map: &tile_map_buf,
                     total_tiles: &total_tiles_buf,
                     dispatch_args: &dispatch_args_buf,
-                    num_tiles_n,
-                    t,
+                    total_rows: sum_k,
                     d_model,
                     d_ff,
                     e,
-                    k,
+                    num_tiles_k: num_tiles_k as u32,
                     gating_code: 2, // SILU
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: 20.0,
@@ -1138,8 +821,7 @@ fn test_moe_pipeline_breakdown_decode() {
     // Print results
     router_perf.print();
     topk_perf.print();
-    counts_perf.print();
-    offsets_perf.print();
+    fused_perf.print();
     scatter_perf.print();
     gather_perf.print();
     experts_perf.print();
@@ -1148,8 +830,7 @@ fn test_moe_pipeline_breakdown_decode() {
     // Calculate breakdown
     let total_us = (router_perf.mean_ms
         + topk_perf.mean_ms
-        + counts_perf.mean_ms
-        + offsets_perf.mean_ms
+        + fused_perf.mean_ms
         + scatter_perf.mean_ms
         + gather_perf.mean_ms
         + experts_perf.mean_ms
@@ -1160,47 +841,42 @@ fn test_moe_pipeline_breakdown_decode() {
         "\n  ═══ Per-Kernel Latency (Production D=4096, H=14336, E=16, K=2, T=1) ═══"
     );
     eprintln!(
-        "    Router:   {:8.1} us  ({:5.1}%)",
+        "    Router:      {:8.1} us  ({:5.1}%)",
         router_perf.mean_ms * 1000.0,
         (router_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    TopK:     {:8.1} us  ({:5.1}%)",
+        "    TopK:        {:8.1} us  ({:5.1}%)",
         topk_perf.mean_ms * 1000.0,
         (topk_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    Counts:   {:8.1} us  ({:5.1}%)",
-        counts_perf.mean_ms * 1000.0,
-        (counts_perf.mean_ms / (total_us / 1000.0)) * 100.0
+        "    Counts+Offsets (FUSED): {:8.1} us  ({:5.1}%)",
+        fused_perf.mean_ms * 1000.0,
+        (fused_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    Offsets:  {:8.1} us  ({:5.1}%)",
-        offsets_perf.mean_ms * 1000.0,
-        (offsets_perf.mean_ms / (total_us / 1000.0)) * 100.0
-    );
-    eprintln!(
-        "    Scatter:  {:8.1} us  ({:5.1}%)",
+        "    Scatter:     {:8.1} us  ({:5.1}%)",
         scatter_perf.mean_ms * 1000.0,
         (scatter_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    Gather:   {:8.1} us  ({:5.1}%)",
+        "    Gather:      {:8.1} us  ({:5.1}%)",
         gather_perf.mean_ms * 1000.0,
         (gather_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    Experts:  {:8.1} us  ({:5.1}%) ← MAIN COMPUTE",
+        "    Experts:     {:8.1} us  ({:5.1}%) ← MAIN COMPUTE",
         experts_perf.mean_ms * 1000.0,
         (experts_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    Finalize: {:8.1} us  ({:5.1}%)",
+        "    Finalize:    {:8.1} us  ({:5.1}%)",
         finalize_perf.mean_ms * 1000.0,
         (finalize_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!("    ═══════════════════════════════════════════");
-    eprintln!("    TOTAL:    {:8.1} us (100.0%)", total_us);
+    eprintln!("    TOTAL:       {:8.1} us (100.0%)", total_us);
     eprintln!(
         "\n  Note: Times include Metal CB overhead (~10-50ms per kernel)."
     );

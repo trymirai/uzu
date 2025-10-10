@@ -4,42 +4,28 @@ mod encodable;
 pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
 
 // Submodules
-mod bucket_counts;
+mod counts_offsets_fused;
 mod experts;
 mod finalize;
 mod gather;
-mod offsets_scan;
 mod router;
 mod scatter;
 mod tiles;
 mod topk;
 
 // Re-export public items from submodules
-pub use bucket_counts::{
-    MoeBucketCountsArguments, MoeBucketCountsError, MoeBucketCountsKernel,
-    encode_moe_bucket_counts, encode_moe_bucket_counts_with_pipelines,
+pub use counts_offsets_fused::{
+    MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedError,
+    MoeCountsOffsetsFusedKernel,
 };
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsFusedKernel,
-    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-    MoeExpertsTwoPassPrefillKernel, MoeScatterError,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
+    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+    MoeScatterError,
 };
-pub use finalize::{
-    MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel,
-    encode_moe_finalize, encode_moe_finalize_with_pipeline,
-};
-pub use gather::{
-    MoeGatherArguments, MoeGatherError, MoeGatherKernel, encode_moe_gather,
-    encode_moe_gather_with_pipeline,
-};
-pub use offsets_scan::{
-    MoeOffsetsScanArguments, MoeOffsetsScanError, MoeOffsetsScanKernel,
-    encode_moe_offsets_scan, encode_moe_offsets_scan_with_pipeline,
-};
-pub use router::{
-    MoeRouterArguments, MoeRouterError, MoeRouterKernel, RouterEncoderArgs,
-    encode_moe_router, encode_moe_router_with_pipeline,
-};
+pub use finalize::{MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel};
+pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
+pub use router::{MoeRouterArguments, MoeRouterError, MoeRouterKernel};
 pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     MoeScatterWithMapArguments,
@@ -49,13 +35,9 @@ pub use tiles::{
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
     MoePassATileKernel, MoePassATileScanArguments, MoeTileCountsArguments,
     MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
-    MoeTileMapKernel, MoeTileScanArguments, encode_moe_tile_counts,
-    encode_moe_tile_scan,
+    MoeTileMapKernel, MoeTileScanArguments,
 };
-pub use topk::{
-    MoeTopKArguments, MoeTopKError, MoeTopKKernel, encode_moe_topk,
-    encode_moe_topk_with_pipeline,
-};
+pub use topk::{MoeTopKArguments, MoeTopKError, MoeTopKKernel};
 
 // Common utility functions
 pub(crate) fn dtype_suffix(dtype: KernelDataType) -> &'static str {
