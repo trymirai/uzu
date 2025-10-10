@@ -8,10 +8,9 @@ mod counts_offsets_fused;
 mod experts;
 mod finalize;
 mod gather;
-mod router;
+mod router_topk;
 mod scatter;
 mod tiles;
-mod topk;
 
 // Re-export public items from submodules
 pub use counts_offsets_fused::{
@@ -25,7 +24,9 @@ pub use experts::{
 };
 pub use finalize::{MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel};
 pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
-pub use router::{MoeRouterArguments, MoeRouterError, MoeRouterKernel};
+pub use router_topk::{
+    MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
+};
 pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     MoeScatterWithMapArguments,
@@ -37,7 +38,6 @@ pub use tiles::{
     MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
     MoeTileMapKernel, MoeTileScanArguments,
 };
-pub use topk::{MoeTopKArguments, MoeTopKError, MoeTopKKernel};
 
 // Common utility functions
 pub(crate) fn dtype_suffix(dtype: KernelDataType) -> &'static str {

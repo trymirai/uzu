@@ -1,11 +1,11 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use half::f16;
+use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
-    MoeTopKArguments, MoeTopKKernel,
+    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -55,39 +55,59 @@ fn test_scatter_buckets_parity() {
     let shapes = vec![(1usize, 4usize, 1usize), (7, 16, 2), (128, 64, 2)];
     for (t, e, k) in shapes {
         let mut rng = StdRng::seed_from_u64(7);
-        let logits: Vec<f32> =
-            (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
-        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
+
+        // Generate random input and router weights for fused kernel
+        let d_model = 64;
+        let input_f32: Vec<f32> =
+            (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+        let weight_f32: Vec<f32> =
+            (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+        let bias_f32: Vec<f32> =
+            (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
+
+        let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+
+        let input_buf = alloc_buffer_with_data(&ctx, &input);
+        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
+        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-        let topk_probs_buf = alloc_buffer::<f16>(&ctx, t * k);
-        let topk = MoeTopKKernel::new(&ctx).expect("topk");
+        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
+
+        // Use fused router+topk kernel
+        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
         let cb = ctx.command_queue.new_command_buffer();
-        topk.encode(
-            &cb,
-            KernelDataType::Float32,
-            MoeTopKArguments {
-                logits_buffer: &logits_buf,
-                topk_ids_buffer: &topk_ids_buf,
-                topk_probs_buffer: &topk_probs_buf,
-                t,
-                e,
-                k,
-                renorm: true,
-            },
-        )
-        .expect("encode topk");
+        router_topk
+            .encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeRouterTopKArguments {
+                    input_buffer: &input_buf,
+                    weight_buffer: &weight_buf,
+                    bias_buffer: &bias_buf,
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    t,
+                    d_model,
+                    e,
+                    k,
+                    renorm: true,
+                },
+            )
+            .expect("encode router_topk");
         cb.commit();
         cb.wait_until_completed();
 
         // Read back CPU probs for reference compare
-        let probs_f16 = unsafe {
+        let probs_bf16 = unsafe {
             std::slice::from_raw_parts(
-                topk_probs_buf.contents() as *const f16,
+                topk_probs_buf.contents() as *const bf16,
                 t * k,
             )
         };
         let topk_probs_cpu: Vec<f32> =
-            probs_f16.iter().map(|&h| h.to_f32()).collect();
+            probs_bf16.iter().map(|&h| f32::from(h)).collect();
         let topk_ids_cpu = unsafe {
             std::slice::from_raw_parts(
                 topk_ids_buf.contents() as *const i32,
@@ -149,7 +169,7 @@ fn test_scatter_buckets_parity() {
             std::slice::from_raw_parts(sumk_buf.contents() as *const u32, 1)
         }[0] as usize;
         let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
-        let out_probs_buf = alloc_buffer::<f16>(&ctx, sumk);
+        let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
         let cb = ctx.command_queue.new_command_buffer();
         scatter
@@ -169,7 +189,7 @@ fn test_scatter_buckets_parity() {
                     num_blocks,
                     num_tiles,
                 },
-                KernelDataType::Float16,
+                KernelDataType::BFloat16,
             )
             .expect("encode scatter");
         cb.commit();
@@ -183,12 +203,12 @@ fn test_scatter_buckets_parity() {
         };
         let out_probs_h = unsafe {
             std::slice::from_raw_parts(
-                out_probs_buf.contents() as *const f16,
+                out_probs_buf.contents() as *const bf16,
                 sumk,
             )
         };
         let _out_probs: Vec<f32> =
-            out_probs_h.iter().map(|&h| h.to_f32()).collect();
+            out_probs_h.iter().map(|&h| f32::from(h)).collect();
 
         // CPU reference (stable per expert)
         let (cpu_ids, _cpu_probs, offsets_cpu) =

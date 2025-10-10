@@ -8,8 +8,9 @@ use super::{
     MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
     MoeExpertsArguments, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel, MoeScatterKernels,
-    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKKernel,
+    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel,
+    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterKernels,
+    MoeScatterWithMapArguments,
 };
 use crate::{
     DataType,
@@ -21,7 +22,10 @@ use crate::{
         },
         kernel::linear::QuantizedLinearKernelBlock,
     },
-    config::{Activation, LinearConfig, MixtureOfExpertsConfig},
+    config::{
+        mlp::RoutingFunctionConfig, Activation, LinearConfig,
+        MixtureOfExpertsConfig,
+    },
     device::Array,
     parameters::ParameterTree,
 };
@@ -29,11 +33,8 @@ use crate::{
 enum RouterBlock {
     Quantized(QuantizedLinearKernelBlock),
     Metal {
-        pipeline: metal::ComputePipelineState,
         weights_buf: metal::Buffer,
         biases_buf: metal::Buffer,
-        mixture_size: usize,
-        model_dim: usize,
     },
 }
 
@@ -48,7 +49,8 @@ pub struct SharedMoeWeights {
 pub struct MoeBlockEncodable {
     router: RouterBlock,
     router_data_type: KernelDataType,
-    topk_kernel: MoeTopKKernel,
+    router_renorm: bool,
+    router_topk_kernel: MoeRouterTopKKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernel: MoeGatherKernel,
@@ -358,6 +360,11 @@ impl MoeBlockEncodable {
             moe_config.router_config.activation_precision().into();
         let router_kernel_data_type: KernelDataType = router_data_type.into();
 
+        let router_renorm = matches!(
+            moe_config.routing_function,
+            RoutingFunctionConfig::SoftmaxRouting
+        );
+
         let router_tree = parameter_tree.subtree("router").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Router subtree error: {:?}",
@@ -366,28 +373,17 @@ impl MoeBlockEncodable {
         })?;
 
         let router = match &moe_config.router_config {
-            LinearConfig::Quantized(quant_config) => {
-                RouterBlock::Quantized(QuantizedLinearKernelBlock::new(
-                    context,
-                    quant_config,
-                    model_dim,
-                    moe_config.mixture_size,
-                    &router_tree,
-                    ArrayId::Main,
-                    ArrayId::MoeRouterLogits,
-                )?)
+            LinearConfig::Quantized(_quant_config) => {
+                // TODO: Quantized router with fused router+topk not yet supported
+                // The fused kernel doesn't support quantized weights yet.
+                return Err(crate::backends::metal::MTLError::Generic(
+                    "Quantized router with fused router+topk not yet supported"
+                        .to_string(),
+                ));
             },
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let kernel_name = match router_kernel_data_type {
-                    KernelDataType::BFloat16 => "moe_router_bf16",
-                    KernelDataType::Float16 => "moe_router_f16",
-                    KernelDataType::Float32 => "moe_router_f32",
-                };
-                let pipeline =
-                    context.compute_pipeline_state(kernel_name, None)?;
-
                 let mut weights_arr =
                     router_tree.leaf("weights").map_err(|e| {
                         crate::backends::metal::MTLError::Generic(format!(
@@ -491,11 +487,8 @@ impl MoeBlockEncodable {
                 let biases_buf = unsafe { biases_arr.mtl_buffer().clone() };
 
                 RouterBlock::Metal {
-                    pipeline,
                     weights_buf,
                     biases_buf,
-                    mixture_size: moe_config.mixture_size,
-                    model_dim,
                 }
             },
             LinearConfig::QLoRA {
@@ -507,12 +500,13 @@ impl MoeBlockEncodable {
             },
         };
 
-        let topk_kernel = MoeTopKKernel::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "TopK kernel error: {:?}",
-                e
-            ))
-        })?;
+        let router_topk_kernel =
+            MoeRouterTopKKernel::new(context).map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "RouterTopK fused kernel error: {:?}",
+                    e
+                ))
+            })?;
         let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context)
             .map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
@@ -567,7 +561,8 @@ impl MoeBlockEncodable {
         Ok(Self {
             router,
             router_data_type: router_kernel_data_type,
-            topk_kernel,
+            router_renorm,
+            router_topk_kernel,
             counts_offsets_kernel,
             scatter_kernels,
             gather_kernel,
@@ -622,7 +617,6 @@ impl EncodableWithState for MoeBlockEncodable {
         let suffix_length = state.aux_buffers_suffix_length();
         let arrays = state.arrays(&[
             ArrayId::Main,
-            ArrayId::MoeRouterLogits,
             ArrayId::MoeTopkIds,
             ArrayId::MoeTopkProbs,
             ArrayId::MoeOffsets,
@@ -653,14 +647,6 @@ impl EncodableWithState for MoeBlockEncodable {
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());
-        if std::env::var_os("UZU_DEBUG_ROUTER").is_some() {
-            let dtype = array_iter.clone().next().unwrap().borrow().data_type();
-            eprintln!(
-                "[RouterDebug] layer={} router logits dtype={:?}",
-                self.layer_index, dtype
-            );
-        }
-        let router_logits_buf = clone_buffer(array_iter.next().unwrap());
         let topk_ids_buf = clone_buffer(array_iter.next().unwrap());
         let topk_probs_buf = clone_buffer(array_iter.next().unwrap());
         let offsets_buf = clone_buffer(array_iter.next().unwrap());
@@ -766,70 +752,39 @@ impl EncodableWithState for MoeBlockEncodable {
 
         blit_encoder.end_encoding();
 
+        // Use fused Router+TopK kernel for non-quantized routers
         match &self.router {
-            RouterBlock::Quantized(block) => {
-                block.encode(state, command_buffer, parameters)
+            RouterBlock::Quantized(_block) => {
+                unimplemented!(
+                    "Quantized router with fused router+topk not yet supported"
+                );
             },
             RouterBlock::Metal {
-                pipeline,
                 weights_buf,
                 biases_buf,
-                mixture_size,
-                model_dim,
+                ..
             } => {
-                let compute_encoder = root.new_compute_command_encoder();
-                compute_encoder.set_compute_pipeline_state(pipeline);
-                compute_encoder.set_buffer(0, Some(&main_buf), 0);
-                compute_encoder.set_buffer(1, Some(weights_buf), 0);
-                compute_encoder.set_buffer(2, Some(biases_buf), 0);
-                compute_encoder.set_buffer(3, Some(&router_logits_buf), 0);
-
-                let t_u = suffix_length as u32;
-                let dm_u = *model_dim as u32;
-                let e_u = *mixture_size as u32;
-                compute_encoder.set_bytes(
-                    4,
-                    std::mem::size_of::<u32>() as u64,
-                    &t_u as *const u32 as *const _,
-                );
-                compute_encoder.set_bytes(
-                    5,
-                    std::mem::size_of::<u32>() as u64,
-                    &dm_u as *const u32 as *const _,
-                );
-                compute_encoder.set_bytes(
-                    6,
-                    std::mem::size_of::<u32>() as u64,
-                    &e_u as *const u32 as *const _,
-                );
-
-                // Optimized: 8 simdgroups per TG (256 threads) with TG input caching
-                let num_simdgroups: u64 = 8;
-                let tg_x = ((*mixture_size as u64) + num_simdgroups - 1)
-                    / num_simdgroups;
-                compute_encoder.dispatch_thread_groups(
-                    metal::MTLSize::new(tg_x, suffix_length as u64, 1),
-                    metal::MTLSize::new(32 * num_simdgroups, 1, 1),
-                );
-                compute_encoder.end_encoding();
+                // Use the fused router+topk kernel
+                self.router_topk_kernel
+                    .encode(
+                        root,
+                        self.router_data_type,
+                        MoeRouterTopKArguments {
+                            input_buffer: &main_buf,
+                            weight_buffer: weights_buf,
+                            bias_buffer: biases_buf,
+                            topk_ids_buffer: &topk_ids_buf,
+                            topk_probs_buffer: &topk_probs_buf,
+                            t: suffix_length,
+                            d_model: self.model_dim,
+                            e,
+                            k,
+                            renorm: self.router_renorm,
+                        },
+                    )
+                    .expect("MoE fused router+topk failed");
             },
         }
-
-        self.topk_kernel
-            .encode(
-                root,
-                self.router_data_type,
-                MoeTopKArguments {
-                    logits_buffer: &router_logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t: suffix_length,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("MoE TopK failed");
 
         self.counts_offsets_kernel
             .encode(

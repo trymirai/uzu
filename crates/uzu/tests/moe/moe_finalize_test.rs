@@ -1,23 +1,22 @@
-use half::f16;
+#![cfg(any(target_os = "macos", target_os = "ios"))]
+
+use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-    MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-    MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
-    MoeTopKArguments, MoeTopKKernel,
+    KernelDataType, MoeFinalizeArguments, MoeFinalizeKernel,
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_finalize(
     tok2row: &[i32],
-    probs: &[f16],
-    y_partial: &[f16],
+    probs: &[bf16],
+    y_partial: &[bf16],
     t: usize,
     d_model: usize,
     k: usize,
-) -> Vec<f16> {
-    let mut y = vec![f16::from_f32(0.0); t * d_model];
+) -> Vec<bf16> {
+    let mut y = vec![bf16::from_f32(0.0); t * d_model];
     for ti in 0..t {
         for f in 0..d_model {
             let mut acc = 0f32;
@@ -26,209 +25,117 @@ fn cpu_finalize(
                 let row = tok2row[idx];
                 if row >= 0 {
                     let rowu = row as usize;
-                    acc += probs[idx].to_f32()
-                        * y_partial[rowu * d_model + f].to_f32();
+                    acc += f32::from(probs[idx])
+                        * f32::from(y_partial[rowu * d_model + f]);
                 }
             }
-            y[ti * d_model + f] = f16::from_f32(acc);
+            y[ti * d_model + f] = bf16::from_f32(acc);
         }
     }
     y
 }
 
 #[test]
-fn test_moe_finalize_end_to_end() {
+fn test_finalize_correctness() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(2026);
-    let t = 37usize;
-    let e = 17usize;
-    let k = 2usize;
-    let d_model = 96usize;
 
-    // Inputs
-    let logits: Vec<f32> =
-        (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
+    // Test multiple shapes: (T, K, d_model, sum_k)
+    let shapes = vec![
+        (1, 2, 64, 2),      // Single token, K=2
+        (4, 2, 128, 8),     // Small batch
+        (8, 4, 256, 32),    // Medium
+        (16, 2, 512, 32),   // Large d_model
+    ];
 
-    // Buffers
-    let logits_buf = alloc_buffer_with_data(&ctx, &logits);
-    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-    let topk_probs_buf = alloc_buffer::<f16>(&ctx, t * k);
-
-    let topk = MoeTopKKernel::new(&ctx).expect("topk");
-    let cb = ctx.command_queue.new_command_buffer();
-    topk.encode(
-        &cb,
-        KernelDataType::Float32,
-        MoeTopKArguments {
-            logits_buffer: &logits_buf,
-            topk_ids_buffer: &topk_ids_buf,
-            topk_probs_buffer: &topk_probs_buf,
-            t,
-            e,
-            k,
-            renorm: true,
-        },
-    )
-    .expect("encode topk");
-    cb.commit();
-    cb.wait_until_completed();
-
-    // Bucket counts -> offsets -> sumk (fused)
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
-    let num_tiles = ((e + 511) / 512).max(1);
-    let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
-
-    let fused_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.new_command_buffer();
-    fused_kernel
-        .encode(
-            &cb,
-            MoeCountsOffsetsFusedArguments {
-                topk_ids_buffer: &topk_ids_buf,
-                offsets_buffer: &offsets_buf,
-                sum_k_buffer: &sumk_buf,
-                partials_buffer: &partials_buf,
-                t,
-                e,
-                k,
-            },
-        )
-        .expect("fused encode");
-    cb.commit();
-    cb.wait_until_completed();
-
-    let sumk = unsafe { *(sumk_buf.contents() as *const u32) } as usize;
-    let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
-    let out_probs_buf = alloc_buffer::<f16>(&ctx, sumk);
-
-    // Use partials from fused kernel (already computed above)
-    let num_blocks = 1; // Fused kernel uses single block
-    let entries = num_tiles * 512usize;
-
-    // Block bases
-    let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
-    let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-    let cb = ctx.command_queue.new_command_buffer();
-    let block_alloc_buf =
-        alloc_buffer::<u32>(&ctx, num_blocks * num_tiles * 512);
-    scatter
-        .encode_block_bases(
-            &cb,
-            MoeBlockBasesArguments {
-                partials_buffer: &partials_buf,
-                block_bases_buffer: &block_bases_buf,
-                block_alloc_buffer: &block_alloc_buf,
-                e,
-                num_blocks,
-                num_tiles,
-            },
-        )
-        .expect("encode bases");
-    cb.commit();
-    cb.wait_until_completed();
-
-    // tok2row map buffer
-    let tok2row_len = t * k;
-    let tok2row_buf = alloc_buffer::<i32>(&ctx, tok2row_len);
-    unsafe {
-        std::ptr::write_bytes(
-            tok2row_buf.contents(),
-            0xff,
-            tok2row_len * std::mem::size_of::<i32>(),
+    for (t, k, d_model, sum_k) in shapes {
+        eprintln!(
+            "[FinalizeTest] T={}, K={}, d_model={}, sum_k={}",
+            t, k, d_model, sum_k
         );
-    }
 
-    // Scatter with map
-    let cb = ctx.command_queue.new_command_buffer();
-    scatter
-        .encode_scatter_with_map(
-            &cb,
-            MoeScatterWithMapArguments {
-                base: MoeScatterArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    offsets_buffer: &offsets_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    out_ids_buffer: &out_ids_buf,
-                    out_probs_buffer: &out_probs_buf,
+        // Generate random tok2row mapping: maps (token, k_idx) → row in y_partial
+        // Some entries can be -1 (no expert selected)
+        let mut tok2row: Vec<i32> = (0..t * k)
+            .map(|_| {
+                if rng.gen_bool(0.9) {
+                    rng.random_range(0..sum_k as i32)
+                } else {
+                    -1 // No expert selected
+                }
+            })
+            .collect();
+
+        // Ensure we use all rows in sum_k (avoid unused rows)
+        for row in 0..sum_k.min(t * k) {
+            tok2row[row] = row as i32;
+        }
+
+        // Generate random probabilities (should sum to 1 per token, but not critical for unit test)
+        let probs: Vec<bf16> = (0..t * k)
+            .map(|_| bf16::from_f32(rng.random_range(0.0..1.0)))
+            .collect();
+
+        // Generate random y_partial (expert outputs)
+        let y_partial: Vec<bf16> = (0..sum_k * d_model)
+            .map(|_| bf16::from_f32(rng.random_range(-2.0..2.0)))
+            .collect();
+
+        // CPU reference
+        let y_cpu = cpu_finalize(&tok2row, &probs, &y_partial, t, d_model, k);
+
+        // GPU buffers
+        let tok2row_buf = alloc_buffer_with_data(&ctx, &tok2row);
+        let probs_buf = alloc_buffer_with_data(&ctx, &probs);
+        let y_partial_buf = alloc_buffer_with_data(&ctx, &y_partial);
+        let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
+
+        // Execute finalize kernel
+        let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize kernel");
+        let cb = ctx.command_queue.new_command_buffer();
+        finalize
+            .encode(
+                &cb,
+                MoeFinalizeArguments {
+                    tok2row_buffer: &tok2row_buf,
+                    probs_buffer: &probs_buf,
+                    y_partial_buffer: &y_partial_buf,
+                    y_out_buffer: &y_out_buf,
                     t,
-                    e,
+                    d_model,
                     k,
-                    num_blocks,
-                    num_tiles,
                 },
-                tok2row_buffer: &tok2row_buf,
-            },
-            KernelDataType::Float16,
-        )
-        .expect("encode scatter map");
-    cb.commit();
-    cb.wait_until_completed();
+                KernelDataType::BFloat16,
+            )
+            .expect("encode finalize");
+        cb.commit();
+        cb.wait_until_completed();
 
-    // Finalize
-    let y_partial_buf = alloc_buffer::<f16>(&ctx, sumk * d_model);
-    let mut y_partial = vec![f16::from_f32(0.0); sumk * d_model];
-    for item in &mut y_partial {
-        *item = f16::from_f32(rng.random_range(-2.0..2.0));
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            y_partial.as_ptr(),
-            y_partial_buf.contents() as *mut f16,
-            y_partial.len(),
-        );
-    }
+        // Compare
+        let y_gpu = unsafe {
+            std::slice::from_raw_parts(
+                y_out_buf.contents() as *const bf16,
+                t * d_model,
+            )
+        };
 
-    let y_out_buf = alloc_buffer::<f16>(&ctx, t * d_model);
-    let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize");
-    let cb = ctx.command_queue.new_command_buffer();
-    finalize
-        .encode(
-            &cb,
-            MoeFinalizeArguments {
-                tok2row_buffer: &tok2row_buf,
-                probs_buffer: &topk_probs_buf,
-                y_partial_buffer: &y_partial_buf,
-                y_out_buffer: &y_out_buf,
-                t,
-                d_model,
-                k,
-            },
-            KernelDataType::Float16,
-        )
-        .expect("encode finalize");
-    cb.commit();
-    cb.wait_until_completed();
+        for i in 0..(t * d_model) {
+            let gpu_val = f32::from(y_gpu[i]);
+            let cpu_val = f32::from(y_cpu[i]);
+            let abs_diff = (gpu_val - cpu_val).abs();
 
-    // Compare with CPU
-    let tok2row = unsafe {
-        std::slice::from_raw_parts(tok2row_buf.contents() as *const i32, t * k)
-    };
-    let probs_h = unsafe {
-        std::slice::from_raw_parts(
-            topk_probs_buf.contents() as *const f16,
-            t * k,
-        )
-    };
-    let y_partial_h = unsafe {
-        std::slice::from_raw_parts(
-            y_partial_buf.contents() as *const f16,
-            sumk * d_model,
-        )
-    };
-    let y_out_h = unsafe {
-        std::slice::from_raw_parts(
-            y_out_buf.contents() as *const f16,
-            t * d_model,
-        )
-    };
-    let y_cpu = cpu_finalize(tok2row, probs_h, y_partial_h, t, d_model, k);
-    for i in 0..(t * d_model) {
-        let a = y_out_h[i].to_f32();
-        let b = y_cpu[i].to_f32();
-        assert!((a - b).abs() < 1e-2, "mismatch at {}: {} vs {}", i, a, b);
+            // BF16 has limited precision, especially for weighted sums
+            let tolerance = 1e-2;
+            assert!(
+                abs_diff < tolerance,
+                "Mismatch at {}: GPU={}, CPU={}, diff={}",
+                i,
+                gpu_val,
+                cpu_val,
+                abs_diff
+            );
+        }
+
+        eprintln!("[FinalizeTest] ✓ PASSED");
     }
 }

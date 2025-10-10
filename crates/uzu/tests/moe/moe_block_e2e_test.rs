@@ -5,11 +5,11 @@ use uzu::backends::metal::{
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
         MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
-        MoeTopKKernel,
+        MoeScatterKernels, MoeScatterWithMapArguments,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
-            MoeGatherArguments, MoeGatherKernel,
+            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
+            MoeRouterTopKKernel,
         },
     },
 };
@@ -303,30 +303,11 @@ fn run_moe_parity_test_internal(
     let router_bias_f32: Vec<f32> =
         (0..e).map(|_| rng.random_range(-0.1..0.1)).collect();
 
-    // Compute router logits on CPU with BF16 precision to match GPU
-    // Convert to BF16, then back to F32 for each multiplication to match GPU precision
+    // Convert router weights/bias to BF16 for GPU
     let router_weight_bf16: Vec<bf16> =
         router_weight_f32.iter().map(|&v| bf16::from_f32(v)).collect();
     let router_bias_bf16: Vec<bf16> =
         router_bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
-
-    let mut router_logits_f32 = vec![0.0f32; t * e];
-    for token_idx in 0..t {
-        let x_start = token_idx * d_model;
-        for expert_idx in 0..e {
-            let mut logit = f32::from(router_bias_bf16[expert_idx]);
-            for d in 0..d_model {
-                // Match GPU precision: BF16 * BF16 → F32 accumulation
-                let x_val = f32::from(x[x_start + d]);
-                let w_val =
-                    f32::from(router_weight_bf16[expert_idx * d_model + d]);
-                logit += x_val * w_val;
-            }
-            router_logits_f32[token_idx * e + expert_idx] = logit;
-        }
-    }
-    let router_logits: Vec<bf16> =
-        router_logits_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
     // Generate random expert weights and biases
     let w13_len = e * d_model * 2 * d_ff;
@@ -378,7 +359,8 @@ fn run_moe_parity_test_internal(
 
     // Create Metal buffers
     let x_buf = alloc_buffer_with_data(&ctx, &x);
-    let logits_buf = alloc_buffer_with_data(&ctx, &router_logits);
+    let router_w_buf = alloc_buffer_with_data(&ctx, &router_weight_bf16);
+    let router_b_buf = alloc_buffer_with_data(&ctx, &router_bias_bf16);
     let w13_buf = alloc_buffer_with_data(&ctx, &w13_gpu);
     let w2_buf = alloc_buffer_with_data(&ctx, &w2_gpu);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
@@ -415,23 +397,26 @@ fn run_moe_parity_test_internal(
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
     let cb = ctx.command_queue.new_command_buffer();
 
-    // Note: Router logits already computed on CPU and uploaded to logits_buf
-
-    let topk = MoeTopKKernel::new(&ctx).expect("topk");
-    topk.encode(
-        &cb,
-        KernelDataType::BFloat16,
-        MoeTopKArguments {
-            logits_buffer: &logits_buf,
-            topk_ids_buffer: &topk_ids_buf,
-            topk_probs_buffer: &topk_probs_buf,
-            t,
-            e,
-            k,
-            renorm: true,
-        },
-    )
-    .expect("topk encode");
+    // Router + TopK (fused kernel)
+    let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
+    router_topk
+        .encode(
+            &cb,
+            KernelDataType::BFloat16,
+            MoeRouterTopKArguments {
+                input_buffer: &x_buf,
+                weight_buffer: &router_w_buf,
+                bias_buffer: &router_b_buf,
+                topk_ids_buffer: &topk_ids_buf,
+                topk_probs_buffer: &topk_probs_buf,
+                t,
+                d_model,
+                e,
+                k,
+                renorm: true,
+            },
+        )
+        .expect("router+topk encode");
 
     let fused_kernel =
         MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");

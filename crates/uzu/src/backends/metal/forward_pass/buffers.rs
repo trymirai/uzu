@@ -42,7 +42,6 @@ pub struct ForwardPassBuffers {
     pub attention_sums: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
     pub attention_maxs: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
 
-    pub moe_router_logits: Option<MTLBuffer>,
     pub moe_topk_ids: Option<MTLBuffer>,
     pub moe_topk_probs: Option<MTLBuffer>,
     pub moe_offsets: Option<MTLBuffer>,
@@ -140,18 +139,6 @@ impl ForwardPassBuffers {
             attention_sums: alloc(&sums_maxs_shape, act_ty),
             attention_maxs: alloc(&sums_maxs_shape, act_ty),
 
-            moe_router_logits: match &decoder_config.layer_config.mlp_config {
-                MLPConfig::MixtureOfExperts(moe) => {
-                    let shape = model_shape.moe_router_logits_shape(
-                        max_suffix_len,
-                        moe.mixture_size,
-                    );
-                    let logits_dtype: DataType =
-                        moe.router_config.activation_precision().into();
-                    Some(alloc(&shape, logits_dtype))
-                },
-                _ => None,
-            },
             moe_topk_ids: match &decoder_config.layer_config.mlp_config {
                 MLPConfig::MixtureOfExperts(moe) => {
                     let shape = model_shape.moe_topk_ids_shape(

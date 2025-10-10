@@ -1,12 +1,13 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use half::f16;
+use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeTopKArguments, MoeTopKKernel,
+        MoeCountsOffsetsFusedKernel,
+        moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
     },
 };
 
@@ -51,26 +52,45 @@ fn gen_topk_ids_from_logits(
     k: usize,
 ) -> (Vec<i32>, metal::Buffer) {
     let mut rng = StdRng::seed_from_u64(1234);
-    let logits: Vec<f32> =
-        (0..t * e).map(|_| rng.random_range(-4.0..4.0)).collect();
 
-    let logits_buf = alloc_buffer_with_data(ctx, &logits);
+    // Generate random input and router weights
+    let d_model = 64; // arbitrary model dimension for test
+    let input_f32: Vec<f32> =
+        (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+    let weight_f32: Vec<f32> =
+        (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+    let bias_f32: Vec<f32> =
+        (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
 
+    // Convert to bf16
+    let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+
+    let input_buf = alloc_buffer_with_data(ctx, &input);
+    let weight_buf = alloc_buffer_with_data(ctx, &weight);
+    let bias_buf = alloc_buffer_with_data(ctx, &bias);
     let topk_ids_buf = alloc_buffer::<i32>(ctx, t * k);
-    let topk_probs_buf = alloc_buffer::<f16>(ctx, t * k);
+    let topk_probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
-    let topk = MoeTopKKernel::new(ctx).expect("topk kernel");
+    // Use fused router+topk kernel
+    let router_topk = MoeRouterTopKKernel::new(ctx).expect("router_topk kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    let args = MoeTopKArguments {
-        logits_buffer: &logits_buf,
+    let args = MoeRouterTopKArguments {
+        input_buffer: &input_buf,
+        weight_buffer: &weight_buf,
+        bias_buffer: &bias_buf,
         topk_ids_buffer: &topk_ids_buf,
         topk_probs_buffer: &topk_probs_buf,
         t,
+        d_model,
         e,
         k,
         renorm: true,
     };
-    topk.encode(&cb, KernelDataType::Float32, args).expect("encode topk");
+    router_topk
+        .encode(&cb, KernelDataType::BFloat16, args)
+        .expect("encode router_topk");
     cb.commit();
     cb.wait_until_completed();
 

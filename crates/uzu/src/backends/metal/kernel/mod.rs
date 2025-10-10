@@ -23,7 +23,7 @@ pub use moe::{
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel,
     MoeScatterArguments, MoeScatterError, MoeScatterKernels,
-    MoeScatterWithMapArguments, MoeTopKArguments, MoeTopKError, MoeTopKKernel,
+    MoeScatterWithMapArguments,
 };
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,

@@ -8,9 +8,8 @@ use uzu::backends::metal::{
         MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-        MoeGatherKernel, MoeRouterArguments, MoeRouterKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments, MoeTopKArguments,
-        MoeTopKKernel,
+        MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
+        MoeScatterKernels, MoeScatterWithMapArguments,
     },
 };
 
@@ -91,267 +90,6 @@ where
     PerfResult::new(name.to_string(), &times_ms)
 }
 
-// ============================================================================
-// DECODE PERFORMANCE (T=1) - Latency-Critical
-// ============================================================================
-
-// Test router kernel performance in decode mode (T=1)
-#[test]
-fn test_router_decode_perf() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(0xA0073);
-
-    let configs = vec![
-        ("Small", 1, 8, 1024),
-        ("Medium", 1, 16, 2048),
-        ("Large", 1, 16, 4096),
-        ("Production", 1, 16, 4096),
-    ];
-
-    eprintln!("\n=== Router Kernel Performance (DECODE, T=1) ===");
-
-    for (name, t, e, d_model) in configs {
-        let x: Vec<bf16> = (0..t * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-            .collect();
-        let weight: Vec<bf16> = (0..e * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
-            .collect();
-        let bias: Vec<bf16> = (0..e)
-            .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
-            .collect();
-
-        let x_buf = alloc_buffer_with_data(&ctx, &x);
-        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
-        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
-        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
-
-        let router_kernel = MoeRouterKernel::new(&ctx).expect("router kernel");
-
-        let perf = time_kernel(
-            &format!("{} (T={}, E={}, D={})", name, t, e, d_model),
-            5,
-            20,
-            || {
-                let cb = ctx.command_queue.new_command_buffer();
-                router_kernel
-                    .encode(
-                        &cb,
-                        KernelDataType::BFloat16,
-                        MoeRouterArguments {
-                            input_buffer: &x_buf,
-                            weight_buffer: &weight_buf,
-                            bias_buffer: &bias_buf,
-                            output_buffer: &logits_buf,
-                            t,
-                            d_model,
-                            e,
-                        },
-                    )
-                    .expect("router encode failed");
-                cb.commit();
-                cb.wait_until_completed();
-            },
-        );
-
-        perf.print();
-
-        // For decode (T=1), show latency in microseconds
-        let latency_us = (perf.mean_ms / t as f64) * 1000.0;
-        eprintln!("    → Latency: {:.1} µs/token", latency_us);
-    }
-}
-
-// Test router kernel performance in prefill mode (T>1)
-#[test]
-fn test_router_prefill_perf() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(0xA0073);
-
-    let configs = vec![
-        ("Batch4", 4, 16, 4096),
-        ("Batch8", 8, 16, 4096),
-        ("Batch16", 16, 16, 4096),
-        ("Batch32", 32, 16, 4096),
-        ("Batch64", 64, 16, 4096),
-        ("Batch128", 128, 16, 4096),
-    ];
-
-    eprintln!("\n=== Router Kernel Performance (PREFILL, T>1) ===");
-
-    for (name, t, e, d_model) in configs {
-        let x: Vec<bf16> = (0..t * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-            .collect();
-        let weight: Vec<bf16> = (0..e * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-0.5..0.5)))
-            .collect();
-        let bias: Vec<bf16> = (0..e)
-            .map(|_| bf16::from_f32(rng.random_range(-0.1..0.1)))
-            .collect();
-
-        let x_buf = alloc_buffer_with_data(&ctx, &x);
-        let weight_buf = alloc_buffer_with_data(&ctx, &weight);
-        let bias_buf = alloc_buffer_with_data(&ctx, &bias);
-        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
-
-        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
-
-        let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
-            let cb = ctx.command_queue.new_command_buffer();
-            router
-                .encode(
-                    &cb,
-                    KernelDataType::BFloat16,
-                    MoeRouterArguments {
-                        input_buffer: &x_buf,
-                        weight_buffer: &weight_buf,
-                        bias_buffer: &bias_buf,
-                        output_buffer: &logits_buf,
-                        t,
-                        d_model,
-                        e,
-                    },
-                )
-                .expect("encode router");
-            cb.commit();
-            cb.wait_until_completed();
-        });
-
-        perf.print();
-
-        // For prefill, show throughput
-        let tokens_per_sec = (t as f64 / perf.mean_ms) * 1000.0;
-        eprintln!(
-            "    → Throughput: {:.1} tokens/sec, {:.3} ms/token",
-            tokens_per_sec,
-            perf.mean_ms / t as f64
-        );
-    }
-}
-
-// ============================================================================
-// PREFILL PERFORMANCE (T>1) - Throughput-Oriented
-// ============================================================================
-
-// Test TopK kernel performance in decode mode (T=1)
-#[test]
-fn test_topk_decode_perf() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(0xA0074);
-
-    let configs = vec![
-        ("Small_K2", 1, 8, 2),
-        ("Medium_K2", 1, 16, 2),
-        ("Production_K2", 1, 16, 2),
-        ("Production_K4", 1, 16, 4),
-    ];
-
-    eprintln!("\n=== TopK Kernel Performance (DECODE, T=1) ===");
-
-    for (name, t, e, k) in configs {
-        let logits: Vec<bf16> = (0..t * e)
-            .map(|_| bf16::from_f32(rng.random_range(-5.0..5.0)))
-            .collect();
-
-        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
-        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
-
-        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
-
-        let perf = time_kernel(
-            &format!("{} (T={}, E={}, K={})", name, t, e, k),
-            5,
-            20,
-            || {
-                let cb = ctx.command_queue.new_command_buffer();
-                topk.encode(
-                    &cb,
-                    KernelDataType::BFloat16,
-                    MoeTopKArguments {
-                        logits_buffer: &logits_buf,
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        t,
-                        e,
-                        k,
-                        renorm: true,
-                    },
-                )
-                .expect("encode topk");
-                cb.commit();
-                cb.wait_until_completed();
-            },
-        );
-
-        perf.print();
-
-        // For decode (T=1), show latency in nanoseconds (TopK is very fast)
-        let latency_us = (perf.mean_ms / t as f64) * 1000.0;
-        eprintln!("    → Latency: {:.1} µs/token", latency_us);
-    }
-}
-
-// Test TopK kernel performance in prefill mode (T>1)
-#[test]
-fn test_topk_prefill_perf() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(0xA0074);
-
-    let configs = vec![
-        ("Batch4_K2", 4, 16, 2),
-        ("Batch16_K2", 16, 16, 2),
-        ("Batch32_K2", 32, 16, 2),
-        ("Batch64_K2", 64, 16, 2),
-        ("Batch128_K2", 128, 16, 2),
-    ];
-
-    eprintln!("\n=== TopK Kernel Performance (PREFILL, T>1) ===");
-
-    for (name, t, e, k) in configs {
-        let logits: Vec<bf16> = (0..t * e)
-            .map(|_| bf16::from_f32(rng.random_range(-5.0..5.0)))
-            .collect();
-
-        let logits_buf = alloc_buffer_with_data(&ctx, &logits);
-        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
-
-        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
-
-        let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
-            let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeTopKArguments {
-                    logits_buffer: &logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("encode topk");
-            cb.commit();
-            cb.wait_until_completed();
-        });
-
-        perf.print();
-
-        // For prefill, show throughput
-        let tokens_per_sec = (t as f64 / perf.mean_ms) * 1000.0;
-        eprintln!(
-            "    → Throughput: {:.1} tokens/sec, {:.3} µs/token",
-            tokens_per_sec,
-            (perf.mean_ms / t as f64) * 1000.0
-        );
-    }
-}
-
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
 #[test]
 fn test_moe_e2e_decode_perf() {
@@ -387,67 +125,38 @@ fn test_moe_e2e_decode_perf() {
         let x_buf = alloc_buffer_with_data(&ctx, &x);
         let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
         let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
-        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
-        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
+        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
 
-        // Time router
-        let router_perf = time_kernel("Router", 5, 20, || {
+        // Time fused Router+TopK
+        let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            router
+            router_topk
                 .encode(
                     &cb,
                     KernelDataType::BFloat16,
-                    MoeRouterArguments {
+                    MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
                         bias_buffer: &router_b_buf,
-                        output_buffer: &logits_buf,
+                        topk_ids_buffer: &topk_ids_buf,
+                        topk_probs_buffer: &topk_probs_buf,
                         t,
                         d_model,
                         e,
+                        k,
+                        renorm: true,
                     },
                 )
-                .expect("encode router");
+                .expect("encode fused router+topk");
             cb.commit();
             cb.wait_until_completed();
         });
 
-        // Time TopK
-        let topk_perf = time_kernel("TopK", 5, 20, || {
-            let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeTopKArguments {
-                    logits_buffer: &logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("encode topk");
-            cb.commit();
-            cb.wait_until_completed();
-        });
-
-        router_perf.print();
-        topk_perf.print();
-
-        let total_ms = router_perf.mean_ms + topk_perf.mean_ms;
-        let router_pct = (router_perf.mean_ms / total_ms) * 100.0;
-        let topk_pct = (topk_perf.mean_ms / total_ms) * 100.0;
-
-        eprintln!("\n  Breakdown:");
-        eprintln!("    Router:  {:6.2}%", router_pct);
-        eprintln!("    TopK:    {:6.2}%", topk_pct);
-        eprintln!("    Total:   {:8.1} µs/token", total_ms * 1000.0);
+        fused_perf.print();
+        eprintln!("    Total:   {:8.1} µs/token", fused_perf.mean_ms * 1000.0);
     }
 }
 
@@ -487,71 +196,42 @@ fn test_moe_e2e_prefill_perf() {
         let x_buf = alloc_buffer_with_data(&ctx, &x);
         let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
         let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
-        let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router = MoeRouterKernel::new(&ctx).expect("router kernel");
-        let topk = MoeTopKKernel::new(&ctx).expect("topk kernel");
+        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
 
-        // Time router
-        let router_perf = time_kernel("Router", 5, 20, || {
+        // Time fused Router+TopK
+        let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            router
+            router_topk
                 .encode(
                     &cb,
                     KernelDataType::BFloat16,
-                    MoeRouterArguments {
+                    MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
                         bias_buffer: &router_b_buf,
-                        output_buffer: &logits_buf,
+                        topk_ids_buffer: &topk_ids_buf,
+                        topk_probs_buffer: &topk_probs_buf,
                         t,
                         d_model,
                         e,
+                        k,
+                        renorm: true,
                     },
                 )
-                .expect("encode router");
+                .expect("encode fused router+topk");
             cb.commit();
             cb.wait_until_completed();
         });
 
-        // Time TopK
-        let topk_perf = time_kernel("TopK", 5, 20, || {
-            let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeTopKArguments {
-                    logits_buffer: &logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("encode topk");
-            cb.commit();
-            cb.wait_until_completed();
-        });
-
-        router_perf.print();
-        topk_perf.print();
-
-        let total_ms = router_perf.mean_ms + topk_perf.mean_ms;
-        let router_pct = (router_perf.mean_ms / total_ms) * 100.0;
-        let topk_pct = (topk_perf.mean_ms / total_ms) * 100.0;
-
-        eprintln!("\n  Breakdown:");
-        eprintln!("    Router:  {:6.2}%", router_pct);
-        eprintln!("    TopK:    {:6.2}%", topk_pct);
-        eprintln!("    Total:   {:8.3} ms", total_ms);
+        fused_perf.print();
+        eprintln!("    Total:   {:8.3} ms", fused_perf.mean_ms);
         eprintln!(
             "    Throughput: {:.1} tokens/sec, {:.3} ms/token",
-            (t as f64 / total_ms) * 1000.0,
-            total_ms / t as f64
+            (t as f64 / fused_perf.mean_ms) * 1000.0,
+            fused_perf.mean_ms / t as f64
         );
     }
 }
@@ -654,79 +334,62 @@ fn test_moe_pipeline_breakdown_decode() {
     let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
     // Create kernel structs (use production-validated encoding logic)
-    let router_kernel = MoeRouterKernel::new(&ctx).expect("router");
-    let topk_kernel = MoeTopKKernel::new(&ctx).expect("topk");
-    let fused_kernel =
+    let counts_offsets_kernel =
         MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
-
-    // Time each kernel (reduced iterations for isolation)
-    let router_perf = time_kernel("Router", 2, 5, || {
-        let cb = ctx.command_queue.new_command_buffer();
-        router_kernel
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeRouterArguments {
-                    input_buffer: &x_buf,
-                    weight_buffer: &router_w_buf,
-                    bias_buffer: &router_b_buf,
-                    output_buffer: &logits_buf,
-                    t,
-                    d_model,
-                    e,
-                },
-            )
-            .expect("router");
-        cb.commit();
-        cb.wait_until_completed();
-    });
-
-    let topk_perf = time_kernel("TopK", 2, 5, || {
-        let cb = ctx.command_queue.new_command_buffer();
-        topk_kernel
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeTopKArguments {
-                    logits_buffer: &logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("topk");
-        cb.commit();
-        cb.wait_until_completed();
-    });
+    let router_topk_fused_kernel =
+        MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
-    let fused_perf = time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel
-            .encode(
-                &cb,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t,
-                    e,
-                    k,
-                },
-            )
-            .expect("counts+offsets fused");
-        cb.commit();
-        cb.wait_until_completed();
-    });
+    let router_topk_fused_perf =
+        time_kernel("Router+TopK (FUSED)", 2, 5, || {
+            let cb = ctx.command_queue.new_command_buffer();
+            router_topk_fused_kernel
+                .encode(
+                    &cb,
+                    KernelDataType::BFloat16,
+                    MoeRouterTopKArguments {
+                        input_buffer: &x_buf,
+                        weight_buffer: &router_w_buf,
+                        bias_buffer: &router_b_buf,
+                        topk_ids_buffer: &topk_ids_buf,
+                        topk_probs_buffer: &topk_probs_buf,
+                        t,
+                        d_model,
+                        e,
+                        k,
+                        renorm: true,
+                    },
+                )
+                .expect("router_topk_fused");
+            cb.commit();
+            cb.wait_until_completed();
+        });
+
+    let counts_offsets_perf =
+        time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
+            let cb = ctx.command_queue.new_command_buffer();
+            counts_offsets_kernel
+                .encode(
+                    &cb,
+                    MoeCountsOffsetsFusedArguments {
+                        topk_ids_buffer: &topk_ids_buf,
+                        offsets_buffer: &offsets_buf,
+                        sum_k_buffer: &sumk_buf,
+                        partials_buffer: &partials_buf,
+                        t,
+                        e,
+                        k,
+                    },
+                )
+                .expect("counts+offsets fused");
+            cb.commit();
+            cb.wait_until_completed();
+        });
 
     let scatter_perf = time_kernel("Scatter", 2, 5, || {
         let cb = ctx.command_queue.new_command_buffer();
@@ -854,18 +517,16 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     // Print results
-    router_perf.print();
-    topk_perf.print();
-    fused_perf.print();
+    router_topk_fused_perf.print();
+    counts_offsets_perf.print();
     scatter_perf.print();
     gather_perf.print();
     experts_perf.print();
     finalize_perf.print();
 
     // Calculate breakdown
-    let total_us = (router_perf.mean_ms
-        + topk_perf.mean_ms
-        + fused_perf.mean_ms
+    let total_us = (router_topk_fused_perf.mean_ms
+        + counts_offsets_perf.mean_ms
         + scatter_perf.mean_ms
         + gather_perf.mean_ms
         + experts_perf.mean_ms
@@ -876,19 +537,14 @@ fn test_moe_pipeline_breakdown_decode() {
         "\n  ═══ Per-Kernel Latency (Production D=4096, H=14336, E=16, K=2, T=1) ═══"
     );
     eprintln!(
-        "    Router:      {:8.1} us  ({:5.1}%)",
-        router_perf.mean_ms * 1000.0,
-        (router_perf.mean_ms / (total_us / 1000.0)) * 100.0
+        "    Router+TopK (FUSED): {:8.1} us  ({:5.1}%)",
+        router_topk_fused_perf.mean_ms * 1000.0,
+        (router_topk_fused_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
-        "    TopK:        {:8.1} us  ({:5.1}%)",
-        topk_perf.mean_ms * 1000.0,
-        (topk_perf.mean_ms / (total_us / 1000.0)) * 100.0
-    );
-    eprintln!(
-        "    Counts+Offsets (FUSED): {:8.1} us  ({:5.1}%)",
-        fused_perf.mean_ms * 1000.0,
-        (fused_perf.mean_ms / (total_us / 1000.0)) * 100.0
+        "    Counts+Offsets: {:8.1} us  ({:5.1}%)",
+        counts_offsets_perf.mean_ms * 1000.0,
+        (counts_offsets_perf.mean_ms / (total_us / 1000.0)) * 100.0
     );
     eprintln!(
         "    Scatter:     {:8.1} us  ({:5.1}%)",

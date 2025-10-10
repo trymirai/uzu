@@ -320,7 +320,6 @@ struct AuxBuffers {
     /// [num_heads * suffix_length * total_blocks_count]
     attention_maxs: ArrayCell,
 
-    moe_router_logits: Option<ArrayCell>,
     moe_topk_ids: Option<ArrayCell>,
     moe_topk_probs: Option<ArrayCell>,
     moe_offsets: Option<ArrayCell>,
@@ -410,24 +409,6 @@ impl AuxBuffers {
                     act_dtype,
                 )),
 
-                moe_router_logits: match &decoder_config.layer_config.mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_router_logits.as_ref().map(|buf| {
-                            let logits_dtype: DataType =
-                                moe.router_config.activation_precision().into();
-                            RefCell::new(MetalArray::new(
-                                buf.clone(),
-                                &model_shape.moe_router_logits_shape(
-                                    suffix_length,
-                                    moe.mixture_size,
-                                ),
-                                logits_dtype,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
                 moe_topk_ids: match &decoder_config.layer_config.mlp_config {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_topk_ids.as_ref().map(|buf| {
@@ -1006,7 +987,6 @@ impl ForwardPassState {
                     .clone(),
             },
 
-            ArrayId::MoeRouterLogits => self.aux_buffers.moe_router_logits.as_ref().expect("MoE router logits buffer not initialized").clone(),
             ArrayId::MoeTopkIds => self.aux_buffers.moe_topk_ids.as_ref().expect("MoE topk ids buffer not initialized").clone(),
             ArrayId::MoeTopkProbs => self.aux_buffers.moe_topk_probs.as_ref().expect("MoE topk probs buffer not initialized").clone(),
             ArrayId::MoeOffsets => self.aux_buffers.moe_offsets.as_ref().expect("MoE offsets buffer not initialized").clone(),
@@ -1144,7 +1124,6 @@ pub enum ArrayId {
 
     AttentionSinks(usize),
 
-    MoeRouterLogits,
     MoeTopkIds,
     MoeTopkProbs,
     MoeOffsets,

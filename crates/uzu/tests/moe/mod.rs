@@ -17,11 +17,9 @@ mod finalize_test;
 mod gather_test;
 #[path = "moe_perf_test.rs"]
 mod perf_test;
-#[path = "moe_router_test.rs"]
-mod router_test;
+#[path = "moe_router_topk_test.rs"]
+mod router_topk_test;
 #[path = "moe_scatter_test.rs"]
 mod scatter_test;
 #[path = "moe_tiles_test.rs"]
 mod tiles_test;
-#[path = "moe_topk_select_test.rs"]
-mod topk_select_test;
