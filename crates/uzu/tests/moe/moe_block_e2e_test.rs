@@ -416,7 +416,6 @@ fn run_moe_parity_test_internal(
     let cb = ctx.command_queue.new_command_buffer();
 
     // Note: Router logits already computed on CPU and uploaded to logits_buf
-    // TODO: Test full MoeBlockEncodable path which includes GPU router matmul
 
     let topk = MoeTopKKernel::new(&ctx).expect("topk");
     topk.encode(

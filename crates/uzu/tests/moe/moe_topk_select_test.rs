@@ -133,8 +133,18 @@ fn test_topk_correctness_random() {
     let ctx = create_ctx();
 
     let mut rng = StdRng::seed_from_u64(42);
-    let shapes = vec![(1usize, 4usize), (4, 16), (32, 64), (32, 257)];
-    let ks = vec![1usize, 2usize];
+    let shapes = vec![
+        (1usize, 4usize),
+        (4, 16),
+        (32, 64),
+        (32, 257),
+        (1, 32),  // Production config: single token, 32 experts
+        (32, 32), // Production config: batch, 32 experts
+        (4, 128), // Test K=64, K=128
+    ];
+    let ks = vec![
+        1usize, 2usize, 4usize, 8usize, 16usize, 32usize, 64usize, 128usize,
+    ];
     let renorms = vec![false, true];
     for &(t, e) in &shapes {
         for &k in &ks {

@@ -1,17 +1,14 @@
 #include <metal_stdlib>
+#include "../definitions.metal"
 using namespace metal;
 
-// Kernel expects:
-// buffer(0): logits [T * E] as half or float (two entrypoints below)
-// buffer(1): topk_ids [T * K] as int32
-// buffer(2): topk_probs [T * K] as half
-// bytes(3): T (u32)
-// bytes(4): E (u32)
-// bytes(5): K (u32)
-// bytes(6): renorm (u32: 0/1)
+constant uint THREADS_PER_TG = 128;
+constant uint MAX_EXPERTS = 512;
+constant uint MAX_TOPK = 128;
+constant float NEG_INF = -INFINITY;
 
-template <typename LogitT, typename ProbT>
-inline void topk_select_impl(
+template<typename LogitT, typename ProbT>
+inline void moe_topk_select_impl(
     device const LogitT* logits,
     device int* topk_ids,
     device ProbT* topk_probs,
@@ -19,100 +16,140 @@ inline void topk_select_impl(
     uint E,
     uint K,
     uint renorm,
-    uint gid)
+    ushort lid,
+    uint token,
+    threadgroup float* tg_logits,
+    threadgroup uint* tg_indices,
+    threadgroup float* reduce_tmp,
+    threadgroup uint* reduce_tmp_u,
+    threadgroup float* selected_vals,
+    threadgroup uint* selected_ids)
 {
-    if (gid >= T) return;
-    const uint row_off = gid * E;
+    if (token >= T || K == 0) {
+        return;
+    }
 
-    float best_vals[4];
-    int   best_ids[4];
-    for (uint i = 0; i < 4; ++i) { best_vals[i] = -INFINITY; best_ids[i] = -1; }
+    const uint effective_k = min(K, MAX_TOPK);
 
-    // linear scan over experts
-    for (uint e = 0; e < E; ++e) {
-        float v = float(logits[row_off + e]);
-        // insert into descending best_vals with deterministic tie-break
-        int insert_pos = -1;
-        uint Kc_u = (K < 4u ? K : 4u);
-        for (int j = int(Kc_u) - 1; j >= 0; --j) {
-            if (v > best_vals[j] || (v == best_vals[j] && int(e) < best_ids[j])) {
-                insert_pos = j;
+    for (uint i = lid; i < MAX_EXPERTS; i += THREADS_PER_TG) {
+        if (i < E) {
+            tg_logits[i] = float(logits[token * E + i]);
+        } else {
+            tg_logits[i] = NEG_INF;
+        }
+        tg_indices[i] = i;
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint selections = min(effective_k, E);
+    for (uint sel = 0; sel < selections; ++sel) {
+        float local_best_val = NEG_INF;
+        uint local_best_idx = 0xFFFFFFFFu;
+
+        for (uint i = lid; i < E; i += THREADS_PER_TG) {
+            float candidate = tg_logits[i];
+            if (candidate > local_best_val ||
+                (candidate == local_best_val && i < local_best_idx)) {
+                local_best_val = candidate;
+                local_best_idx = i;
             }
         }
-        if (insert_pos >= 0) {
-            // shift down
-            for (int s = int(Kc_u) - 1; s > insert_pos; --s) {
-                best_vals[s] = best_vals[s - 1];
-                best_ids[s] = best_ids[s - 1];
+
+        float max_val = threadgroup_cooperative_reduce_max<THREADS_PER_TG>(
+            local_best_val,
+            reduce_tmp,
+            lid);
+
+        uint candidate_id =
+            (local_best_val == max_val) ? local_best_idx : 0xFFFFFFFFu;
+        uint best_idx = threadgroup_cooperative_reduce_min<THREADS_PER_TG>(
+            candidate_id,
+            reduce_tmp_u,
+            lid);
+
+        if (lid == 0) {
+            selected_vals[sel] = max_val;
+            selected_ids[sel] = best_idx;
+            tg_logits[best_idx] = NEG_INF;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (lid == 0) {
+        device int* out_ids = topk_ids + token * K;
+        device ProbT* out_probs = topk_probs + token * K;
+
+        const uint written = selections;
+        for (uint i = 0; i < written; ++i) {
+            out_ids[i] = int(selected_ids[i]);
+        }
+        for (uint i = written; i < K; ++i) {
+            out_ids[i] = 0;
+        }
+
+        if (renorm != 0 && written > 0) {
+            float max_logit = -INFINITY;
+            for (uint i = 0; i < written; ++i) {
+                max_logit = fmax(max_logit, selected_vals[i]);
             }
-            best_vals[insert_pos] = v;
-            best_ids[insert_pos] = int(e);
+
+            float exp_values[MAX_TOPK];
+            float sum_exp = 0.0f;
+            for (uint i = 0; i < written; ++i) {
+                float e_val = exp(selected_vals[i] - max_logit);
+                exp_values[i] = e_val;
+                sum_exp += e_val;
+            }
+
+            float default_prob = 1.0f / float(written);
+            float inv_sum =
+                (sum_exp > 0.0f) ? (1.0f / sum_exp) : default_prob;
+
+            for (uint i = 0; i < written; ++i) {
+                float prob = (sum_exp > 0.0f) ? (exp_values[i] * inv_sum)
+                                              : default_prob;
+                out_probs[i] = ProbT(prob);
+            }
+            for (uint i = written; i < K; ++i) {
+                out_probs[i] = ProbT(0.0f);
+            }
+        } else {
+            for (uint i = 0; i < written; ++i) {
+                out_probs[i] = ProbT(selected_vals[i]);
+            }
+            for (uint i = written; i < K; ++i) {
+                out_probs[i] = ProbT(0.0f);
+            }
         }
     }
-
-    // write ids
-    const uint out_off = gid * K;
-    for (uint k = 0; k < K; ++k) {
-        topk_ids[out_off + k] = best_ids[k];
-    }
-
-    // probs: either logits or renormalized softmax over selected K
-    if (renorm != 0) {
-        // stabilize with max for numerical safety
-        float max_v = -INFINITY;
-        for (uint k = 0; k < K; ++k) { max_v = fmax(max_v, best_vals[k]); }
-        float sum = 0.0f;
-        float expv[4];
-        for (uint k = 0; k < K; ++k) {
-            expv[k] = exp(best_vals[k] - max_v);
-            sum += expv[k];
-        }
-        for (uint k = 0; k < K; ++k) {
-            float p = (sum > 0.0f) ? (expv[k] / sum) : (1.0f / float(K));
-            topk_probs[out_off + k] = ProbT(p);
-        }
-    } else {
-        for (uint k = 0; k < K; ++k) {
-            topk_probs[out_off + k] = ProbT(best_vals[k]);
-        }
-    }
 }
 
-kernel void moe_topk_select_f16(
-    device const half* logits [[buffer(0)]],
-    device int* topk_ids [[buffer(1)]],
-    device half* topk_probs [[buffer(2)]],
-    constant uint& T [[buffer(3)]],
-    constant uint& E [[buffer(4)]],
-    constant uint& K [[buffer(5)]],
-    constant uint& renorm [[buffer(6)]],
-    uint gid [[thread_position_in_grid]])
-{
-    topk_select_impl<half, half>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
+#define DEFINE_MOE_TOPK_KERNEL(LOGIT_T, PROB_T, SUFFIX) \
+kernel void moe_topk_select_##SUFFIX( \
+    device const LOGIT_T* logits [[buffer(0)]], \
+    device int* topk_ids [[buffer(1)]], \
+    device PROB_T* topk_probs [[buffer(2)]], \
+    constant uint& T [[buffer(3)]], \
+    constant uint& E [[buffer(4)]], \
+    constant uint& K [[buffer(5)]], \
+    constant uint& renorm [[buffer(6)]], \
+    ushort lid [[thread_index_in_threadgroup]], \
+    uint3 tgpig [[threadgroup_position_in_grid]]) \
+{ \
+    threadgroup float tg_logits[MAX_EXPERTS]; \
+    threadgroup uint tg_indices[MAX_EXPERTS]; \
+    threadgroup float reduce_tmp[THREADS_PER_TG]; \
+    threadgroup uint reduce_tmp_u[THREADS_PER_TG]; \
+    threadgroup float selected_vals[MAX_TOPK]; \
+    threadgroup uint selected_ids[MAX_TOPK]; \
+    moe_topk_select_impl<LOGIT_T, PROB_T>( \
+        logits, topk_ids, topk_probs, T, E, K, renorm, lid, tgpig.x, \
+        tg_logits, tg_indices, reduce_tmp, reduce_tmp_u, selected_vals, selected_ids); \
 }
 
-kernel void moe_topk_select_f32(
-    device const float* logits [[buffer(0)]],
-    device int* topk_ids [[buffer(1)]],
-    device half* topk_probs [[buffer(2)]],
-    constant uint& T [[buffer(3)]],
-    constant uint& E [[buffer(4)]],
-    constant uint& K [[buffer(5)]],
-    constant uint& renorm [[buffer(6)]],
-    uint gid [[thread_position_in_grid]])
-{
-    topk_select_impl<float, half>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
-}
-
-kernel void moe_topk_select_bf16(
-    device const bfloat* logits [[buffer(0)]],
-    device int* topk_ids [[buffer(1)]],
-    device bfloat* topk_probs [[buffer(2)]],
-    constant uint& T [[buffer(3)]],
-    constant uint& E [[buffer(4)]],
-    constant uint& K [[buffer(5)]],
-    constant uint& renorm [[buffer(6)]],
-    uint gid [[thread_position_in_grid]])
-{
-    topk_select_impl<bfloat, bfloat>(logits, topk_ids, topk_probs, T, E, K, renorm, gid);
-}
+DEFINE_MOE_TOPK_KERNEL(half, half, f16)
+DEFINE_MOE_TOPK_KERNEL(float, half, f32)
+DEFINE_MOE_TOPK_KERNEL(bfloat, bfloat, bf16)

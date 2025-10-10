@@ -17,6 +17,16 @@ pub enum MoeTopKError {
         e: usize,
         k: usize,
     },
+    #[error("Expert count {e} exceeds supported maximum {max}")]
+    ExpertLimitExceeded {
+        e: usize,
+        max: usize,
+    },
+    #[error("Top-K {k} exceeds supported maximum {max}")]
+    TopKLimitExceeded {
+        k: usize,
+        max: usize,
+    },
 }
 
 pub struct MoeTopKKernel {
@@ -58,16 +68,28 @@ impl MoeTopKKernel {
         args: MoeTopKArguments,
     ) -> Result<(), MoeTopKError> {
         if args.k == 0 || args.e == 0 || args.t == 0 {
-            // No-op for empty work; allow t==0 silently
-            if args.t == 0 {
-                return Ok(());
-            }
+            return Ok(());
         }
         if args.e < args.k {
             return Err(MoeTopKError::InvalidDimensions {
                 t: args.t,
                 e: args.e,
                 k: args.k,
+            });
+        }
+
+        const MAX_EXPERTS_PER_TOKEN: usize = 512;
+        const MAX_TOPK: usize = 128;
+        if args.e > MAX_EXPERTS_PER_TOKEN {
+            return Err(MoeTopKError::ExpertLimitExceeded {
+                e: args.e,
+                max: MAX_EXPERTS_PER_TOKEN,
+            });
+        }
+        if args.k > MAX_TOPK {
+            return Err(MoeTopKError::TopKLimitExceeded {
+                k: args.k,
+                max: MAX_TOPK,
             });
         }
 
@@ -118,18 +140,12 @@ impl MoeTopKKernel {
             &renorm_u32 as *const u32 as *const std::ffi::c_void,
         );
 
-        // Launch
-        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let num_threadgroups = if args.t == 0 {
-            0
-        } else {
-            (args.t + 255) / 256
-        } as u64;
-        if num_threadgroups > 0 {
-            let threadgroups = MTLSize::new(num_threadgroups, 1, 1);
-            compute_encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
-        }
+        const THREADS_PER_THREADGROUP: usize = 128;
+        let threads_per_threadgroup_mtl =
+            MTLSize::new(THREADS_PER_THREADGROUP as u64, 1, 1);
+        let threadgroups = MTLSize::new(args.t as u64, 1, 1);
+        compute_encoder
+            .dispatch_thread_groups(threadgroups, threads_per_threadgroup_mtl);
         compute_encoder.end_encoding();
 
         Ok(())
