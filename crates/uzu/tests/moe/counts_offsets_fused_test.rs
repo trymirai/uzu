@@ -98,7 +98,6 @@ fn test_counts_offsets_fused_parity_random() {
             let (offsets_cpu, sum_cpu) = cpu_offsets_from_counts(&counts_cpu);
 
             // GPU fused kernel
-            let counts_buf = alloc_buffer::<u32>(&ctx, e);
             let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
             let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
             let num_tiles = ((e + 511) / 512).max(1);
@@ -109,7 +108,6 @@ fn test_counts_offsets_fused_parity_random() {
             let cb = ctx.command_queue.new_command_buffer();
             let args = MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
-                counts_buffer: &counts_buf,
                 offsets_buffer: &offsets_buf,
                 sum_k_buffer: &sum_k_buf,
                 partials_buffer: &partials_buf,
@@ -120,19 +118,6 @@ fn test_counts_offsets_fused_parity_random() {
             kernel.encode(&cb, args).expect("encode fused");
             cb.commit();
             cb.wait_until_completed();
-
-            // Verify counts
-            let counts_ptr = counts_buf.contents() as *const u32;
-            let counts_gpu =
-                unsafe { std::slice::from_raw_parts(counts_ptr, e) };
-            assert_eq!(
-                counts_gpu,
-                &counts_cpu[..],
-                "counts mismatch T={} E={} K={}",
-                t,
-                e,
-                k
-            );
 
             // Verify offsets
             let offsets_ptr = offsets_buf.contents() as *const u32;
@@ -173,7 +158,6 @@ fn test_counts_offsets_fused_edge_cases() {
     }
     let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
 
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_tiles = ((e + 511) / 512).max(1);
@@ -183,7 +167,6 @@ fn test_counts_offsets_fused_edge_cases() {
     let cb = ctx.command_queue.new_command_buffer();
     let args = MoeCountsOffsetsFusedArguments {
         topk_ids_buffer: &topk_ids_buf,
-        counts_buffer: &counts_buf,
         offsets_buffer: &offsets_buf,
         sum_k_buffer: &sum_k_buf,
         partials_buffer: &partials_buf,
@@ -195,16 +178,9 @@ fn test_counts_offsets_fused_edge_cases() {
     cb.commit();
     cb.wait_until_completed();
 
-    let counts_gpu = unsafe {
-        std::slice::from_raw_parts(counts_buf.contents() as *const u32, e)
-    };
     let offsets_gpu = unsafe {
         std::slice::from_raw_parts(offsets_buf.contents() as *const u32, e + 1)
     };
-
-    let mut expected_counts = vec![0u32; e];
-    expected_counts[3] = (t * k) as u32;
-    assert_eq!(counts_gpu, &expected_counts[..]);
 
     let mut expected_offsets = vec![0u32; e + 1];
     expected_offsets[4..].fill((t * k) as u32);
@@ -214,7 +190,6 @@ fn test_counts_offsets_fused_edge_cases() {
     let (t, e, k) = (0usize, 8usize, 2usize);
     let topk_ids: Vec<i32> = vec![];
     let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_tiles = ((e + 511) / 512).max(1);
@@ -224,7 +199,6 @@ fn test_counts_offsets_fused_edge_cases() {
     let cb = ctx.command_queue.new_command_buffer();
     let args = MoeCountsOffsetsFusedArguments {
         topk_ids_buffer: &topk_ids_buf,
-        counts_buffer: &counts_buf,
         offsets_buffer: &offsets_buf,
         sum_k_buffer: &sum_k_buf,
         partials_buffer: &partials_buf,

@@ -45,7 +45,6 @@ pub struct ForwardPassBuffers {
     pub moe_router_logits: Option<MTLBuffer>,
     pub moe_topk_ids: Option<MTLBuffer>,
     pub moe_topk_probs: Option<MTLBuffer>,
-    pub moe_counts: Option<MTLBuffer>,
     pub moe_offsets: Option<MTLBuffer>,
     pub moe_sumk: Option<MTLBuffer>,
     pub moe_bucketed_token_ids: Option<MTLBuffer>,
@@ -170,13 +169,6 @@ impl ForwardPassBuffers {
                         moe.num_experts_per_token,
                     );
                     Some(alloc(&shape, act_ty))
-                },
-                _ => None,
-            },
-            moe_counts: match &decoder_config.layer_config.mlp_config {
-                MLPConfig::MixtureOfExperts(moe) => {
-                    let shape = model_shape.moe_counts_shape(moe.mixture_size);
-                    Some(alloc(&shape, DataType::U32))
                 },
                 _ => None,
             },

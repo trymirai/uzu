@@ -74,7 +74,6 @@ fn test_moe_finalize_end_to_end() {
     cb.wait_until_completed();
 
     // Bucket counts -> offsets -> sumk (fused)
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_tiles = ((e + 511) / 512).max(1);
@@ -88,7 +87,6 @@ fn test_moe_finalize_end_to_end() {
             &cb,
             MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
-                counts_buffer: &counts_buf,
                 offsets_buffer: &offsets_buf,
                 sum_k_buffer: &sumk_buf,
                 partials_buffer: &partials_buf,

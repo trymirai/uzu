@@ -388,7 +388,6 @@ fn run_moe_parity_test_internal(
     let max_sumk = t * k;
     let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
     let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_blocks = ((t + 255) / 256).max(1);
@@ -442,7 +441,6 @@ fn run_moe_parity_test_internal(
             &cb,
             MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
-                counts_buffer: &counts_buf,
                 offsets_buffer: &offsets_buf,
                 sum_k_buffer: &sumk_buf,
                 partials_buffer: &partials_buf,
@@ -799,22 +797,6 @@ fn run_moe_parity_test_internal(
     eprintln!(
         "[E2E] Error metrics: max_abs={:.6}, max_rel={:.6}, mean_abs={:.6}, mismatches={}",
         max_abs_diff, max_rel_diff, mean_abs_error, mismatches
-    );
-
-    // Log for threshold calibration
-    let k0_iters = (d_model + 31) / 32;
-    let ff0_iters = (d_ff + 31) / 32;
-    let product = k0_iters * ff0_iters;
-    let sqrt_product = (product as f32).sqrt();
-    eprintln!(
-        "[E2E] Calibration data: k0={}, ff0={}, product={}, sqrt={:.1}, K={}, mean_abs={:.6}, ratio={:.4}",
-        k0_iters,
-        ff0_iters,
-        product,
-        sqrt_product,
-        k,
-        mean_abs_error,
-        mean_abs_error / sqrt_product
     );
 
     // Debug: print some sample values from intermediate buffers

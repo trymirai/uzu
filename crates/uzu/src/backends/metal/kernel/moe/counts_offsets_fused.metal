@@ -15,13 +15,12 @@ using namespace metal;
 // This kernel is launched with SINGLE threadgroup
 kernel void moe_counts_offsets_fused(
     device const int* topk_ids [[buffer(0)]],
-    device uint* counts [[buffer(1)]],           // output: counts per expert [E]
-    device uint* offsets [[buffer(2)]],          // output: exclusive scan [E+1]
-    device uint* sum_k_out [[buffer(3)]],        // output: total count [1]
-    device uint* partials [[buffer(4)]],         // output: partials [num_tiles * TILE_E] (for block_bases)
-    constant uint& T [[buffer(5)]],
-    constant uint& E [[buffer(6)]],
-    constant uint& K [[buffer(7)]],
+    device uint* offsets [[buffer(1)]],          // output: exclusive scan [E+1]
+    device uint* sum_k_out [[buffer(2)]],        // output: total count [1]
+    device uint* partials [[buffer(3)]],         // output: partials [num_tiles * TILE_E] (for block_bases)
+    constant uint& T [[buffer(4)]],
+    constant uint& E [[buffer(5)]],
+    constant uint& K [[buffer(6)]],
     uint lid [[thread_index_in_threadgroup]])
 {
     if (E == 0) {
@@ -35,6 +34,7 @@ kernel void moe_counts_offsets_fused(
     threadgroup _atomic<uint> tg_hist[TILE_E];
     threadgroup uint scan_shared[BLOCK_SIZE];
     threadgroup uint reduce_shared[BLOCK_SIZE];
+    threadgroup uint counts_shared[BLOCK_SIZE];  // Cache counts in threadgroup memory
 
     // ═══════════════════════════════════════════════════════════
     // PHASE 1: Count tokens per expert using tiled histogram
@@ -69,7 +69,7 @@ kernel void moe_counts_offsets_fused(
         // Write final counts and partials for this tile
         for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
             const uint count_val = atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
-            counts[e0 + e] = count_val;
+            counts_shared[e0 + e] = count_val;
             partials[e0 + e] = count_val;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -86,7 +86,7 @@ kernel void moe_counts_offsets_fused(
         uint remaining = E - base;
         uint chunk_n = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
 
-        uint v = (lid < chunk_n) ? counts[base + lid] : 0u;
+        uint v = (lid < chunk_n) ? counts_shared[lid] : 0u;
 
         uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(v, scan_shared, (ushort)lid);
         uint prefix_global = prefix_local + carry;

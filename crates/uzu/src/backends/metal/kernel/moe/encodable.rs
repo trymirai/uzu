@@ -625,7 +625,6 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeRouterLogits,
             ArrayId::MoeTopkIds,
             ArrayId::MoeTopkProbs,
-            ArrayId::MoeCounts,
             ArrayId::MoeOffsets,
             ArrayId::MoeSumK,
             ArrayId::MoeBucketedTokenIds,
@@ -664,7 +663,6 @@ impl EncodableWithState for MoeBlockEncodable {
         let router_logits_buf = clone_buffer(array_iter.next().unwrap());
         let topk_ids_buf = clone_buffer(array_iter.next().unwrap());
         let topk_probs_buf = clone_buffer(array_iter.next().unwrap());
-        let counts_buf = clone_buffer(array_iter.next().unwrap());
         let offsets_buf = clone_buffer(array_iter.next().unwrap());
         let sumk_buf = clone_buffer(array_iter.next().unwrap());
         let bucketed_ids_buf = clone_buffer(array_iter.next().unwrap());
@@ -838,7 +836,6 @@ impl EncodableWithState for MoeBlockEncodable {
                 root,
                 MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
-                    counts_buffer: &counts_buf,
                     offsets_buffer: &offsets_buf,
                     sum_k_buffer: &sumk_buf,
                     partials_buffer: &partials_buf,

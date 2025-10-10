@@ -36,7 +36,8 @@ MTL_CONST uint BLOCK_N = THREADS_N * TN;
 static_assert(SM * SN == 32, "simdgroup must have 32 threads");
 static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, or 32");
 
-static inline float simdgroup_sum_shuffle(float val) {
+template<typename T>
+static inline T simdgroup_sum_shuffle(T val) {
     MTL_PRAGMA_UNROLL
     for (ushort offset = 16; offset >= 1; offset >>= 1) {
         val += simd_shuffle_down(val, offset);
@@ -47,7 +48,7 @@ static inline float simdgroup_sum_shuffle(float val) {
 // === Pass A: Optimized GEMV with hierarchical tiling ===
 // Computes: hidden[row, h] = activation(x[row, d] @ W13[d, 2*h])
 // AccumT is used for internal accumulations, output still stored as T
-template<typename T, typename AccumT = float>
+template<typename T, typename AccumT>
 void moe_experts_decode_pass_a_impl(
     device const T* X_perm,              // [total_rows, d_model]
     device const uint* expert_offsets,   // [E + 1]
@@ -101,11 +102,11 @@ void moe_experts_decode_pass_a_impl(
     if (h_row >= int(d_ff)) return;
 
     // Accumulation arrays for up and gate projections
-    thread float result_up[TM] = {0};
-    thread float result_gate[TM] = {0};
+    thread AccumT result_up[TM] = {0};
+    thread AccumT result_gate[TM] = {0};
     thread T weights_up[TN];
     thread T weights_gate[TN];
-    thread float x_vals[TN];
+    thread AccumT x_vals[TN];
 
     // Expert weight base addresses
     const ulong w13_base = (ulong)expert_idx * (ulong)d_model * (ulong)(2 * d_ff);
@@ -121,7 +122,7 @@ void moe_experts_decode_pass_a_impl(
         MTL_PRAGMA_UNROLL
         for (uint tn = 0; tn < TN; tn++) {
             uint d_idx = bn + tn;
-            x_vals[tn] = float(X_perm[x_row_base + d_idx]);
+            x_vals[tn] = AccumT(X_perm[x_row_base + d_idx]);
         }
 
         // Accumulate for each output row
@@ -141,7 +142,7 @@ void moe_experts_decode_pass_a_impl(
             // Accumulate up projection
             MTL_PRAGMA_UNROLL
             for (uint tn = 0; tn < TN; tn++) {
-                result_up[tm] += x_vals[tn] * float(weights_up[tn]);
+                result_up[tm] += x_vals[tn] * AccumT(weights_up[tn]);
             }
 
             // Load and accumulate gate projection if needed
@@ -155,7 +156,7 @@ void moe_experts_decode_pass_a_impl(
 
                 MTL_PRAGMA_UNROLL
                 for (uint tn = 0; tn < TN; tn++) {
-                    result_gate[tm] += x_vals[tn] * float(weights_gate[tn]);
+                    result_gate[tm] += x_vals[tn] * AccumT(weights_gate[tn]);
                 }
             }
         }
@@ -168,7 +169,7 @@ void moe_experts_decode_pass_a_impl(
         MTL_PRAGMA_UNROLL
         for (uint tn = 0; tn < TN; tn++) {
             uint d_idx = bn + tn;
-            x_vals[tn] = (d_idx < d_model) ? float(X_perm[x_row_base + d_idx]) : 0.0f;
+            x_vals[tn] = (d_idx < d_model) ? AccumT(X_perm[x_row_base + d_idx]) : AccumT(0.0);
         }
 
         MTL_PRAGMA_UNROLL
@@ -182,12 +183,12 @@ void moe_experts_decode_pass_a_impl(
                     // Transposed layout: [E, 2*d_ff, d_model]
                     ulong w_idx = w13_base + (ulong)h_idx * (ulong)d_model + (ulong)d_idx;
                     weights_up[tn] = W13_all[w_idx];
-                    result_up[tm] += x_vals[tn] * float(weights_up[tn]);
+                    result_up[tm] += x_vals[tn] * AccumT(weights_up[tn]);
 
                     if (GATING_SEL > 1) {
                         ulong w_gate_idx = w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model + (ulong)d_idx;
                         weights_gate[tn] = W13_all[w_gate_idx];
-                        result_gate[tm] += x_vals[tn] * float(weights_gate[tn]);
+                        result_gate[tm] += x_vals[tn] * AccumT(weights_gate[tn]);
                     }
                 }
             }
@@ -211,9 +212,9 @@ void moe_experts_decode_pass_a_impl(
         if (thrN == 0) {
             MTL_PRAGMA_UNROLL
             for (uint tm = 0; tm < TM; tm++) {
-                tgp_up[sgN * (BLOCK_M + TM) + bm + tm] = result_up[tm];
+                tgp_up[sgN * (BLOCK_M + TM) + bm + tm] = float(result_up[tm]);
                 if (GATING_SEL > 1) {
-                    tgp_gate[sgN * (BLOCK_M + TM) + bm + tm] = result_gate[tm];
+                    tgp_gate[sgN * (BLOCK_M + TM) + bm + tm] = float(result_gate[tm]);
                 }
             }
 
@@ -224,9 +225,9 @@ void moe_experts_decode_pass_a_impl(
                 for (uint sgn = 1; sgn < BN; sgn++) {
                     MTL_PRAGMA_UNROLL
                     for (uint tm = 0; tm < TM; tm++) {
-                        result_up[tm] += tgp_up[sgn * (BLOCK_M + TM) + bm + tm];
+                        result_up[tm] += AccumT(tgp_up[sgn * (BLOCK_M + TM) + bm + tm]);
                         if (GATING_SEL > 1) {
-                            result_gate[tm] += tgp_gate[sgn * (BLOCK_M + TM) + bm + tm];
+                            result_gate[tm] += AccumT(tgp_gate[sgn * (BLOCK_M + TM) + bm + tm]);
                         }
                     }
                 }
@@ -241,16 +242,16 @@ void moe_experts_decode_pass_a_impl(
             uint h_idx = h_row + tm;
             if (h_idx < d_ff) {
                 // Add bias and clip
-                float up_val = result_up[tm] + float(up_biases[bias_base + h_idx]);
-                up_val = clamp(up_val, up_clip_min, up_clip_max);
+                AccumT up_val = result_up[tm] + AccumT(up_biases[bias_base + h_idx]);
+                up_val = AccumT(clamp(float(up_val), up_clip_min, up_clip_max));
 
-                float activated_val;
+                AccumT activated_val;
                 if (GATING_SEL <= 1) {
-                    activated_val = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+                    activated_val = (GATING_SEL == 0) ? AccumT(gelu_approx(float(up_val))) : AccumT(silu(float(up_val), silu_alpha));
                 } else {
-                    float gate_val = result_gate[tm] + float(up_biases[bias_base + d_ff + h_idx]);
-                    gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
-                    float gate_activated = (GATING_SEL == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
+                    AccumT gate_val = result_gate[tm] + AccumT(up_biases[bias_base + d_ff + h_idx]);
+                    gate_val = AccumT(clamp(float(gate_val), gate_clip_min, gate_clip_max));
+                    AccumT gate_activated = (GATING_SEL == 2) ? AccumT(silu(float(gate_val), silu_alpha)) : AccumT(gelu_approx(float(gate_val)));
                     activated_val = gate_activated * up_val;
                 }
 
@@ -507,7 +508,7 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 // Exploits transposed layout for stride-1 memory access across threads
 // AccumT is used for internal accumulations
 
-template<typename T, typename AccumT = float>
+template<typename T, typename AccumT>
 void moe_experts_decode_down_fused_2d_impl(
     device const T* hidden,               // [total_rows, d_ff]
     device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
@@ -540,7 +541,7 @@ void moe_experts_decode_down_fused_2d_impl(
 
     // Each thread in simdgroup handles every 32nd element along K
     // With transposed W2, simd_lid gives consecutive memory locations → perfect coalescing!
-    AccumT acc = 0.0;
+    AccumT acc = AccumT(0.0);
 
     // Main loop: stride-32 with vec8 loads for ILP
     const uint k_iters = d_ff / THREADS_PER_SIMD;

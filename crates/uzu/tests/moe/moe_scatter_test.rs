@@ -2,13 +2,10 @@
 
 use half::f16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    MTLContext,
-    kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
-        MoeTopKArguments, MoeTopKKernel,
-    },
+use uzu::backends::metal::kernel::{
+    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
+    MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
+    MoeTopKArguments, MoeTopKKernel,
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -98,7 +95,6 @@ fn test_scatter_buckets_parity() {
             )
         };
 
-        let counts_buf = alloc_buffer::<u32>(&ctx, e);
         let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
         let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
         let num_tiles = ((e + 511) / 512).max(1);
@@ -112,7 +108,6 @@ fn test_scatter_buckets_parity() {
                 &cb,
                 MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
-                    counts_buffer: &counts_buf,
                     offsets_buffer: &offsets_buf,
                     sum_k_buffer: &sumk_buf,
                     partials_buffer: &partials_buf,
@@ -217,168 +212,4 @@ fn test_scatter_buckets_parity() {
             assert_eq!(a, b, "ids multiset mismatch for expert {}", ei);
         }
     }
-}
-
-const BLOCK_SIZE: usize = 256;
-const TILE_E: usize = 512;
-
-fn run_partials(
-    ctx: &MTLContext,
-    topk_ids_buf: &metal::Buffer,
-    t: usize,
-    e: usize,
-    k: usize,
-) -> (metal::Buffer, usize, usize) {
-    // Use fused kernel to generate partials (as a side effect)
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
-    let num_tiles = ((e + 511) / 512).max(1);
-    let partials = alloc_buffer::<u32>(&ctx, num_tiles * 512);
-    let num_blocks = 1; // Fused kernel uses single block
-
-    let fused_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.new_command_buffer();
-    fused_kernel
-        .encode(
-            &cb,
-            MoeCountsOffsetsFusedArguments {
-                topk_ids_buffer: topk_ids_buf,
-                counts_buffer: &counts_buf,
-                offsets_buffer: &offsets_buf,
-                sum_k_buffer: &sumk_buf,
-                partials_buffer: &partials,
-                t,
-                e,
-                k,
-            },
-        )
-        .expect("encode fused");
-    cb.commit();
-    cb.wait_until_completed();
-
-    (partials, num_blocks, num_tiles)
-}
-
-fn run_offsets(
-    ctx: &MTLContext,
-    counts: &metal::Buffer,
-    e: usize,
-) -> (metal::Buffer, metal::Buffer) {
-    // Compute offsets on CPU from counts (for test capacity_clamp scenario)
-    let counts_cpu = unsafe {
-        std::slice::from_raw_parts(counts.contents() as *const u32, e)
-    };
-    let mut offsets_cpu = vec![0u32; e + 1];
-    let mut sum = 0u32;
-    for (i, &count) in counts_cpu.iter().enumerate() {
-        offsets_cpu[i] = sum;
-        sum += count;
-    }
-    offsets_cpu[e] = sum;
-
-    let offsets = alloc_buffer_with_data(&ctx, &offsets_cpu);
-    let sumk = alloc_buffer_with_data(&ctx, &[sum]);
-
-    (offsets, sumk)
-}
-
-fn run_block_bases(
-    ctx: &MTLContext,
-    partials: &metal::Buffer,
-    e: usize,
-    num_blocks: usize,
-    num_tiles: usize,
-    _capacity: u32, // Capacity clamping not implemented in block_bases kernel
-) -> (metal::Buffer, metal::Buffer) {
-    let entries = num_blocks * num_tiles * TILE_E;
-    let bases = alloc_buffer::<u32>(&ctx, entries);
-    let alloc = alloc_buffer::<u32>(&ctx, entries);
-
-    let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-    let cb = ctx.command_queue.new_command_buffer();
-    scatter
-        .encode_block_bases(
-            &cb,
-            MoeBlockBasesArguments {
-                partials_buffer: partials,
-                block_bases_buffer: &bases,
-                block_alloc_buffer: &alloc,
-                e,
-                num_blocks,
-                num_tiles,
-            },
-        )
-        .expect("encode block bases");
-    cb.commit();
-    cb.wait_until_completed();
-
-    (bases, alloc)
-}
-
-fn run_scatter(
-    ctx: &MTLContext,
-    topk_ids: &metal::Buffer,
-    topk_probs: &metal::Buffer,
-    offsets: &metal::Buffer,
-    bases: &metal::Buffer,
-    alloc: &metal::Buffer,
-    t: usize,
-    e: usize,
-    k: usize,
-    num_blocks: usize,
-    num_tiles: usize,
-    sumk: usize,
-) -> (metal::Buffer, metal::Buffer) {
-    let out_ids = alloc_buffer::<i32>(&ctx, sumk);
-    let out_probs = alloc_buffer::<f16>(&ctx, sumk);
-
-    let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-    let cb = ctx.command_queue.new_command_buffer();
-    scatter
-        .encode_scatter(
-            &cb,
-            MoeScatterArguments {
-                topk_ids_buffer: topk_ids,
-                topk_probs_buffer: topk_probs,
-                offsets_buffer: offsets,
-                block_bases_buffer: bases,
-                block_alloc_buffer: alloc,
-                out_ids_buffer: &out_ids,
-                out_probs_buffer: &out_probs,
-                t,
-                e,
-                k,
-                num_blocks,
-                num_tiles,
-            },
-            KernelDataType::Float16,
-        )
-        .expect("encode scatter");
-    cb.commit();
-    cb.wait_until_completed();
-
-    (out_ids, out_probs)
-}
-
-fn build_cpu_multisets(
-    topk_ids: &[i32],
-    t: usize,
-    e: usize,
-    k: usize,
-) -> Vec<Vec<i32>> {
-    let mut per_e: Vec<Vec<i32>> = vec![Vec::new(); e];
-    for ti in 0..t {
-        for kk in 0..k {
-            let id = topk_ids[ti * k + kk];
-            if id >= 0 {
-                let ue = id as usize;
-                if ue < e {
-                    per_e[ue].push(ti as i32);
-                }
-            }
-        }
-    }
-    per_e
 }

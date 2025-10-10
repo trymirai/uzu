@@ -28,9 +28,8 @@ pub struct MoeCountsOffsetsFusedKernel {
 #[derive(Debug)]
 pub struct MoeCountsOffsetsFusedArguments<'a> {
     pub topk_ids_buffer: &'a MTLBuffer,
-    pub counts_buffer: &'a MTLBuffer, // output [E]
     pub offsets_buffer: &'a MTLBuffer, // output [E+1]
-    pub sum_k_buffer: &'a MTLBuffer,  // output [1]
+    pub sum_k_buffer: &'a MTLBuffer,   // output [1]
     pub partials_buffer: &'a MTLBuffer, // output [num_tiles * 512] (for block_bases)
     pub t: usize,
     pub e: usize,
@@ -71,27 +70,26 @@ impl MoeCountsOffsetsFusedKernel {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
-        encoder.set_buffer(1, Some(args.counts_buffer), 0);
-        encoder.set_buffer(2, Some(args.offsets_buffer), 0);
-        encoder.set_buffer(3, Some(args.sum_k_buffer), 0);
-        encoder.set_buffer(4, Some(args.partials_buffer), 0);
+        encoder.set_buffer(1, Some(args.offsets_buffer), 0);
+        encoder.set_buffer(2, Some(args.sum_k_buffer), 0);
+        encoder.set_buffer(3, Some(args.partials_buffer), 0);
 
         let t_u32 = args.t as u32;
         let e_u32 = args.e as u32;
         let k_u32 = args.k as u32;
 
         encoder.set_bytes(
-            5,
+            4,
             size_of::<u32>() as u64,
             &t_u32 as *const u32 as *const std::ffi::c_void,
         );
         encoder.set_bytes(
-            6,
+            5,
             size_of::<u32>() as u64,
             &e_u32 as *const u32 as *const std::ffi::c_void,
         );
         encoder.set_bytes(
-            7,
+            6,
             size_of::<u32>() as u64,
             &k_u32 as *const u32 as *const std::ffi::c_void,
         );

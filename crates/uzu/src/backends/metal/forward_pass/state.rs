@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::device::array::Array;
 use half::{bf16, f16};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +15,7 @@ use crate::{
     DataType, DeviceContext,
     backends::metal::forward_pass::traces::DecoderActivationTrace,
     config::{DecoderConfig, EmbeddingConfig, MLPConfig},
+    device::array::Array,
     parameters::ParameterTree,
     session::parameter::SamplingMethod,
 };
@@ -323,7 +323,6 @@ struct AuxBuffers {
     moe_router_logits: Option<ArrayCell>,
     moe_topk_ids: Option<ArrayCell>,
     moe_topk_probs: Option<ArrayCell>,
-    moe_counts: Option<ArrayCell>,
     moe_offsets: Option<ArrayCell>,
     moe_sumk: Option<ArrayCell>,
     moe_bucketed_token_ids: Option<ArrayCell>,
@@ -454,18 +453,6 @@ impl AuxBuffers {
                                     moe.num_experts_per_token,
                                 ),
                                 act_dtype,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_counts: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_counts.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::new(
-                                buf.clone(),
-                                &model_shape.moe_counts_shape(moe.mixture_size),
-                                DataType::U32,
                             ))
                         })
                     },
@@ -1022,7 +1009,6 @@ impl ForwardPassState {
             ArrayId::MoeRouterLogits => self.aux_buffers.moe_router_logits.as_ref().expect("MoE router logits buffer not initialized").clone(),
             ArrayId::MoeTopkIds => self.aux_buffers.moe_topk_ids.as_ref().expect("MoE topk ids buffer not initialized").clone(),
             ArrayId::MoeTopkProbs => self.aux_buffers.moe_topk_probs.as_ref().expect("MoE topk probs buffer not initialized").clone(),
-            ArrayId::MoeCounts => self.aux_buffers.moe_counts.as_ref().expect("MoE counts buffer not initialized").clone(),
             ArrayId::MoeOffsets => self.aux_buffers.moe_offsets.as_ref().expect("MoE offsets buffer not initialized").clone(),
             ArrayId::MoeSumK => self.aux_buffers.moe_sumk.as_ref().expect("MoE sumk buffer not initialized").clone(),
             ArrayId::MoeBucketedTokenIds => self.aux_buffers.moe_bucketed_token_ids.as_ref().expect("MoE bucketed token ids buffer not initialized").clone(),
@@ -1161,7 +1147,6 @@ pub enum ArrayId {
     MoeRouterLogits,
     MoeTopkIds,
     MoeTopkProbs,
-    MoeCounts,
     MoeOffsets,
     MoeSumK,
     MoeBucketedTokenIds,

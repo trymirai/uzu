@@ -126,8 +126,7 @@ fn test_router_decode_perf() {
         let bias_buf = alloc_buffer_with_data(&ctx, &bias);
         let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
 
-        let router_kernel =
-            MoeRouterKernel::new(&ctx).expect("router kernel");
+        let router_kernel = MoeRouterKernel::new(&ctx).expect("router kernel");
 
         let perf = time_kernel(
             &format!("{} (T={}, E={}, D={})", name, t, e, d_model),
@@ -200,15 +199,21 @@ fn test_router_prefill_perf() {
 
         let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
-                input_buffer: &x_buf,
-                weight_buffer: &weight_buf,
-                bias_buffer: &bias_buf,
-                output_buffer: &logits_buf,
-                t,
-                d_model,
-                e,
-            }).expect("encode router");
+            router
+                .encode(
+                    &cb,
+                    KernelDataType::BFloat16,
+                    MoeRouterArguments {
+                        input_buffer: &x_buf,
+                        weight_buffer: &weight_buf,
+                        bias_buffer: &bias_buf,
+                        output_buffer: &logits_buf,
+                        t,
+                        d_model,
+                        e,
+                    },
+                )
+                .expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -261,15 +266,20 @@ fn test_topk_decode_perf() {
             20,
             || {
                 let cb = ctx.command_queue.new_command_buffer();
-                topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
-                    logits_buffer: &logits_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    e,
-                    k,
-                    renorm: true,
-                }).expect("encode topk");
+                topk.encode(
+                    &cb,
+                    KernelDataType::BFloat16,
+                    MoeTopKArguments {
+                        logits_buffer: &logits_buf,
+                        topk_ids_buffer: &topk_ids_buf,
+                        topk_probs_buffer: &topk_probs_buf,
+                        t,
+                        e,
+                        k,
+                        renorm: true,
+                    },
+                )
+                .expect("encode topk");
                 cb.commit();
                 cb.wait_until_completed();
             },
@@ -312,15 +322,20 @@ fn test_topk_prefill_perf() {
 
         let perf = time_kernel(&format!("{} (T={})", name, t), 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
-                logits_buffer: &logits_buf,
-                topk_ids_buffer: &topk_ids_buf,
-                topk_probs_buffer: &topk_probs_buf,
-                t,
-                e,
-                k,
-                renorm: true,
-            }).expect("encode topk");
+            topk.encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeTopKArguments {
+                    logits_buffer: &logits_buf,
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    t,
+                    e,
+                    k,
+                    renorm: true,
+                },
+            )
+            .expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -382,15 +397,21 @@ fn test_moe_e2e_decode_perf() {
         // Time router
         let router_perf = time_kernel("Router", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
-                input_buffer: &x_buf,
-                weight_buffer: &router_w_buf,
-                bias_buffer: &router_b_buf,
-                output_buffer: &logits_buf,
-                t,
-                d_model,
-                e,
-            }).expect("encode router");
+            router
+                .encode(
+                    &cb,
+                    KernelDataType::BFloat16,
+                    MoeRouterArguments {
+                        input_buffer: &x_buf,
+                        weight_buffer: &router_w_buf,
+                        bias_buffer: &router_b_buf,
+                        output_buffer: &logits_buf,
+                        t,
+                        d_model,
+                        e,
+                    },
+                )
+                .expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -398,15 +419,20 @@ fn test_moe_e2e_decode_perf() {
         // Time TopK
         let topk_perf = time_kernel("TopK", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
-                logits_buffer: &logits_buf,
-                topk_ids_buffer: &topk_ids_buf,
-                topk_probs_buffer: &topk_probs_buf,
-                t,
-                e,
-                k,
-                renorm: true,
-            }).expect("encode topk");
+            topk.encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeTopKArguments {
+                    logits_buffer: &logits_buf,
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    t,
+                    e,
+                    k,
+                    renorm: true,
+                },
+            )
+            .expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -471,15 +497,21 @@ fn test_moe_e2e_prefill_perf() {
         // Time router
         let router_perf = time_kernel("Router", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            router.encode(&cb, KernelDataType::BFloat16, MoeRouterArguments {
-                input_buffer: &x_buf,
-                weight_buffer: &router_w_buf,
-                bias_buffer: &router_b_buf,
-                output_buffer: &logits_buf,
-                t,
-                d_model,
-                e,
-            }).expect("encode router");
+            router
+                .encode(
+                    &cb,
+                    KernelDataType::BFloat16,
+                    MoeRouterArguments {
+                        input_buffer: &x_buf,
+                        weight_buffer: &router_w_buf,
+                        bias_buffer: &router_b_buf,
+                        output_buffer: &logits_buf,
+                        t,
+                        d_model,
+                        e,
+                    },
+                )
+                .expect("encode router");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -487,15 +519,20 @@ fn test_moe_e2e_prefill_perf() {
         // Time TopK
         let topk_perf = time_kernel("TopK", 5, 20, || {
             let cb = ctx.command_queue.new_command_buffer();
-            topk.encode(&cb, KernelDataType::BFloat16, MoeTopKArguments {
-                logits_buffer: &logits_buf,
-                topk_ids_buffer: &topk_ids_buf,
-                topk_probs_buffer: &topk_probs_buf,
-                t,
-                e,
-                k,
-                renorm: true,
-            }).expect("encode topk");
+            topk.encode(
+                &cb,
+                KernelDataType::BFloat16,
+                MoeTopKArguments {
+                    logits_buffer: &logits_buf,
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    t,
+                    e,
+                    k,
+                    renorm: true,
+                },
+            )
+            .expect("encode topk");
             cb.commit();
             cb.wait_until_completed();
         });
@@ -548,7 +585,6 @@ fn test_moe_pipeline_breakdown_decode() {
     let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
     let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
     let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
-    let counts_buf = alloc_buffer::<u32>(&ctx, e);
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let partials_buf = alloc_buffer::<i32>(&ctx, num_blocks * num_tiles * e);
@@ -679,7 +715,6 @@ fn test_moe_pipeline_breakdown_decode() {
                 &cb,
                 MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
-                    counts_buffer: &counts_buf,
                     offsets_buffer: &offsets_buf,
                     sum_k_buffer: &sumk_buf,
                     partials_buffer: &partials_buf,

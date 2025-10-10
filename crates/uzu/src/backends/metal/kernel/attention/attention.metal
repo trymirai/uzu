@@ -30,8 +30,8 @@ void attention_single_pass_impl(
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
     const device float* sinks,
-    uint3 tid, // thread index in threadgroup
-    uint3 tpg, // threads per group
+    uint3 tid, // threadgroup position in grid
+    uint3 tpg, // threadgroups per grid
     uint simd_gid, // simdgroup index in threadgroup
     uint simd_lid, // thread index in simdgroup
     threadgroup float* shared_max_scores,
@@ -185,8 +185,8 @@ void attention_2pass_1_impl(
     const constant int& mask_q_seq_stride,
     const constant int& mask_head_stride,
     const device float* sinks,
-    uint3 tid, // thread index in threadgroup
-    uint3 tpg, // threads per group
+    uint3 tid, // threadgroup position in grid
+    uint3 tpg, // threadgroups per grid
     uint simd_gid, // simdgroup index in threadgroup
     uint simd_lid, // thread index in simdgroup
     threadgroup float* shared_max_scores,
