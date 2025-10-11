@@ -128,17 +128,15 @@ inline void moe_router_topk_impl(
             max_logit = fmax(max_logit, float(out_probs[i]));
         }
         float sum_exp = 0.0f;
-        float probs[MAX_TOPK];
         for (uint i = 0; i < effective_k; ++i) {
-            float val = float(out_probs[i]);
-            float exp_val = exp(val - max_logit);
-            probs[i] = exp_val;
-            sum_exp += exp_val;
+            sum_exp += exp(float(out_probs[i]) - max_logit);
         }
         float default_prob = 1.0f / float(effective_k);
         float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : default_prob;
         for (uint i = 0; i < effective_k; ++i) {
-            float prob = (sum_exp > 0.0f) ? (probs[i] * inv_sum) : default_prob;
+            float prob = (sum_exp > 0.0f)
+                ? exp(float(out_probs[i]) - max_logit) * inv_sum
+                : default_prob;
             out_probs[i] = ProbT(prob);
         }
         for (uint i = effective_k; i < K; ++i) {

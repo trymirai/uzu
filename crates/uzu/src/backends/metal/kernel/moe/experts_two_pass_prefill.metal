@@ -50,7 +50,7 @@ void moe_two_pass_prefill_pass_a_impl(
     device const uint* expert_offsets,      // [E + 1]
     device const T* W13_all,                // [E, 2*FF, D] transposed
     device const T* up_biases,              // [E, 2*FF]
-    device T* hidden_out,                   // [total_rows, FF]
+    device float* hidden_out,               // [total_rows, FF] - f32 for activation precision
     uint d_model,
     uint d_ff,
     uint E,
@@ -226,7 +226,7 @@ void moe_two_pass_prefill_pass_a_impl(
         }
 
         // Store results to hidden buffer with bias and activation
-        device T* hidden_tile = hidden_out + (seg_start + m0) * d_ff + stripe_n0;
+        device float* hidden_tile = hidden_out + (seg_start + m0) * d_ff + stripe_n0;
 
         const short2 dst_dims = short2(n_cols, m_rows);
 
@@ -280,7 +280,7 @@ void moe_two_pass_prefill_pass_a_impl(
                         result = swish_y * up_val;
                     }
 
-                    hidden_tile[elem_m * d_ff + elem_n] = T(result);
+                    hidden_tile[elem_m * d_ff + elem_n] = result;
                 }
             }
         }
@@ -294,7 +294,7 @@ kernel void moe_two_pass_prefill_pass_a_##SUFFIX( \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
     device const DTYPE* up_biases [[buffer(3)]], \
-    device DTYPE* hidden_out [[buffer(4)]], \
+    device float* hidden_out [[buffer(4)]], \
     constant uint& d_model [[buffer(5)]], \
     constant uint& d_ff [[buffer(6)]], \
     constant uint& E [[buffer(7)]], \
@@ -335,7 +335,7 @@ void moe_two_pass_prefill_pass_a_indirect_impl(
     device const uint* expert_offsets,
     device const T* W13_all,
     device const T* up_biases,
-    device T* hidden_out,
+    device float* hidden_out,
     device const uint* tile_map, // [total_tiles * 3] -> [expert, seg_start, tile_row_offset]
     uint d_model,
     uint d_ff,
@@ -391,7 +391,7 @@ kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX( \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
     device const DTYPE* up_biases [[buffer(3)]], \
-    device DTYPE* hidden_out [[buffer(4)]], \
+    device float* hidden_out [[buffer(4)]], \
     constant uint& d_model [[buffer(5)]], \
     constant uint& d_ff [[buffer(6)]], \
     constant uint& E [[buffer(7)]], \
@@ -430,7 +430,7 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 
 template<typename T, typename AccumT = float>
 void moe_two_pass_prefill_pass_b_impl(
-    device const T* hidden,                 // [total_rows, FF]
+    device const float* hidden,             // [total_rows, FF] - f32 from Pass A
     device const uint* expert_offsets,      // [E + 1]
     device const T* W2_all,                 // [E, FF, D] transposed
     device const T* down_biases,            // [E, D]
@@ -498,7 +498,7 @@ void moe_two_pass_prefill_pass_b_impl(
             const ushort kk = idx % BK;
             T val = T(0.0f);
             if (mi < m_rows) {
-                val = hidden[h_base + (ulong)mi * (ulong)d_ff + (ulong)(k0 + kk)];
+                val = T(hidden[h_base + (ulong)mi * (ulong)d_ff + (ulong)(k0 + kk)]);
             }
             Hs[mi * BK + kk] = val;
         }
@@ -535,7 +535,7 @@ void moe_two_pass_prefill_pass_b_impl(
             const ushort kk = idx % BK;
             T val = T(0.0f);
             if (mi < m_rows && kk < k_remainder) {
-                val = hidden[h_base + (ulong)mi * (ulong)d_ff + (ulong)(k0 + kk)];
+                val = T(hidden[h_base + (ulong)mi * (ulong)d_ff + (ulong)(k0 + kk)]);
             }
             Hs[mi * BK + kk] = val;
         }
@@ -599,7 +599,7 @@ void moe_two_pass_prefill_pass_b_impl(
 // Kernel entry point for Pass B
 #define MOE_PASS_B_KERNEL(DTYPE, SUFFIX) \
 kernel void moe_two_pass_prefill_pass_b_##SUFFIX( \
-    device const DTYPE* hidden [[buffer(0)]], \
+    device const float* hidden [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W2_all [[buffer(2)]], \
     device const DTYPE* down_biases [[buffer(3)]], \
@@ -632,7 +632,7 @@ MOE_PASS_B_KERNEL(float, f32)
 
 template<typename T>
 void moe_two_pass_prefill_pass_b_indirect_impl(
-    device const T* hidden,
+    device const float* hidden,
     device const uint* expert_offsets,
     device const T* W2_all,
     device const T* down_biases,
@@ -676,7 +676,7 @@ void moe_two_pass_prefill_pass_b_indirect_impl(
 
 #define MOE_PASS_B_INDIRECT_KERNEL(DTYPE, SUFFIX) \
 kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX( \
-    device const DTYPE* hidden [[buffer(0)]], \
+    device const float* hidden [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W2_all [[buffer(2)]], \
     device const DTYPE* down_biases [[buffer(3)]], \

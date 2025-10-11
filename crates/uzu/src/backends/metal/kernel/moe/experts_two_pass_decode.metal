@@ -38,11 +38,12 @@ static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, 
 
 template<typename T>
 static inline T simdgroup_sum_shuffle(T val) {
-    MTL_PRAGMA_UNROLL
-    for (ushort offset = 16; offset >= 1; offset >>= 1) {
-        val += simd_shuffle_down(val, offset);
-    }
-    return val;
+    return simd_sum(val);
+    // MTL_PRAGMA_UNROLL
+    // for (ushort offset = 16; offset >= 1; offset >>= 1) {
+    //     val += simd_shuffle_down(val, offset);
+    // }
+    // return val;
 }
 
 // === Pass A: Optimized GEMV with hierarchical tiling ===
@@ -54,7 +55,7 @@ void moe_experts_decode_pass_a_impl(
     device const uint* expert_offsets,   // [E + 1]
     device const T* W13_all,             // weights in transposed layout [E, 2*d_ff, d_model]
     device const T* up_biases,           // [E, 2*d_ff]
-    device T* hidden_out,                // [total_rows, d_ff]
+    device float* hidden_out,            // [total_rows, d_ff] - f32 for activation precision
     uint d_model,
     uint d_ff,
     uint E,
@@ -256,7 +257,7 @@ void moe_experts_decode_pass_a_impl(
                 }
 
                 ulong hidden_idx = (ulong)global_row * (ulong)d_ff + (ulong)h_idx;
-                hidden_out[hidden_idx] = T(activated_val);
+                hidden_out[hidden_idx] = float(activated_val);
             }
         }
     }
@@ -267,7 +268,7 @@ kernel void moe_experts_decode_pass_a_##SUFFIX( \
     device const DTYPE* X_perm [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
-    device DTYPE* hidden_out [[buffer(3)]], \
+    device float* hidden_out [[buffer(3)]], \
     device const DTYPE* up_biases [[buffer(4)]], \
     constant uint& d_model [[buffer(5)]], \
     constant uint& d_ff [[buffer(6)]], \
@@ -436,7 +437,7 @@ void moe_experts_decode_pass_a_indirect_impl(
     device const uint* expert_offsets,
     device const T* W13_all,
     device const T* up_biases,
-    device T* hidden_out,
+    device float* hidden_out,
     device const uint* tile_map,         // [total_tiles * 3]
     uint d_model,
     uint d_ff,
@@ -472,7 +473,7 @@ kernel void moe_experts_decode_pass_a_indirect_##SUFFIX( \
     device const DTYPE* X_perm [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
-    device DTYPE* hidden_out [[buffer(3)]], \
+    device float* hidden_out [[buffer(3)]], \
     device const DTYPE* up_biases [[buffer(4)]], \
     constant uint& d_model [[buffer(5)]], \
     constant uint& d_ff [[buffer(6)]], \
@@ -510,7 +511,7 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 
 template<typename T, typename AccumT>
 void moe_experts_decode_down_fused_2d_impl(
-    device const T* hidden,               // [total_rows, d_ff]
+    device const float* hidden,           // [total_rows, d_ff] - f32 from Pass A
     device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
     device const T* w2_all,               // [E, d_model, d_ff] - TRANSPOSED layout
     device const T* down_biases,          // [E, d_model]
@@ -541,45 +542,53 @@ void moe_experts_decode_down_fused_2d_impl(
 
     // Each thread in simdgroup handles every 32nd element along K
     // With transposed W2, simd_lid gives consecutive memory locations → perfect coalescing!
+
+    // Dual accumulators for ILP: breaks FMA dependency chains
+    AccumT acc0 = AccumT(0.0);
+    AccumT acc1 = AccumT(0.0);
     AccumT acc = AccumT(0.0);
 
     // Main loop: stride-32 with vec8 loads for ILP
     const uint k_iters = d_ff / THREADS_PER_SIMD;
     const uint k_vec_iters = k_iters / 8;
 
-    #pragma clang loop unroll_count(4)
+    MTL_PRAGMA_UNROLL
     for (uint iter = 0; iter < k_vec_iters; ++iter) {
         const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd_lid;
 
-        // Load 8 values with stride-32
-        AccumT h0 = AccumT(hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD]);
-        AccumT h1 = AccumT(hidden[hidden_base + k_base + 1 * THREADS_PER_SIMD]);
-        AccumT h2 = AccumT(hidden[hidden_base + k_base + 2 * THREADS_PER_SIMD]);
-        AccumT h3 = AccumT(hidden[hidden_base + k_base + 3 * THREADS_PER_SIMD]);
-        AccumT h4 = AccumT(hidden[hidden_base + k_base + 4 * THREADS_PER_SIMD]);
-        AccumT h5 = AccumT(hidden[hidden_base + k_base + 5 * THREADS_PER_SIMD]);
-        AccumT h6 = AccumT(hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD]);
-        AccumT h7 = AccumT(hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD]);
+        // hidden: stride-32 per lane, already f32 from Pass A
+        const AccumT h0 = hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD];
+        const AccumT h1 = hidden[hidden_base + k_base + 1 * THREADS_PER_SIMD];
+        const AccumT h2 = hidden[hidden_base + k_base + 2 * THREADS_PER_SIMD];
+        const AccumT h3 = hidden[hidden_base + k_base + 3 * THREADS_PER_SIMD];
+        const AccumT h4 = hidden[hidden_base + k_base + 4 * THREADS_PER_SIMD];
+        const AccumT h5 = hidden[hidden_base + k_base + 5 * THREADS_PER_SIMD];
+        const AccumT h6 = hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD];
+        const AccumT h7 = hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD];
 
-        // W2 loads: COALESCED - consecutive threads read consecutive addresses!
-        AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
-        AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
-        AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
-        AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
-        AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
-        AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
-        AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
-        AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+        // W2: lane-coalesced thanks to transposed layout
+        const AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+        const AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+        const AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+        const AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+        const AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+        const AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+        const AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+        const AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
 
-        acc = fma(h0, w0, acc);
-        acc = fma(h1, w1, acc);
-        acc = fma(h2, w2, acc);
-        acc = fma(h3, w3, acc);
-        acc = fma(h4, w4, acc);
-        acc = fma(h5, w5, acc);
-        acc = fma(h6, w6, acc);
-        acc = fma(h7, w7, acc);
+        // dual trees for ILP
+        acc0 = fma(h0, w0, acc0);
+        acc1 = fma(h1, w1, acc1);
+        acc0 = fma(h2, w2, acc0);
+        acc1 = fma(h3, w3, acc1);
+        acc0 = fma(h4, w4, acc0);
+        acc1 = fma(h5, w5, acc1);
+        acc0 = fma(h6, w6, acc0);
+        acc1 = fma(h7, w7, acc1);
     }
+
+    // fold the vectorized contribution once
+    acc += (acc0 + acc1);
 
     // Handle remaining full iterations
     MTL_PRAGMA_UNROLL
@@ -610,7 +619,7 @@ void moe_experts_decode_down_fused_2d_impl(
 
 #define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX) \
 kernel void moe_experts_decode_down_fused_2d_##SUFFIX( \
-    device const DTYPE* hidden [[buffer(0)]], \
+    device const float* hidden [[buffer(0)]], \
     device const uint* row_expert_map [[buffer(1)]], \
     device const DTYPE* w2_all [[buffer(2)]], \
     device const DTYPE* down_biases [[buffer(3)]], \

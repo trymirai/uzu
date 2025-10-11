@@ -224,7 +224,7 @@ impl ForwardPassBuffers {
                 MLPConfig::MixtureOfExperts(moe) => {
                     let max_routed = max_suffix_len * moe.num_experts_per_token;
                     let shape = model_shape.moe_hidden_shape(max_routed);
-                    Some(alloc(&shape, DataType::F16))
+                    Some(alloc(&shape, DataType::F32))
                 },
                 _ => None,
             },

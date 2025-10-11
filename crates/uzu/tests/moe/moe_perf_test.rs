@@ -323,7 +323,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Two-pass specific buffers
-    let hidden_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_ff);
+    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let two_pass_partial_buf =
         alloc_buffer::<f32>(&ctx, num_tiles_k * sum_k * d_model);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);

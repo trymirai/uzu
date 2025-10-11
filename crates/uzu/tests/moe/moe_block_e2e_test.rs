@@ -493,7 +493,7 @@ fn run_moe_parity_test_internal(
 
     // Additional buffers for 2-pass
     let total_rows = t * k;
-    let hidden_buf = alloc_buffer::<bf16>(&ctx, total_rows * d_ff);
+    let hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
     let two_pass_partial_buf = alloc_buffer::<f32>(&ctx, total_rows * d_model);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 

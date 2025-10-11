@@ -76,10 +76,10 @@ fn cpu_expert_ffn_full(
     d_ff: usize,
     gating_code: u32,
     silu_alpha: f32,
-) -> (Vec<bf16>, Vec<bf16>) {
+) -> (Vec<f32>, Vec<bf16>) {
     let e = offsets.len() - 1;
     let sum_k = x_perm.len() / d_model;
-    let mut hidden_full = vec![bf16::from_f32(0.0); sum_k * d_ff];
+    let mut hidden_full = vec![0.0f32; sum_k * d_ff];
     let mut output = vec![bf16::from_f32(0.0); sum_k * d_model];
 
     // Helper functions matching Metal kernels
@@ -152,8 +152,7 @@ fn cpu_expert_ffn_full(
                 };
 
                 hidden[row * 2 * d_ff + ff] = bf16::from_f32(result);
-                hidden_full[(row_start + row) * d_ff + ff] =
-                    bf16::from_f32(result);
+                hidden_full[(row_start + row) * d_ff + ff] = result;
             }
         }
 
@@ -265,8 +264,8 @@ fn test_two_pass_decode_correctness() {
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
-    // Intermediate buffers
-    let hidden_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_ff);
+    // Intermediate buffers - hidden is f32 for activation precision
+    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
@@ -448,8 +447,8 @@ fn test_two_pass_prefill_correctness() {
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
-    // Intermediate buffers
-    let hidden_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_ff);
+    // Intermediate buffers - hidden is f32 for activation precision
+    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
@@ -566,7 +565,7 @@ fn test_two_pass_prefill_correctness() {
 
     let hidden_gpu = unsafe {
         std::slice::from_raw_parts(
-            hidden_buf.contents() as *const bf16,
+            hidden_buf.contents() as *const f32,
             sum_k * d_ff,
         )
     };
@@ -576,7 +575,7 @@ fn test_two_pass_prefill_correctness() {
     for (idx, (&gpu, &cpu)) in
         hidden_gpu.iter().zip(hidden_expected.iter()).enumerate()
     {
-        let diff = (f32::from(gpu) - f32::from(cpu)).abs();
+        let diff = (gpu - cpu).abs();
         if diff > hidden_max_diff {
             hidden_max_diff = diff;
             hidden_max_idx = idx;
@@ -590,15 +589,15 @@ fn test_two_pass_prefill_correctness() {
             "[2-pass prefill] hidden mismatch row={} col={} gpu={} cpu={} diff={}",
             row,
             col,
-            f32::from(hidden_gpu[hidden_max_idx]),
-            f32::from(hidden_expected[hidden_max_idx]),
+            hidden_gpu[hidden_max_idx],
+            hidden_expected[hidden_max_idx],
             hidden_max_diff
         );
 
         for offset in 0..8 {
             let idx = row * d_ff + (col + offset).min(d_ff - 1);
-            let g = f32::from(hidden_gpu[idx]);
-            let c = f32::from(hidden_expected[idx]);
+            let g = hidden_gpu[idx];
+            let c = hidden_expected[idx];
             eprintln!(
                 "    col {} -> gpu {:.6} cpu {:.6} diff {:.6}",
                 (col + offset).min(d_ff - 1),
