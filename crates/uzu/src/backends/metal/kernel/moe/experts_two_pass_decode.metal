@@ -36,16 +36,6 @@ MTL_CONST uint BLOCK_N = THREADS_N * TN;
 static_assert(SM * SN == 32, "simdgroup must have 32 threads");
 static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, or 32");
 
-template<typename T>
-static inline T simdgroup_sum_shuffle(T val) {
-    return simd_sum(val);
-    // MTL_PRAGMA_UNROLL
-    // for (ushort offset = 16; offset >= 1; offset >>= 1) {
-    //     val += simd_shuffle_down(val, offset);
-    // }
-    // return val;
-}
-
 // === Pass A: Optimized GEMV with hierarchical tiling ===
 // Computes: hidden[row, h] = activation(x[row, d] @ W13[d, 2*h])
 // AccumT is used for internal accumulations, output still stored as T
@@ -199,9 +189,9 @@ void moe_experts_decode_pass_a_impl(
     // Simdgroup reduction across thrN dimension
     MTL_PRAGMA_UNROLL
     for (uint tm = 0; tm < TM; tm++) {
-        result_up[tm] = simdgroup_sum_shuffle(result_up[tm]);
+        result_up[tm] = simd_sum(result_up[tm]);
         if (GATING_SEL > 1) {
-            result_gate[tm] = simdgroup_sum_shuffle(result_gate[tm]);
+            result_gate[tm] = simd_sum(result_gate[tm]);
         }
     }
 
@@ -605,7 +595,7 @@ void moe_experts_decode_down_fused_2d_impl(
     }
 
     // Simdgroup reduction
-    AccumT result = simdgroup_sum_shuffle(acc);
+    AccumT result = simd_sum(acc);
 
     // Lane 0 writes result
     if (simd_lid == 0) {
