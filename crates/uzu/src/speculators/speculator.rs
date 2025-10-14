@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 pub trait Speculator: Send + Sync {
-    fn generate_proposals(
+    fn speculate(
         &self,
         prefix: &[u64],
-    ) -> Vec<Vec<u64>>;
+    ) -> HashMap<u64, f32>;
 }

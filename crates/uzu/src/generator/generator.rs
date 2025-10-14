@@ -14,7 +14,7 @@ use crate::{
         encodable_with_state::{EncodableWithState, EncodingParameters},
         kv_cache::INVALID_POSITION,
     },
-    linearizer::trie::TokenTrie,
+    linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
@@ -83,9 +83,14 @@ impl Generator {
         let unused_tokens_count = total_prefill_tokens_count - tokens_length;
 
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let proposals = speculator.generate_proposals(&tokens);
-        let speculated_suffix = TokenTrie::from_sequences(&proposals)
-            .linearize(0, unused_tokens_count);
+        let speculated_suffix = TokenTrie::from_speculator(
+            &tokens,
+            false,
+            speculator.as_ref(),
+            &TrieCreationConfig::default(),
+            unused_tokens_count,
+        )
+        .linearize(0, unused_tokens_count);
 
         let zero_padding_tokens: Vec<u64> =
             vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
@@ -222,20 +227,15 @@ impl Generator {
         &mut self,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
-        let last_token = self.tokens.last().ok_or(Error::GenerateFailed)?;
-
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let mut proposals: Vec<Vec<u64>> = speculator
-            .generate_proposals(&self.tokens)
-            .into_iter()
-            .map(|v| std::iter::once(*last_token).chain(v).collect())
-            .collect();
-        if proposals.is_empty() {
-            proposals = vec![vec![*last_token]];
-        }
-
-        let speculated_suffix = TokenTrie::from_sequences(&proposals)
-            .linearize(0, self.decoding_config.generate_suffix_length());
+        let speculated_suffix = TokenTrie::from_speculator(
+            &self.tokens,
+            true,
+            speculator.as_ref(),
+            &TrieCreationConfig::default(),
+            self.decoding_config.generate_suffix_length(),
+        )
+        .linearize(0, self.decoding_config.generate_suffix_length());
 
         let expected_suffix_length =
             self.decoding_config.generate_suffix_length();
