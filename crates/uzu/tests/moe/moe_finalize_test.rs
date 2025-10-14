@@ -6,7 +6,9 @@ use uzu::backends::metal::kernel::{
     KernelDataType, MoeFinalizeArguments, MoeFinalizeKernel,
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use super::test_utils::{
+    alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx,
+};
 
 fn cpu_finalize(
     tok2row: &[i32],
@@ -58,7 +60,7 @@ fn test_finalize_correctness() {
         // Some entries can be -1 (no expert selected)
         let mut tok2row: Vec<i32> = (0..t * k)
             .map(|_| {
-                if rng.gen_bool(0.9) {
+                if rng.random_bool(0.9) {
                     rng.random_range(0..sum_k as i32)
                 } else {
                     -1 // No expert selected
@@ -119,22 +121,8 @@ fn test_finalize_correctness() {
             )
         };
 
-        for i in 0..(t * d_model) {
-            let gpu_val = f32::from(y_gpu[i]);
-            let cpu_val = f32::from(y_cpu[i]);
-            let abs_diff = (gpu_val - cpu_val).abs();
-
-            // BF16 has limited precision, especially for weighted sums
-            let tolerance = 1e-2;
-            assert!(
-                abs_diff < tolerance,
-                "Mismatch at {}: GPU={}, CPU={}, diff={}",
-                i,
-                gpu_val,
-                cpu_val,
-                abs_diff
-            );
-        }
+        // BF16 has limited precision, especially for weighted sums
+        assert_bf16_close(y_gpu, &y_cpu, 1e-2, "finalize output");
 
         eprintln!("[FinalizeTest] ✓ PASSED");
     }

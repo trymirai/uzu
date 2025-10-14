@@ -7,10 +7,124 @@ use uzu::backends::metal::{
     kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
 
-use super::test_utils::{
-    alloc_buffer, alloc_buffer_with_data, cpu_router_logits_bf16,
-    cpu_topk_select_f32, create_ctx,
-};
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+
+/// CPU reference for router logits (bf16 precision, f32 accumulation).
+pub fn cpu_router_logits_bf16(
+    input: &[bf16],
+    weight: &[bf16],
+    bias: &[bf16],
+    t: usize,
+    e: usize,
+    d_model: usize,
+) -> Vec<f32> {
+    assert_eq!(input.len(), t * d_model);
+    assert_eq!(weight.len(), e * d_model);
+    assert_eq!(bias.len(), e);
+    assert_eq!(d_model % 4, 0, "d_model must be multiple of 4");
+
+    let mut out = vec![0.0f32; t * e];
+    for token in 0..t {
+        let x_row = &input[token * d_model..(token + 1) * d_model];
+        for expert in 0..e {
+            let w_row = &weight[expert * d_model..(expert + 1) * d_model];
+
+            // Simulate GPU vec4 processing: accumulate in 4-element chunks
+            let mut accum = [0.0f32; 4];
+            for chunk in (0..d_model).step_by(4) {
+                // Load vec4
+                let xv = [
+                    f32::from(x_row[chunk]),
+                    f32::from(x_row[chunk + 1]),
+                    f32::from(x_row[chunk + 2]),
+                    f32::from(x_row[chunk + 3]),
+                ];
+                let wv = [
+                    f32::from(w_row[chunk]),
+                    f32::from(w_row[chunk + 1]),
+                    f32::from(w_row[chunk + 2]),
+                    f32::from(w_row[chunk + 3]),
+                ];
+                // FMA: accum = wv * xv + accum
+                for i in 0..4 {
+                    accum[i] = wv[i].mul_add(xv[i], accum[i]);
+                }
+            }
+
+            // Sum the 4-vector: (a.x + a.y) + (a.z + a.w) - matches Metal shader line 60
+            let sum = (accum[0] + accum[1]) + (accum[2] + accum[3]);
+            out[token * e + expert] = sum + f32::from(bias[expert]);
+        }
+    }
+    out
+}
+
+/// CPU reference for Top-K selection over float32 logits.
+pub fn cpu_topk_select_f32(
+    logits: &[f32],
+    t: usize,
+    e: usize,
+    k: usize,
+    renorm: bool,
+) -> (Vec<i32>, Vec<f32>) {
+    assert_eq!(logits.len(), t * e);
+    assert!(k >= 1 && e >= k);
+    let mut ids = vec![0i32; t * k];
+    let mut probs = vec![0f32; t * k];
+    for token in 0..t {
+        let row = &logits[token * e..(token + 1) * e];
+        let mut best_vals = vec![f32::NEG_INFINITY; k];
+        let mut best_ids = vec![-1i32; k];
+        for expert in 0..e {
+            let v = row[expert];
+            let mut insert_pos = None;
+            for j in (0..k).rev() {
+                if v > best_vals[j]
+                    || (v == best_vals[j] && (expert as i32) < best_ids[j])
+                {
+                    insert_pos = Some(j);
+                }
+            }
+            if let Some(pos) = insert_pos {
+                for s in (pos + 1..k).rev() {
+                    best_vals[s] = best_vals[s - 1];
+                    best_ids[s] = best_ids[s - 1];
+                }
+                best_vals[pos] = v;
+                best_ids[pos] = expert as i32;
+            }
+        }
+        let base = token * k;
+        for kk in 0..k {
+            ids[base + kk] = best_ids[kk];
+        }
+        if renorm {
+            let max_v =
+                best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mut exps = vec![0.0f32; k];
+            let mut sum = 0.0f32;
+            for kk in 0..k {
+                exps[kk] = (best_vals[kk] - max_v).exp();
+                sum += exps[kk];
+            }
+            if sum > 0.0 {
+                for kk in 0..k {
+                    probs[base + kk] = exps[kk] / sum;
+                }
+            } else {
+                let uniform = 1.0f32 / k as f32;
+                for kk in 0..k {
+                    probs[base + kk] = uniform;
+                }
+            }
+        } else {
+            for kk in 0..k {
+                probs[base + kk] = f32::from(bf16::from_f32(best_vals[kk]));
+            }
+        }
+    }
+    (ids, probs)
+}
 
 fn run_router_topk_once(
     ctx: &MTLContext,

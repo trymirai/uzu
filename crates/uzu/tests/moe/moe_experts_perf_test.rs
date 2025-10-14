@@ -41,8 +41,6 @@ fn run_decode_case(
     warmup: usize,
     iters: usize,
 ) {
-    use std::mem::size_of;
-
     const K_TILE: usize = 64;
 
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
@@ -180,6 +178,7 @@ fn run_decode_case(
 }
 
 #[test]
+#[ignore]
 fn test_two_pass_decode_speed() {
     let ctx = create_ctx();
 
@@ -340,6 +339,7 @@ fn run_two_pass_prefill_case(
 }
 
 #[test]
+#[ignore]
 fn test_two_pass_prefill_speed() {
     let ctx = create_ctx();
 

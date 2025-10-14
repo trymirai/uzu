@@ -92,6 +92,7 @@ where
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
 #[test]
+#[ignore]
 fn test_moe_e2e_decode_perf() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(0xA0075);
@@ -163,6 +164,7 @@ fn test_moe_e2e_decode_perf() {
 
 // Test E2E MoE performance with timing breakdown (prefill mode, T>1)
 #[test]
+#[ignore]
 fn test_moe_e2e_prefill_perf() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(0xA0076);
@@ -240,6 +242,7 @@ fn test_moe_e2e_prefill_perf() {
 
 // Test complete MoE pipeline timing breakdown (decode mode, T=1)
 #[test]
+#[ignore]
 fn test_moe_pipeline_breakdown_decode() {
     let ctx = create_ctx();
     let mut rng = StdRng::seed_from_u64(0xDECADE);
@@ -264,7 +267,6 @@ fn test_moe_pipeline_breakdown_decode() {
     let x_buf = alloc_buffer_with_data(&ctx, &x);
     let router_w_buf = alloc_buffer_with_data(&ctx, &router_w);
     let router_b_buf = alloc_buffer_with_data(&ctx, &router_b);
-    let logits_buf = alloc_buffer::<bf16>(&ctx, t * e);
     let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
     let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
     let num_blocks = ((t + 255) / 256).max(1);

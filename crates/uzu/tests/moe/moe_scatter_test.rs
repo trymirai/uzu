@@ -213,7 +213,7 @@ fn test_scatter_buckets_parity() {
         let _out_probs: Vec<f32> =
             out_probs_h.iter().map(|&h| f32::from(h)).collect();
 
-        // CPU reference (stable per expert)
+        // CPU reference
         let (cpu_ids, _cpu_probs, offsets_cpu) =
             cpu_expert_buckets(topk_ids_cpu, &topk_probs_cpu, t, e, k);
         let offsets_gpu = unsafe {

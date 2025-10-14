@@ -8,8 +8,39 @@ use uzu::backends::metal::kernel::{
 };
 
 use super::test_utils::{
-    alloc_buffer, alloc_buffer_with_data, cpu_gather, create_ctx,
+    alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx,
 };
+
+/// CPU reference for gather operation: x_perm[i] = x[bucketed_ids[i]]
+///
+/// # Arguments
+/// * `x` - Input tensor [T, d_model]
+/// * `bucketed_ids` - Index mapping [sum_k], values in range [0, T)
+/// * `t` - Number of tokens
+/// * `d_model` - Model dimension
+/// * `sum_k` - Number of output rows
+///
+/// # Returns
+/// Gathered tensor [sum_k, d_model]
+pub fn cpu_gather(
+    x: &[bf16],
+    bucketed_ids: &[i32],
+    t: usize,
+    d_model: usize,
+    sum_k: usize,
+) -> Vec<bf16> {
+    let mut x_perm = vec![bf16::from_f32(0.0); sum_k * d_model];
+    for row in 0..sum_k {
+        let token_id = bucketed_ids[row];
+        if token_id >= 0 && (token_id as usize) < t {
+            let src_offset = (token_id as usize) * d_model;
+            let dst_offset = row * d_model;
+            x_perm[dst_offset..dst_offset + d_model]
+                .copy_from_slice(&x[src_offset..src_offset + d_model]);
+        }
+    }
+    x_perm
+}
 
 #[test]
 fn test_gather_correctness() {
@@ -76,17 +107,7 @@ fn test_gather_correctness() {
             )
         };
 
-        for i in 0..(sum_k * d_model) {
-            let gpu_val = f32::from(x_gpu[i]);
-            let cpu_val = f32::from(x_cpu[i]);
-            assert!(
-                (gpu_val - cpu_val).abs() < 1e-6,
-                "Mismatch at {}: GPU={}, CPU={}",
-                i,
-                gpu_val,
-                cpu_val
-            );
-        }
+        assert_bf16_close(x_gpu, &x_cpu, 1e-6, "gather output");
 
         eprintln!("[GatherTest] ✓ PASSED");
     }

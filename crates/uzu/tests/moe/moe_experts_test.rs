@@ -174,33 +174,6 @@ fn cpu_expert_ffn_full(
     (hidden_full, output)
 }
 
-fn cpu_expert_ffn(
-    x_perm: &[bf16],
-    offsets: &[u32],
-    w13: &[bf16],
-    w2: &[bf16],
-    up_biases: &[bf16],
-    down_biases: &[bf16],
-    d_model: usize,
-    d_ff: usize,
-    gating_code: u32,
-    silu_alpha: f32,
-) -> Vec<bf16> {
-    cpu_expert_ffn_full(
-        x_perm,
-        offsets,
-        w13,
-        w2,
-        up_biases,
-        down_biases,
-        d_model,
-        d_ff,
-        gating_code,
-        silu_alpha,
-    )
-    .1
-}
-
 #[test]
 fn test_two_pass_decode_correctness() {
     let ctx = create_ctx();
