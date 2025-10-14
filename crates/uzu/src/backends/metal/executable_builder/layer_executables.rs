@@ -52,9 +52,6 @@ impl LayerExecutables {
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
         rope: Rc<Box<dyn EncodableWithState>>,
-        shared_moe_weights: Option<
-            crate::backends::metal::kernel::moe::SharedMoeWeights,
-        >,
     ) -> Self {
         autoreleasepool(|_| {
             let intermediate_data_type: DataType = layer_config
@@ -196,8 +193,6 @@ impl LayerExecutables {
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
                 &compilation_config.descriptor_mlp,
-                shared_moe_weights,
-                layer_index,
             );
 
             let post_mlp_norm: Option<Box<dyn EncodableWithState>> =

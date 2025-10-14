@@ -83,29 +83,6 @@ impl DecoderExecutables {
                     rope = local_rope_block;
                 }
 
-                let shared_moe_weights =
-                    if let crate::config::MLPConfig::MixtureOfExperts(moe_config) =
-                        &decoder_config.layer_config.mlp_config
-                    {
-                        let layer_mlp_tree = decoder_weight_loader
-                            .subtree(&format!("layers.{}", layer_index))
-                            .unwrap()
-                            .subtree("mlp")
-                            .unwrap();
-
-                        Some(
-                            crate::backends::metal::kernel::moe::MoeBlockEncodable::load_shared_expert_weights(
-                                &mtl_context,
-                                moe_config,
-                                decoder_config.hidden_dim,
-                                &layer_mlp_tree,
-                            )
-                            .expect("Failed to transform MOE weights")
-                        )
-                    } else {
-                        None
-                    };
-
                 let layer = LayerExecutables::new(
                     &mtl_context,
                     &decoder_config.layer_config,
@@ -121,7 +98,6 @@ impl DecoderExecutables {
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
                     rope,
-                    shared_moe_weights.clone(),
                 );
                 layer
             })

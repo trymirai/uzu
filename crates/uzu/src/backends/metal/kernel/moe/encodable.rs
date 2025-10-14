@@ -1,7 +1,5 @@
-use std::{cell::RefCell, mem::size_of, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
-use half::{bf16, f16};
-use metal::MTLResourceOptions;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -20,18 +18,15 @@ use crate::{
             ArrayId, ForwardPassState, MOE_TWO_PASS_K_TILE,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
-        kernel::linear::QuantizedLinearKernelBlock,
     },
     config::{
         mlp::RoutingFunctionConfig, Activation, LinearConfig,
         MixtureOfExpertsConfig,
     },
-    device::Array,
     parameters::ParameterTree,
 };
 
 enum RouterBlock {
-    Quantized(QuantizedLinearKernelBlock),
     Metal {
         weights_buf: metal::Buffer,
         biases_buf: metal::Buffer,
@@ -62,292 +57,15 @@ pub struct MoeBlockEncodable {
     hidden_dim: usize,
     data_type: KernelDataType,
     shared_weights: SharedMoeWeights,
-    layer_index: usize,
 }
 
 impl MoeBlockEncodable {
-    pub fn load_shared_expert_weights(
-        context: &MTLContext,
-        _moe_config: &MixtureOfExpertsConfig,
-        hidden_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<SharedMoeWeights, crate::backends::metal::MTLError> {
-        let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "experts subtree error: {:?}",
-                e
-            ))
-        })?;
-
-        let up_arr = experts_tree
-            .subtree("up_projection")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "up_projection error: {:?}",
-                    e
-                ))
-            })?
-            .leaf("weights")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "up weights error: {:?}",
-                    e
-                ))
-            })?;
-
-        let up_shape = up_arr.shape().to_vec();
-        let fused_up_weights = up_shape[2] == hidden_dim * 2;
-
-        if !fused_up_weights {
-            return Err(crate::backends::metal::MTLError::Generic(
-                "MoE experts require fused gate+up weights (input shape [E, d_model, 2*d_ff])"
-                    .to_string(),
-            ));
-        }
-
-        // Transpose W13 from source layout [E, d_model, 2*d_ff] to GPU layout [E, 2*d_ff, d_model]
-        let e = up_shape[0];
-        let d_model_size = up_shape[1];
-        let two_d_ff = up_shape[2];
-
-        let transpose_err =
-            |err: crate::device::array::ArrayConversionError| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "W13 transpose failed: {}",
-                    err
-                ))
-            };
-
-        let total_size = e * d_model_size * two_d_ff;
-        let w13_transposed = match up_arr.data_type() {
-            DataType::BF16 => {
-                let src = up_arr.as_slice::<bf16>().map_err(transpose_err)?;
-                let mut dst = vec![bf16::from_f32(0.0); total_size];
-
-                for expert in 0..e {
-                    let expert_offset = expert * d_model_size * two_d_ff;
-                    for dm in 0..d_model_size {
-                        for ff in 0..two_d_ff {
-                            // src: [E, d_model, 2*d_ff] -> index: expert_offset + dm * two_d_ff + ff
-                            // dst: [E, 2*d_ff, d_model] -> index: expert_offset + ff * d_model + dm
-                            dst[expert_offset + ff * d_model_size + dm] =
-                                src[expert_offset + dm * two_d_ff + ff];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (total_size * size_of::<bf16>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            DataType::F16 => {
-                let src = up_arr.as_slice::<f16>().map_err(transpose_err)?;
-                let mut dst = vec![f16::from_f32(0.0); total_size];
-
-                for expert in 0..e {
-                    let expert_offset = expert * d_model_size * two_d_ff;
-                    for dm in 0..d_model_size {
-                        for ff in 0..two_d_ff {
-                            dst[expert_offset + ff * d_model_size + dm] =
-                                src[expert_offset + dm * two_d_ff + ff];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (total_size * size_of::<f16>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            DataType::F32 => {
-                let src = up_arr.as_slice::<f32>().map_err(transpose_err)?;
-                let mut dst = vec![0.0f32; total_size];
-
-                for expert in 0..e {
-                    let expert_offset = expert * d_model_size * two_d_ff;
-                    for dm in 0..d_model_size {
-                        for ff in 0..two_d_ff {
-                            dst[expert_offset + ff * d_model_size + dm] =
-                                src[expert_offset + dm * two_d_ff + ff];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (total_size * size_of::<f32>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            other => {
-                return Err(crate::backends::metal::MTLError::Generic(
-                    format!("Unsupported W13 weight dtype {:?}", other),
-                ));
-            },
-        };
-
-        let w2_arr = experts_tree
-            .subtree("down_projection")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "down_projection error: {:?}",
-                    e
-                ))
-            })?
-            .leaf("weights")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "down weights error: {:?}",
-                    e
-                ))
-            })?;
-
-        // Transpose W2 from source layout [E, d_ff, d_model] to GPU layout [E, d_model, d_ff]
-        let w2_shape = w2_arr.shape().to_vec();
-        let w2_e = w2_shape[0];
-        let w2_d_ff = w2_shape[1];
-        let w2_d_model = w2_shape[2];
-
-        let w2_total_size = w2_e * w2_d_ff * w2_d_model;
-        let w2_transpose_err =
-            |err: crate::device::array::ArrayConversionError| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "W2 transpose failed: {}",
-                    err
-                ))
-            };
-
-        let w2_transposed = match w2_arr.data_type() {
-            DataType::BF16 => {
-                let src =
-                    w2_arr.as_slice::<bf16>().map_err(w2_transpose_err)?;
-                let mut dst = vec![bf16::from_f32(0.0); w2_total_size];
-
-                for expert in 0..w2_e {
-                    let expert_offset = expert * w2_d_ff * w2_d_model;
-                    for ff in 0..w2_d_ff {
-                        for dm in 0..w2_d_model {
-                            // src: [E, d_ff, d_model] -> index: expert_offset + ff * d_model + dm
-                            // dst: [E, d_model, d_ff] -> index: expert_offset + dm * d_ff + ff
-                            dst[expert_offset + dm * w2_d_ff + ff] =
-                                src[expert_offset + ff * w2_d_model + dm];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (w2_total_size * size_of::<bf16>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            DataType::F16 => {
-                let src = w2_arr.as_slice::<f16>().map_err(w2_transpose_err)?;
-                let mut dst = vec![f16::from_f32(0.0); w2_total_size];
-
-                for expert in 0..w2_e {
-                    let expert_offset = expert * w2_d_ff * w2_d_model;
-                    for ff in 0..w2_d_ff {
-                        for dm in 0..w2_d_model {
-                            dst[expert_offset + dm * w2_d_ff + ff] =
-                                src[expert_offset + ff * w2_d_model + dm];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (w2_total_size * size_of::<f16>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            DataType::F32 => {
-                let src = w2_arr.as_slice::<f32>().map_err(w2_transpose_err)?;
-                let mut dst = vec![0.0f32; w2_total_size];
-
-                for expert in 0..w2_e {
-                    let expert_offset = expert * w2_d_ff * w2_d_model;
-                    for ff in 0..w2_d_ff {
-                        for dm in 0..w2_d_model {
-                            dst[expert_offset + dm * w2_d_ff + ff] =
-                                src[expert_offset + ff * w2_d_model + dm];
-                        }
-                    }
-                }
-
-                context.device.new_buffer_with_data(
-                    dst.as_ptr() as *const _,
-                    (w2_total_size * size_of::<f32>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                )
-            },
-            other => {
-                return Err(crate::backends::metal::MTLError::Generic(
-                    format!("Unsupported W2 weight dtype {:?}", other),
-                ));
-            },
-        };
-
-        let w2_src = w2_transposed;
-
-        let mut up_biases_arr = experts_tree
-            .subtree("up_projection")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "up_projection biases error: {:?}",
-                    e
-                ))
-            })?
-            .leaf("biases")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "up biases error: {:?}",
-                    e
-                ))
-            })?;
-        let up_biases_src = unsafe { up_biases_arr.mtl_buffer().clone() };
-
-        let mut down_biases_arr = experts_tree
-            .subtree("down_projection")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "down_projection biases error: {:?}",
-                    e
-                ))
-            })?
-            .leaf("biases")
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "down biases error: {:?}",
-                    e
-                ))
-            })?;
-        let down_biases_src = unsafe { down_biases_arr.mtl_buffer().clone() };
-
-        let w13_buf = w13_transposed;
-        let w2_buf = w2_src;
-        let up_biases_buf = up_biases_src;
-        let down_biases_buf = down_biases_src;
-
-        Ok(SharedMoeWeights {
-            w13_buf: Rc::new(w13_buf),
-            w2_buf: Rc::new(w2_buf),
-            up_biases_buf: Rc::new(up_biases_buf),
-            down_biases_buf: Rc::new(down_biases_buf),
-        })
-    }
-
     pub fn new(
         context: &MTLContext,
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         hidden_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-        shared_weights: Option<SharedMoeWeights>,
-        layer_index: usize,
     ) -> Result<Self, crate::backends::metal::MTLError> {
         let activation_data_type: DataType = moe_config
             .expert_config
@@ -373,17 +91,15 @@ impl MoeBlockEncodable {
         })?;
 
         let router = match &moe_config.router_config {
-            LinearConfig::Quantized(_quant_config) => {
-                // TODO: Quantized router with fused router+topk not yet supported
-                // The fused kernel doesn't support quantized weights yet.
-                return Err(crate::backends::metal::MTLError::Generic(
+            LinearConfig::Quantized(_) => {
+                unimplemented!(
                     "Quantized router with fused router+topk not yet supported"
-                        .to_string(),
-                ));
+                );
             },
             LinearConfig::FullPrecision {
                 ..
             } => {
+                // Load router weights directly (already transposed)
                 let mut weights_arr =
                     router_tree.leaf("weights").map_err(|e| {
                         crate::backends::metal::MTLError::Generic(format!(
@@ -391,91 +107,7 @@ impl MoeBlockEncodable {
                             e
                         ))
                     })?;
-                let weights_shape = weights_arr.shape().to_owned();
-                if weights_shape.len() != 2 {
-                    return Err(crate::backends::metal::MTLError::Generic(
-                        format!(
-                            "Router weights expected 2D tensor, got shape {:?}",
-                            weights_shape
-                        ),
-                    ));
-                }
-                let rows = weights_shape[0];
-                let cols = weights_shape[1];
-                let expected_lalamo_layout =
-                    (model_dim, moe_config.mixture_size);
-                let expected_kernel_layout =
-                    (moe_config.mixture_size, model_dim);
-
-                let weights_buf = if (rows, cols) == expected_kernel_layout {
-                    unsafe { weights_arr.mtl_buffer().clone() }
-                } else if (rows, cols) == expected_lalamo_layout {
-                    let transpose_err =
-                        |err: crate::device::array::ArrayConversionError| {
-                            crate::backends::metal::MTLError::Generic(format!(
-                                "Router weights transpose failed: {}",
-                                err
-                            ))
-                        };
-
-                    match weights_arr.data_type() {
-                        DataType::BF16 => {
-                            let src = weights_arr
-                                .as_slice::<bf16>()
-                                .map_err(transpose_err)?;
-                            let transposed =
-                                transpose_router_weights(src, rows, cols);
-                            context.device.new_buffer_with_data(
-                                transposed.as_ptr() as *const _,
-                                (transposed.len() * size_of::<bf16>()) as u64,
-                                MTLResourceOptions::StorageModeShared,
-                            )
-                        },
-                        DataType::F16 => {
-                            let src = weights_arr
-                                .as_slice::<f16>()
-                                .map_err(transpose_err)?;
-                            let transposed =
-                                transpose_router_weights(src, rows, cols);
-                            context.device.new_buffer_with_data(
-                                transposed.as_ptr() as *const _,
-                                (transposed.len() * size_of::<f16>()) as u64,
-                                MTLResourceOptions::StorageModeShared,
-                            )
-                        },
-                        DataType::F32 => {
-                            let src = weights_arr
-                                .as_slice::<f32>()
-                                .map_err(transpose_err)?;
-                            let transposed =
-                                transpose_router_weights(src, rows, cols);
-                            context.device.new_buffer_with_data(
-                                transposed.as_ptr() as *const _,
-                                (transposed.len() * size_of::<f32>()) as u64,
-                                MTLResourceOptions::StorageModeShared,
-                            )
-                        },
-                        other => {
-                            return Err(
-                                crate::backends::metal::MTLError::Generic(
-                                    format!(
-                                        "Unsupported router weight dtype {:?}",
-                                        other
-                                    ),
-                                ),
-                            );
-                        },
-                    }
-                } else {
-                    return Err(crate::backends::metal::MTLError::Generic(
-                        format!(
-                            "Unexpected router weight shape {:?}, expected {:?} or {:?}",
-                            weights_shape,
-                            expected_lalamo_layout,
-                            expected_kernel_layout
-                        ),
-                    ));
-                };
+                let weights_buf = unsafe { weights_arr.mtl_buffer().clone() };
 
                 let mut biases_arr =
                     router_tree.leaf("biases").map_err(|e| {
@@ -494,9 +126,7 @@ impl MoeBlockEncodable {
             LinearConfig::QLoRA {
                 ..
             } => {
-                return Err(crate::backends::metal::MTLError::Generic(
-                    "QLoRA router not yet supported for MoE".to_string(),
-                ));
+                unimplemented!("QLoRA router not yet supported for MoE");
             },
         };
 
@@ -547,15 +177,87 @@ impl MoeBlockEncodable {
             ))
         })?;
 
-        let shared_weights = if let Some(weights) = shared_weights {
-            weights
-        } else {
-            Self::load_shared_expert_weights(
-                context,
-                moe_config,
-                hidden_dim,
-                parameter_tree,
-            )?
+        // Load expert weights directly from parameter tree (already transposed)
+        let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!(
+                "experts subtree error: {:?}",
+                e
+            ))
+        })?;
+
+        let mut w13_arr = experts_tree
+            .subtree("up_projection")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "up_projection error: {:?}",
+                    e
+                ))
+            })?
+            .leaf("weights")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "up weights error: {:?}",
+                    e
+                ))
+            })?;
+        let w13_buf = unsafe { w13_arr.mtl_buffer().clone() };
+
+        let mut w2_arr = experts_tree
+            .subtree("down_projection")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "down_projection error: {:?}",
+                    e
+                ))
+            })?
+            .leaf("weights")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "down weights error: {:?}",
+                    e
+                ))
+            })?;
+        let w2_buf = unsafe { w2_arr.mtl_buffer().clone() };
+
+        let mut up_biases_arr = experts_tree
+            .subtree("up_projection")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "up_projection biases error: {:?}",
+                    e
+                ))
+            })?
+            .leaf("biases")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "up biases error: {:?}",
+                    e
+                ))
+            })?;
+        let up_biases_buf = unsafe { up_biases_arr.mtl_buffer().clone() };
+
+        let mut down_biases_arr = experts_tree
+            .subtree("down_projection")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "down_projection biases error: {:?}",
+                    e
+                ))
+            })?
+            .leaf("biases")
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "down biases error: {:?}",
+                    e
+                ))
+            })?;
+        let down_biases_buf = unsafe { down_biases_arr.mtl_buffer().clone() };
+
+        let shared_weights = SharedMoeWeights {
+            w13_buf: Rc::new(w13_buf),
+            w2_buf: Rc::new(w2_buf),
+            up_biases_buf: Rc::new(up_biases_buf),
+            down_biases_buf: Rc::new(down_biases_buf),
         };
 
         Ok(Self {
@@ -574,7 +276,6 @@ impl MoeBlockEncodable {
             hidden_dim,
             data_type,
             shared_weights,
-            layer_index,
         })
     }
 
@@ -586,25 +287,6 @@ impl MoeBlockEncodable {
             } => 2,
         }
     }
-}
-
-fn transpose_router_weights<T>(
-    src: &[T],
-    rows: usize,
-    cols: usize,
-) -> Vec<T>
-where
-    T: Copy + Default,
-{
-    debug_assert_eq!(rows * cols, src.len());
-    let mut dst = vec![T::default(); src.len()];
-    for r in 0..rows {
-        let row_offset = r * cols;
-        for c in 0..cols {
-            dst[c * rows + r] = src[row_offset + c];
-        }
-    }
-    dst
 }
 
 impl EncodableWithState for MoeBlockEncodable {
@@ -754,15 +436,9 @@ impl EncodableWithState for MoeBlockEncodable {
 
         // Use fused Router+TopK kernel for non-quantized routers
         match &self.router {
-            RouterBlock::Quantized(_block) => {
-                unimplemented!(
-                    "Quantized router with fused router+topk not yet supported"
-                );
-            },
             RouterBlock::Metal {
                 weights_buf,
                 biases_buf,
-                ..
             } => {
                 // Use the fused router+topk kernel
                 self.router_topk_kernel

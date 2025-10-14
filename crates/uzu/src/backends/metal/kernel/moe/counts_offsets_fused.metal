@@ -1,7 +1,3 @@
-// Fused single-threadgroup counts + offsets kernel
-// Based on bucket_counts tiling approach but produces final counts directly
-// Launch with 1 threadgroup of 256 threads
-
 #include <metal_stdlib>
 #include <metal_atomic>
 using namespace metal;

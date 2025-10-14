@@ -553,13 +553,14 @@ impl Tracer {
                     let sliced = permuted.slice(s![start.., .., ..]);
                     let reshaped = sliced
                         .into_owned()
-                        .into_shape(IxDyn(&[
+                        .to_shape(IxDyn(&[
                             1,
                             expected_tokens,
                             permuted.shape()[1],
                             permuted.shape()[2],
                         ]))
-                        .expect("Failed to reshape KV cache slice");
+                        .expect("Failed to reshape KV cache slice")
+                        .to_owned();
                     (expected_view.to_owned(), reshaped)
                 },
             },
@@ -574,15 +575,17 @@ impl Tracer {
                 && expected_shape[1..] == produced_shape[..]
             {
                 expected_data = expected_data
-                    .into_shape(IxDyn(&produced_shape))
-                    .expect("Failed to reshape expected data");
+                    .to_shape(IxDyn(&produced_shape))
+                    .expect("Failed to reshape expected data")
+                    .to_owned();
             } else if produced_shape.len() == expected_shape.len() + 1
                 && produced_shape.get(0) == Some(&1)
                 && produced_shape[1..] == expected_shape[..]
             {
                 produced_data = produced_data
-                    .into_shape(IxDyn(&expected_shape))
-                    .expect("Failed to reshape produced data");
+                    .to_shape(IxDyn(&expected_shape))
+                    .expect("Failed to reshape produced data")
+                    .to_owned();
             }
         }
 

@@ -26,11 +26,14 @@ fn run_router_topk_once(
         (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
     let weight_f32: Vec<f32> =
         (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
-    let bias_f32: Vec<f32> = (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
+    let bias_f32: Vec<f32> =
+        (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
 
     // Convert to bf16
-    let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-    let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let input: Vec<bf16> =
+        input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let weight: Vec<bf16> =
+        weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
     let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
 
     // Compute CPU reference using bf16 inputs (with f32 accumulation)
@@ -38,20 +41,6 @@ fn run_router_topk_once(
         cpu_router_logits_bf16(&input, &weight, &bias, t, e, d_model);
     let (ids_ref, probs_ref) =
         cpu_topk_select_f32(&logits_ref, t, e, k, renorm);
-
-    // Debug: print first few logits if ENV var is set
-    if std::env::var_os("DEBUG_ROUTER_TOPK").is_some() && t == 1 && e == 32 {
-        eprintln!("CPU logits (ALL): {:?}", &logits_ref);
-        eprintln!("CPU top-K ids: {:?}", &ids_ref[..k]);
-        eprintln!("CPU top-K probs: {:?}", &probs_ref[..k]);
-        // Show which experts were selected
-        for kk in 0..k {
-            let expert_id = ids_ref[kk] as usize;
-            if expert_id < e {
-                eprintln!("  Expert {}: logit={}", expert_id, logits_ref[expert_id]);
-            }
-        }
-    }
 
     let input_buf = alloc_buffer_with_data(ctx, &input);
     let weight_buf = alloc_buffer_with_data(ctx, &weight);
@@ -86,13 +75,8 @@ fn run_router_topk_once(
     let probs_bf16_gpu =
         unsafe { std::slice::from_raw_parts(probs_ptr, t * k) }.to_vec();
     // Convert bf16 to f32 for comparison
-    let probs_gpu: Vec<f32> = probs_bf16_gpu.iter().map(|&h| f32::from(h)).collect();
-
-    // Debug: print GPU results if ENV var is set
-    if std::env::var_os("DEBUG_ROUTER_TOPK").is_some() && t == 1 && e == 32 {
-        eprintln!("GPU top-K ids: {:?}", &ids_gpu[..k]);
-        eprintln!("GPU top-K probs: {:?}", &probs_gpu[..k]);
-    }
+    let probs_gpu: Vec<f32> =
+        probs_bf16_gpu.iter().map(|&h| f32::from(h)).collect();
 
     assert_eq!(
         ids_gpu, ids_ref,
@@ -110,9 +94,9 @@ fn run_router_topk_once(
         // 3. TopK selection (minor)
         // 4. Softmax computation when renorm=true (exp/div operations)
         let atol = if renorm {
-            2e-2  // Normalized probabilities with bf16: softmax + bf16 quantization
+            2e-2 // Normalized probabilities with bf16: softmax + bf16 quantization
         } else {
-            5e-2  // Raw logits with bf16: vec4 accumulation + bf16 output quantization
+            5e-2 // Raw logits with bf16: vec4 accumulation + bf16 output quantization
         };
         assert!(
             diff <= atol,

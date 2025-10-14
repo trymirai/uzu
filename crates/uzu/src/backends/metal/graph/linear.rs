@@ -24,7 +24,7 @@ fn full_precision_weights_subgraph<const N: usize>(
         graph,
         parameter_tree,
         "weights",
-        &[input_dim, output_dim_sum],
+        &[output_dim_sum, input_dim],
         precision,
     )
 }
@@ -148,7 +148,7 @@ fn full_precision_matmul_subgraph<const N: usize>(
     )?;
     Ok(graph.transpose(
         &graph.matrix_multiplication(
-            &graph.transpose(&weights, &[1, 0], None),
+            &weights,
             &graph.transpose(input, &[1, 0], None),
             None,
         ),

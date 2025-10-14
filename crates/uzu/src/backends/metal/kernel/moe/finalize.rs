@@ -18,6 +18,7 @@ pub enum MoeFinalizeError {
 pub struct MoeFinalizeKernel {
     pipeline_f16: MTLComputePipelineState,
     pipeline_bf16: MTLComputePipelineState,
+    pipeline_f32: MTLComputePipelineState,
 }
 
 #[derive(Debug)]
@@ -37,9 +38,12 @@ impl MoeFinalizeKernel {
             ctx.compute_pipeline_state("moe_finalize_f16", None)?;
         let pipeline_bf16 =
             ctx.compute_pipeline_state("moe_finalize_bf16", None)?;
+        let pipeline_f32 =
+            ctx.compute_pipeline_state("moe_finalize_f32", None)?;
         Ok(Self {
             pipeline_f16,
             pipeline_bf16,
+            pipeline_f32,
         })
     }
 
@@ -58,8 +62,7 @@ impl MoeFinalizeKernel {
                 encoder.set_compute_pipeline_state(&self.pipeline_bf16);
             },
             KernelDataType::Float32 => {
-                // Not used for finalize in v1
-                encoder.set_compute_pipeline_state(&self.pipeline_f16);
+                encoder.set_compute_pipeline_state(&self.pipeline_f32);
             },
         }
         encoder.set_buffer(0, Some(args.tok2row_buffer), 0);

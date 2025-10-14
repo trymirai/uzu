@@ -55,7 +55,7 @@ mod tests {
                 "embedding_config": {
                     "type": "QuantizedTiedEmbeddingConfig",
                     "input_scale": null,
-                    "logits_soft_cap": null,
+                    "logit_soft_cap": null,
                     "embedding_quantization_mode": "int8",
                     "activation_quantization_mode": "int8",
                     "activation_precision": "bfloat16"

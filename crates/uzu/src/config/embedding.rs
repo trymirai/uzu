@@ -5,7 +5,6 @@ use super::common::{ConfigDataType, QuantizationMode};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct EmbeddingConfigCommon {
     pub input_scale: Option<f32>,
-    #[serde(rename = "logits_soft_cap")]
     pub logit_soft_cap: Option<f32>,
 }
 
@@ -65,7 +64,7 @@ mod tests {
             {
                 "type": "QuantizedTiedEmbeddingConfig",
                 "input_scale": null,
-                "logits_soft_cap": null,
+                "logit_soft_cap": null,
                 "embedding_quantization_mode": "int8",
                 "activation_quantization_mode": "int8",
                 "activation_precision": "bfloat16"

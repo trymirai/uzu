@@ -1,14 +1,10 @@
-use std::{
-    collections::HashMap,
-    path::Path,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, path::Path, time::Instant};
 
-use metal::{CaptureDescriptor, CaptureManager, MTLCaptureDestination};
 use mpsgraph::CommandBuffer;
 
 use super::{
     context::GeneratorContext,
+    gpu_capture::GpuCaptureManager,
     result::{GenerateResult, PrefillResult},
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
@@ -36,8 +32,7 @@ pub struct Generator {
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
     pending_kv_update: Option<u64>,
-    first_decode_done: bool,
-    first_prefill_done: bool,
+    gpu_capture: GpuCaptureManager,
 }
 
 impl Generator {
@@ -45,14 +40,8 @@ impl Generator {
         model_path: &Path,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
-        // IMPORTANT: Enable Metal capture layer BEFORE device creation
-        if std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some()
-            || std::env::var_os("UZU_CAPTURE_FIRST_PREFILL").is_some()
-        {
-            unsafe {
-                std::env::set_var("METAL_CAPTURE_ENABLED", "1");
-            }
-        }
+        // Initialize GPU capture manager (reads env vars and enables METAL_CAPTURE_ENABLED if needed)
+        let gpu_capture = GpuCaptureManager::new();
 
         let context = GeneratorContext::new(model_path, &decoding_config)?;
 
@@ -61,21 +50,20 @@ impl Generator {
         let generate_suffix_length = decoding_config.generate_suffix_length();
 
         let mut generator = Self {
-            decoding_config: decoding_config,
+            decoding_config,
             tokens: Vec::new(),
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
             pending_kv_update: None,
-            first_decode_done: false,
-            first_prefill_done: false,
+            gpu_capture,
         };
 
         //Warmup
         generator.warmup(prefill_step_size);
         generator.warmup(generate_suffix_length);
 
-        return Ok(generator);
+        Ok(generator)
     }
 
     pub fn prefill(
@@ -141,42 +129,11 @@ impl Generator {
                 &padded_positions[tokens_start_index..tokens_end_index];
 
             // Capture first prefill chunk if requested
-            let is_first_prefill = !self.first_prefill_done && step == 0;
-            let should_capture = is_first_prefill
-                && std::env::var_os("UZU_CAPTURE_FIRST_PREFILL").is_some();
+            let is_first_prefill = step == 0;
+            let should_capture = self.gpu_capture.should_capture_prefill(is_first_prefill);
 
             if should_capture {
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs();
-                let trace_path = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                    .join(format!("uzu_first_prefill-{timestamp}.gputrace"));
-
-                let capture_manager = CaptureManager::shared();
-                let capture_descriptor = CaptureDescriptor::new();
-                capture_descriptor
-                    .set_destination(MTLCaptureDestination::GpuTraceDocument);
-                capture_descriptor.set_output_url(&trace_path);
-                self.context
-                    .mtl_context
-                    .command_queue
-                    .set_label("uzu_command_queue");
-                capture_descriptor.set_capture_command_queue(
-                    &self.context.mtl_context.command_queue,
-                );
-
-                if let Err(err) =
-                    capture_manager.start_capture(&capture_descriptor)
-                {
-                    eprintln!("⚠️  Failed to start GPU capture: {err}");
-                } else {
-                    println!(
-                        "🔍 GPU capture started for first prefill chunk: {:?}",
-                        trace_path
-                    );
-                }
+                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "prefill");
             }
 
             objc2::rc::autoreleasepool(|_pool| {
@@ -197,13 +154,7 @@ impl Generator {
             );
 
             if should_capture {
-                CaptureManager::shared().stop_capture();
-                println!("✅ GPU capture stopped");
-                self.first_prefill_done = true;
-            }
-
-            if is_first_prefill {
-                self.first_prefill_done = true;
+                self.gpu_capture.stop_capture("prefill");
             }
 
             // Register the *accepted* real tokens from this step (exclude the
@@ -381,8 +332,7 @@ impl Generator {
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
         self.pending_kv_update = None;
-        self.first_decode_done = false;
-        self.first_prefill_done = false;
+        self.gpu_capture.reset();
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -416,43 +366,11 @@ impl Generator {
             state.sampling_method = Some(sampling_method);
 
             // Capture first decode if requested
-            let is_first_decode =
-                !warmup && !self.first_decode_done && task.token_ids.len() == 1;
-            let should_capture = is_first_decode
-                && std::env::var_os("UZU_CAPTURE_FIRST_DECODE").is_some();
+            let is_first_decode = !warmup && task.token_ids.len() == 1;
+            let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs();
-                let trace_path = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                    .join(format!("uzu_first_decode-{timestamp}.gputrace"));
-
-                let capture_manager = CaptureManager::shared();
-                let capture_descriptor = CaptureDescriptor::new();
-                capture_descriptor
-                    .set_destination(MTLCaptureDestination::GpuTraceDocument);
-                capture_descriptor.set_output_url(&trace_path);
-                self.context
-                    .mtl_context
-                    .command_queue
-                    .set_label("uzu_command_queue");
-                capture_descriptor.set_capture_command_queue(
-                    &self.context.mtl_context.command_queue,
-                );
-
-                if let Err(err) =
-                    capture_manager.start_capture(&capture_descriptor)
-                {
-                    eprintln!("⚠️  Failed to start GPU capture: {err}");
-                } else {
-                    println!(
-                        "🔍 GPU capture started for first decode: {:?}",
-                        trace_path
-                    );
-                }
+                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "decode");
             }
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
@@ -515,13 +433,7 @@ impl Generator {
             let run_time = run_start.elapsed().as_secs_f64();
 
             if should_capture {
-                CaptureManager::shared().stop_capture();
-                println!("✅ GPU capture stopped");
-                self.first_decode_done = true;
-            }
-
-            if is_first_decode {
-                self.first_decode_done = true;
+                self.gpu_capture.stop_capture("decode");
             }
 
             (state, run_time)

@@ -81,3 +81,17 @@ kernel void moe_finalize_bf16(
 {
     moe_finalize_impl<bfloat>(tok2row, probs, Y_partial, Y, T, d_model, K, lid, tgpig);
 }
+
+kernel void moe_finalize_f32(
+    device const int*   tok2row   [[buffer(0)]],
+    device const float* probs     [[buffer(1)]],
+    device const float* Y_partial [[buffer(2)]],
+    device float*       Y         [[buffer(3)]],
+    constant uint& T             [[buffer(4)]],
+    constant uint& d_model       [[buffer(5)]],
+    constant uint& K             [[buffer(6)]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint3 tgpig [[threadgroup_position_in_grid]])
+{
+    moe_finalize_impl<float>(tok2row, probs, Y_partial, Y, T, d_model, K, lid, tgpig);
+}
