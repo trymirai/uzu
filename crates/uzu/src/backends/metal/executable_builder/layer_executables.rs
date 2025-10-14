@@ -276,14 +276,11 @@ impl EncodableWithState for LayerExecutables {
         }
 
         self.qkv_projection.encode(state, command_buffer, parameters);
-
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, command_buffer, parameters);
         }
         self.rope.encode(state, command_buffer, parameters);
-
         self.attention.encode(state, command_buffer, parameters);
-
         self.out_projection.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
@@ -314,7 +311,6 @@ impl EncodableWithState for LayerExecutables {
         }
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
-
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,

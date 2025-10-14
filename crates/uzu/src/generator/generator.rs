@@ -130,10 +130,13 @@ impl Generator {
 
             // Capture first prefill chunk if requested
             let is_first_prefill = step == 0;
-            let should_capture = self.gpu_capture.should_capture_prefill(is_first_prefill);
+            let should_capture =
+                self.gpu_capture.should_capture_prefill(is_first_prefill);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "prefill");
+                let _ = self
+                    .gpu_capture
+                    .start_capture(&self.context.mtl_context, "prefill");
             }
 
             objc2::rc::autoreleasepool(|_pool| {
@@ -367,10 +370,13 @@ impl Generator {
 
             // Capture first decode if requested
             let is_first_decode = !warmup && task.token_ids.len() == 1;
-            let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
+            let should_capture =
+                self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "decode");
+                let _ = self
+                    .gpu_capture
+                    .start_capture(&self.context.mtl_context, "decode");
             }
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());

@@ -102,7 +102,6 @@ fn run_decode_case(
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
     let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let partial_buf = alloc_buffer::<f32>(&ctx, num_tiles_k * sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Buffers for indirect dispatch
@@ -119,7 +118,6 @@ fn run_decode_case(
         expert_offsets: &offsets_buf,
         row_expert_map: &row_expert_map_buf,
         hidden_buffer: &hidden_buf,
-        partial_buffer: &partial_buf,
         output_buffer: &output_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
@@ -262,7 +260,6 @@ fn run_two_pass_prefill_case(
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
     let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let partial_buf = alloc_buffer::<f32>(&ctx, num_tiles_k * sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
@@ -278,7 +275,6 @@ fn run_two_pass_prefill_case(
         expert_offsets: &offsets_buf,
         row_expert_map: &row_expert_map_buf,
         hidden_buffer: &hidden_buf,
-        partial_buffer: &partial_buf,
         output_buffer: &output_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,

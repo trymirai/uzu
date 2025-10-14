@@ -266,7 +266,6 @@ fn test_two_pass_decode_correctness() {
 
     // Intermediate buffers - hidden is f32 for activation precision
     let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
@@ -295,7 +294,6 @@ fn test_two_pass_decode_correctness() {
                 expert_offsets: &offsets_buf,
                 row_expert_map: &row_expert_map_buf,
                 hidden_buffer: &hidden_buf,
-                partial_buffer: &partial_buf,
                 output_buffer: &output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
@@ -449,7 +447,6 @@ fn test_two_pass_prefill_correctness() {
 
     // Intermediate buffers - hidden is f32 for activation precision
     let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
     let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
@@ -478,7 +475,6 @@ fn test_two_pass_prefill_correctness() {
                 expert_offsets: &offsets_buf,
                 row_expert_map: &row_expert_map_buf,
                 hidden_buffer: &hidden_buf,
-                partial_buffer: &partial_buf,
                 output_buffer: &output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,

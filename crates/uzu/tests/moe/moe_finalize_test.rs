@@ -42,10 +42,10 @@ fn test_finalize_correctness() {
 
     // Test multiple shapes: (T, K, d_model, sum_k)
     let shapes = vec![
-        (1, 2, 64, 2),      // Single token, K=2
-        (4, 2, 128, 8),     // Small batch
-        (8, 4, 256, 32),    // Medium
-        (16, 2, 512, 32),   // Large d_model
+        (1, 2, 64, 2),    // Single token, K=2
+        (4, 2, 128, 8),   // Small batch
+        (8, 4, 256, 32),  // Medium
+        (16, 2, 512, 32), // Large d_model
     ];
 
     for (t, k, d_model, sum_k) in shapes {

@@ -54,44 +54,21 @@ inline void moe_finalize_impl(
     }
 }
 
-kernel void moe_finalize_f16(
-    device const int*  tok2row   [[buffer(0)]],
-    device const half* probs     [[buffer(1)]],
-    device const half* Y_partial [[buffer(2)]],
-    device half*       Y         [[buffer(3)]],
-    constant uint& T            [[buffer(4)]],
-    constant uint& d_model      [[buffer(5)]],
-    constant uint& K            [[buffer(6)]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    moe_finalize_impl<half>(tok2row, probs, Y_partial, Y, T, d_model, K, lid, tgpig);
+#define DEFINE_MOE_FINALIZE_KERNEL(SUFFIX, T) \
+kernel void moe_finalize_##SUFFIX( \
+    device const int*  tok2row   [[buffer(0)]], \
+    device const T*    probs     [[buffer(1)]], \
+    device const T*    Y_partial [[buffer(2)]], \
+    device T*          Y         [[buffer(3)]], \
+    constant uint& T_count       [[buffer(4)]], \
+    constant uint& d_model       [[buffer(5)]], \
+    constant uint& K             [[buffer(6)]], \
+    uint lid [[thread_index_in_threadgroup]], \
+    uint3 tgpig [[threadgroup_position_in_grid]]) \
+{ \
+    moe_finalize_impl<T>(tok2row, probs, Y_partial, Y, T_count, d_model, K, lid, tgpig); \
 }
 
-kernel void moe_finalize_bf16(
-    device const int*    tok2row   [[buffer(0)]],
-    device const bfloat* probs     [[buffer(1)]],
-    device const bfloat* Y_partial [[buffer(2)]],
-    device bfloat*       Y         [[buffer(3)]],
-    constant uint& T              [[buffer(4)]],
-    constant uint& d_model        [[buffer(5)]],
-    constant uint& K              [[buffer(6)]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    moe_finalize_impl<bfloat>(tok2row, probs, Y_partial, Y, T, d_model, K, lid, tgpig);
-}
-
-kernel void moe_finalize_f32(
-    device const int*   tok2row   [[buffer(0)]],
-    device const float* probs     [[buffer(1)]],
-    device const float* Y_partial [[buffer(2)]],
-    device float*       Y         [[buffer(3)]],
-    constant uint& T             [[buffer(4)]],
-    constant uint& d_model       [[buffer(5)]],
-    constant uint& K             [[buffer(6)]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    moe_finalize_impl<float>(tok2row, probs, Y_partial, Y, T, d_model, K, lid, tgpig);
-}
+DEFINE_MOE_FINALIZE_KERNEL(f16, half)
+DEFINE_MOE_FINALIZE_KERNEL(bf16, bfloat)
+DEFINE_MOE_FINALIZE_KERNEL(f32, float)

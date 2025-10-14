@@ -83,7 +83,7 @@ impl DecoderExecutables {
                     rope = local_rope_block;
                 }
 
-                let layer = LayerExecutables::new(
+                LayerExecutables::new(
                     &mtl_context,
                     &decoder_config.layer_config,
                     compilation_config.clone(),
@@ -98,8 +98,7 @@ impl DecoderExecutables {
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
                     rope,
-                );
-                layer
+                )
             })
             .collect::<Vec<_>>();
 
@@ -166,7 +165,6 @@ impl EncodableWithState for DecoderExecutables {
         }
 
         self.readout.encode(state, command_buffer, parameters);
-
         if let Some(traces) = state.traces.clone() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }

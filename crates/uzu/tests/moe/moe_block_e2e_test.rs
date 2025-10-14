@@ -494,7 +494,6 @@ fn run_moe_parity_test_internal(
     // Additional buffers for 2-pass
     let total_rows = t * k;
     let hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
-    let two_pass_partial_buf = alloc_buffer::<f32>(&ctx, total_rows * d_model);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 
     let experts = MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("experts");
@@ -507,7 +506,6 @@ fn run_moe_parity_test_internal(
                 expert_offsets: &offsets_buf,
                 row_expert_map: &row_expert_map_buf,
                 hidden_buffer: &hidden_buf,
-                partial_buffer: &two_pass_partial_buf,
                 output_buffer: &y_partial_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,

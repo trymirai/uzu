@@ -156,138 +156,58 @@ inline void moe_scatter_buckets_impl(
     }
 }
 
-kernel void moe_scatter_buckets_f16(
-    device const int* topk_ids [[buffer(0)]],
-    device const half* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device half* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<half>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, (device int*)nullptr, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
+#define DEFINE_MOE_SCATTER_BUCKETS_KERNEL(SUFFIX, ProbT) \
+kernel void moe_scatter_buckets_##SUFFIX( \
+    device const int* topk_ids [[buffer(0)]], \
+    device const ProbT* topk_probs [[buffer(1)]], \
+    device const uint* offsets [[buffer(2)]], \
+    device const uint* block_bases [[buffer(3)]], \
+    device const uint* block_alloc [[buffer(4)]], \
+    device int* out_ids [[buffer(5)]], \
+    device ProbT* out_probs [[buffer(6)]], \
+    constant uint& T [[buffer(7)]], \
+    constant uint& E [[buffer(8)]], \
+    constant uint& K [[buffer(9)]], \
+    constant uint& num_blocks [[buffer(10)]], \
+    constant uint& num_tiles [[buffer(11)]], \
+    uint3 tid3 [[thread_position_in_grid]], \
+    uint lid [[thread_index_in_threadgroup]], \
+    uint3 tgpig [[threadgroup_position_in_grid]]) \
+{ \
+    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E]; \
+    threadgroup uint          sg_base  [NUM_SG * TILE_E]; \
+    moe_scatter_buckets_impl<ProbT>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, (device int*)nullptr, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base); \
 }
 
-kernel void moe_scatter_buckets_f32(
-    device const int* topk_ids [[buffer(0)]],
-    device const float* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device float* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<float>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, (device int*)nullptr, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
-}
-
-kernel void moe_scatter_buckets_bf16(
-    device const int* topk_ids [[buffer(0)]],
-    device const bfloat* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device bfloat* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<bfloat>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, (device int*)nullptr, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
-}
+DEFINE_MOE_SCATTER_BUCKETS_KERNEL(f16, half)
+DEFINE_MOE_SCATTER_BUCKETS_KERNEL(f32, float)
+DEFINE_MOE_SCATTER_BUCKETS_KERNEL(bf16, bfloat)
 
 // Map variants
-kernel void moe_scatter_buckets_map_f16(
-    device const int* topk_ids [[buffer(0)]],
-    device const half* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device half* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    device int* tok2row [[buffer(12)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<half>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, tok2row, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
+#define DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(SUFFIX, ProbT) \
+kernel void moe_scatter_buckets_map_##SUFFIX( \
+    device const int* topk_ids [[buffer(0)]], \
+    device const ProbT* topk_probs [[buffer(1)]], \
+    device const uint* offsets [[buffer(2)]], \
+    device const uint* block_bases [[buffer(3)]], \
+    device const uint* block_alloc [[buffer(4)]], \
+    device int* out_ids [[buffer(5)]], \
+    device ProbT* out_probs [[buffer(6)]], \
+    constant uint& T [[buffer(7)]], \
+    constant uint& E [[buffer(8)]], \
+    constant uint& K [[buffer(9)]], \
+    constant uint& num_blocks [[buffer(10)]], \
+    constant uint& num_tiles [[buffer(11)]], \
+    device int* tok2row [[buffer(12)]], \
+    uint3 tid3 [[thread_position_in_grid]], \
+    uint lid [[thread_index_in_threadgroup]], \
+    uint3 tgpig [[threadgroup_position_in_grid]]) \
+{ \
+    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E]; \
+    threadgroup uint          sg_base  [NUM_SG * TILE_E]; \
+    moe_scatter_buckets_impl<ProbT>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, tok2row, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base); \
 }
 
-kernel void moe_scatter_buckets_map_f32(
-    device const int* topk_ids [[buffer(0)]],
-    device const float* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device float* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    device int* tok2row [[buffer(12)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<float>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, tok2row, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
-}
-
-kernel void moe_scatter_buckets_map_bf16(
-    device const int* topk_ids [[buffer(0)]],
-    device const bfloat* topk_probs [[buffer(1)]],
-    device const uint* offsets [[buffer(2)]],
-    device const uint* block_bases [[buffer(3)]],
-    device const uint* block_alloc [[buffer(4)]],
-    device int* out_ids [[buffer(5)]],
-    device bfloat* out_probs [[buffer(6)]],
-    constant uint& T [[buffer(7)]],
-    constant uint& E [[buffer(8)]],
-    constant uint& K [[buffer(9)]],
-    constant uint& num_blocks [[buffer(10)]],
-    constant uint& num_tiles [[buffer(11)]],
-    device int* tok2row [[buffer(12)]],
-    uint3 tid3 [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint3 tgpig [[threadgroup_position_in_grid]])
-{
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];
-    threadgroup uint          sg_base  [NUM_SG * TILE_E];
-    moe_scatter_buckets_impl<bfloat>(topk_ids, topk_probs, offsets, block_bases, block_alloc, out_ids, out_probs, tok2row, T, E, K, num_blocks, num_tiles, tid3, lid, tgpig, sg_counts, sg_base);
-}
+DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(f16, half)
+DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(f32, float)
+DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(bf16, bfloat)

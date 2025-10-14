@@ -128,7 +128,8 @@ fn test_moe_e2e_decode_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+        let router_topk =
+            MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -199,7 +200,8 @@ fn test_moe_e2e_prefill_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+        let router_topk =
+            MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -324,8 +326,6 @@ fn test_moe_pipeline_breakdown_decode() {
 
     // Two-pass specific buffers
     let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let two_pass_partial_buf =
-        alloc_buffer::<f32>(&ctx, num_tiles_k * sum_k * d_model);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     // Scatter block bases buffers
@@ -465,7 +465,6 @@ fn test_moe_pipeline_breakdown_decode() {
                     expert_offsets: &offsets_buf,
                     row_expert_map: &row_expert_map_buf,
                     hidden_buffer: &hidden_buf,
-                    partial_buffer: &two_pass_partial_buf,
                     output_buffer: &y_partial_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,

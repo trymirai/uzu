@@ -4,24 +4,23 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
-    MoeExpertsArguments, MoeExpertsTwoPassArguments,
-    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeFinalizeKernel, MoeGatherArguments, MoeGatherKernel,
-    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterKernels,
-    MoeScatterWithMapArguments,
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+    MoeExpertsTwoPassPrefillKernel, MoeFinalizeKernel, MoeGatherArguments,
+    MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
+    MoeScatterKernels, MoeScatterWithMapArguments,
 };
 use crate::{
     DataType,
     backends::metal::{
         KernelDataType, MTLContext, MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassState, MOE_TWO_PASS_K_TILE,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
     config::{
-        mlp::RoutingFunctionConfig, Activation, LinearConfig,
-        MixtureOfExpertsConfig,
+        Activation, LinearConfig, MixtureOfExpertsConfig,
+        mlp::RoutingFunctionConfig,
     },
     parameters::ParameterTree,
 };
@@ -317,7 +316,6 @@ impl EncodableWithState for MoeBlockEncodable {
             ArrayId::MoeScatterBlockBases,
             ArrayId::MoeBlockAlloc,
             ArrayId::MoeHidden,
-            ArrayId::MoeTwoPassPartial,
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
@@ -347,7 +345,6 @@ impl EncodableWithState for MoeBlockEncodable {
         let block_bases_buf = clone_buffer(array_iter.next().unwrap());
         let block_alloc_buf = clone_buffer(array_iter.next().unwrap());
         let hidden_buf = clone_buffer(array_iter.next().unwrap());
-        let two_pass_partial_buf = clone_buffer(array_iter.next().unwrap());
         let row_expert_map_buf = clone_buffer(array_iter.next().unwrap());
         debug_assert!(array_iter.next().is_none());
 
@@ -357,8 +354,9 @@ impl EncodableWithState for MoeBlockEncodable {
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         let root = &*mtl_command_buffer;
+        let k_tile = 128;
 
-        // Clear all internal MoE buffers
+        // Clear internal MoE buffers
         let dtype_size = match self.data_type {
             KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
             KernelDataType::Float32 => 4,
@@ -394,17 +392,6 @@ impl EncodableWithState for MoeBlockEncodable {
                 blit_encoder.fill_buffer(
                     &hidden_buf,
                     metal::NSRange::new(0, hidden_bytes),
-                    0,
-                );
-            }
-
-            // Clear two-pass partial buffer (f32 accumulator)
-            let two_pass_partial_bytes =
-                (suffix_length * k * self.model_dim * 4) as u64;
-            if two_pass_partial_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &two_pass_partial_buf,
-                    metal::NSRange::new(0, two_pass_partial_bytes),
                     0,
                 );
             }
@@ -537,45 +524,19 @@ impl EncodableWithState for MoeBlockEncodable {
         let gating_code = Self::gating_code_from_activation(
             &self.moe_config.expert_config.activation,
         );
-        const BN: usize = 64;
-        let num_tiles_n = (self.model_dim + BN - 1) / BN;
 
-        let w2_buf = &self.shared_weights.w2_buf;
-
-        let experts_args = MoeExpertsArguments {
-            x_perm_buffer: &x_perm_buf,
-            expert_offsets: &offsets_buf,
-            w13_all: &self.shared_weights.w13_buf,
-            w2_all: w2_buf,
-            y_partial: &y_partial_buf,
-            up_biases: &self.shared_weights.up_biases_buf,
-            down_biases: &self.shared_weights.down_biases_buf,
-            tile_counts: &tile_counts_buf,
-            tile_row_offsets: &tile_offsets_buf,
-            tile_map: &tile_map_buf,
-            total_tiles: &total_tiles_buf,
-            dispatch_args: &dispatch_args_buf,
-            num_tiles_n,
-            t: suffix_length,
-            d_model: self.model_dim,
-            d_ff: self.hidden_dim,
-            e,
-            k,
-            gating_code,
-            gate_clip_min: self.moe_config.expert_config.gate_clipping[0]
-                .unwrap_or(f32::NEG_INFINITY),
-            gate_clip_max: self.moe_config.expert_config.gate_clipping[1]
-                .unwrap_or(f32::INFINITY),
-            up_clip_min: self.moe_config.expert_config.up_clipping[0],
-            up_clip_max: self.moe_config.expert_config.up_clipping[1],
-            silu_alpha: self.moe_config.expert_config.activation.alpha(),
-            data_type: self.data_type,
-        };
+        // Compute clipping values and alpha for expert kernels
+        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0]
+            .unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1]
+            .unwrap_or(f32::INFINITY);
+        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
+        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
+        let silu_alpha = self.moe_config.expert_config.activation.alpha();
 
         if suffix_length == 1 {
             let total_rows = suffix_length * k;
-            let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
-                / MOE_TWO_PASS_K_TILE) as u32;
+            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel
                 .encode(
@@ -585,7 +546,6 @@ impl EncodableWithState for MoeBlockEncodable {
                         expert_offsets: &offsets_buf,
                         row_expert_map: &row_expert_map_buf,
                         hidden_buffer: &hidden_buf,
-                        partial_buffer: &two_pass_partial_buf,
                         output_buffer: &y_partial_buf,
                         w13_all: &self.shared_weights.w13_buf,
                         w2_all: &self.shared_weights.w2_buf,
@@ -602,19 +562,18 @@ impl EncodableWithState for MoeBlockEncodable {
                         e,
                         num_tiles_k,
                         gating_code,
-                        gate_clip_min: experts_args.gate_clip_min,
-                        gate_clip_max: experts_args.gate_clip_max,
-                        up_clip_min: experts_args.up_clip_min,
-                        up_clip_max: experts_args.up_clip_max,
-                        silu_alpha: experts_args.silu_alpha,
+                        gate_clip_min,
+                        gate_clip_max,
+                        up_clip_min,
+                        up_clip_max,
+                        silu_alpha,
                         data_type: self.data_type,
                     },
                 )
                 .expect("MoE experts two-pass failed");
         } else {
             let total_rows = suffix_length * k;
-            let num_tiles_k = ((self.hidden_dim + MOE_TWO_PASS_K_TILE - 1)
-                / MOE_TWO_PASS_K_TILE) as u32;
+            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_prefill_kernel
                 .encode(
@@ -624,7 +583,6 @@ impl EncodableWithState for MoeBlockEncodable {
                         expert_offsets: &offsets_buf,
                         row_expert_map: &row_expert_map_buf,
                         hidden_buffer: &hidden_buf,
-                        partial_buffer: &two_pass_partial_buf,
                         output_buffer: &y_partial_buf,
                         w13_all: &self.shared_weights.w13_buf,
                         w2_all: &self.shared_weights.w2_buf,
@@ -641,11 +599,11 @@ impl EncodableWithState for MoeBlockEncodable {
                         e,
                         num_tiles_k,
                         gating_code,
-                        gate_clip_min: experts_args.gate_clip_min,
-                        gate_clip_max: experts_args.gate_clip_max,
-                        up_clip_min: experts_args.up_clip_min,
-                        up_clip_max: experts_args.up_clip_max,
-                        silu_alpha: experts_args.silu_alpha,
+                        gate_clip_min,
+                        gate_clip_max,
+                        up_clip_min,
+                        up_clip_max,
+                        silu_alpha,
                         data_type: self.data_type,
                     },
                 )

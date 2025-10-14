@@ -16,8 +16,10 @@ pub struct GpuCaptureManager {
 
 impl GpuCaptureManager {
     pub fn new() -> Self {
-        let capture_prefill_enabled = MetalEnvVar::CaptureFirstPrefill.is_enabled();
-        let capture_decode_enabled = MetalEnvVar::CaptureFirstDecode.is_enabled();
+        let capture_prefill_enabled =
+            MetalEnvVar::CaptureFirstPrefill.is_enabled();
+        let capture_decode_enabled =
+            MetalEnvVar::CaptureFirstDecode.is_enabled();
 
         // Enable Metal capture layer BEFORE device creation if any capture is requested
         if capture_prefill_enabled || capture_decode_enabled {
@@ -34,12 +36,22 @@ impl GpuCaptureManager {
         }
     }
 
-    pub fn should_capture_prefill(&self, is_first_prefill: bool) -> bool {
-        self.capture_prefill_enabled && is_first_prefill && !self.first_prefill_captured
+    pub fn should_capture_prefill(
+        &self,
+        is_first_prefill: bool,
+    ) -> bool {
+        self.capture_prefill_enabled
+            && is_first_prefill
+            && !self.first_prefill_captured
     }
 
-    pub fn should_capture_decode(&self, is_first_decode: bool) -> bool {
-        self.capture_decode_enabled && is_first_decode && !self.first_decode_captured
+    pub fn should_capture_decode(
+        &self,
+        is_first_decode: bool,
+    ) -> bool {
+        self.capture_decode_enabled
+            && is_first_decode
+            && !self.first_decode_captured
     }
 
     pub fn start_capture(
@@ -58,22 +70,30 @@ impl GpuCaptureManager {
 
         let capture_manager = CaptureManager::shared();
         let capture_descriptor = CaptureDescriptor::new();
-        capture_descriptor.set_destination(MTLCaptureDestination::GpuTraceDocument);
+        capture_descriptor
+            .set_destination(MTLCaptureDestination::GpuTraceDocument);
         capture_descriptor.set_output_url(&trace_path);
 
         mtl_context.command_queue.set_label("uzu_command_queue");
-        capture_descriptor.set_capture_command_queue(&mtl_context.command_queue);
+        capture_descriptor
+            .set_capture_command_queue(&mtl_context.command_queue);
 
         capture_manager
             .start_capture(&capture_descriptor)
             .map_err(|e| format!("Failed to start GPU capture: {}", e))?;
 
-        println!("🔍 GPU capture started for first {}: {:?}", capture_type, trace_path);
+        println!(
+            "🔍 GPU capture started for first {}: {:?}",
+            capture_type, trace_path
+        );
 
         Ok(trace_path)
     }
 
-    pub fn stop_capture(&mut self, capture_type: &str) {
+    pub fn stop_capture(
+        &mut self,
+        capture_type: &str,
+    ) {
         CaptureManager::shared().stop_capture();
         println!("✅ GPU capture stopped for {}", capture_type);
 

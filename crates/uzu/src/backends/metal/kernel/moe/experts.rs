@@ -85,7 +85,6 @@ pub struct MoeExpertsTwoPassArguments<'a> {
     pub expert_offsets: &'a MTLBuffer,
     pub row_expert_map: &'a MTLBuffer,
     pub hidden_buffer: &'a MTLBuffer,
-    pub partial_buffer: &'a MTLBuffer,
     pub output_buffer: &'a MTLBuffer,
     pub w13_all: &'a MTLBuffer,
     pub w2_all: &'a MTLBuffer,

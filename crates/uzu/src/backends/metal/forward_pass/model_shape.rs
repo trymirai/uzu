@@ -1,7 +1,5 @@
 use crate::{DataType, config::DecoderConfig};
 
-pub const MOE_TWO_PASS_K_TILE: usize = 128;
-
 #[derive(Debug)]
 pub struct ModelShape {
     activation_type: DataType,
@@ -252,15 +250,6 @@ impl ModelShape {
         max_routed_tokens: usize,
     ) -> [usize; 2] {
         [max_routed_tokens, self.hidden_dim]
-    }
-
-    pub fn moe_two_pass_partial_shape(
-        &self,
-        max_routed_tokens: usize,
-        k_tile: usize,
-    ) -> [usize; 2] {
-        let num_tiles = (self.hidden_dim + k_tile - 1) / k_tile;
-        [max_routed_tokens * num_tiles, self.model_dim]
     }
 
     pub fn moe_x_perm_shape(

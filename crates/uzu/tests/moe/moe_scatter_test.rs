@@ -65,9 +65,12 @@ fn test_scatter_buckets_parity() {
         let bias_f32: Vec<f32> =
             (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
 
-        let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-        let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-        let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let input: Vec<bf16> =
+            input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let weight: Vec<bf16> =
+            weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let bias: Vec<bf16> =
+            bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
 
         let input_buf = alloc_buffer_with_data(&ctx, &input);
         let weight_buf = alloc_buffer_with_data(&ctx, &weight);
