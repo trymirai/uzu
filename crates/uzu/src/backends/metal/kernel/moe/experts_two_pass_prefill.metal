@@ -99,12 +99,10 @@ inline void pass_a_impl(
     uint tile_seg_start, uint expert_idx, uint tile_m, uint tile_n,
     // per-thread info
     uint sg_id, uint3 threads_per_tg, uint3 local_tid,
-    // TG scratch
+    // TG storage
     threadgroup typename StageStorage<T>::type* Xs,       // [BM,BK]
     threadgroup typename StageStorage<T>::type* Wk_up,    // [BN,BK]
     threadgroup typename StageStorage<T>::type* Wk_gate,  // [BN,BK]
-    threadgroup float* scratch_up,    // [BM,BN]
-    threadgroup float* scratch_gate,  // [BM,BN]
     threadgroup float* bias_up,       // [BN]
     threadgroup float* bias_gate      // [BN]
 ) {
@@ -269,24 +267,6 @@ UZU_PRAGMA_UNROLL
         }
     } // K loop
 
-    // ---- Store accumulators to scratch [Bm,Bn] ----
-    UZU_PRAGMA_UNROLL
-    for (uint n_sub = 0; n_sub < PASSA_SG_BN; n_sub += SG_TILE) {
-        const uint c_idx = n_sub / SG_TILE;
-        const uint col_off = col_sg_off + n_sub;
-    UZU_PRAGMA_UNROLL
-        for (uint m_sub = 0; m_sub < PASSA_SG_BM; m_sub += SG_TILE) {
-            const uint r_idx = m_sub / SG_TILE;
-            const uint row_off = row_sg_off + m_sub;
-            const uint tile = r_idx * (PASSA_SG_BN / SG_TILE) + c_idx;
-
-            simdgroup_store(OutUp[tile],   scratch_up,   PASSA_BN, ulong2(col_off, row_off));
-            if (GATING_SEL > 1u) {
-                simdgroup_store(OutGate[tile], scratch_gate, PASSA_BN, ulong2(col_off, row_off));
-            }
-        }
-    }
-
     // ---- Bias tile [Bn] ----
     // Note: bias layout is [up | gate] in contiguous FF chunks.
     for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
@@ -300,105 +280,76 @@ UZU_PRAGMA_UNROLL
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // ---- Epilogue: activation/gating → hidden_out (f32) ----
-    // Compute valid bounds with saturation to avoid unsigned underflow
-    const uint row0 = row_sg_off;
-    const uint col0 = col_sg_off;
-    const uint row_end = min(m_rows, row0 + SgBm);
-    const uint col_end = min(n_cols, col0 + SgBn);
-
-    // Early exit if this simdgroup is entirely out of bounds
-    if (row0 >= row_end || col0 >= col_end) return;
-
-    const uint valid_rows = row_end - row0;
-    const uint valid_cols = col_end - col0;
-
-    // Only let this simdgroup's threads participate
     const uint sg_lane_start = sg_id * 32;
     const uint sg_lane_end = sg_lane_start + 32;
     if (lin < sg_lane_start || lin >= sg_lane_end) return;
+    const uint sg_lin = lin - sg_lane_start;
+    // Lane→(row,col) mapping for 8x8 simdgroup fragments, matches the fragment layout used above.
+    const uint lane_qid = sg_lin >> 2;
+    const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
+    const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
 
-    const uint sg_lin = lin - sg_lane_start;  // Thread index within simdgroup (0-31)
+UZU_PRAGMA_UNROLL
+    for (uint n_sub = 0; n_sub < PASSA_SG_BN; n_sub += SG_TILE) {
+        const uint c_idx = n_sub / SG_TILE;
+UZU_PRAGMA_UNROLL
+        for (uint m_sub = 0; m_sub < PASSA_SG_BM; m_sub += SG_TILE) {
+            const uint r_idx = m_sub / SG_TILE;
+            const uint tile = r_idx * (PASSA_SG_BN / SG_TILE) + c_idx;
 
-    const uint vec_cols = valid_cols / 4u;
-    const uint vec_total = valid_rows * vec_cols;
-    for (uint vec_idx = sg_lin; vec_idx < vec_total; vec_idx += 32u) {
-        const uint lr = vec_idx / vec_cols;
-        const uint lc_vec = vec_idx % vec_cols;
-        const uint r = row0 + lr;
-        const uint c = col0 + (lc_vec << 2);
-
-        const uint scratch_base = r * Bn + c;
-        float4 up_vals =
-            *reinterpret_cast<threadgroup float4*>(scratch_up + scratch_base);
-        const float4 bias_vals = float4(
-            bias_up[c + 0],
-            bias_up[c + 1],
-            bias_up[c + 2],
-            bias_up[c + 3]);
-        up_vals += bias_vals;
-        up_vals = clamp(up_vals, up_clip_min, up_clip_max);
-
-        float4 out_vec;
-        if (GATING_SEL <= 1u) {
-            out_vec.x = (GATING_SEL == 0u) ? gelu_approx(up_vals.x) : silu(up_vals.x, silu_alpha);
-            out_vec.y = (GATING_SEL == 0u) ? gelu_approx(up_vals.y) : silu(up_vals.y, silu_alpha);
-            out_vec.z = (GATING_SEL == 0u) ? gelu_approx(up_vals.z) : silu(up_vals.z, silu_alpha);
-            out_vec.w = (GATING_SEL == 0u) ? gelu_approx(up_vals.w) : silu(up_vals.w, silu_alpha);
-        } else {
-            float4 gate_vals =
-                *reinterpret_cast<threadgroup float4*>(scratch_gate + scratch_base);
-            const float4 gate_bias = float4(
-                bias_gate[c + 0],
-                bias_gate[c + 1],
-                bias_gate[c + 2],
-                bias_gate[c + 3]);
-            gate_vals += gate_bias;
-            gate_vals = clamp(gate_vals, gate_clip_min, gate_clip_max);
-            if (GATING_SEL == 2u) {
-                out_vec.x = silu(gate_vals.x, silu_alpha) * up_vals.x;
-                out_vec.y = silu(gate_vals.y, silu_alpha) * up_vals.y;
-                out_vec.z = silu(gate_vals.z, silu_alpha) * up_vals.z;
-                out_vec.w = silu(gate_vals.w, silu_alpha) * up_vals.w;
-            } else {
-                out_vec.x = gelu_approx(gate_vals.x) * up_vals.x;
-                out_vec.y = gelu_approx(gate_vals.y) * up_vals.y;
-                out_vec.z = gelu_approx(gate_vals.z) * up_vals.z;
-                out_vec.w = gelu_approx(gate_vals.w) * up_vals.w;
-            }
-        }
-
-        const ulong out_base =
-            (seg_start + row_tg_off + r) * (ulong)d_ff + (col_tg_off + c);
-        *reinterpret_cast<device float4*>(hidden_out + out_base) = out_vec;
-    }
-
-    const uint tail_cols = valid_cols - vec_cols * 4u;
-    if (tail_cols > 0u) {
-        const uint tail_total = valid_rows * tail_cols;
-        for (uint idx = sg_lin; idx < tail_total; idx += 32u) {
-            const uint lr = idx / tail_cols;
-            const uint lc_tail = idx % tail_cols;
-            const uint r = row0 + lr;
-            const uint c = col0 + vec_cols * 4u + lc_tail;
-            const uint s = r * Bn + c;
-
-            float up_v = scratch_up[s] + bias_up[c];
-            up_v = clamp(up_v, up_clip_min, up_clip_max);
-
-            float out;
-            if (GATING_SEL <= 1u) {
-                out = (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
-            } else {
-                float gate_v = scratch_gate[s] + bias_gate[c];
-                gate_v = clamp(gate_v, gate_clip_min, gate_clip_max);
-                const float sw = (GATING_SEL == 2u) ? silu(gate_v, silu_alpha)
-                                                    : gelu_approx(gate_v);
-                out = sw * up_v;
+            const uint tile_row_base = row_sg_off + m_sub;
+            const uint tile_col_base = col_sg_off + n_sub;
+            const uint local_row = tile_row_base + lane_row;
+            if (local_row >= m_rows || tile_col_base >= n_cols) {
+                continue;
             }
 
-            const ulong out_idx =
-                (seg_start + row_tg_off + r) * (ulong)d_ff + (col_tg_off + c);
-            hidden_out[out_idx] = out;
+            const auto up_frag = OutUp[tile].thread_elements();
+            float gate_frag_0 = 0.0f;
+            float gate_frag_1 = 0.0f;
+            if (GATING_SEL > 1u) {
+                const auto gate_frag = OutGate[tile].thread_elements();
+                gate_frag_0 = gate_frag[0];
+                gate_frag_1 = gate_frag[1];
+            }
+
+            const uint col0 = tile_col_base + lane_col_base;
+            const uint col1 = col0 + 1;
+            const ulong out_row = seg_start + row_tg_off + local_row;
+
+            if (col0 < n_cols) {
+                float up_v = clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
+                float out_val;
+                if (GATING_SEL <= 1u) {
+                    out_val =
+                        (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+                } else {
+                    float gate_v =
+                        clamp(gate_frag_0 + bias_gate[col0], gate_clip_min, gate_clip_max);
+                    const float gate_act =
+                        (GATING_SEL == 2u) ? silu(gate_v, silu_alpha) : gelu_approx(gate_v);
+                    out_val = gate_act * up_v;
+                }
+                const ulong out_col = col_tg_off + col0;
+                hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+            }
+
+            if (col1 < n_cols) {
+                float up_v = clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
+                float out_val;
+                if (GATING_SEL <= 1u) {
+                    out_val =
+                        (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+                } else {
+                    float gate_v =
+                        clamp(gate_frag_1 + bias_gate[col1], gate_clip_min, gate_clip_max);
+                    const float gate_act =
+                        (GATING_SEL == 2u) ? silu(gate_v, silu_alpha) : gelu_approx(gate_v);
+                    out_val = gate_act * up_v;
+                }
+                const ulong out_col = col_tg_off + col1;
+                hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+            }
         }
     }
 }
@@ -428,8 +379,6 @@ kernel void moe_two_pass_prefill_pass_a_##SUFFIX( \
     threadgroup StageT Xs         [PASSA_BM * PASSA_BK]; \
     threadgroup StageT Wk_up      [PASSA_BN * PASSA_BK]; \
     threadgroup StageT Wk_gate    [PASSA_BN * PASSA_BK]; \
-    threadgroup float scratch_up [PASSA_BM * PASSA_BN]; \
-    threadgroup float scratch_gt [PASSA_BM * PASSA_BN]; \
     threadgroup float bias_up    [PASSA_BN]; \
     threadgroup float bias_gate  [PASSA_BN]; \
     pass_a_impl<DTYPE>( \
@@ -438,7 +387,7 @@ kernel void moe_two_pass_prefill_pass_a_##SUFFIX( \
         gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha, \
         /*tile_seg_start*/ expert_offsets[tg_pos.z], /*expert*/ tg_pos.z, /*tile_m*/ tg_pos.y, /*tile_n*/ tg_pos.x, \
         sg_id, threads_per_tg, local_tid, \
-        Xs, Wk_up, Wk_gate, scratch_up, scratch_gt, bias_up, bias_gate); \
+        Xs, Wk_up, Wk_gate, bias_up, bias_gate); \
 }
 
 MOE_PASS_A_KERNEL(bfloat, bf16)
@@ -463,8 +412,6 @@ inline void pass_a_indirect_impl(
     threadgroup typename StageStorage<T>::type* Xs,
     threadgroup typename StageStorage<T>::type* Wk_up,
     threadgroup typename StageStorage<T>::type* Wk_gate,
-    threadgroup float* scratch_up,
-    threadgroup float* scratch_gate,
     threadgroup float* bias_up,
     threadgroup float* bias_gate)
 {
@@ -482,7 +429,7 @@ inline void pass_a_indirect_impl(
         gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha,
         tile_seg_start, expert_idx, tile_m, n_tile_idx,
         sg_id, threads_per_tg, local_tid,
-        Xs, Wk_up, Wk_gate, scratch_up, scratch_gate, bias_up, bias_gate);
+        Xs, Wk_up, Wk_gate, bias_up, bias_gate);
 }
 
 #define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, SUFFIX) \
@@ -510,8 +457,6 @@ kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX( \
     threadgroup StageT Xs         [PASSA_BM * PASSA_BK]; \
     threadgroup StageT Wk_up      [PASSA_BN * PASSA_BK]; \
     threadgroup StageT Wk_gate    [PASSA_BN * PASSA_BK]; \
-    threadgroup float scratch_up [PASSA_BM * PASSA_BN]; \
-    threadgroup float scratch_gt [PASSA_BM * PASSA_BN]; \
     threadgroup float bias_up    [PASSA_BN]; \
     threadgroup float bias_gate  [PASSA_BN]; \
     pass_a_indirect_impl<DTYPE>( \
@@ -520,7 +465,7 @@ kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX( \
         gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha, \
         /*row_tile_idx*/ tg_pos.y, /*n_tile_idx*/ tg_pos.x, \
         sg_id, threads_per_tg, local_tid, \
-        Xs, Wk_up, Wk_gate, scratch_up, scratch_gt, bias_up, bias_gate); \
+        Xs, Wk_up, Wk_gate, bias_up, bias_gate); \
 }
 
 MOE_PASS_A_INDIRECT_KERNEL(bfloat, bf16)
@@ -546,7 +491,6 @@ inline void pass_b_impl(
     uint sg_id, uint3 threads_per_tg, uint3 local_tid,
     threadgroup float* Hs,                                 // [BM,BK]
     threadgroup typename StageStorage<T>::type* Wk,        // [BN,BK]
-    threadgroup float* scratch,                           // [BM,BN]
     threadgroup float* bias_tile                          // [BN]
 ) {
     using StageT = typename StageStorage<T>::type;
@@ -682,20 +626,6 @@ UZU_PRAGMA_UNROLL
         }
     }
 
-    // ---- Store to scratch ----
-UZU_PRAGMA_UNROLL
-    for (uint n_sub = 0; n_sub < PASSB_SG_BN; n_sub += SG_TILE) {
-        const uint c_idx = n_sub / SG_TILE;
-        const uint col_off = col_sg_off + n_sub;
-UZU_PRAGMA_UNROLL
-        for (uint m_sub = 0; m_sub < PASSB_SG_BM; m_sub += SG_TILE) {
-            const uint r_idx = m_sub / SG_TILE;
-            const uint row_off = row_sg_off + m_sub;
-            const uint tile = r_idx * (PASSB_SG_BN / SG_TILE) + c_idx;
-            simdgroup_store(Out[tile], scratch, PASSB_BN, ulong2(col_off, row_off));
-        }
-    }
-
     // ---- Bias tile ----
     for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
         const uint c_global = col_tg_off + c_local;
@@ -705,59 +635,48 @@ UZU_PRAGMA_UNROLL
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // ---- Writeout ----
-    const uint row0 = row_sg_off;
-    const uint col0 = col_sg_off;
-    const uint row_end = min(m_rows, row0 + SgBm);
-    const uint col_end = min(n_cols, col0 + SgBn);
-
-    // Early exit if this simdgroup is entirely out of bounds
-    if (row0 >= row_end || col0 >= col_end) return;
-
-    const uint valid_rows = row_end - row0;
-    const uint valid_cols = col_end - col0;
-
-    // Only let this simdgroup's threads participate
     const uint sg_lane_start = sg_id * 32;
     const uint sg_lane_end = sg_lane_start + 32;
     if (lin < sg_lane_start || lin >= sg_lane_end) return;
+    const uint sg_lin = lin - sg_lane_start;
 
-    const uint sg_lin = lin - sg_lane_start;  // Thread index within simdgroup (0-31)
+    // Lane→(row,col) mapping for 8x8 simdgroup fragments, matches PASSB fragment packing.
+    const uint lane_qid = sg_lin >> 2;
+    const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
+    const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
 
-    const uint vec_cols = valid_cols / 4u;
-    const uint vec_total = valid_rows * vec_cols;
-    for (uint vec_idx = sg_lin; vec_idx < vec_total; vec_idx += 32u) {
-        const uint lr = vec_idx / vec_cols;
-        const uint lc_vec = vec_idx % vec_cols;
-        const uint r = row0 + lr;
-        const uint c = col0 + (lc_vec << 2);
+UZU_PRAGMA_UNROLL
+    for (uint n_sub = 0; n_sub < PASSB_SG_BN; n_sub += SG_TILE) {
+        const uint c_idx = n_sub / SG_TILE;
+UZU_PRAGMA_UNROLL
+        for (uint m_sub = 0; m_sub < PASSB_SG_BM; m_sub += SG_TILE) {
+            const uint r_idx = m_sub / SG_TILE;
+            const uint tile = r_idx * (PASSB_SG_BN / SG_TILE) + c_idx;
 
-        const uint scratch_base = r * Bn + c;
-        float4 vals =
-            *reinterpret_cast<threadgroup float4*>(scratch + scratch_base);
-        vals += float4(
-            bias_tile[c + 0],
-            bias_tile[c + 1],
-            bias_tile[c + 2],
-            bias_tile[c + 3]);
+            const uint tile_row_base = row_sg_off + m_sub;
+            const uint tile_col_base = col_sg_off + n_sub;
+            const uint local_row = tile_row_base + lane_row;
+            if (local_row >= m_rows || tile_col_base >= n_cols) {
+                continue;
+            }
 
-        const ulong out_base =
-            (seg_start + row_tg_off + r) * (ulong)d_model + (col_tg_off + c);
-        store_vec4<T>(output, out_base, vals);
-    }
+            const auto accum = Out[tile].thread_elements();
 
-    const uint tail_cols = valid_cols - vec_cols * 4u;
-    if (tail_cols > 0u) {
-        const uint tail_total = valid_rows * tail_cols;
-        for (uint idx = sg_lin; idx < tail_total; idx += 32u) {
-            const uint lr = idx / tail_cols;
-            const uint lc_tail = idx % tail_cols;
-            const uint r = row0 + lr;
-            const uint c = col0 + vec_cols * 4u + lc_tail;
-            const float val = scratch[r * Bn + c] + bias_tile[c];
+            const uint col0 = tile_col_base + lane_col_base;
+            const uint col1 = col0 + 1u;
+            const ulong out_row = seg_start + row_tg_off + local_row;
 
-            const ulong out_idx =
-                (seg_start + row_tg_off + r) * (ulong)d_model + (col_tg_off + c);
-            output[out_idx] = T(val);
+            if (col0 < n_cols) {
+                const ulong out_col = col_tg_off + col0;
+                const float val = accum[0] + bias_tile[col0];
+                output[out_row * (ulong)d_model + out_col] = T(val);
+            }
+
+            if (col1 < n_cols) {
+                const ulong out_col = col_tg_off + col1;
+                const float val = accum[1] + bias_tile[col1];
+                output[out_row * (ulong)d_model + out_col] = T(val);
+            }
         }
     }
 }
@@ -781,14 +700,13 @@ kernel void moe_two_pass_prefill_pass_b_##SUFFIX( \
     using StageT = typename StageStorage<DTYPE>::type; \
     threadgroup float Hs      [PASSB_BM * PASSB_BK]; \
     threadgroup StageT Wk     [PASSB_BN * PASSB_BK]; \
-    threadgroup float scratch [PASSB_BM * PASSB_BN]; \
     threadgroup float bias    [PASSB_BN]; \
     pass_b_impl<DTYPE>( \
         hidden, expert_offsets, W2_all, down_biases, output, \
         d_model, d_ff, E, \
         /*expert*/ tg_pos.z, /*tile_m*/ tg_pos.y, /*tile_n*/ tg_pos.x, \
         sg_id, threads_per_tg, local_tid, \
-        Hs, Wk, scratch, bias); \
+        Hs, Wk, bias); \
 }
 
 MOE_PASS_B_KERNEL(bfloat, bf16)
@@ -809,7 +727,6 @@ inline void pass_b_indirect_impl(
     uint sg_id, uint3 threads_per_tg, uint3 local_tid,
     threadgroup float* Hs,
     threadgroup typename StageStorage<T>::type* Wk,
-    threadgroup float* scratch,
     threadgroup float* bias_tile)
 {
     constexpr uint ROW_TILE = PASSB_BM;
@@ -824,7 +741,7 @@ inline void pass_b_indirect_impl(
         d_model, d_ff, E,
         expert_idx, tile_m, n_tile_idx,
         sg_id, threads_per_tg, local_tid,
-        Hs, Wk, scratch, bias_tile);
+        Hs, Wk, bias_tile);
 }
 
 #define MOE_PASS_B_INDIRECT_KERNEL(DTYPE, SUFFIX) \
@@ -846,14 +763,13 @@ kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX( \
     using StageT = typename StageStorage<DTYPE>::type; \
     threadgroup float Hs      [PASSB_BM * PASSB_BK]; \
     threadgroup StageT Wk     [PASSB_BN * PASSB_BK]; \
-    threadgroup float scratch [PASSB_BM * PASSB_BN]; \
     threadgroup float bias    [PASSB_BN]; \
     pass_b_indirect_impl<DTYPE>( \
         hidden, expert_offsets, W2_all, down_biases, output, tile_map, \
         d_model, d_ff, E, \
         /*row_tile_idx*/ tg_pos.y, /*n_tile_idx*/ tg_pos.x, \
         sg_id, threads_per_tg, local_tid, \
-        Hs, Wk, scratch, bias); \
+        Hs, Wk, bias); \
 }
 
 MOE_PASS_B_INDIRECT_KERNEL(bfloat, bf16)
