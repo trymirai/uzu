@@ -40,7 +40,6 @@ impl Generator {
         model_path: &Path,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
-        // Initialize GPU capture manager (reads env vars and enables METAL_CAPTURE_ENABLED if needed)
         let gpu_capture = GpuCaptureManager::new();
 
         let context = GeneratorContext::new(model_path, &decoding_config)?;
@@ -128,7 +127,6 @@ impl Generator {
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
 
-            // Capture first prefill chunk if requested
             let is_first_prefill = step == 0;
             let should_capture =
                 self.gpu_capture.should_capture_prefill(is_first_prefill);
@@ -368,7 +366,6 @@ impl Generator {
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
 
-            // Capture first decode if requested
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture =
                 self.gpu_capture.should_capture_decode(is_first_decode);
@@ -381,7 +378,6 @@ impl Generator {
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
 
-            // Force fresh encoding if capturing (don't use cached)
             if should_capture {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
