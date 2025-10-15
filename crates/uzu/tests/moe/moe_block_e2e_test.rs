@@ -203,7 +203,6 @@ fn run_moe_parity_test(
             up_clip,
             seed,
             &format!("{}_decode", test_name),
-            false,
         );
         // Test 2-pass prefill (experimental)
         run_moe_parity_test_internal(
@@ -219,7 +218,6 @@ fn run_moe_parity_test(
             up_clip,
             seed,
             &format!("{}_prefill", test_name),
-            true,
         );
     } else {
         // Decode mode (T=1) - no prefill variants
@@ -236,7 +234,6 @@ fn run_moe_parity_test(
             up_clip,
             seed,
             test_name,
-            false,
         );
     }
 }
@@ -254,26 +251,11 @@ fn run_moe_parity_test_internal(
     up_clip: (f32, f32),
     seed: u64,
     test_name: &str,
-    two_pass_prefill: bool, // If true, enable 2-pass prefill via env var
 ) {
-    // Set environment variable for 2-pass prefill if requested
-    if two_pass_prefill && t > 1 {
-        unsafe {
-            std::env::set_var("UZU_MOE_TWO_PASS_PREFILL", "1");
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("UZU_MOE_TWO_PASS_PREFILL");
-        }
-    }
     let mut rng = StdRng::seed_from_u64(seed);
 
     let prefill_mode = if t > 1 {
-        if two_pass_prefill {
-            "2-pass"
-        } else {
-            "1-pass"
-        }
+        "2-pass"
     } else {
         "decode"
     };
