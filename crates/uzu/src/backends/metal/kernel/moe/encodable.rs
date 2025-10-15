@@ -98,7 +98,6 @@ impl MoeBlockEncodable {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                // Load router weights directly (already transposed)
                 let mut weights_arr =
                     router_tree.leaf("weights").map_err(|e| {
                         crate::backends::metal::MTLError::Generic(format!(
@@ -176,7 +175,6 @@ impl MoeBlockEncodable {
             ))
         })?;
 
-        // Load expert weights directly from parameter tree (already transposed)
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "experts subtree error: {:?}",

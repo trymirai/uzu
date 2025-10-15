@@ -21,12 +21,12 @@ static inline float silu(float x, float alpha) {
 #define MTL_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
 
 // Tiling configuration (tunable)
-MTL_CONST uint BM = 1;   // Threadgroups in M dimension (usually 1 for GEMV)
-MTL_CONST uint BN = 4;   // Threadgroups in N dimension
-MTL_CONST uint SM = 1;   // Simdgroup rows
-MTL_CONST uint SN = 32;  // Simdgroup cols (must be power of 2, ≤32)
-MTL_CONST uint TM = 4;   // Thread work in M (output elements per thread)
-MTL_CONST uint TN = 4;   // Thread work in N (input elements per iteration)
+MTL_CONST uint BM = 1;   // Simdgroups in M dimension within threadgroup
+MTL_CONST uint BN = 4;   // Simdgroups in N dimension within threadgroup
+MTL_CONST uint SM = 1;   // Thread rows per simdgroup
+MTL_CONST uint SN = 32;  // Thread cols per simdgroup (full warp width)
+MTL_CONST uint TM = 4;   // Output elements per thread in M
+MTL_CONST uint TN = 4;   // Input elements per thread in N (per iteration)
 
 MTL_CONST uint THREADS_M = BM * SM;
 MTL_CONST uint THREADS_N = BN * SN;
@@ -43,7 +43,7 @@ template<typename T, typename AccumT>
 void moe_experts_decode_pass_a_impl(
     device const T* X_perm,              // [total_rows, d_model]
     device const uint* expert_offsets,   // [E + 1]
-    device const T* W13_all,             // weights in transposed layout [E, 2*d_ff, d_model]
+    device const T* W13_all,             // weights in layout [E, 2*d_ff, d_model]
     device const T* up_biases,           // [E, 2*d_ff]
     device float* hidden_out,            // [total_rows, d_ff] - f32 for activation precision
     uint d_model,
@@ -122,7 +122,6 @@ void moe_experts_decode_pass_a_impl(
             uint h_idx = h_row + tm;
 
             // Load weights for up projection
-            // Transposed layout: [E, 2*d_ff, d_model] for contiguous d_model access
             MTL_PRAGMA_UNROLL
             for (uint tn = 0; tn < TN; tn++) {
                 uint d_idx = bn + tn;
@@ -171,7 +170,6 @@ void moe_experts_decode_pass_a_impl(
             for (uint tn = 0; tn < TN; tn++) {
                 uint d_idx = bn + tn;
                 if (d_idx < d_model) {
-                    // Transposed layout: [E, 2*d_ff, d_model]
                     ulong w_idx = w13_base + (ulong)h_idx * (ulong)d_model + (ulong)d_idx;
                     weights_up[tn] = W13_all[w_idx];
                     result_up[tm] += x_vals[tn] * AccumT(weights_up[tn]);
@@ -496,14 +494,12 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 
 // === Pass B: Simdgroup cooperation along K for coalescing ===
 // W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading consecutive K elements
-// Exploits transposed layout for stride-1 memory access across threads
-// AccumT is used for internal accumulations
 
 template<typename T, typename AccumT>
 void moe_experts_decode_down_fused_2d_impl(
     device const float* hidden,           // [total_rows, d_ff] - f32 from Pass A
     device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
-    device const T* w2_all,               // [E, d_model, d_ff] - TRANSPOSED layout
+    device const T* w2_all,               // [E, d_model, d_ff] - layout
     device const T* down_biases,          // [E, d_model]
     device T* y_out,                      // [total_rows, d_model]
     uint total_rows,
@@ -530,9 +526,6 @@ void moe_experts_decode_down_fused_2d_impl(
     const ulong hidden_base = (ulong)row_idx * (ulong)d_ff;
     const ulong w2_col_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff + (ulong)my_col * (ulong)d_ff;
 
-    // Each thread in simdgroup handles every 32nd element along K
-    // With transposed W2, simd_lid gives consecutive memory locations → perfect coalescing!
-
     // Dual accumulators for ILP: breaks FMA dependency chains
     AccumT acc0 = AccumT(0.0);
     AccumT acc1 = AccumT(0.0);
@@ -556,7 +549,7 @@ void moe_experts_decode_down_fused_2d_impl(
         const AccumT h6 = hidden[hidden_base + k_base + 6 * THREADS_PER_SIMD];
         const AccumT h7 = hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD];
 
-        // W2: lane-coalesced thanks to transposed layout
+        // W2: lane-coalesced
         const AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
         const AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
         const AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);

@@ -13,9 +13,9 @@ using namespace metal;
 //
 // Layouts:
 //   X_perm: [total_rows, D]
-//   W13: [E, 2*FF, D] - transposed (D contiguous)
+//   W13: [E, 2*FF, D] 
 //   Hidden: [total_rows, FF]
-//   W2: [E, FF, D] - transposed (D contiguous)
+//   W2: [E, FF, D]
 //   Output: [total_rows, D]
 //
 
@@ -48,7 +48,7 @@ template<typename T, typename AccumT = float>
 void moe_two_pass_prefill_pass_a_impl(
     device const T* X_perm,                // [total_rows, D]
     device const uint* expert_offsets,      // [E + 1]
-    device const T* W13_all,                // [E, 2*FF, D] transposed
+    device const T* W13_all,                // [E, 2*FF, D]
     device const T* up_biases,              // [E, 2*FF]
     device float* hidden_out,               // [total_rows, FF] - f32 for activation precision
     uint d_model,
@@ -432,7 +432,7 @@ template<typename T, typename AccumT = float>
 void moe_two_pass_prefill_pass_b_impl(
     device const float* hidden,             // [total_rows, FF] - f32 from Pass A
     device const uint* expert_offsets,      // [E + 1]
-    device const T* W2_all,                 // [E, FF, D] transposed
+    device const T* W2_all,                 // [E, FF, D]
     device const T* down_biases,            // [E, D]
     device T* output,                       // [total_rows, D]
     uint d_model,
