@@ -4,6 +4,7 @@ use mpsgraph::CommandBuffer;
 
 use super::{
     context::GeneratorContext,
+    gpu_capture::GpuCaptureManager,
     result::{GenerateResult, PrefillResult},
     tasks::{GeneratorEncodedTask, GeneratorRunTask},
 };
@@ -31,6 +32,7 @@ pub struct Generator {
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
     pending_kv_update: Option<u64>,
+    gpu_capture: GpuCaptureManager,
 }
 
 impl Generator {
@@ -38,6 +40,8 @@ impl Generator {
         model_path: &Path,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
+        let gpu_capture = GpuCaptureManager::new();
+
         let context = GeneratorContext::new(model_path, &decoding_config)?;
 
         let prefill_step_size =
@@ -45,19 +49,20 @@ impl Generator {
         let generate_suffix_length = decoding_config.generate_suffix_length();
 
         let mut generator = Self {
-            decoding_config: decoding_config,
+            decoding_config,
             tokens: Vec::new(),
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
             pending_kv_update: None,
+            gpu_capture,
         };
 
         //Warmup
         generator.warmup(prefill_step_size);
         generator.warmup(generate_suffix_length);
 
-        return Ok(generator);
+        Ok(generator)
     }
 
     pub fn prefill(
@@ -127,6 +132,16 @@ impl Generator {
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
 
+            let is_first_prefill = step == 0;
+            let should_capture =
+                self.gpu_capture.should_capture_prefill(is_first_prefill);
+
+            if should_capture {
+                let _ = self
+                    .gpu_capture
+                    .start_capture(&self.context.mtl_context, "prefill");
+            }
+
             objc2::rc::autoreleasepool(|_pool| {
                 let _ = last_state.take();
             });
@@ -143,6 +158,10 @@ impl Generator {
                 self.allow_pre_encode(),
                 sampling_method,
             );
+
+            if should_capture {
+                self.gpu_capture.stop_capture("prefill");
+            }
 
             // Register the *accepted* real tokens from this step (exclude the
             // padding token at the very end of the overall prefill).
@@ -314,6 +333,7 @@ impl Generator {
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
         self.pending_kv_update = None;
+        self.gpu_capture.reset();
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -346,7 +366,21 @@ impl Generator {
             let mut state = task.create_state(&mut self.context, None);
             state.sampling_method = Some(sampling_method);
 
+            let is_first_decode = !warmup && task.token_ids.len() == 1;
+            let should_capture =
+                self.gpu_capture.should_capture_decode(is_first_decode);
+
+            if should_capture {
+                let _ = self
+                    .gpu_capture
+                    .start_capture(&self.context.mtl_context, "decode");
+            }
+
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
+
+            if should_capture {
+                self.encoded_tasks.remove(&encoded_task_key);
+            }
 
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
                 //Nothing
@@ -399,6 +433,10 @@ impl Generator {
 
             root_command_buffer.wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
+
+            if should_capture {
+                self.gpu_capture.stop_capture("decode");
+            }
 
             (state, run_time)
         })

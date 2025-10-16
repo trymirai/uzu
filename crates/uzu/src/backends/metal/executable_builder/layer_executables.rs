@@ -220,6 +220,7 @@ impl LayerExecutables {
                     kernel_data_type,
                     layer_index,
                     attention_scale,
+                    layer_config.attention_config.has_sinks,
                 )
                 .expect("Failed to create AttentionWrapper with Metal kernel"),
             );

@@ -80,6 +80,9 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
+    unsafe {
+        std::env::set_var("UZU_SKIP_RAM_CHECK", "1");
+    }
     let mut session =
         Session::new(build_model_path(), build_decoding_config()).unwrap();
 

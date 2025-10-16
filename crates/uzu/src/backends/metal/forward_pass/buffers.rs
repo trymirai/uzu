@@ -2,8 +2,15 @@ use std::collections::HashMap;
 
 use metal::Buffer as MTLBuffer;
 
-use super::{super::MTLContext, model_shape::ModelShape};
-use crate::{DataType, array::array_size_in_bytes};
+use super::{
+    super::MTLContext,
+    model_shape::ModelShape,
+};
+use crate::{
+    DataType,
+    array::array_size_in_bytes,
+    config::{DecoderConfig, MLPConfig},
+};
 
 /// Holds one shared Metal buffer for every temporary tensor that can appear during a forward pass.
 /// Each buffer is large enough for the worst-case shape: `max_suffix_len` / `max_prefix_len`.
@@ -34,6 +41,26 @@ pub struct ForwardPassBuffers {
     pub attention_partials: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
     pub attention_sums: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
     pub attention_maxs: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
+
+    pub moe_topk_ids: Option<MTLBuffer>,
+    pub moe_topk_probs: Option<MTLBuffer>,
+    pub moe_offsets: Option<MTLBuffer>,
+    pub moe_sumk: Option<MTLBuffer>,
+    pub moe_bucketed_token_ids: Option<MTLBuffer>,
+    pub moe_bucketed_probs: Option<MTLBuffer>,
+    pub moe_x_perm: Option<MTLBuffer>,
+    pub moe_tok2row: Option<MTLBuffer>,
+    pub moe_y_partial: Option<MTLBuffer>,
+    pub moe_hidden: Option<MTLBuffer>,
+    pub moe_two_pass_row_expert_map: Option<MTLBuffer>,
+    pub moe_tile_counts: Option<MTLBuffer>,
+    pub moe_tile_offsets: Option<MTLBuffer>,
+    pub moe_tile_map: Option<MTLBuffer>,
+    pub moe_total_tiles: Option<MTLBuffer>,
+    pub moe_dispatch_args: Option<MTLBuffer>,
+    pub moe_scatter_partials: Option<MTLBuffer>,
+    pub moe_scatter_block_bases: Option<MTLBuffer>,
+    pub moe_block_alloc: Option<MTLBuffer>,
 }
 
 impl ForwardPassBuffers {
@@ -41,6 +68,7 @@ impl ForwardPassBuffers {
     /// Allocate the buffers with `StorageModeShared` so that they are CPU-accessible as well.
     pub fn new(
         context: &MTLContext,
+        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         max_prefix_len: usize,
         max_suffix_len: usize,
@@ -109,6 +137,185 @@ impl ForwardPassBuffers {
             attention_partials: alloc(&partials_shape, act_ty),
             attention_sums: alloc(&sums_maxs_shape, act_ty),
             attention_maxs: alloc(&sums_maxs_shape, act_ty),
+
+            moe_topk_ids: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_topk_ids_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    );
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_topk_probs: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_topk_probs_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    );
+                    Some(alloc(&shape, act_ty))
+                },
+                _ => None,
+            },
+            moe_offsets: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_offsets_shape(moe.mixture_size);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_sumk: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(_) => {
+                    let shape = model_shape.moe_sumk_shape();
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_bucketed_token_ids: match &decoder_config
+                .layer_config
+                .mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape =
+                        model_shape.moe_bucketed_token_ids_shape(max_routed);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_bucketed_probs: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape =
+                        model_shape.moe_bucketed_probs_shape(max_routed);
+                    Some(alloc(&shape, act_ty))
+                },
+                _ => None,
+            },
+            moe_x_perm: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_x_perm_shape(max_routed);
+                    Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
+            moe_tok2row: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_tok2row_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    );
+                    Some(alloc(&shape, DataType::I32))
+                },
+                _ => None,
+            },
+            moe_y_partial: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_y_partial_shape(max_routed);
+                    Some(alloc(&shape, DataType::F16))
+                },
+                _ => None,
+            },
+            moe_hidden: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_hidden_shape(max_routed);
+                    Some(alloc(&shape, DataType::F32))
+                },
+                _ => None,
+            },
+            moe_two_pass_row_expert_map: match &decoder_config
+                .layer_config
+                .mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    Some(alloc(&[max_routed], DataType::U32))
+                },
+                _ => None,
+            },
+            moe_tile_counts: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_counts_shape(moe.mixture_size);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_tile_offsets: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let shape = model_shape.moe_offsets_shape(moe.mixture_size);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_tile_map: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let max_routed = max_suffix_len * moe.num_experts_per_token;
+                    let shape = model_shape.moe_tile_map_shape(max_routed);
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_total_tiles: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(_) => {
+                    let shape = model_shape.moe_total_tiles_shape();
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_dispatch_args: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(_) => {
+                    let shape = model_shape.moe_dispatch_args_shape();
+                    Some(alloc(&shape, DataType::U32))
+                },
+                _ => None,
+            },
+            moe_scatter_partials: match &decoder_config.layer_config.mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let num_blocks = ((max_suffix_len + 255) / 256).max(1);
+                    let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+                    let entries = num_blocks * num_tiles * 512;
+                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
+                    Some(context.device.new_buffer(
+                        bytes,
+                        metal::MTLResourceOptions::StorageModeShared,
+                    ))
+                },
+                _ => None,
+            },
+            moe_scatter_block_bases: match &decoder_config
+                .layer_config
+                .mlp_config
+            {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let num_blocks = ((max_suffix_len + 255) / 256).max(1);
+                    let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+                    let entries = num_blocks * num_tiles * 512;
+                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
+                    Some(context.device.new_buffer(
+                        bytes,
+                        metal::MTLResourceOptions::StorageModeShared,
+                    ))
+                },
+                _ => None,
+            },
+            moe_block_alloc: match &decoder_config.layer_config.mlp_config {
+                MLPConfig::MixtureOfExperts(moe) => {
+                    let num_blocks = ((max_suffix_len + 255) / 256).max(1);
+                    let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+                    let entries = num_blocks * num_tiles * 512;
+                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
+                    Some(context.device.new_buffer(
+                        bytes,
+                        metal::MTLResourceOptions::StorageModeShared,
+                    ))
+                },
+                _ => None,
+            },
         }
     }
 }

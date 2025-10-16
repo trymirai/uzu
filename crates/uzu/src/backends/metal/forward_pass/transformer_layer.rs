@@ -22,7 +22,10 @@ use crate::{
             embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
             embeddings_readout_subgraph,
         },
-        kernel::{QuantizedLinearKernelBlock, mlp::MlpGateActMulEncodable},
+        kernel::{
+            MoeBlockEncodable, QuantizedLinearKernelBlock,
+            mlp::MlpGateActMulEncodable,
+        },
     },
     config::{
         DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig,
@@ -138,69 +141,98 @@ pub fn mlp_block(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
-    if let crate::config::LinearConfig::Quantized(ref quant_config) =
-        config.linear_config
-    {
-        // Quantized MLP path: up (2H) -> act+mul -> down
-        let dtype: DataType =
-            config.linear_config.activation_precision().into();
+    if let crate::config::MLPConfig::Dense(dense) = config {
+        if let crate::config::LinearConfig::Quantized(ref quant_config) =
+            dense.linear_config
+        {
+            // Quantized MLP path: up (2H) -> act+mul -> down
+            let dtype: DataType =
+                dense.linear_config.activation_precision().into();
 
-        // Up fused: Main -> MlpFusedUp
-        let up = QuantizedLinearKernelBlock::new(
-            context,
-            quant_config,
-            model_dim,
-            2 * hidden_dim,
-            &parameter_tree.subtree("up_projection").unwrap(),
-            ArrayId::Main,
-            ArrayId::MlpFusedUp,
-        )
-        .expect("Failed to build MLP up quantized block");
+            // Up fused: Main -> MlpFusedUp
+            let up = QuantizedLinearKernelBlock::new(
+                context,
+                quant_config,
+                model_dim,
+                2 * hidden_dim,
+                &parameter_tree.subtree("up_projection").unwrap(),
+                ArrayId::Main,
+                ArrayId::MlpFusedUp,
+            )
+            .expect("Failed to build MLP up quantized block");
 
-        // Activation+mul: MlpFusedUp -> MlpHidden
-        let gate_op = MlpGateActMulEncodable::new(
-            context,
-            dtype,
-            config.activation.clone(),
-            hidden_dim,
-        )
-        .expect("Failed to build MLP gate activation kernel");
+            // Activation+mul: MlpFusedUp -> MlpHidden
+            let gate_op = MlpGateActMulEncodable::new(
+                context,
+                dtype,
+                dense.activation,
+                hidden_dim,
+            )
+            .expect("Failed to build MLP gate activation kernel");
 
-        // Down: MlpHidden -> Main
-        let down = QuantizedLinearKernelBlock::new(
-            context,
-            quant_config,
-            hidden_dim,
-            model_dim,
-            &parameter_tree.subtree("down_projection").unwrap(),
-            ArrayId::MlpHidden,
-            ArrayId::Main,
-        )
-        .expect("Failed to build MLP down quantized block");
+            // Down: MlpHidden -> Main
+            let down = QuantizedLinearKernelBlock::new(
+                context,
+                quant_config,
+                hidden_dim,
+                model_dim,
+                &parameter_tree.subtree("down_projection").unwrap(),
+                ArrayId::MlpHidden,
+                ArrayId::Main,
+            )
+            .expect("Failed to build MLP down quantized block");
 
-        let enc = crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
-            up, gate_op, down,
-        );
-        return Box::new(enc);
+            let enc =
+                crate::backends::metal::kernel::mlp::MlpBlockEncodable::new(
+                    up, gate_op, down,
+                );
+            return Box::new(enc);
+        }
     }
+
+    // STEP 2: Enable MOE block creation (encode will be minimal)
+    if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
+        let moe_block = MoeBlockEncodable::new(
+            context,
+            moe,
+            model_dim,
+            hidden_dim,
+            parameter_tree,
+        )
+        .expect("Failed to build MoE block");
+        return Box::new(moe_block);
+    }
+
+    // Non-quantized Dense path is handled via MPSGraph below
     autoreleasepool(|_| {
         let graph = Graph::new();
 
         let input_shape = [-1, model_dim as isize];
-        let input_data_type: DataType =
-            config.linear_config.activation_precision().into();
+        let input_data_type: DataType = match config {
+            crate::config::MLPConfig::Dense(dense) => {
+                dense.linear_config.activation_precision().into()
+            },
+            crate::config::MLPConfig::MixtureOfExperts(moe) => {
+                moe.expert_config.linear_config.activation_precision().into()
+            },
+        };
         let input_placeholder =
             placeholder(&graph, &input_shape, input_data_type);
 
-        let output = mlp_subgraph(
-            &graph,
-            config,
-            model_dim,
-            hidden_dim,
-            &input_placeholder,
-            parameter_tree,
-        )
-        .unwrap();
+        let output = match config {
+            crate::config::MLPConfig::Dense(dense) => mlp_subgraph(
+                &graph,
+                &MLPConfig::Dense(dense.clone()),
+                model_dim,
+                hidden_dim,
+                &input_placeholder,
+                parameter_tree,
+            )
+            .unwrap(),
+            crate::config::MLPConfig::MixtureOfExperts(_moe) => {
+                unreachable!("MoE uses MoeBlockEncodable, not MPSGraph")
+            },
+        };
 
         let retained_shaped_type = shaped_type(&input_shape, input_data_type);
         let feeds =
@@ -464,17 +496,19 @@ pub fn readout_block(
             ..
         } => {
             let weights_shape =
-                [config.model_dim as isize, config.vocab_size as isize];
+                [config.vocab_size as isize, config.model_dim as isize];
             let weights_data_type: DataType = precision.into();
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
                 placeholder(&graph, &weights_shape, weights_data_type);
 
+            let weights_transposed =
+                graph.transpose(&weights_placeholder, &[1, 0], None);
             let output = embeddings_readout_subgraph(
                 &graph,
                 &input_placeholder,
-                &weights_placeholder,
+                &weights_transposed,
             )
             .unwrap();
 

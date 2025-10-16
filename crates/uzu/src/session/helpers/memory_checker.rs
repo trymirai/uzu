@@ -22,6 +22,6 @@ pub fn is_directory_fits_ram(path: &Path) -> bool {
     let mut sys = System::new();
     sys.refresh_memory();
 
-    let allowed_bytes = sys.total_memory() * 60 / 100;
-    return model_size_bytes <= allowed_bytes;
+    let allowed_bytes = sys.total_memory() * 100 / 100;
+    model_size_bytes <= allowed_bytes
 }

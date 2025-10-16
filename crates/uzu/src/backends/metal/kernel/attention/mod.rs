@@ -25,9 +25,11 @@ pub enum AttentionKernelVariant {
     TwoPass,
 }
 
+type PipelineKey = (usize, bool);
+
 pub struct AttentionKernelPipelines {
-    single_pass: HashMap<usize, MTLComputePipelineState>,
-    two_pass_1: HashMap<usize, MTLComputePipelineState>,
+    single_pass: HashMap<PipelineKey, MTLComputePipelineState>,
+    two_pass_1: HashMap<PipelineKey, MTLComputePipelineState>,
     two_pass_2: HashMap<usize, MTLComputePipelineState>,
     kv_cache_update: Option<MTLComputePipelineState>,
 }
@@ -62,6 +64,7 @@ pub struct AttentionSinglePassArguments<'a> {
     pub mask_kv_seq_stride: i32,       // buffer(13)
     pub mask_q_seq_stride: i32,        // buffer(14)
     pub mask_head_stride: i32,         // buffer(15)
+    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(16)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -86,6 +89,7 @@ pub struct AttentionTwoPassArguments<'a> {
     pub mask_kv_seq_stride: i32,        // buffer(15)
     pub mask_q_seq_stride: i32,         // buffer(16)
     pub mask_head_stride: i32,          // buffer(17)
+    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(18)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -104,6 +108,49 @@ pub struct KVCacheUpdateArguments<'a> {
     pub max_sequence_length: usize,
 }
 
+fn make_function_constants(has_sinks_value: bool) -> FunctionConstantValues {
+    let function_constants = FunctionConstantValues::new();
+
+    let has_mask_value = true;
+    let query_transposed_value = false;
+    let do_causal_value = false;
+    let bool_mask_value = false;
+    let float_mask_value = true;
+
+    function_constants.set_constant_value_at_index(
+        &has_mask_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        20,
+    ); // has_mask
+    function_constants.set_constant_value_at_index(
+        &query_transposed_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        21,
+    ); // query_transposed
+    function_constants.set_constant_value_at_index(
+        &do_causal_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        22,
+    ); // do_causal
+    function_constants.set_constant_value_at_index(
+        &bool_mask_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        23,
+    ); // bool_mask
+    function_constants.set_constant_value_at_index(
+        &float_mask_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        24,
+    ); // float_mask
+    function_constants.set_constant_value_at_index(
+        &has_sinks_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        25,
+    ); // has_sinks
+
+    function_constants
+}
+
 impl AttentionKernel {
     pub fn new(
         context: &MTLContext,
@@ -111,75 +158,53 @@ impl AttentionKernel {
     ) -> Result<Self, AttentionError> {
         let data_suffix = data_type.function_name_suffix();
 
-        let function_constants = FunctionConstantValues::new();
-
-        let has_mask_value = true;
-        let query_transposed_value = false;
-        let do_causal_value = false;
-        let bool_mask_value = false;
-        let float_mask_value = true;
-
-        function_constants.set_constant_value_at_index(
-            &has_mask_value as *const bool as *const std::ffi::c_void,
-            MTLDataType::Bool,
-            20,
-        ); // has_mask
-        function_constants.set_constant_value_at_index(
-            &query_transposed_value as *const bool as *const std::ffi::c_void,
-            MTLDataType::Bool,
-            21,
-        ); // query_transposed
-        function_constants.set_constant_value_at_index(
-            &do_causal_value as *const bool as *const std::ffi::c_void,
-            MTLDataType::Bool,
-            22,
-        ); // do_causal
-        function_constants.set_constant_value_at_index(
-            &bool_mask_value as *const bool as *const std::ffi::c_void,
-            MTLDataType::Bool,
-            23,
-        ); // bool_mask
-        function_constants.set_constant_value_at_index(
-            &float_mask_value as *const bool as *const std::ffi::c_void,
-            MTLDataType::Bool,
-            24,
-        ); // float_mask
-
         let supported_head_dims = [64, 128, 256];
         let mut single_pass = HashMap::new();
         let mut two_pass_1 = HashMap::new();
         let mut two_pass_2 = HashMap::new();
 
-        // Pre-generate all supported variants
-        for &head_dim in &supported_head_dims {
-            if let Ok((pipeline, _)) = context
-                .compute_pipeline_state_with_reflection(
-                    &format!(
-                        "attention_single_pass_{}_{}",
-                        data_suffix, head_dim
-                    ),
-                    Some(&function_constants),
-                )
-            {
-                single_pass.insert(head_dim, pipeline);
-            }
+        // Pre-generate all supported variants for both sink configurations
+        for &has_sinks_value in &[false, true] {
+            let function_constants = make_function_constants(has_sinks_value);
 
-            if let Ok((pipeline, _)) = context
-                .compute_pipeline_state_with_reflection(
-                    &format!("attention_2pass_1_{}_{}", data_suffix, head_dim),
-                    Some(&function_constants),
-                )
-            {
-                two_pass_1.insert(head_dim, pipeline);
-            }
+            for &head_dim in &supported_head_dims {
+                if let Ok((pipeline, _)) = context
+                    .compute_pipeline_state_with_reflection(
+                        &format!(
+                            "attention_single_pass_{}_{}",
+                            data_suffix, head_dim
+                        ),
+                        Some(&function_constants),
+                    )
+                {
+                    single_pass.insert((head_dim, has_sinks_value), pipeline);
+                }
 
-            if let Ok((pipeline, _)) = context
-                .compute_pipeline_state_with_reflection(
-                    &format!("attention_2pass_2_{}_{}", data_suffix, head_dim),
-                    Some(&function_constants),
-                )
-            {
-                two_pass_2.insert(head_dim, pipeline);
+                if let Ok((pipeline, _)) = context
+                    .compute_pipeline_state_with_reflection(
+                        &format!(
+                            "attention_2pass_1_{}_{}",
+                            data_suffix, head_dim
+                        ),
+                        Some(&function_constants),
+                    )
+                {
+                    two_pass_1.insert((head_dim, has_sinks_value), pipeline);
+                }
+
+                if !two_pass_2.contains_key(&head_dim) {
+                    if let Ok((pipeline, _)) = context
+                        .compute_pipeline_state_with_reflection(
+                            &format!(
+                                "attention_2pass_2_{}_{}",
+                                data_suffix, head_dim
+                            ),
+                            Some(&function_constants),
+                        )
+                    {
+                        two_pass_2.insert(head_dim, pipeline);
+                    }
+                }
             }
         }
 
@@ -205,14 +230,14 @@ impl AttentionKernel {
         &self,
         head_dim: usize,
     ) -> bool {
-        self.pipelines.single_pass.contains_key(&head_dim)
+        self.pipelines.single_pass.contains_key(&(head_dim, false))
     }
 
     pub fn supports_two_pass(
         &self,
         head_dim: usize,
     ) -> bool {
-        self.pipelines.two_pass_1.contains_key(&head_dim)
+        self.pipelines.two_pass_1.contains_key(&(head_dim, false))
             && self.pipelines.two_pass_2.contains_key(&head_dim)
     }
 
@@ -233,10 +258,12 @@ impl AttentionKernel {
         compute_encoder: &ComputeCommandEncoderRef,
         args: AttentionSinglePassArguments,
     ) -> Result<(), AttentionError> {
-        let pipeline =
-            self.pipelines.single_pass.get(&args.head_dim).ok_or_else(
-                || AttentionError::UnsupportedHeadDim(args.head_dim),
-            )?;
+        let has_sinks = args.sinks_buffer.is_some();
+        let pipeline = self
+            .pipelines
+            .single_pass
+            .get(&(args.head_dim, has_sinks))
+            .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         compute_encoder.set_compute_pipeline_state(pipeline);
 
@@ -300,6 +327,10 @@ impl AttentionKernel {
             );
         }
 
+        if let Some(sinks_buffer) = args.sinks_buffer {
+            compute_encoder.set_buffer(16, Some(sinks_buffer), 0);
+        }
+
         let threads_per_threadgroup = MTLSize {
             width: 32 * 32, // sequence_block_size * head_block_size
             height: 1,
@@ -324,10 +355,12 @@ impl AttentionKernel {
         compute_encoder: &ComputeCommandEncoderRef,
         args: AttentionTwoPassArguments,
     ) -> Result<(), AttentionError> {
-        let pass1_pipeline =
-            self.pipelines.two_pass_1.get(&args.head_dim).ok_or_else(|| {
-                AttentionError::UnsupportedHeadDim(args.head_dim)
-            })?;
+        let has_sinks = args.sinks_buffer.is_some();
+        let pass1_pipeline = self
+            .pipelines
+            .two_pass_1
+            .get(&(args.head_dim, has_sinks))
+            .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         let pass2_pipeline =
             self.pipelines.two_pass_2.get(&args.head_dim).ok_or_else(|| {
@@ -397,6 +430,10 @@ impl AttentionKernel {
                 size_of::<i32>() as u64,
                 &args.mask_head_stride as *const i32 as *const _,
             );
+        }
+
+        if let Some(sinks_buffer) = args.sinks_buffer {
+            compute_encoder.set_buffer(18, Some(sinks_buffer), 0);
         }
 
         let total_blocks_count = 32u64;
@@ -516,6 +553,7 @@ pub struct AttentionKernelEncodable {
     kernel: AttentionKernel,
     layer_index: usize,
     attention_scale: Option<f32>,
+    has_sinks: bool,
 }
 
 impl AttentionKernelEncodable {
@@ -524,12 +562,14 @@ impl AttentionKernelEncodable {
         data_type: KernelDataType,
         layer_index: usize,
         attention_scale: Option<f32>,
+        has_sinks: bool,
     ) -> Result<Self, AttentionError> {
         let kernel = AttentionKernel::new(context, data_type)?;
         Ok(Self {
             kernel,
             layer_index,
             attention_scale,
+            has_sinks,
         })
     }
 }
@@ -602,6 +642,16 @@ impl EncodableWithState for AttentionKernelEncodable {
         let attention_output_binding =
             state.arrays(&[ArrayId::AttentionOutput]);
 
+        let attention_bias_map = attention_bias_binding[0].clone();
+        let mask_kv_seq_stride = 1;
+        let mask_q_seq_stride = sequence_length as i32;
+        let mask_head_stride = 0;
+        let sinks_binding = if self.has_sinks {
+            Some(state.arrays(&[ArrayId::AttentionSinks(self.layer_index)]))
+        } else {
+            None
+        };
+
         let mut rotated_keys_array = rotated_keys_binding[0].borrow_mut();
         let rotated_keys_buffer = unsafe { rotated_keys_array.mtl_buffer() };
 
@@ -622,7 +672,6 @@ impl EncodableWithState for AttentionKernelEncodable {
         let attention_output_buffer =
             unsafe { attention_output_array.mtl_buffer() };
 
-        let attention_bias_map = attention_bias_binding[0].clone();
         let attention_bias_buffer = attention_bias_map
             .get(&window_length)
             .map(|array| {
@@ -648,6 +697,10 @@ impl EncodableWithState for AttentionKernelEncodable {
 
         let mut maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
+
+        let sinks_buffer = sinks_binding.as_ref().map(|binding| unsafe {
+            binding[0].borrow_mut().mtl_buffer().clone()
+        });
 
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
@@ -679,10 +732,6 @@ impl EncodableWithState for AttentionKernelEncodable {
         let v_head_stride = (max_sequence_length * head_dim) as i32;
         let v_seq_stride = head_dim as i32;
 
-        let mask_kv_seq_stride = 1;
-        let mask_q_seq_stride = sequence_length as i32;
-        let mask_head_stride = 0;
-
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if let Err(e) = self.kernel.encode_single_pass(
@@ -703,6 +752,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
+                        sinks_buffer: sinks_buffer.as_ref(),
                         num_heads,
                         suffix_length,
                         head_dim,
@@ -736,6 +786,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
+                        sinks_buffer: sinks_buffer.as_ref(),
                         num_heads,
                         suffix_length,
                         head_dim,

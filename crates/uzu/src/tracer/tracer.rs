@@ -12,21 +12,26 @@ use num_traits::NumCast;
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{
-        ForwardPassState, MTLContext, MetalArray,
+        ForwardPassState, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
+        MetalArray,
         forward_pass::{
-            ArrayId,
+            ArrayId, ForwardPassBuffers,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             traces::DecoderActivationTrace,
         },
+        kernel::SamplingKernelEncodable,
     },
     generator::{
         context::GeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
-    parameters::{ParameterLoader, ParameterTree},
+    parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
     session::{
         config::{DecodingConfig, SpeculatorConfig},
-        parameter::{ContextLength, PrefillStepSize, SamplingSeed},
+        parameter::{
+            ConfigResolvableValue, ContextLength, PrefillStepSize,
+            ResolvableValue, SamplingSeed,
+        },
     },
 };
 
@@ -140,15 +145,23 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn new(model_path: &Path) -> Self {
+        let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(1024),
+            PrefillStepSize::Custom(prefill_step_size),
             ContextLength::default(),
             SpeculatorConfig::default(),
             SamplingSeed::default(),
             false,
         );
-        let generator_context =
+        let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
+        let desired_suffix_length =
+            prefill_step_size.max(decoding_config.generate_suffix_length());
+        Self::ensure_context_capacity(
+            &decoding_config,
+            desired_suffix_length,
+            &mut generator_context,
+        );
 
         Self {
             model_path: model_path.to_path_buf(),
@@ -161,20 +174,108 @@ impl Tracer {
         sampling_seed: SamplingSeed,
         max_prefix_length: ContextLength,
     ) -> Self {
+        let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(1024),
+            PrefillStepSize::Custom(prefill_step_size),
             max_prefix_length,
             SpeculatorConfig::default(),
             sampling_seed,
             false,
         );
-        let generator_context =
+        let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
+        let desired_suffix_length =
+            prefill_step_size.max(decoding_config.generate_suffix_length());
+        Self::ensure_context_capacity(
+            &decoding_config,
+            desired_suffix_length,
+            &mut generator_context,
+        );
 
         Self {
             model_path: model_path.to_path_buf(),
             generator_context,
         }
+    }
+
+    fn determine_prefill_step_size(model_path: &Path) -> usize {
+        let traces_path = model_path.join("traces.safetensors");
+        if let Ok(file) = File::open(&traces_path) {
+            if let Ok((_header_len, metadata)) =
+                read_safetensors_metadata(&file)
+            {
+                if let Some(tensor) =
+                    metadata.tensors.get("activation_trace.token_ids")
+                {
+                    if let Some(&length) = tensor.shape.first() {
+                        return tensor
+                            .shape
+                            .iter()
+                            .copied()
+                            .max()
+                            .unwrap_or(length)
+                            .max(1);
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    fn ensure_context_capacity(
+        decoding_config: &DecodingConfig,
+        desired_suffix_length: usize,
+        context: &mut GeneratorContext,
+    ) {
+        let resolved_prefix_length =
+            decoding_config.context_length.resolve(&context.model_config);
+        let current_suffix_length = std::cmp::max(
+            decoding_config.prefill_step_size.resolve(&context.model_config),
+            decoding_config.generate_suffix_length(),
+        );
+
+        if desired_suffix_length <= current_suffix_length {
+            return;
+        }
+
+        let decoder_config = &context.model_config.decoder_config;
+        context.scratch_buffers = ForwardPassBuffers::new(
+            &context.mtl_context,
+            decoder_config,
+            &context.model_shape,
+            resolved_prefix_length,
+            desired_suffix_length,
+        );
+
+        context.kv_cache = Rc::new(RefCell::new(KVCache::new(
+            &context.mtl_context,
+            &context.model_shape,
+            resolved_prefix_length,
+            desired_suffix_length,
+        )));
+
+        let intermediate_dtype: DataType =
+            decoder_config.output_norm_config.scale_precision.into();
+        let kernel_dtype: KernelDataType = intermediate_dtype.into();
+
+        context.kv_cache_update = Box::new(
+            KVCacheUpdate::new(
+                &context.mtl_context,
+                kernel_dtype,
+                resolved_prefix_length,
+            )
+            .expect("Failed to create KV cache update kernel"),
+        );
+
+        let sampling_seed = decoding_config.sampling_seed.resolve();
+        context.gpu_sampler = SamplingKernelEncodable::new(
+            &context.mtl_context,
+            kernel_dtype,
+            desired_suffix_length,
+            decoder_config.vocab_size,
+            sampling_seed,
+        )
+        .expect("Failed to create sampling kernel");
     }
 
     pub fn run(&self) -> TracerValidationResults {
@@ -202,6 +303,7 @@ impl Tracer {
 
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
+            &self.generator_context.model_config.decoder_config,
             &self.generator_context.model_shape,
             &self.generator_context.scratch_buffers,
             self.generator_context.kv_cache.clone(),
@@ -440,20 +542,60 @@ impl Tracer {
         let expected_view = expected_array.as_view::<Precision>().unwrap();
         let produced_view = produced_array.as_view::<Precision>().unwrap();
 
-        let (expected_data, produced_data) = match produced_transform {
+        let (mut expected_data, mut produced_data) = match produced_transform {
             Some(transform) => match transform {
                 Transform::KVCacheSlice => {
-                    let transformed_data = produced_view
-                        .permuted_axes(IxDyn(&[1, 0, 2]))
-                        .slice(s![0..expected_view.shape()[0], .., ..])
-                        .into_dyn()
+                    let permuted =
+                        produced_view.permuted_axes(IxDyn(&[1, 0, 2]));
+                    let total_tokens = permuted.shape()[0];
+                    let expected_tokens = expected_view.shape()[1];
+                    let start = total_tokens.saturating_sub(expected_tokens);
+                    let sliced = permuted.slice(s![start.., .., ..]);
+                    let reshaped = sliced
+                        .into_owned()
+                        .to_shape(IxDyn(&[
+                            1,
+                            expected_tokens,
+                            permuted.shape()[1],
+                            permuted.shape()[2],
+                        ]))
+                        .expect("Failed to reshape KV cache slice")
                         .to_owned();
-                    (expected_view.to_owned(), transformed_data)
+                    (expected_view.to_owned(), reshaped)
                 },
             },
             None => (expected_view.to_owned(), produced_view.to_owned()),
         };
-        assert_eq!(expected_data.shape(), produced_data.shape());
+        let expected_shape = expected_data.shape().to_vec();
+        let produced_shape = produced_data.shape().to_vec();
+
+        if expected_shape != produced_shape {
+            if expected_shape.len() == produced_shape.len() + 1
+                && expected_shape.get(0) == Some(&1)
+                && expected_shape[1..] == produced_shape[..]
+            {
+                expected_data = expected_data
+                    .to_shape(IxDyn(&produced_shape))
+                    .expect("Failed to reshape expected data")
+                    .to_owned();
+            } else if produced_shape.len() == expected_shape.len() + 1
+                && produced_shape.get(0) == Some(&1)
+                && produced_shape[1..] == expected_shape[..]
+            {
+                produced_data = produced_data
+                    .to_shape(IxDyn(&expected_shape))
+                    .expect("Failed to reshape produced data")
+                    .to_owned();
+            }
+        }
+
+        if expected_data.shape() != produced_data.shape() {
+            panic!(
+                "Shape mismatch after alignment: expected {:?}, produced {:?}",
+                expected_data.shape(),
+                produced_data.shape()
+            );
+        }
 
         let reference = expected_data
             .iter()

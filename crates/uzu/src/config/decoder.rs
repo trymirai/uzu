@@ -41,7 +41,7 @@ mod tests {
             common::{Activation, ConfigDataType, QuantizationMode},
             embedding::{EmbeddingConfig, EmbeddingConfigCommon},
             linear::{LinearConfig, QuantizationConfig},
-            mlp::MLPConfig,
+            mlp::{DenseMLPConfig, MLPConfig},
             normalization::UpcastMode,
             rope::RopeConfigCommon,
         },
@@ -55,7 +55,7 @@ mod tests {
                 "embedding_config": {
                     "type": "QuantizedTiedEmbeddingConfig",
                     "input_scale": null,
-                    "logits_soft_cap": null,
+                    "logit_soft_cap": null,
                     "embedding_quantization_mode": "int8",
                     "activation_quantization_mode": "int8",
                     "activation_precision": "bfloat16"
@@ -99,6 +99,7 @@ mod tests {
                             "lora_scale": 2.0,
                         },
                         "logit_soft_cap": null,
+                "has_sinks": false,
                         "has_qkv_biases": false,
                         "has_out_biases": false
                     },
@@ -111,6 +112,7 @@ mod tests {
                         "upcast_mode": "only_normalization"
                     },
                     "mlp_config": {
+                        "type": "DenseMLPConfig",
                         "linear_config": {
                             "type": "QLoRALinearConfig",
                             "group_size": 32,
@@ -118,9 +120,9 @@ mod tests {
                             "activation_quantization_mode": "int8",
                             "activation_precision": "bfloat16",
                             "lora_rank": 16,
-                            "lora_scale": 2.0,
+                            "lora_scale": 2.0
                         },
-                        "activation": "silu"
+                        "activation": {"type": "SiLU"}
                     },
                     "post_mlp_norm_config": null
                 },
@@ -209,10 +211,11 @@ mod tests {
                     query_norm_config: None,
                     key_norm_config: None,
                     logit_soft_cap: None,
+                    has_sinks: false,
                     has_qkv_biases: false,
                     has_out_biases: false,
                 },
-                mlp_config: MLPConfig {
+                mlp_config: MLPConfig::Dense(DenseMLPConfig {
                     linear_config: LinearConfig::QLoRA {
                         quantization: QuantizationConfig {
                             group_size: 32,
@@ -225,8 +228,10 @@ mod tests {
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SILU,
-                },
+                    activation: Activation::SILU {
+                        alpha: 1.0,
+                    },
+                }),
                 post_attention_norm_config: None,
                 post_mlp_norm_config: None,
             },

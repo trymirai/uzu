@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use half::{bf16, f16};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -12,7 +13,8 @@ use super::{
 use crate::{
     DataType, DeviceContext,
     backends::metal::forward_pass::traces::DecoderActivationTrace,
-    config::{DecoderConfig, EmbeddingConfig},
+    config::{DecoderConfig, EmbeddingConfig, MLPConfig},
+    device::array::Array,
     parameters::ParameterTree,
     session::parameter::SamplingMethod,
 };
@@ -173,6 +175,14 @@ pub struct SharedBuffers {
     pub embeddings: EmbeddingsBuffers,
     pub global_rope: RopeBuffers,
     pub local_rope: Option<RopeBuffers>,
+    pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
+    pub attention_sinks: Option<Vec<ArrayCell>>,
+}
+
+pub struct MoeExpertWeights {
+    pub w1: ArrayCell,
+    pub w2: ArrayCell,
+    pub w3: ArrayCell,
 }
 
 impl SharedBuffers {
@@ -195,10 +205,38 @@ impl SharedBuffers {
             None
         };
 
+        let moe_expert_weights = if matches!(
+            decoder_config.layer_config.mlp_config,
+            crate::config::MLPConfig::MixtureOfExperts(_)
+        ) {
+            Some(Vec::new())
+        } else {
+            None
+        };
+
+        let attention_sinks =
+            if decoder_config.layer_config.attention_config.has_sinks {
+                let num_heads = decoder_config.num_heads;
+                Some(
+                    (0..decoder_config.num_layers)
+                        .map(|_| unsafe {
+                            RefCell::new(context.array_uninitialized(
+                                &[num_heads],
+                                DataType::F32,
+                            ))
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+
         Self {
             embeddings,
             global_rope,
             local_rope,
+            moe_expert_weights,
+            attention_sinks,
         }
     }
 
@@ -211,6 +249,47 @@ impl SharedBuffers {
             .update_data(parameter_tree, String::from("global_rope"));
         if let Some(local_rope) = &mut self.local_rope {
             local_rope.update_data(parameter_tree, String::from("local_rope"));
+        }
+
+        if let Some(sinks_vec) = &mut self.attention_sinks {
+            for (layer_idx, sink_cell) in sinks_vec.iter_mut().enumerate() {
+                let layer_tree = parameter_tree
+                    .subtree(&format!("layers.{}", layer_idx))
+                    .unwrap();
+                let attn_tree = layer_tree.subtree("attention").unwrap();
+                let sinks_arr = attn_tree.leaf("sinks").unwrap();
+                let mut dst = sink_cell.borrow_mut();
+                let dst_slice = dst.as_slice_mut::<f32>().unwrap();
+
+                match sinks_arr.data_type() {
+                    DataType::F32 => {
+                        let src = sinks_arr.as_slice::<f32>().unwrap();
+                        dst_slice.copy_from_slice(src);
+                    },
+                    DataType::BF16 => {
+                        let src = sinks_arr.as_slice::<bf16>().unwrap();
+                        for (dst_val, src_val) in
+                            dst_slice.iter_mut().zip(src.iter())
+                        {
+                            *dst_val = f32::from(*src_val);
+                        }
+                    },
+                    DataType::F16 => {
+                        let src = sinks_arr.as_slice::<f16>().unwrap();
+                        for (dst_val, src_val) in
+                            dst_slice.iter_mut().zip(src.iter())
+                        {
+                            *dst_val = f32::from(*src_val);
+                        }
+                    },
+                    other => {
+                        panic!(
+                            "Unsupported attention sink data type: {:?}",
+                            other
+                        );
+                    },
+                }
+            }
         }
     }
 }
@@ -239,11 +318,32 @@ struct AuxBuffers {
     attention_sums: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
     attention_maxs: ArrayCell,
+
+    moe_topk_ids: Option<ArrayCell>,
+    moe_topk_probs: Option<ArrayCell>,
+    moe_offsets: Option<ArrayCell>,
+    moe_sumk: Option<ArrayCell>,
+    moe_bucketed_token_ids: Option<ArrayCell>,
+    moe_bucketed_probs: Option<ArrayCell>,
+    moe_x_perm: Option<ArrayCell>,
+    moe_tok2row: Option<ArrayCell>,
+    moe_y_partial: Option<ArrayCell>,
+    moe_hidden: Option<ArrayCell>,
+    moe_two_pass_row_expert_map: Option<ArrayCell>,
+    moe_tile_counts: Option<ArrayCell>,
+    moe_tile_offsets: Option<ArrayCell>,
+    moe_tile_map: Option<ArrayCell>,
+    moe_total_tiles: Option<ArrayCell>,
+    moe_dispatch_args: Option<ArrayCell>,
+    moe_scatter_partials: Option<ArrayCell>,
+    moe_scatter_block_bases: Option<ArrayCell>,
+    moe_block_alloc: Option<ArrayCell>,
 }
 
 impl AuxBuffers {
     fn new(
         scratch: &ForwardPassBuffers,
+        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
@@ -306,6 +406,293 @@ impl AuxBuffers {
                     &model_shape.attention_maxs_shape(suffix_length),
                     act_dtype,
                 )),
+
+                moe_topk_ids: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_topk_ids.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_topk_ids_shape(
+                                    suffix_length,
+                                    moe.num_experts_per_token,
+                                ),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_topk_probs: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_topk_probs.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_topk_probs_shape(
+                                    suffix_length,
+                                    moe.num_experts_per_token,
+                                ),
+                                act_dtype,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_offsets: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_offsets.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape
+                                    .moe_offsets_shape(moe.mixture_size),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_sumk: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(_) => {
+                        scratch.moe_sumk.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_sumk_shape(),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_bucketed_token_ids: match &decoder_config
+                    .layer_config
+                    .mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_bucketed_token_ids.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape
+                                    .moe_bucketed_token_ids_shape(max_routed),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_bucketed_probs: match &decoder_config
+                    .layer_config
+                    .mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_bucketed_probs.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape
+                                    .moe_bucketed_probs_shape(max_routed),
+                                act_dtype,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_x_perm: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_x_perm.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_x_perm_shape(max_routed),
+                                DataType::F16,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_tok2row: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_tok2row.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_tok2row_shape(
+                                    suffix_length,
+                                    moe.num_experts_per_token,
+                                ),
+                                DataType::I32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_y_partial: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_y_partial.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_y_partial_shape(max_routed),
+                                DataType::F16,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_hidden: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_hidden.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_hidden_shape(max_routed),
+                                act_dtype,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_two_pass_row_expert_map: match &decoder_config
+                    .layer_config
+                    .mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_two_pass_row_expert_map.as_ref().map(
+                            |buf| {
+                                RefCell::new(MetalArray::new(
+                                    buf.clone(),
+                                    &[max_routed],
+                                    DataType::U32,
+                                ))
+                            },
+                        )
+                    },
+                    _ => None,
+                },
+                moe_tile_counts: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_tile_counts.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_counts_shape(moe.mixture_size),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_tile_offsets: match &decoder_config.layer_config.mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        scratch.moe_tile_offsets.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape
+                                    .moe_offsets_shape(moe.mixture_size),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_tile_map: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(moe) => {
+                        let max_routed =
+                            suffix_length * moe.num_experts_per_token;
+                        scratch.moe_tile_map.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_tile_map_shape(max_routed),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_total_tiles: match &decoder_config.layer_config.mlp_config {
+                    MLPConfig::MixtureOfExperts(_) => {
+                        scratch.moe_total_tiles.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_total_tiles_shape(),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_dispatch_args: match &decoder_config.layer_config.mlp_config
+                {
+                    MLPConfig::MixtureOfExperts(_) => {
+                        scratch.moe_dispatch_args.as_ref().map(|buf| {
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &model_shape.moe_dispatch_args_shape(),
+                                DataType::U32,
+                            ))
+                        })
+                    },
+                    _ => None,
+                },
+                moe_scatter_partials: scratch
+                    .moe_scatter_partials
+                    .as_ref()
+                    .map(|buf| {
+                        let num_blocks = ((suffix_length + 255) / 256).max(1);
+                        match &decoder_config.layer_config.mlp_config {
+                            MLPConfig::MixtureOfExperts(moe) => {
+                                let num_tiles =
+                                    ((moe.mixture_size + 512 - 1) / 512).max(1);
+                                let entries = num_blocks * num_tiles * 512;
+                                RefCell::new(MetalArray::new(
+                                    buf.clone(),
+                                    &[entries],
+                                    DataType::U32,
+                                ))
+                            },
+                            _ => unreachable!(),
+                        }
+                    }),
+                moe_scatter_block_bases: scratch
+                    .moe_scatter_block_bases
+                    .as_ref()
+                    .map(|buf| {
+                        let num_blocks = ((suffix_length + 255) / 256).max(1);
+                        match &decoder_config.layer_config.mlp_config {
+                            MLPConfig::MixtureOfExperts(moe) => {
+                                let num_tiles =
+                                    ((moe.mixture_size + 512 - 1) / 512).max(1);
+                                let entries = num_blocks * num_tiles * 512;
+                                RefCell::new(MetalArray::new(
+                                    buf.clone(),
+                                    &[entries],
+                                    DataType::U32,
+                                ))
+                            },
+                            _ => unreachable!(),
+                        }
+                    }),
+                moe_block_alloc: scratch.moe_block_alloc.as_ref().map(|buf| {
+                    let num_blocks = ((suffix_length + 255) / 256).max(1);
+                    match &decoder_config.layer_config.mlp_config {
+                        MLPConfig::MixtureOfExperts(moe) => {
+                            let num_tiles =
+                                ((moe.mixture_size + 512 - 1) / 512).max(1);
+                            let entries = num_blocks * num_tiles * 512;
+                            RefCell::new(MetalArray::new(
+                                buf.clone(),
+                                &[entries],
+                                DataType::U32,
+                            ))
+                        },
+                        _ => unreachable!(),
+                    }
+                }),
             }
         }
     }
@@ -338,6 +725,7 @@ pub struct ForwardPassState {
 impl ForwardPassState {
     pub fn new(
         context: Rc<MTLContext>,
+        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
         kv_cache: Rc<RefCell<KVCache>>,
@@ -361,7 +749,12 @@ impl ForwardPassState {
             kv_cache.borrow().max_suffix_length(),
             suffix_length
         );
-        let aux_buffers = AuxBuffers::new(scratch, model_shape, suffix_length);
+        let aux_buffers = AuxBuffers::new(
+            scratch,
+            decoder_config,
+            model_shape,
+            suffix_length,
+        );
 
         // --------------------
         // Token IDs
@@ -571,6 +964,31 @@ impl ForwardPassState {
                     .sines
                     .clone(),
             },
+
+            ArrayId::MoeTopkIds => self.aux_buffers.moe_topk_ids.as_ref().expect("MoE topk ids buffer not initialized").clone(),
+            ArrayId::MoeTopkProbs => self.aux_buffers.moe_topk_probs.as_ref().expect("MoE topk probs buffer not initialized").clone(),
+            ArrayId::MoeOffsets => self.aux_buffers.moe_offsets.as_ref().expect("MoE offsets buffer not initialized").clone(),
+            ArrayId::MoeSumK => self.aux_buffers.moe_sumk.as_ref().expect("MoE sumk buffer not initialized").clone(),
+            ArrayId::MoeBucketedTokenIds => self.aux_buffers.moe_bucketed_token_ids.as_ref().expect("MoE bucketed token ids buffer not initialized").clone(),
+            ArrayId::MoeBucketedProbs => self.aux_buffers.moe_bucketed_probs.as_ref().expect("MoE bucketed probs buffer not initialized").clone(),
+            ArrayId::MoeXPerm => self.aux_buffers.moe_x_perm.as_ref().expect("MoE x_perm buffer not initialized").clone(),
+            ArrayId::MoeTok2Row => self.aux_buffers.moe_tok2row.as_ref().expect("MoE tok2row buffer not initialized").clone(),
+            ArrayId::MoeYPartial => self.aux_buffers.moe_y_partial.as_ref().expect("MoE y_partial buffer not initialized").clone(),
+            ArrayId::MoeHidden => self.aux_buffers.moe_hidden.as_ref().expect("MoE hidden buffer not initialized").clone(),
+            ArrayId::MoeTwoPassRowExpertMap => self.aux_buffers.moe_two_pass_row_expert_map.as_ref().expect("MoE two-pass row expert map buffer not initialized").clone(),
+            ArrayId::MoeTileCounts => self.aux_buffers.moe_tile_counts.as_ref().expect("MoE tile counts buffer not initialized").clone(),
+            ArrayId::MoeTileOffsets => self.aux_buffers.moe_tile_offsets.as_ref().expect("MoE tile offsets buffer not initialized").clone(),
+            ArrayId::MoeTileMap => self.aux_buffers.moe_tile_map.as_ref().expect("MoE tile map buffer not initialized").clone(),
+            ArrayId::MoeTotalTiles => self.aux_buffers.moe_total_tiles.as_ref().expect("MoE total tiles buffer not initialized").clone(),
+            ArrayId::MoeDispatchArgs => self.aux_buffers.moe_dispatch_args.as_ref().expect("MoE dispatch args buffer not initialized").clone(),
+            ArrayId::MoeScatterPartials => self.aux_buffers.moe_scatter_partials.as_ref().expect("MoE scatter partials buffer not initialized").clone(),
+            ArrayId::MoeScatterBlockBases => self.aux_buffers.moe_scatter_block_bases.as_ref().expect("MoE scatter block bases buffer not initialized").clone(),
+            ArrayId::MoeBlockAlloc => self.aux_buffers.moe_block_alloc.as_ref().expect("MoE block alloc buffer not initialized").clone(),
+
+            ArrayId::AttentionSinks(layer_index) => {
+                self.shared_buffers.borrow().attention_sinks.as_ref()
+                    .expect("Attention sinks not initialized")[layer_index].clone()
+            },
         }
     }
 
@@ -607,6 +1025,14 @@ impl ForwardPassState {
         destination_array
             .borrow_mut()
             .copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
+    }
+
+    pub fn aux_buffers_suffix_length(&self) -> usize {
+        self.aux_buffers.suffix_length()
+    }
+
+    pub fn mtl_context(&self) -> &Rc<MTLContext> {
+        &self.context
     }
 }
 
@@ -672,6 +1098,28 @@ pub enum ArrayId {
     EmbeddingsScales,
     RopeCosines(RopeType),
     RopeSines(RopeType),
+
+    AttentionSinks(usize),
+
+    MoeTopkIds,
+    MoeTopkProbs,
+    MoeOffsets,
+    MoeSumK,
+    MoeBucketedTokenIds,
+    MoeBucketedProbs,
+    MoeXPerm,
+    MoeTok2Row,
+    MoeYPartial,
+    MoeHidden,
+    MoeTwoPassRowExpertMap,
+    MoeTileCounts,
+    MoeTileOffsets,
+    MoeTileMap,
+    MoeTotalTiles,
+    MoeDispatchArgs,
+    MoeScatterPartials,
+    MoeScatterBlockBases,
+    MoeBlockAlloc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

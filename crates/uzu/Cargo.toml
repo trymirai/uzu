@@ -1,6 +1,6 @@
 [package]
 name = "uzu"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 build = "build.rs"
 
@@ -33,3 +33,7 @@ serde_json5 = "0.2.1"
 [features]
 default = ["metal-shaders"]
 metal-shaders = []
+
+[[test]]
+name = "moe"
+path = "tests/moe/mod.rs"

@@ -19,12 +19,15 @@ pub struct ModelShape {
 
 impl ModelShape {
     pub fn from_decoder_config(decoder_config: &DecoderConfig) -> Self {
-        let activation_type: DataType = decoder_config
-            .layer_config
-            .mlp_config
-            .linear_config
-            .activation_precision()
-            .into();
+        let activation_type: DataType =
+            match &decoder_config.layer_config.mlp_config {
+                crate::config::MLPConfig::Dense(d) => {
+                    d.linear_config.activation_precision().into()
+                },
+                crate::config::MLPConfig::MixtureOfExperts(m) => {
+                    m.expert_config.linear_config.activation_precision().into()
+                },
+            };
         let num_layers = decoder_config.num_layers;
         Self {
             activation_type,
@@ -100,7 +103,7 @@ impl ModelShape {
     }
 
     pub fn embeddings_output_shape(&self) -> [usize; 2] {
-        [self.model_dim, self.vocabulary_size]
+        [self.vocabulary_size, self.model_dim]
     }
 
     pub fn quantized_embeddings_weights_shape(&self) -> [usize; 2] {
@@ -169,5 +172,119 @@ impl ModelShape {
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
         [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
+    }
+
+    pub fn moe_router_logits_shape(
+        &self,
+        suffix_length: usize,
+        num_experts: usize,
+    ) -> [usize; 2] {
+        [suffix_length, num_experts]
+    }
+
+    pub fn moe_topk_ids_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 2] {
+        [suffix_length, k]
+    }
+
+    pub fn moe_topk_probs_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 2] {
+        [suffix_length, k]
+    }
+
+    pub fn moe_counts_shape(
+        &self,
+        num_experts: usize,
+    ) -> [usize; 1] {
+        [num_experts]
+    }
+
+    pub fn moe_offsets_shape(
+        &self,
+        num_experts: usize,
+    ) -> [usize; 1] {
+        [num_experts + 1]
+    }
+
+    pub fn moe_sumk_shape(&self) -> [usize; 1] {
+        [1]
+    }
+
+    pub fn moe_bucketed_token_ids_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        [max_routed_tokens]
+    }
+
+    pub fn moe_bucketed_probs_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        [max_routed_tokens]
+    }
+
+    pub fn moe_tok2row_shape(
+        &self,
+        suffix_length: usize,
+        k: usize,
+    ) -> [usize; 1] {
+        [suffix_length * k]
+    }
+
+    pub fn moe_y_partial_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 2] {
+        [max_routed_tokens, self.model_dim]
+    }
+
+    pub fn moe_hidden_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 2] {
+        [max_routed_tokens, self.hidden_dim]
+    }
+
+    pub fn moe_x_perm_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 2] {
+        [max_routed_tokens, self.model_dim]
+    }
+
+    pub fn moe_tile_map_shape(
+        &self,
+        max_routed_tokens: usize,
+    ) -> [usize; 1] {
+        // For tiled GEMM: max_routed_tokens * 3
+        // For two-pass decode indirect dispatch: max_routed_tokens * h_blocks * 3
+        // where h_blocks = (d_ff + 3) / 4
+        // We size for the larger (two-pass decode)
+        let d_ff = self.hidden_dim;
+        if d_ff > 0 {
+            let h_blocks = (d_ff + 3) / 4;
+            [max_routed_tokens * h_blocks * 3]
+        } else {
+            [max_routed_tokens * 3]
+        }
+    }
+
+    pub fn moe_dispatch_args_shape(&self) -> [usize; 1] {
+        [3]
+    }
+
+    pub fn moe_total_tiles_shape(&self) -> [usize; 1] {
+        // layout: [total_tiles, total_jobs,
+        //          nan_fc1_count, nan_fc2_count,
+        //          nan_fc1_bits, nan_fc2_bits,
+        //          nan_gate_bits, nan_up_bits]
+        [8]
     }
 }

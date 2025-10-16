@@ -100,6 +100,7 @@ impl GeneratorContext {
 
         let scratch_buffers = ForwardPassBuffers::new(
             &mtl_context,
+            &decoder_config,
             &model_shape,
             max_prefix_length,
             max_suffix_length,

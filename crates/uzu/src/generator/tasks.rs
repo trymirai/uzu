@@ -43,6 +43,7 @@ impl GeneratorRunTask {
     ) -> ForwardPassState {
         let state = ForwardPassState::new(
             context.mtl_context.clone(),
+            &context.model_config.decoder_config,
             &context.model_shape,
             &context.scratch_buffers,
             context.kv_cache.clone(),

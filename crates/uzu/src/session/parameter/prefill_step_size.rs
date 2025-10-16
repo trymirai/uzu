@@ -43,7 +43,7 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
                 if cfg!(target_os = "ios") {
                     64
                 } else {
-                    256
+                    64
                 }
             },
             PrefillStepSize::Maximal => maximal_value,

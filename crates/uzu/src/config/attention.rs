@@ -11,6 +11,8 @@ pub struct AttentionConfig {
     pub key_norm_config: Option<RMSNormConfig>,
 
     pub logit_soft_cap: Option<f32>,
+    #[serde(default)]
+    pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
 }
@@ -81,6 +83,7 @@ mod tests {
             query_norm_config: None,
             key_norm_config: None,
             logit_soft_cap: None,
+            has_sinks: false,
             has_qkv_biases: false,
             has_out_biases: false,
         };

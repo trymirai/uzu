@@ -400,6 +400,9 @@ impl Session {
         let prefill_stats = {
             let tokens_count = prefill_result.tokens.len();
             let tokens_per_second = tokens_count as f64 / prefill_duration;
+            let processed_tokens = tokens_count_input + tokens_count;
+            let processed_tokens_per_second =
+                processed_tokens as f64 / prefill_duration;
 
             let model_run_count = prefill_result.forwardpass_durations.len();
             let model_run_average_duration =
@@ -411,6 +414,7 @@ impl Session {
                 suffix_length: prefill_suffix_length as u64,
                 tokens_count: tokens_count as u64,
                 tokens_per_second,
+                processed_tokens_per_second,
                 model_run: RunStats {
                     count: model_run_count as u64,
                     average_duration: model_run_average_duration,
@@ -445,6 +449,7 @@ impl Session {
                 suffix_length: generate_suffix_length as u64,
                 tokens_count: tokens_count as u64,
                 tokens_per_second,
+                processed_tokens_per_second: tokens_per_second,
                 model_run: RunStats {
                     count: model_run_count as u64,
                     average_duration: model_run_average_duration,

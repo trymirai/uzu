@@ -12,6 +12,7 @@ pub struct StepStats {
     pub suffix_length: u64,
     pub tokens_count: u64,
     pub tokens_per_second: f64,
+    pub processed_tokens_per_second: f64,
     pub model_run: RunStats,
     pub run: Option<RunStats>,
 }
