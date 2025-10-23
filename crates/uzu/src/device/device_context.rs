@@ -221,7 +221,6 @@ pub trait DeviceContext {
                         });
                     }
                 }
-
                 self.copy_from_view(dst, ndarray::ArrayView1::from(&buf));
             },
             DataType::F32 => {

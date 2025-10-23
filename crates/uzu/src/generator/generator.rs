@@ -176,20 +176,11 @@ impl Generator {
         let last_step_rows = tokens_length
             - prefill_step_size * number_of_prefill_steps.saturating_sub(1);
         let sampling_row = last_step_rows.saturating_sub(1);
-        let sampling_row_is_valid = last_step_rows > 0;
 
-        let mut accepted_token_indices: Vec<usize> = Vec::new();
         let accepted_tokens =
             vec![sampled_tokens[sampled_tokens.len().saturating_sub(1)]];
 
-        if sampling_row_is_valid
-            && !accepted_token_indices.contains(&sampling_row)
-        {
-            accepted_token_indices.push(sampling_row);
-        }
-
-        accepted_token_indices.sort_unstable();
-        accepted_token_indices.dedup();
+        let accepted_token_indices = vec![sampling_row];
 
         self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
