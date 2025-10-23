@@ -162,15 +162,14 @@ impl KVCacheLayer {
         command_buffer: &MPSCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
-        assert!(
-            !accepted_suffix_indices.is_empty(),
-            "update_after_acceptance requires at least one accepted suffix index"
-        );
-
         match &mut self.state {
             KVCacheLayerState::Full {
                 prefix_len,
             } => {
+                if accepted_suffix_indices.is_empty() {
+                    return;
+                }
+
                 // Absolute positions of the *source* rows (still in suffix part).
                 let source_indices: Vec<usize> = accepted_suffix_indices
                     .iter()
@@ -195,16 +194,28 @@ impl KVCacheLayer {
                 ring_length,
                 window_length,
             } => {
-                let source_indices: Vec<usize> = accepted_suffix_indices
-                    .iter()
-                    .map(|i| i + *window_length)
-                    .collect();
+                let needs_update = *ring_length + accepted_suffix_indices.len()
+                    > *window_length
+                    || *ring_length >= *window_length;
 
-                // Consecutive slots starting at current ring_offset.
+                if !needs_update {
+                    return;
+                }
+
+                let suffix_indices: Vec<usize> =
+                    if accepted_suffix_indices.is_empty() {
+                        vec![0]
+                    } else {
+                        accepted_suffix_indices.to_vec()
+                    };
+
+                let source_indices: Vec<usize> =
+                    suffix_indices.iter().map(|i| i + *window_length).collect();
+
                 let mut destination_indices =
-                    Vec::with_capacity(accepted_suffix_indices.len());
+                    Vec::with_capacity(suffix_indices.len());
 
-                for i in 0..accepted_suffix_indices.len() {
+                for i in 0..suffix_indices.len() {
                     destination_indices.push(
                         (*ring_length + *ring_offset + i) % *window_length,
                     );

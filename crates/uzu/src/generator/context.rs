@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
-use metal::SharedEvent;
+use metal::Event;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
@@ -25,7 +25,7 @@ use crate::{
 pub struct GeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
-    pub kv_update_event: SharedEvent,
+    pub kv_update_event: Event,
     pub kv_update_signal: u64,
 
     pub kv_cache: Rc<RefCell<KVCache>>,
@@ -141,7 +141,7 @@ impl GeneratorContext {
         )
         .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let kv_update_event = mtl_context.device.new_shared_event();
+        let kv_update_event = mtl_context.device.new_event();
         let kv_update_signal = 1;
 
         let context = Self {

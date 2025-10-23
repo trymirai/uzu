@@ -271,10 +271,6 @@ impl Generator {
             }
         }
 
-        accepted_token_indices = accepted_token_indices
-            .is_empty()
-            .then(|| vec![0])
-            .unwrap_or(accepted_token_indices);
         self.update_kv_cache(&mut state, &accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
