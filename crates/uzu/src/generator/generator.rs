@@ -343,17 +343,11 @@ impl Generator {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
 
+            let mut prenecoded = false;
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                //Nothing
+                prenecoded = true;
             } else {
                 self.context.reset_command_buffer();
-
-                _ = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, true, false),
-                    encoded_task_key.clone(),
-                );
             }
 
             let root_command_buffer =
@@ -363,6 +357,15 @@ impl Generator {
                 root_command_buffer.encode_wait_for_event(
                     &self.context.kv_update_event,
                     signal_value,
+                );
+            }
+
+            if !prenecoded {
+                _ = task.build_encoded_task(
+                    &self.context,
+                    &mut state,
+                    &EncodingParameters::new(warmup, false, false),
+                    encoded_task_key.clone(),
                 );
             }
 
@@ -450,7 +453,6 @@ impl Generator {
         self.pending_kv_update = Some(signal_value);
 
         command_buffer.commit();
-        command_buffer.root_command_buffer().wait_until_completed();
     }
 
     fn allow_pre_encode(&self) -> bool {
