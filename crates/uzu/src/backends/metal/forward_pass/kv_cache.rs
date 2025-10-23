@@ -194,14 +194,6 @@ impl KVCacheLayer {
                 ring_length,
                 window_length,
             } => {
-                let needs_update = *ring_length + accepted_suffix_indices.len()
-                    > *window_length
-                    || *ring_length >= *window_length;
-
-                if !needs_update {
-                    return;
-                }
-
                 let suffix_indices: Vec<usize> =
                     if accepted_suffix_indices.is_empty() {
                         vec![0]

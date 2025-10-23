@@ -121,7 +121,7 @@ impl Generator {
                 expected_number_of_new_tokens: tokens_for_step.len(),
             };
 
-            let (mut state, run_time) = self.run_model(
+            let (state, run_time) = self.run_model(
                 task,
                 false,
                 self.allow_pre_encode(),
@@ -149,7 +149,7 @@ impl Generator {
                     let accept_indices_for_step: Vec<usize> =
                         (0..accept_count).collect();
 
-                    self.update_kv_cache(&mut state, &accept_indices_for_step);
+                    self.update_kv_cache(&accept_indices_for_step);
 
                     let accepted_positions: Vec<usize> = (tokens_start_index
                         ..tokens_start_index + accept_count)
@@ -182,7 +182,7 @@ impl Generator {
 
         let accepted_token_indices = vec![sampling_row];
 
-        self.update_kv_cache(&mut final_state, &accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
 
@@ -262,7 +262,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut state, &accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -334,9 +334,9 @@ impl Generator {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
 
-            let mut prenecoded = false;
+            let mut preencoded = false;
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                prenecoded = true;
+                preencoded = true;
             } else {
                 self.context.reset_command_buffer();
             }
@@ -351,7 +351,7 @@ impl Generator {
                 );
             }
 
-            if !prenecoded {
+            if !preencoded {
                 _ = task.build_encoded_task(
                     &self.context,
                     &mut state,
@@ -420,7 +420,6 @@ impl Generator {
 
     fn update_kv_cache(
         &mut self,
-        _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
     ) {
         let command_buffer = CommandBuffer::from_command_queue(
@@ -444,6 +443,8 @@ impl Generator {
         self.pending_kv_update = Some(signal_value);
 
         command_buffer.commit();
+        // CRITICAL: We don't wait until completed, we want to use MTL event. something in MPS breaks event synchronization.
+        command_buffer.root_command_buffer().wait_until_completed();
     }
 
     fn allow_pre_encode(&self) -> bool {
