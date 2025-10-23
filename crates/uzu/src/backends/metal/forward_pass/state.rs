@@ -790,9 +790,7 @@ impl ForwardPassState {
         // --------------------
         // Attention Bias
         // --------------------
-        let prefix_length = kv_cache.borrow().max_prefix_length();
-        let attention_bias_shape =
-            [suffix_length, suffix_length + prefix_length];
+
         let act_dtype = model_shape.activation_data_type();
 
         let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
@@ -800,6 +798,11 @@ impl ForwardPassState {
                 .attention_window_size_to_bias
                 .iter()
                 .map(|(window_size, buffer)| {
+                    let prefix_length = window_size
+                        .unwrap_or(kv_cache.borrow().max_prefix_length());
+                    let attention_bias_shape =
+                        [suffix_length, suffix_length + prefix_length];
+
                     let array = unsafe {
                         MetalArray::new(
                             buffer.clone(),

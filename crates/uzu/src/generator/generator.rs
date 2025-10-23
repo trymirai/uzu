@@ -83,54 +83,23 @@ impl Generator {
         let tokens_length = tokens.len();
         let number_of_prefill_steps =
             (tokens_length as f32 / prefill_step_size as f32).ceil() as usize;
-        let total_prefill_tokens_count =
-            number_of_prefill_steps * prefill_step_size;
-        let unused_tokens_count = total_prefill_tokens_count - tokens_length;
-
-        let speculator = &self.decoding_config.speculator_config.speculator;
-        let speculated_suffix = TokenTrie::from_speculator(
-            &tokens,
-            false,
-            speculator.as_ref(),
-            &TrieCreationConfig::default(),
-            unused_tokens_count,
-        )
-        .linearize(0, unused_tokens_count);
-
-        let zero_padding_tokens: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-
-        let padded_tokens = [
-            &tokens[..],
-            &speculated_suffix.tokens[..],
-            &zero_padding_tokens[..],
-        ]
-        .concat();
-
-        let mut padded_positions: Vec<usize> =
-            (prefix_offset..prefix_offset + tokens_length).collect();
-        padded_positions.extend(
-            speculated_suffix
-                .indices
-                .iter()
-                .map(|index| index + prefix_offset + tokens_length),
-        );
-        let padding_count =
-            unused_tokens_count - speculated_suffix.tokens.len();
-        padded_positions
-            .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
+        let last_prefill_step = number_of_prefill_steps.saturating_sub(1);
 
         // Process each prefill step and update the KV cache.
         for step in 0..number_of_prefill_steps {
             let tokens_start_index = step * prefill_step_size;
-            let tokens_end_index = tokens_start_index + prefill_step_size;
-            let tokens_for_step =
-                &padded_tokens[tokens_start_index..tokens_end_index];
-            let positions_for_step =
-                &padded_positions[tokens_start_index..tokens_end_index];
+            let tokens_end_index = std::cmp::min(
+                tokens_start_index + prefill_step_size,
+                tokens_length,
+            );
+            let tokens_for_step = &tokens[tokens_start_index..tokens_end_index];
+            let positions_for_step: Vec<usize> = (tokens_start_index
+                ..tokens_end_index)
+                .map(|idx| idx + prefix_offset)
+                .collect();
 
             let is_first_prefill = step == 0;
             let should_capture =
@@ -148,8 +117,8 @@ impl Generator {
 
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
-                token_positions: positions_for_step.to_vec(),
-                expected_number_of_new_tokens: prefill_step_size,
+                token_positions: positions_for_step,
+                expected_number_of_new_tokens: tokens_for_step.len(),
             };
 
             let (mut state, run_time) = self.run_model(
@@ -163,37 +132,35 @@ impl Generator {
                 self.gpu_capture.stop_capture("prefill");
             }
 
-            // Register the *accepted* real tokens from this step (exclude the
-            // padding token at the very end of the overall prefill).
-            let step_end_token_index =
-                std::cmp::min(tokens_end_index, tokens_length);
+            let step_end_token_index = tokens_end_index;
             let tokens_processed_this_step =
                 step_end_token_index - tokens_start_index;
 
             if tokens_processed_this_step > 0 {
-                let mut positions_for_step: Vec<usize> = (tokens_start_index
-                    ..step_end_token_index)
-                    .map(|idx| idx + prefix_offset)
-                    .collect();
-                if step == number_of_prefill_steps - 1 {
-                    // Exclude the last token because it belongs to the suffix for sampling.
-                    positions_for_step.pop();
-                }
+                let real_rows = step_end_token_index - tokens_start_index;
+                let accept_count = if step == last_prefill_step {
+                    // Exclude the last real token of the final step so it remains available for sampling.
+                    real_rows.saturating_sub(1)
+                } else {
+                    real_rows
+                };
 
-                if !positions_for_step.is_empty() {
+                if accept_count > 0 {
+                    let accept_indices_for_step: Vec<usize> =
+                        (0..accept_count).collect();
+
+                    self.update_kv_cache(&mut state, &accept_indices_for_step);
+
+                    let accepted_positions: Vec<usize> = (tokens_start_index
+                        ..tokens_start_index + accept_count)
+                        .map(|idx| idx + prefix_offset)
+                        .collect();
                     self.context
                         .kv_cache
                         .borrow_mut()
-                        .register_accepted_tokens(&positions_for_step);
-                    let accept_indices_for_step: Vec<usize> =
-                        (0..positions_for_step.len()).collect();
-                    if !accept_indices_for_step.is_empty() {
-                        self.update_kv_cache(
-                            &mut state,
-                            &accept_indices_for_step,
-                        );
-                    }
-                    if let Some(&last_idx) = positions_for_step.last() {
+                        .register_accepted_tokens(&accepted_positions);
+
+                    if let Some(&last_idx) = accepted_positions.last() {
                         self.registered_prefix_len = last_idx + 1;
                     }
                 }
@@ -206,29 +173,23 @@ impl Generator {
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let mut accepted_token_indices: Vec<usize> = Vec::new();
-        let mut accepted_tokens: Vec<u64> = Vec::new();
-        let mut current_token_index: isize = -1;
-        loop {
-            let current_index_in_window =
-                ((current_token_index + tokens_length as isize)
-                    % prefill_step_size as isize) as usize;
-            let new_token = sampled_tokens[current_index_in_window];
-            accepted_tokens.push(new_token);
+        let last_step_rows = tokens_length
+            - prefill_step_size * number_of_prefill_steps.saturating_sub(1);
+        let sampling_row = last_step_rows.saturating_sub(1);
+        let sampling_row_is_valid = last_step_rows > 0;
 
-            if let Some(map) =
-                speculated_suffix.transition_map.get(&current_token_index)
-            {
-                if let Some(&next_token_index) = map.get(&new_token) {
-                    accepted_token_indices.push(next_token_index as usize);
-                    current_token_index = next_token_index;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+        let mut accepted_token_indices: Vec<usize> = Vec::new();
+        let accepted_tokens =
+            vec![sampled_tokens[sampled_tokens.len().saturating_sub(1)]];
+
+        if sampling_row_is_valid
+            && !accepted_token_indices.contains(&sampling_row)
+        {
+            accepted_token_indices.push(sampling_row);
         }
+
+        accepted_token_indices.sort_unstable();
+        accepted_token_indices.dedup();
 
         self.update_kv_cache(&mut final_state, &accepted_token_indices);
 
@@ -310,6 +271,10 @@ impl Generator {
             }
         }
 
+        accepted_token_indices = accepted_token_indices
+            .is_empty()
+            .then(|| vec![0])
+            .unwrap_or(accepted_token_indices);
         self.update_kv_cache(&mut state, &accepted_token_indices);
 
         self.tokens.extend(accepted_tokens.clone());
@@ -489,6 +454,7 @@ impl Generator {
         self.pending_kv_update = Some(signal_value);
 
         command_buffer.commit();
+        command_buffer.root_command_buffer().wait_until_completed();
     }
 
     fn allow_pre_encode(&self) -> bool {

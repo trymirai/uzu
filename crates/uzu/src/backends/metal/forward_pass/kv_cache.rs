@@ -43,19 +43,19 @@ pub struct KVCacheLayer {
 }
 
 impl KVCacheLayer {
-    pub fn effective_prefix_length(&self) -> usize {
+    pub fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
                 prefix_len,
             } => *prefix_len,
             KVCacheLayerState::Windowed {
-                ring_length,
+                window_length,
                 ..
-            } => *ring_length,
+            } => *window_length,
         }
     }
 
-    pub fn projected_effective_prefix_length(
+    pub fn projected_segment_prefix_length(
         &self,
         projection_step: usize,
     ) -> usize {
@@ -64,10 +64,9 @@ impl KVCacheLayer {
                 prefix_len,
             } => *prefix_len + projection_step,
             KVCacheLayerState::Windowed {
-                ring_length,
                 window_length,
                 ..
-            } => std::cmp::min(*ring_length + projection_step, *window_length),
+            } => *window_length,
         }
     }
 
@@ -95,12 +94,12 @@ impl KVCacheLayer {
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
-        let effective_prefix_len = self.effective_prefix_length();
+        let prefix_segment_length = self.prefix_segment_length();
 
         context.fill_attention_bias(
             dst,
             suffix_length,
-            effective_prefix_len,
+            prefix_segment_length,
             |row_index, column_index| {
                 if let Some(bias_fn) = external_bias_fn {
                     bias_fn(row_index, column_index)
@@ -127,23 +126,16 @@ impl KVCacheLayer {
             return true;
         }
 
-        let key_position = if column_index >= self.effective_prefix_length() {
-            suffix_token_positions
-                [column_index - self.effective_prefix_length()]
+        let key_position = if column_index >= self.prefix_segment_length() {
+            suffix_token_positions[column_index - self.prefix_segment_length()]
         } else {
             match &self.state {
                 KVCacheLayerState::Full {
                     ..
                 } => column_index,
                 KVCacheLayerState::Windowed {
-                    ring_offset,
-                    window_length,
                     ..
-                } => {
-                    let physical_index =
-                        (*ring_offset + column_index) % *window_length;
-                    self.prefix_token_positions[physical_index]
-                },
+                } => self.prefix_token_positions[column_index],
             }
         };
 
@@ -159,7 +151,7 @@ impl KVCacheLayer {
             KVCacheLayerState::Windowed {
                 window_length,
                 ..
-            } => query_position > key_position + window_length,
+            } => query_position >= key_position + window_length,
             _ => false,
         }
     }
@@ -170,29 +162,24 @@ impl KVCacheLayer {
         command_buffer: &MPSCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
-        let effective_prefix_length = self.effective_prefix_length();
-        let effective_indices: Vec<usize> = if accepted_suffix_indices
-            .is_empty()
-            && matches!(self.state, KVCacheLayerState::Windowed { .. })
-        {
-            vec![0] // This represents the single new token at suffix position 0
-        } else {
-            accepted_suffix_indices.to_vec()
-        };
+        assert!(
+            !accepted_suffix_indices.is_empty(),
+            "update_after_acceptance requires at least one accepted suffix index"
+        );
 
         match &mut self.state {
             KVCacheLayerState::Full {
                 prefix_len,
             } => {
                 // Absolute positions of the *source* rows (still in suffix part).
-                let source_indices: Vec<usize> = effective_indices
+                let source_indices: Vec<usize> = accepted_suffix_indices
                     .iter()
-                    .map(|i| i + effective_prefix_length)
+                    .map(|i| i + *prefix_len)
                     .collect();
 
                 // Absolute positions of the *destination* rows in the prefix.
                 let destination_indices: Vec<usize> = (*prefix_len
-                    ..*prefix_len + effective_indices.len())
+                    ..*prefix_len + accepted_suffix_indices.len())
                     .collect();
 
                 self.scatter_if_required(
@@ -208,21 +195,19 @@ impl KVCacheLayer {
                 ring_length,
                 window_length,
             } => {
-                if ring_length < window_length {
-                    return;
-                }
-
-                let source_indices: Vec<usize> = effective_indices
+                let source_indices: Vec<usize> = accepted_suffix_indices
                     .iter()
-                    .map(|i| i + effective_prefix_length)
+                    .map(|i| i + *window_length)
                     .collect();
 
                 // Consecutive slots starting at current ring_offset.
                 let mut destination_indices =
-                    Vec::with_capacity(effective_indices.len());
-                for i in 0..effective_indices.len() {
-                    destination_indices
-                        .push((*ring_offset + i) % *window_length);
+                    Vec::with_capacity(accepted_suffix_indices.len());
+
+                for i in 0..accepted_suffix_indices.len() {
+                    destination_indices.push(
+                        (*ring_length + *ring_offset + i) % *window_length,
+                    );
                 }
 
                 self.scatter_if_required(
@@ -282,7 +267,6 @@ impl KVCacheLayer {
             KVCacheLayerState::Full {
                 prefix_len,
             } => {
-                // For full layers, just extend the positions and update prefix_len
                 self.prefix_token_positions.extend_from_slice(token_positions);
                 *prefix_len = self.prefix_token_positions.len();
             },
@@ -293,15 +277,14 @@ impl KVCacheLayer {
             } => {
                 for &token_pos in token_positions {
                     if *ring_length < *window_length {
-                        // Still filling the window
-                        self.prefix_token_positions.push(token_pos);
+                        let dst =
+                            (*ring_offset + *ring_length) % *window_length;
+
+                        self.prefix_token_positions[dst] = token_pos;
                         *ring_length += 1;
                     } else {
-                        // Window is full, overwrite at ring_offset position
-                        let buffer_index = *ring_offset % *window_length;
-                        self.prefix_token_positions[buffer_index] = token_pos;
+                        self.prefix_token_positions[*ring_offset] = token_pos;
 
-                        // NOW increment ring_offset after updating the bookkeeping
                         *ring_offset = (*ring_offset + 1) % *window_length;
                     }
                 }
@@ -345,16 +328,24 @@ impl KVCache {
                 };
 
                 KVCacheLayer {
-                    state,
+                    state: state.clone(),
                     keys: RefCell::new(
                         context.array(&shape, model_shape.kv_cache_data_type()),
                     ),
                     values: RefCell::new(
                         context.array(&shape, model_shape.kv_cache_data_type()),
                     ),
-                    prefix_token_positions: Vec::with_capacity(
-                        max_prefix_length,
-                    ),
+                    prefix_token_positions: match &state {
+                        KVCacheLayerState::Full {
+                            ..
+                        } => Vec::with_capacity(max_prefix_length),
+                        KVCacheLayerState::Windowed {
+                            window_length,
+                            ..
+                        } => (0..*window_length)
+                            .map(|_| INVALID_POSITION)
+                            .collect(),
+                    },
                     max_suffix_length: max_suffix_length,
                 }
             })
@@ -384,7 +375,7 @@ impl KVCache {
                     *ring_length = 0;
                 },
             }
-            layer.prefix_token_positions.clear();
+            layer.prefix_token_positions.fill(INVALID_POSITION);
         }
     }
 
@@ -470,7 +461,7 @@ impl KVCache {
                 let mut new_keys = context.array(&new_shape, dtype);
                 let mut new_values = context.array(&new_shape, dtype);
 
-                let mut copy_rows = layer.effective_prefix_length();
+                let mut copy_rows = layer.prefix_segment_length();
                 if let Some(window_length) = layer.window_length() {
                     copy_rows = std::cmp::min(copy_rows, window_length);
                 }

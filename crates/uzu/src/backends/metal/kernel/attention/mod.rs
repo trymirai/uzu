@@ -104,7 +104,7 @@ pub struct KVCacheUpdateArguments<'a> {
     pub num_heads: usize,
     pub head_dim: usize,
     pub suffix_length: usize,
-    pub prefix_length: usize,
+    pub segment_prefix_length: usize,
     pub max_sequence_length: usize,
 }
 
@@ -523,7 +523,7 @@ impl AttentionKernel {
         compute_encoder.set_bytes(
             8,
             size_of::<i32>() as u64,
-            &(args.prefix_length as i32) as *const i32 as *const _,
+            &(args.segment_prefix_length as i32) as *const i32 as *const _,
         );
         compute_encoder.set_bytes(
             9,
@@ -615,12 +615,13 @@ impl EncodableWithState for AttentionKernelEncodable {
             )
         };
 
-        let prefix_length = state.kv_cache.borrow().data[self.layer_index]
-            .projected_effective_prefix_length(
+        let segment_prefix_length = state.kv_cache.borrow().data
+            [self.layer_index]
+            .projected_segment_prefix_length(
                 parameters.projection_step.unwrap_or(0),
             );
 
-        let sequence_length = prefix_length + suffix_length;
+        let sequence_length = segment_prefix_length + suffix_length;
         let window_length =
             state.kv_cache.borrow().data[self.layer_index].window_length();
 
@@ -718,7 +719,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                 num_heads,
                 head_dim,
                 suffix_length,
-                prefix_length,
+                segment_prefix_length,
                 max_sequence_length,
             },
         ) {
