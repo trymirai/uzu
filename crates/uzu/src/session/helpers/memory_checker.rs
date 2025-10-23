@@ -17,11 +17,18 @@ fn get_directory_size(path: &Path) -> std::io::Result<u64> {
 pub fn is_directory_fits_ram(path: &Path) -> bool {
     use sysinfo::System;
 
-    let model_size_bytes = get_directory_size(path).unwrap_or(0);
-
     let mut sys = System::new();
     sys.refresh_memory();
 
-    let allowed_bytes = sys.total_memory() * 100 / 100;
-    model_size_bytes <= allowed_bytes
+    let total_ram = sys.total_memory();
+    let used_ram = sys.used_memory();
+    let free_ram = total_ram - used_ram;
+
+    let total_swap = sys.total_swap();
+    let used_swap = sys.used_swap();
+    let free_swap = total_swap - used_swap;
+
+    let model_size_bytes = get_directory_size(path).unwrap_or(0);
+    let available_total = free_ram + free_swap;
+    model_size_bytes <= available_total
 }
