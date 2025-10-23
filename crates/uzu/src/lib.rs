@@ -10,5 +10,7 @@ pub mod utils;
 pub use utils::*;
 pub mod device;
 pub use device::*;
+pub mod dltensor;
+pub use dltensor::*;
 pub mod runners;
 pub use runners::*;
