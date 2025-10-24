@@ -202,22 +202,18 @@ impl Generator {
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let mut accepted_token_indices: Vec<usize> = Vec::new();
-        let mut accepted_tokens: Vec<u64> = Vec::new();
         let sampling_row = (tokens_length
             - prefill_step_size * number_of_prefill_steps.saturating_sub(1))
         .saturating_sub(1);
         let mut current_token_index: isize = -1;
+        let mut accepted_token_indices: Vec<usize> = vec![sampling_row];
+        let mut accepted_tokens: Vec<u64> = Vec::new();
         loop {
             let current_index_in_window =
                 ((current_token_index + tokens_length as isize)
                     % prefill_step_size as isize) as usize;
             let new_token = sampled_tokens[current_index_in_window];
             accepted_tokens.push(new_token);
-
-            if current_token_index == -1 {
-                accepted_token_indices.push(sampling_row);
-            }
 
             if let Some(map) =
                 speculated_suffix.transition_map.get(&current_token_index)
