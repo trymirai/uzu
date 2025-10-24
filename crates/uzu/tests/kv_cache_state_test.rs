@@ -227,14 +227,15 @@ fn run_scenario(
     let command_buffer =
         CommandBuffer::from_command_queue(&context.command_queue);
 
+    let root_command_buffer = command_buffer.root_command_buffer().to_owned();
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
-        &command_buffer,
+        &root_command_buffer,
         &kv_cache_update,
     );
 
     command_buffer.commit();
-    command_buffer.root_command_buffer().wait_until_completed();
+    root_command_buffer.wait_until_completed();
 
     layer.register_accepted_tokens(&scenario.accepted_token_positions);
 

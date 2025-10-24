@@ -31,7 +31,6 @@ pub struct Generator {
     pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
-    pending_kv_update: Option<u64>,
     gpu_capture: GpuCaptureManager,
 }
 
@@ -43,7 +42,6 @@ impl Generator {
         let gpu_capture = GpuCaptureManager::new();
 
         let context = GeneratorContext::new(model_path, &decoding_config)?;
-
         let prefill_step_size =
             decoding_config.prefill_step_size.resolve(&context.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
@@ -54,7 +52,6 @@ impl Generator {
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
-            pending_kv_update: None,
             gpu_capture,
         };
 
@@ -149,7 +146,7 @@ impl Generator {
                     let accept_indices_for_step: Vec<usize> =
                         (0..accept_count).collect();
 
-                    self.update_kv_cache(&accept_indices_for_step);
+                    self.update_kv_cache(&accept_indices_for_step, true);
 
                     let accepted_positions: Vec<usize> = (tokens_start_index
                         ..tokens_start_index + accept_count)
@@ -182,7 +179,7 @@ impl Generator {
 
         let accepted_token_indices = vec![sampling_row];
 
-        self.update_kv_cache(&accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices, false);
 
         self.tokens.extend(accepted_tokens.clone());
 
@@ -262,7 +259,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -284,7 +281,6 @@ impl Generator {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
-        self.pending_kv_update = None;
         self.gpu_capture.reset();
     }
 
@@ -334,31 +330,21 @@ impl Generator {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
 
-            let mut preencoded = false;
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                preencoded = true;
+                // Nothing
             } else {
                 self.context.reset_command_buffer();
+
+                _ = task.build_encoded_task(
+                    &self.context,
+                    &mut state,
+                    &EncodingParameters::new(warmup, true, false),
+                    encoded_task_key.clone(),
+                );
             }
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
-
-            if let Some(signal_value) = self.pending_kv_update.take() {
-                root_command_buffer.encode_wait_for_event(
-                    &self.context.kv_update_event,
-                    signal_value,
-                );
-            }
-
-            if !preencoded {
-                _ = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, false, false),
-                    encoded_task_key.clone(),
-                );
-            }
 
             if !warmup {
                 self.context.gpu_sampler.encode(
@@ -421,30 +407,28 @@ impl Generator {
     fn update_kv_cache(
         &mut self,
         accepted_token_indices: &[usize],
+        wait_until_completed: bool,
     ) {
         let command_buffer = CommandBuffer::from_command_queue(
             &self.context.mtl_context.command_queue,
         );
-        let root_command_buffer = command_buffer.command_buffer().to_owned();
+        let root_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
 
         {
             let mut kv_cache = self.context.kv_cache.borrow_mut();
             kv_cache.update_after_acceptance(
                 accepted_token_indices,
-                &command_buffer,
+                &root_command_buffer,
                 &self.context.kv_cache_update,
             );
         }
 
-        let signal_value = self.context.kv_update_signal;
-        root_command_buffer
-            .encode_signal_event(&self.context.kv_update_event, signal_value);
-        self.context.kv_update_signal += 1;
-        self.pending_kv_update = Some(signal_value);
-
         command_buffer.commit();
-        // CRITICAL: We don't wait until completed, we want to use MTL event. something in MPS breaks event synchronization.
-        command_buffer.root_command_buffer().wait_until_completed();
+
+        if wait_until_completed {
+            command_buffer.root_command_buffer().wait_until_completed();
+        }
     }
 
     fn allow_pre_encode(&self) -> bool {

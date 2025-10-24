@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBuffer as MTLCommandBuffer;
 
 use super::{
     super::{MTLContext, MetalArray},
@@ -159,7 +159,7 @@ impl KVCacheLayer {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &MTLCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
         match &mut self.state {
@@ -227,14 +227,13 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &MTLCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {
             return;
         }
 
-        let root_cb = command_buffer.root_command_buffer().to_owned();
         let key_buffer = {
             let mut k = self.keys.borrow_mut();
             unsafe { k.mtl_buffer() }.clone()
@@ -258,7 +257,7 @@ impl KVCacheLayer {
             &[layer_data],
             source_indices,
             destination_indices,
-            &root_cb,
+            &command_buffer,
         );
     }
 
@@ -424,7 +423,7 @@ impl KVCache {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &MTLCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
         for layer in self.data.iter_mut() {
