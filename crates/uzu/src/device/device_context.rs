@@ -188,18 +188,19 @@ pub trait DeviceContext {
         &self,
         dst: &mut Self::DeviceArray,
         suffix_length: usize,
-        prefix_length: usize,
+        prefix_segment_length: usize,
         mut should_be_neg_inf: F,
     ) where
         F: FnMut(usize, usize) -> bool,
     {
-        let total_elems = suffix_length * (suffix_length + prefix_length);
+        let total_elems =
+            suffix_length * (suffix_length + prefix_segment_length);
         match dst.data_type() {
             DataType::F16 => {
                 // TODO: Use lambda to avoid crimes
                 let mut buf = Vec::<f16>::with_capacity(total_elems);
                 for row in 0..suffix_length {
-                    for col in 0..suffix_length + prefix_length {
+                    for col in 0..suffix_length + prefix_segment_length {
                         buf.push(if should_be_neg_inf(row, col) {
                             f16::NEG_INFINITY
                         } else {
@@ -212,7 +213,7 @@ pub trait DeviceContext {
             DataType::BF16 => {
                 let mut buf = Vec::<bf16>::with_capacity(total_elems);
                 for row in 0..suffix_length {
-                    for col in 0..suffix_length + prefix_length {
+                    for col in 0..suffix_length + prefix_segment_length {
                         buf.push(if should_be_neg_inf(row, col) {
                             bf16::NEG_INFINITY
                         } else {
@@ -225,7 +226,7 @@ pub trait DeviceContext {
             DataType::F32 => {
                 let mut buf = Vec::<f32>::with_capacity(total_elems);
                 for row in 0..suffix_length {
-                    for col in 0..suffix_length + prefix_length {
+                    for col in 0..suffix_length + prefix_segment_length {
                         buf.push(if should_be_neg_inf(row, col) {
                             f32::NEG_INFINITY
                         } else {
@@ -238,7 +239,7 @@ pub trait DeviceContext {
             DataType::F64 => {
                 let mut buf = Vec::<f64>::with_capacity(total_elems);
                 for row in 0..suffix_length {
-                    for col in 0..suffix_length + prefix_length {
+                    for col in 0..suffix_length + prefix_segment_length {
                         buf.push(if should_be_neg_inf(row, col) {
                             f64::NEG_INFINITY
                         } else {

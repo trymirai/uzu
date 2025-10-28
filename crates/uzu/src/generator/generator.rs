@@ -31,7 +31,6 @@ pub struct Generator {
     pub context: GeneratorContext,
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
-    pending_kv_update: Option<u64>,
     gpu_capture: GpuCaptureManager,
 }
 
@@ -43,7 +42,6 @@ impl Generator {
         let gpu_capture = GpuCaptureManager::new();
 
         let context = GeneratorContext::new(model_path, &decoding_config)?;
-
         let prefill_step_size =
             decoding_config.prefill_step_size.resolve(&context.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
@@ -54,7 +52,6 @@ impl Generator {
             context,
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
-            pending_kv_update: None,
             gpu_capture,
         };
 
@@ -152,7 +149,7 @@ impl Generator {
                 expected_number_of_new_tokens: prefill_step_size,
             };
 
-            let (mut state, run_time) = self.run_model(
+            let (state, run_time) = self.run_model(
                 task,
                 false,
                 self.allow_pre_encode(),
@@ -181,18 +178,17 @@ impl Generator {
                 }
 
                 if !positions_for_step.is_empty() {
+                    let accept_indices_for_step: Vec<usize> =
+                        (0..positions_for_step.len()).collect();
+                    if !accept_indices_for_step.is_empty() {
+                        self.update_kv_cache(&accept_indices_for_step, true);
+                    }
+
                     self.context
                         .kv_cache
                         .borrow_mut()
                         .register_accepted_tokens(&positions_for_step);
-                    let accept_indices_for_step: Vec<usize> =
-                        (0..positions_for_step.len()).collect();
-                    if !accept_indices_for_step.is_empty() {
-                        self.update_kv_cache(
-                            &mut state,
-                            &accept_indices_for_step,
-                        );
-                    }
+
                     if let Some(&last_idx) = positions_for_step.last() {
                         self.registered_prefix_len = last_idx + 1;
                     }
@@ -206,9 +202,12 @@ impl Generator {
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let mut accepted_token_indices: Vec<usize> = Vec::new();
-        let mut accepted_tokens: Vec<u64> = Vec::new();
+        let sampling_row = (tokens_length
+            - prefill_step_size * number_of_prefill_steps.saturating_sub(1))
+        .saturating_sub(1);
         let mut current_token_index: isize = -1;
+        let mut accepted_token_indices: Vec<usize> = vec![sampling_row];
+        let mut accepted_tokens: Vec<u64> = Vec::new();
         loop {
             let current_index_in_window =
                 ((current_token_index + tokens_length as isize)
@@ -230,7 +229,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut final_state, &accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices, false);
 
         self.tokens.extend(accepted_tokens.clone());
 
@@ -310,7 +309,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&mut state, &accepted_token_indices);
+        self.update_kv_cache(&accepted_token_indices, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -332,7 +331,6 @@ impl Generator {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
-        self.pending_kv_update = None;
         self.gpu_capture.reset();
     }
 
@@ -383,7 +381,7 @@ impl Generator {
             }
 
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                //Nothing
+                // Nothing
             } else {
                 self.context.reset_command_buffer();
 
@@ -397,13 +395,6 @@ impl Generator {
 
             let root_command_buffer =
                 self.context.command_buffer.root_command_buffer().to_owned();
-
-            if let Some(signal_value) = self.pending_kv_update.take() {
-                root_command_buffer.encode_wait_for_event(
-                    &self.context.kv_update_event,
-                    signal_value,
-                );
-            }
 
             if !warmup {
                 self.context.gpu_sampler.encode(
@@ -465,30 +456,29 @@ impl Generator {
 
     fn update_kv_cache(
         &mut self,
-        _state: &mut ForwardPassState,
         accepted_token_indices: &[usize],
+        wait_until_completed: bool,
     ) {
         let command_buffer = CommandBuffer::from_command_queue(
             &self.context.mtl_context.command_queue,
         );
-        let root_command_buffer = command_buffer.command_buffer().to_owned();
+        let root_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
 
         {
             let mut kv_cache = self.context.kv_cache.borrow_mut();
             kv_cache.update_after_acceptance(
                 accepted_token_indices,
-                &command_buffer,
+                &root_command_buffer,
                 &self.context.kv_cache_update,
             );
         }
 
-        let signal_value = self.context.kv_update_signal;
-        root_command_buffer
-            .encode_signal_event(&self.context.kv_update_event, signal_value);
-        self.context.kv_update_signal += 1;
-        self.pending_kv_update = Some(signal_value);
-
         command_buffer.commit();
+
+        if wait_until_completed {
+            command_buffer.root_command_buffer().wait_until_completed();
+        }
     }
 
     fn allow_pre_encode(&self) -> bool {

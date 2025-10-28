@@ -652,7 +652,7 @@ void update_kv_cache(
     const constant int& num_heads,
     const constant int& head_dim,
     const constant int& suffix_length,
-    const constant int& prefix_length,
+    const constant int& prefix_segment_length,
     const constant int& max_sequence_length,
     uint3 position                       // x: group_idx, y: token_idx, z: dim_idx
 ) {
@@ -669,7 +669,7 @@ void update_kv_cache(
     TensorView3D<T> valueCacheTensorView = TensorView3D<T>(value_cache, num_groups, max_sequence_length, head_dim);
     
     // Copy rotated key to cache
-    keyCacheTensorView(groupIndex, prefix_length + tokenIndex, dimIndex) = rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
+    keyCacheTensorView(groupIndex, prefix_segment_length + tokenIndex, dimIndex) = rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
     
     // Update value cache (only first thread in each token processes values to avoid redundant work)
     if (dimIndex == 0) {
@@ -683,7 +683,7 @@ void update_kv_cache(
         // Values start at offset: total_query_dim + total_key_value_dim
         for (uint d = 0; d < head_dim; d++) {
             const uint valueOffset = totalQueryDim + totalKeyValueDim + groupIndex * head_dim + d;
-            valueCacheTensorView(groupIndex, prefix_length + tokenIndex, d) = qkvTensorView(tokenIndex, valueOffset);
+            valueCacheTensorView(groupIndex, prefix_segment_length + tokenIndex, d) = qkvTensorView(tokenIndex, valueOffset);
         }
     }
 }
@@ -697,13 +697,13 @@ void update_kv_cache(
  const constant int& num_heads   [[ buffer(5) ]],                 \
  const constant int& head_dim    [[ buffer(6) ]],                 \
  const constant int& suffix_length [[ buffer(7) ]],               \
- const constant int& prefix_length [[ buffer(8) ]],               \
+ const constant int& prefix_segment_length [[ buffer(8) ]],       \
  const constant int& max_sequence_length [[ buffer(9) ]],         \
  uint3 position                  [[ thread_position_in_grid ]])   \
 
 #define innerArguments                                             \
 (rotated_keys, qkv, key_cache, value_cache, num_groups, num_heads, \
- head_dim, suffix_length, prefix_length, max_sequence_length, position) \
+ head_dim, suffix_length, prefix_segment_length, max_sequence_length, position) \
 
 generateKernels(update_kv_cache)
 

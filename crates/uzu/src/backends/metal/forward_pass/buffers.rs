@@ -2,10 +2,7 @@ use std::collections::HashMap;
 
 use metal::Buffer as MTLBuffer;
 
-use super::{
-    super::MTLContext,
-    model_shape::ModelShape,
-};
+use super::{super::MTLContext, model_shape::ModelShape};
 use crate::{
     DataType,
     array::array_size_in_bytes,

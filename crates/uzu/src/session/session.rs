@@ -341,7 +341,7 @@ impl Session {
             for (ctx_layer, gen_layer) in
                 ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
             {
-                let copy_rows = ctx_layer.effective_prefix_length();
+                let copy_rows = ctx_layer.prefix_segment_length();
                 if copy_rows > 0 {
                     gen_layer.keys.borrow_mut().copy_slice(
                         &ctx_layer.keys.borrow(),
