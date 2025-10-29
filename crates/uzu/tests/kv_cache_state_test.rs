@@ -22,6 +22,7 @@ struct Scenario {
     accepted_suffix_indices: Vec<usize>,
     accepted_token_positions: Vec<usize>,
     suffix_token_positions: Vec<usize>,
+    suffix_start: Option<usize>,
     expected_prefix_positions: Vec<usize>,
     expected_mask: Vec<Vec<bool>>,
     expected_ring_offset: Option<usize>,
@@ -230,6 +231,7 @@ fn run_scenario(
     let root_command_buffer = command_buffer.root_command_buffer().to_owned();
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
+        scenario.suffix_start,
         &root_command_buffer,
         &kv_cache_update,
     );
@@ -327,6 +329,7 @@ fn kv_cache_state_and_mask_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             accepted_token_positions: vec![7, 8, 9],
             suffix_token_positions: vec![7, 8, 9],
+            suffix_start: None,
             expected_prefix_positions: vec![6, 7, 8, 9, 4, 5],
             expected_mask: vec![
                 vec![
@@ -364,6 +367,7 @@ fn kv_cache_state_and_mask_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             accepted_token_positions: vec![4, 5, 6],
             suffix_token_positions: vec![4, 5, 6],
+            suffix_start: None,
             expected_prefix_positions: vec![6, 1, 2, 3, 4, 5],
             expected_mask: vec![
                 vec![false, false, false, false, true, true, false, true, true],
@@ -392,6 +396,7 @@ fn kv_cache_state_and_mask_scenarios() {
             accepted_suffix_indices: vec![0],
             accepted_token_positions: vec![16],
             suffix_token_positions: vec![16],
+            suffix_start: None,
             expected_prefix_positions: vec![11, 12, 13, 14, 15, 16],
             expected_mask: vec![vec![
                 false, false, false, false, false, true, false,
@@ -412,6 +417,7 @@ fn kv_cache_state_and_mask_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             accepted_token_positions: vec![4, 5, 6],
             suffix_token_positions: vec![4, 5, 6],
+            suffix_start: None,
             expected_prefix_positions: vec![0, 1, 2, 3, 4, 5, 6],
             expected_mask: vec![
                 vec![false, false, false, false, false, true, true],
