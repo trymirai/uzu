@@ -368,6 +368,7 @@ impl KVCache {
                     prefix_len,
                 } => {
                     *prefix_len = 0;
+                    layer.prefix_token_positions.clear();
                 },
                 KVCacheLayerState::Windowed {
                     ring_offset,
@@ -376,9 +377,9 @@ impl KVCache {
                 } => {
                     *ring_offset = 0;
                     *ring_length = 0;
+                    layer.prefix_token_positions.fill(INVALID_POSITION);
                 },
             }
-            layer.prefix_token_positions.fill(INVALID_POSITION);
         }
     }
 
