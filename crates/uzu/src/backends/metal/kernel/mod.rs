@@ -9,6 +9,7 @@ pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
+pub mod ssm;
 mod tensor_add_bias;
 mod tensor_add_swap;
 mod tensor_copy;
@@ -31,6 +32,12 @@ pub use rms_norm::{
 };
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
+pub use ssm::{
+    Conv1dForwardArguments, Conv1dForwardKernel, Conv1dSwishForwardArguments,
+    Conv1dSwishForwardKernel, Conv1dUpdateArguments, Conv1dUpdateKernel,
+    SSDUpdateArguments, SSDUpdateKernel, SSDUpdateNoZArguments,
+    SSDUpdateNoZKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+};
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
