@@ -159,6 +159,7 @@ impl KVCacheLayer {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
+        suffix_start: Option<usize>,
         command_buffer: &MTLCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
@@ -170,13 +171,13 @@ impl KVCacheLayer {
                     return;
                 }
 
-                // Absolute positions of the *source* rows (still in suffix part).
+                // Absolute positions of the *source* rows.
                 let source_indices: Vec<usize> = accepted_suffix_indices
                     .iter()
-                    .map(|i| i + *prefix_len)
+                    .map(|i| i + suffix_start.unwrap_or(*prefix_len))
                     .collect();
 
-                // Absolute positions of the *destination* rows in the prefix.
+                // Absolute positions of the *destination* rows.
                 let destination_indices: Vec<usize> = (*prefix_len
                     ..*prefix_len + accepted_suffix_indices.len())
                     .collect();
@@ -423,12 +424,14 @@ impl KVCache {
     pub fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
+        suffix_start: Option<usize>,
         command_buffer: &MTLCommandBuffer,
         kv_cache_update: &KVCacheUpdate,
     ) {
         for layer in self.data.iter_mut() {
             layer.update_after_acceptance(
                 accepted_suffix_indices,
+                suffix_start,
                 command_buffer,
                 kv_cache_update,
             );

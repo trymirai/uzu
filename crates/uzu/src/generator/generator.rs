@@ -181,7 +181,11 @@ impl Generator {
                     let accept_indices_for_step: Vec<usize> =
                         (0..positions_for_step.len()).collect();
                     if !accept_indices_for_step.is_empty() {
-                        self.update_kv_cache(&accept_indices_for_step, true);
+                        self.update_kv_cache(
+                            &accept_indices_for_step,
+                            None,
+                            true,
+                        );
                     }
 
                     self.context
@@ -202,9 +206,10 @@ impl Generator {
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let sampling_row = (tokens_length
-            - prefill_step_size * number_of_prefill_steps.saturating_sub(1))
-        .saturating_sub(1);
+        let last_suffix_start =
+            prefill_step_size * (number_of_prefill_steps - 1);
+
+        let sampling_row = (tokens_length - last_suffix_start) - 1;
         let mut current_token_index: isize = -1;
         let mut accepted_token_indices: Vec<usize> = vec![sampling_row];
         let mut accepted_tokens: Vec<u64> = Vec::new();
@@ -229,7 +234,11 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&accepted_token_indices, false);
+        self.update_kv_cache(
+            &accepted_token_indices,
+            Some(last_suffix_start),
+            false,
+        );
 
         self.tokens.extend(accepted_tokens.clone());
 
@@ -309,7 +318,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&accepted_token_indices, false);
+        self.update_kv_cache(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -457,6 +466,7 @@ impl Generator {
     fn update_kv_cache(
         &mut self,
         accepted_token_indices: &[usize],
+        suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
         let command_buffer = CommandBuffer::from_command_queue(
@@ -469,6 +479,7 @@ impl Generator {
             let mut kv_cache = self.context.kv_cache.borrow_mut();
             kv_cache.update_after_acceptance(
                 accepted_token_indices,
+                suffix_start,
                 &root_command_buffer,
                 &self.context.kv_cache_update,
             );
