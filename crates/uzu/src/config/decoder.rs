@@ -6,6 +6,18 @@ use super::{
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DecoderLayerType {
+    Transformer,
+    #[serde(rename = "ssm")]
+    StateSpace {
+        conv_dim: usize,
+        kernel_size: usize,
+        state_dim: usize,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DecoderConfig {
     pub embedding_config: EmbeddingConfig,
     pub global_rope_config: RoPEConfig,
@@ -22,6 +34,7 @@ pub struct DecoderConfig {
     pub attention_scale: Option<f32>,
     pub num_layers: usize,
     pub sliding_window_sizes: Option<Box<[Option<usize>]>>,
+    pub layer_types: Option<Box<[DecoderLayerType]>>,
     pub context_length: usize,
 }
 
@@ -251,6 +264,7 @@ mod tests {
             attention_scale: None,
             num_layers: 16,
             sliding_window_sizes: None,
+            layer_types: None,
             context_length: 8192,
         };
 

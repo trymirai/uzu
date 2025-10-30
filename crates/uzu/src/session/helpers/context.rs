@@ -1,23 +1,23 @@
 use crate::{
-    backends::metal::forward_pass::kv_cache::KVCache,
+    backends::metal::forward_pass::cache_layers::CacheLayers,
     session::config::DecodingConfig,
 };
 
 pub struct Context {
     pub tokens: Vec<u64>,
-    pub kv_cache: KVCache,
+    pub cache_layers: CacheLayers,
     pub decoding_config: DecodingConfig,
 }
 
 impl Context {
     pub fn new(
         tokens: Vec<u64>,
-        kv_cache: KVCache,
+        cache_layers: CacheLayers,
         decoding_config: DecodingConfig,
     ) -> Self {
         Self {
             tokens,
-            kv_cache,
+            cache_layers,
             decoding_config,
         }
     }

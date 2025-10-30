@@ -12,8 +12,8 @@ use num_traits::NumCast;
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{
-        ForwardPassState, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
-        MetalArray,
+        CacheLayers, ForwardPassState, KVCacheUpdate, KernelDataType,
+        MTLContext, MetalArray,
         forward_pass::{
             ArrayId, ForwardPassBuffers,
             encodable_with_state::{EncodableWithState, EncodingParameters},
@@ -247,7 +247,7 @@ impl Tracer {
             desired_suffix_length,
         );
 
-        context.kv_cache = Rc::new(RefCell::new(KVCache::new(
+        context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             &context.mtl_context,
             &context.model_shape,
             resolved_prefix_length,
@@ -306,7 +306,7 @@ impl Tracer {
             &self.generator_context.model_config.decoder_config,
             &self.generator_context.model_shape,
             &self.generator_context.scratch_buffers,
-            self.generator_context.kv_cache.clone(),
+            self.generator_context.cache_layers.clone(),
             self.generator_context.shared_buffers.clone(),
             &token_ids,
             &token_positions,
@@ -442,7 +442,19 @@ impl Tracer {
         );
         validate("logits", &traces.borrow().logits.borrow(), None);
 
-        for index in 0..state.kv_cache.borrow().data.len() {
+        let transformer_layers: Vec<usize> = {
+            let cache = state.cache_layers.borrow();
+            cache
+                .data
+                .iter()
+                .enumerate()
+                .filter_map(|(index, layer)| {
+                    layer.as_transformer().map(|_| index)
+                })
+                .collect()
+        };
+
+        for index in transformer_layers {
             let arrays =
                 state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
 

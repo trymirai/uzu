@@ -6,8 +6,8 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        DecoderExecutables, KVCache, KVCacheUpdate, KernelDataType, MTLContext,
-        ModelShape,
+        CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
+        MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
@@ -25,7 +25,7 @@ pub struct GeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ForwardPassBuffers,
 
@@ -110,7 +110,7 @@ impl GeneratorContext {
             compilation_config.clone(),
         );
 
-        let kv_cache = Rc::new(RefCell::new(KVCache::new(
+        let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             &mtl_context,
             &model_shape,
             max_prefix_length,
@@ -141,7 +141,7 @@ impl GeneratorContext {
         let context = Self {
             mtl_context,
             command_buffer,
-            kv_cache,
+            cache_layers,
             shared_buffers,
             scratch_buffers,
             model_config: model_metadata.model_config.clone(),

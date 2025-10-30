@@ -1,29 +1,26 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::cell::RefCell;
 
 use metal::CommandBuffer as MTLCommandBuffer;
 
-use super::{
-    super::{MTLContext, MetalArray},
-    model_shape::ModelShape,
-};
+use super::super::{MTLContext, MetalArray};
 use crate::{
     DeviceContext,
     array::Array,
     backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
 };
 
-type ArrayCell = RefCell<MetalArray>;
+pub type ArrayCell = RefCell<MetalArray>;
 
 #[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
     Full {
-        // Prefix length so far (number of tokens in the prefix)
+        /// Prefix length so far (number of tokens in the prefix)
         prefix_len: usize,
     },
     Windowed {
-        // Start of the ring buffer (oldest element index)
+        /// Start of the ring buffer (oldest element index)
         ring_offset: usize,
-        // Current logical length of the window (<= window_length)
+        /// Current logical length of the window (<= window_length)
         ring_length: usize,
         window_length: usize,
     },
@@ -31,6 +28,7 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
+#[derive(Debug)]
 pub struct KVCacheLayer {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
@@ -292,217 +290,6 @@ impl KVCacheLayer {
                     }
                 }
             },
-        }
-    }
-}
-
-pub struct KVCache {
-    max_suffix_length: usize,
-    max_prefix_length: usize,
-    pub data: Box<[KVCacheLayer]>,
-}
-
-impl KVCache {
-    pub fn new(
-        context: &MTLContext,
-        model_shape: &ModelShape,
-        max_prefix_length: usize,
-        max_suffix_length: usize,
-    ) -> Self {
-        let total_context_length = max_prefix_length + max_suffix_length;
-        let data: Box<[KVCacheLayer]> = model_shape
-            .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
-            .enumerate()
-            .map(|(layer_idx, shape)| {
-                let window_length = model_shape.sliding_window_length_per_layer
-                    [layer_idx]
-                    .filter(|&window_size| window_size < total_context_length);
-
-                let state = if let Some(w) = window_length {
-                    KVCacheLayerState::Windowed {
-                        ring_offset: 0,
-                        ring_length: 0,
-                        window_length: w,
-                    }
-                } else {
-                    KVCacheLayerState::Full {
-                        prefix_len: 0,
-                    }
-                };
-
-                KVCacheLayer {
-                    state: state.clone(),
-                    keys: RefCell::new(
-                        context.array(&shape, model_shape.kv_cache_data_type()),
-                    ),
-                    values: RefCell::new(
-                        context.array(&shape, model_shape.kv_cache_data_type()),
-                    ),
-                    prefix_token_positions: match &state {
-                        KVCacheLayerState::Full {
-                            ..
-                        } => Vec::with_capacity(max_prefix_length),
-                        KVCacheLayerState::Windowed {
-                            window_length,
-                            ..
-                        } => (0..*window_length)
-                            .map(|_| INVALID_POSITION)
-                            .collect(),
-                    },
-                    max_suffix_length: max_suffix_length,
-                }
-            })
-            .collect();
-
-        Self {
-            max_suffix_length,
-            max_prefix_length,
-            data,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        for layer in self.data.iter_mut() {
-            match &mut layer.state {
-                KVCacheLayerState::Full {
-                    prefix_len,
-                } => {
-                    *prefix_len = 0;
-                    layer.prefix_token_positions.clear();
-                },
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    ..
-                } => {
-                    *ring_offset = 0;
-                    *ring_length = 0;
-                    layer.prefix_token_positions.fill(INVALID_POSITION);
-                },
-            }
-        }
-    }
-
-    pub fn max_suffix_length(&self) -> usize {
-        self.max_suffix_length
-    }
-
-    pub fn max_prefix_length(&self) -> usize {
-        self.max_prefix_length
-    }
-
-    pub fn fill_attention_bias(
-        &self,
-        dst: &mut HashMap<Option<usize>, MetalArray>,
-        suffix_token_positions: &[usize],
-        suffix_length: usize,
-        context: &MTLContext,
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-    ) {
-        for layer in self.data.iter() {
-            let key: Option<usize> = match &layer.state {
-                KVCacheLayerState::Full {
-                    ..
-                } => None,
-                KVCacheLayerState::Windowed {
-                    window_length,
-                    ..
-                } => Some(*window_length),
-            };
-
-            if let Some(array) = dst.get_mut(&key) {
-                layer.fill_attention_bias(
-                    array,
-                    suffix_token_positions,
-                    suffix_length,
-                    context,
-                    external_bias_fn,
-                );
-            }
-        }
-    }
-
-    pub fn update_after_acceptance(
-        &mut self,
-        accepted_suffix_indices: &[usize],
-        suffix_start: Option<usize>,
-        command_buffer: &MTLCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
-        for layer in self.data.iter_mut() {
-            layer.update_after_acceptance(
-                accepted_suffix_indices,
-                suffix_start,
-                command_buffer,
-                kv_cache_update,
-            );
-        }
-    }
-
-    pub fn register_accepted_tokens(
-        &mut self,
-        token_positions: &[usize],
-    ) {
-        for layer in self.data.iter_mut() {
-            layer.register_accepted_tokens(token_positions);
-        }
-    }
-
-    pub fn clone_with_prefix_len(
-        &self,
-        context: &MTLContext,
-        prefix_len: usize,
-    ) -> Self {
-        let new_total_len = prefix_len + self.max_suffix_length;
-        let data: Box<[KVCacheLayer]> = self
-            .data
-            .iter()
-            .map(|layer| {
-                let shape = layer.keys.borrow().shape().to_vec();
-                let num_groups = shape[0];
-                let head_dim = shape[2];
-                let dtype = layer.keys.borrow().data_type();
-                let new_shape = [num_groups, new_total_len, head_dim];
-
-                let mut new_keys = context.array(&new_shape, dtype);
-                let mut new_values = context.array(&new_shape, dtype);
-
-                let mut copy_rows = layer.prefix_segment_length();
-                if let Some(window_length) = layer.window_length() {
-                    copy_rows = std::cmp::min(copy_rows, window_length);
-                }
-
-                if copy_rows > 0 {
-                    new_keys.copy_slice(
-                        &layer.keys.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                    new_values.copy_slice(
-                        &layer.values.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                }
-
-                KVCacheLayer {
-                    state: layer.state.clone(),
-                    keys: RefCell::new(new_keys),
-                    values: RefCell::new(new_values),
-                    prefix_token_positions: layer
-                        .prefix_token_positions
-                        .clone(),
-                    max_suffix_length: layer.max_suffix_length,
-                }
-            })
-            .collect();
-
-        Self {
-            max_suffix_length: self.max_suffix_length,
-            max_prefix_length: prefix_len,
-            data,
         }
     }
 }

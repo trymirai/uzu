@@ -1,4 +1,7 @@
-use crate::{DataType, config::DecoderConfig};
+use crate::{
+    DataType,
+    config::{DecoderConfig, DecoderLayerType},
+};
 
 #[derive(Debug)]
 pub struct ModelShape {
@@ -15,6 +18,7 @@ pub struct ModelShape {
     head_dim: usize,
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
+    pub layer_types: Box<[DecoderLayerType]>,
 }
 
 impl ModelShape {
@@ -29,6 +33,20 @@ impl ModelShape {
                 },
             };
         let num_layers = decoder_config.num_layers;
+        let layer_types: Box<[DecoderLayerType]> = if let Some(layer_types) =
+            &decoder_config.layer_types
+        {
+            assert_eq!(
+                layer_types.len(),
+                num_layers,
+                "layer_types entry count ({}) must equal num_layers ({})",
+                layer_types.len(),
+                num_layers
+            );
+            layer_types.clone()
+        } else {
+            vec![DecoderLayerType::Transformer; num_layers].into_boxed_slice()
+        };
         Self {
             activation_type,
             kv_cache_type: activation_type,
@@ -44,6 +62,7 @@ impl ModelShape {
                 .sliding_window_sizes
                 .clone()
                 .unwrap_or(vec![None; num_layers].into_boxed_slice()),
+            layer_types,
         }
     }
 
@@ -61,6 +80,17 @@ impl ModelShape {
 
     pub fn head_dim(&self) -> usize {
         self.head_dim
+    }
+
+    pub fn layer_type(
+        &self,
+        layer_index: usize,
+    ) -> &DecoderLayerType {
+        &self.layer_types[layer_index]
+    }
+
+    pub fn layer_types(&self) -> &[DecoderLayerType] {
+        &self.layer_types
     }
 
     pub fn main_shape(

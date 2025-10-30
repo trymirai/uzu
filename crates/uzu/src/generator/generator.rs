@@ -11,9 +11,8 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ForwardPassState,
+        ForwardPassState, INVALID_POSITION,
         encodable_with_state::{EncodableWithState, EncodingParameters},
-        kv_cache::INVALID_POSITION,
     },
     linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
@@ -181,7 +180,7 @@ impl Generator {
                     let accept_indices_for_step: Vec<usize> =
                         (0..positions_for_step.len()).collect();
                     if !accept_indices_for_step.is_empty() {
-                        self.update_kv_cache(
+                        self.update_cache_layers(
                             &accept_indices_for_step,
                             None,
                             true,
@@ -189,7 +188,7 @@ impl Generator {
                     }
 
                     self.context
-                        .kv_cache
+                        .cache_layers
                         .borrow_mut()
                         .register_accepted_tokens(&positions_for_step);
 
@@ -234,7 +233,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
+        self.update_cache_layers(
             &accepted_token_indices,
             Some(last_suffix_start),
             false,
@@ -318,7 +317,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -336,7 +335,7 @@ impl Generator {
     }
 
     pub fn reset_state(&mut self) {
-        self.context.kv_cache.borrow_mut().clear();
+        self.context.cache_layers.borrow_mut().clear();
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
@@ -463,7 +462,7 @@ impl Generator {
         Ok(result)
     }
 
-    fn update_kv_cache(
+    fn update_cache_layers(
         &mut self,
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
@@ -476,8 +475,8 @@ impl Generator {
             command_buffer.root_command_buffer().to_owned();
 
         {
-            let mut kv_cache = self.context.kv_cache.borrow_mut();
-            kv_cache.update_after_acceptance(
+            let mut cache_layers = self.context.cache_layers.borrow_mut();
+            cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
                 &root_command_buffer,
@@ -512,7 +511,7 @@ impl Generator {
                 (self.registered_prefix_len..desired_prefix_len).collect();
             if !positions.is_empty() {
                 self.context
-                    .kv_cache
+                    .cache_layers
                     .borrow_mut()
                     .register_accepted_tokens(&positions);
             }

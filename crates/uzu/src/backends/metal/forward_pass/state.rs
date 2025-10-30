@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     super::{MTLContext, MetalArray},
     buffers::ForwardPassBuffers,
-    kv_cache::KVCache,
+    cache_layers::CacheLayers,
     model_shape::ModelShape,
 };
 use crate::{
@@ -712,7 +712,7 @@ pub struct ForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
     logits: ArrayCell,
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
     /// [suffix_length] - u32 sampling output buffer
@@ -728,7 +728,7 @@ impl ForwardPassState {
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
-        kv_cache: Rc<RefCell<KVCache>>,
+        cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
@@ -744,9 +744,9 @@ impl ForwardPassState {
             token_positions.len()
         );
         assert!(
-            suffix_length <= kv_cache.borrow().max_suffix_length(),
+            suffix_length <= cache_layers.borrow().max_suffix_length(),
             "KV cache size can only accomodate a suffix of length up to {}, but tried to use a suffix of length {}",
-            kv_cache.borrow().max_suffix_length(),
+            cache_layers.borrow().max_suffix_length(),
             suffix_length
         );
         let aux_buffers = AuxBuffers::new(
@@ -799,7 +799,7 @@ impl ForwardPassState {
                 .iter()
                 .map(|(window_size, buffer)| {
                     let prefix_length = window_size
-                        .unwrap_or(kv_cache.borrow().max_prefix_length());
+                        .unwrap_or(cache_layers.borrow().max_prefix_length());
                     let attention_bias_shape =
                         [suffix_length, suffix_length + prefix_length];
 
@@ -814,7 +814,7 @@ impl ForwardPassState {
                 })
                 .collect();
 
-        kv_cache.borrow().fill_attention_bias(
+        cache_layers.borrow().fill_attention_bias(
             &mut attention_bias_map,
             token_positions,
             suffix_length,
@@ -863,7 +863,7 @@ impl ForwardPassState {
             token_positions: token_positions_refcell,
             attention_bias,
             logits,
-            kv_cache,
+            cache_layers,
             shared_buffers,
             aux_buffers,
             sampling_output: Some(sampling_output),
@@ -889,10 +889,44 @@ impl ForwardPassState {
             ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
             ArrayId::Keys(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].keys.clone()
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_transformer() {
+                    Some(layer) => layer.keys.clone(),
+                    None => panic!(
+                        "Requested transformer keys for non-transformer layer {}",
+                        layer_index
+                    ),
+                }
             },
             ArrayId::Values(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].values.clone()
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_transformer() {
+                    Some(layer) => layer.values.clone(),
+                    None => panic!(
+                        "Requested transformer values for non-transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmConvState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.conv_state.clone(),
+                    None => panic!(
+                        "Requested SSM conv state for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.ssm_state.clone(),
+                    None => panic!(
+                        "Requested SSM state for transformer layer {}",
+                        layer_index
+                    ),
+                }
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
@@ -1088,6 +1122,8 @@ pub enum ArrayId {
 
     Keys(usize),
     Values(usize),
+    SsmConvState(usize),
+    SsmState(usize),
 
     RotatedQueries,
     RotatedKeys,

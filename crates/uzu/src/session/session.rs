@@ -4,6 +4,7 @@ use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
 use crate::{
+    backends::metal::forward_pass::cache_layers::CacheLayer,
     config::ModelMetadata,
     generator::{
         generator::Generator,
@@ -337,30 +338,67 @@ impl Session {
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         if let Some(ctx) = context {
-            let mut generator_cache = generator.context.kv_cache.borrow_mut();
-            for (ctx_layer, gen_layer) in
-                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
+            let mut generator_state =
+                generator.context.cache_layers.borrow_mut();
+            for (ctx_layer, gen_layer) in ctx
+                .cache_layers
+                .data
+                .iter()
+                .zip(generator_state.data.iter_mut())
             {
-                let copy_rows = ctx_layer.prefix_segment_length();
-                if copy_rows > 0 {
-                    gen_layer.keys.borrow_mut().copy_slice(
-                        &ctx_layer.keys.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                    gen_layer.values.borrow_mut().copy_slice(
-                        &ctx_layer.values.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
+                match (ctx_layer, gen_layer) {
+                    (
+                        CacheLayer::Transformer(src),
+                        CacheLayer::Transformer(dst),
+                    ) => {
+                        let copy_rows = src.prefix_segment_length();
+                        if copy_rows > 0 {
+                            {
+                                let mut dst_keys = dst.keys.borrow_mut();
+                                let src_keys = src.keys.borrow();
+                                dst_keys.copy_slice(
+                                    &src_keys,
+                                    1,
+                                    0..copy_rows,
+                                    0,
+                                );
+                            }
+                            {
+                                let mut dst_values = dst.values.borrow_mut();
+                                let src_values = src.values.borrow();
+                                dst_values.copy_slice(
+                                    &src_values,
+                                    1,
+                                    0..copy_rows,
+                                    0,
+                                );
+                            }
+                        }
+                        dst.state = src.state.clone();
+                        dst.prefix_token_positions =
+                            src.prefix_token_positions.clone();
+                    },
+                    (
+                        CacheLayer::StateSpace(src),
+                        CacheLayer::StateSpace(dst),
+                    ) => {
+                        {
+                            let mut dst_conv = dst.conv_state.borrow_mut();
+                            let src_conv = src.conv_state.borrow();
+                            dst_conv.copy_from_array(&src_conv);
+                        }
+                        {
+                            let mut dst_ssm = dst.ssm_state.borrow_mut();
+                            let src_ssm = src.ssm_state.borrow();
+                            dst_ssm.copy_from_array(&src_ssm);
+                        }
+                    },
+                    _ => panic!(
+                        "Layer type mismatch when reconfiguring generator cache"
+                    ),
                 }
-                gen_layer.state = ctx_layer.state.clone();
-                gen_layer.prefix_token_positions =
-                    ctx_layer.prefix_token_positions.clone();
             }
-            drop(generator_cache);
+            drop(generator_state);
 
             generator.tokens = ctx.tokens.clone();
         }
@@ -371,14 +409,14 @@ impl Session {
         let generator =
             self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
         let prefix_len = generator.prefix_len();
-        let kv_cache = generator
+        let cache_layers = generator
             .context
-            .kv_cache
+            .cache_layers
             .borrow()
             .clone_with_prefix_len(&generator.context.mtl_context, prefix_len);
         let context = Context::new(
             generator.tokens.clone(),
-            kv_cache,
+            cache_layers,
             generator.decoding_config.clone(),
         );
         Ok(context)

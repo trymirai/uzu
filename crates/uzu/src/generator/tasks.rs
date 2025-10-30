@@ -46,7 +46,7 @@ impl GeneratorRunTask {
             &context.model_config.decoder_config,
             &context.model_shape,
             &context.scratch_buffers,
-            context.kv_cache.clone(),
+            context.cache_layers.clone(),
             context.shared_buffers.clone(),
             &self.token_ids,
             &self.token_positions,
