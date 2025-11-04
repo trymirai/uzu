@@ -2,7 +2,7 @@
 ///
 /// Run with: cargo run --example dltensor_conversion
 use metal::Device as MTLDevice;
-use uzu::{Array, DLTensorExt, DataType, ToDLTensor};
+use uzu::{Array, DLTensorExt, DataType};
 use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor};
 
 fn main() {
@@ -57,7 +57,7 @@ fn main() {
     ];
 
     for dtype in uzu_types {
-        let dl_dtype = dtype.to_dl_datatype();
+        let dl_dtype: DLDataType = dtype.into();
         println!(
             "{:?} -> DLDataType(code={}, bits={}, lanes={})",
             dtype, dl_dtype.code, dl_dtype.bits, dl_dtype.lanes

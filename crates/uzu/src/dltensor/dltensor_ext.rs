@@ -1,35 +1,8 @@
 use metal::{Device as MTLDevice, MTLResourceOptions};
 use xgrammar::{DLDataType, DLDataTypeCode, DLDeviceType, DLTensor};
 
+use super::dltensor_error::DLTensorError;
 use crate::{DataType, backends::metal::MetalArray};
-
-/// Error type for DLTensor conversion operations
-#[derive(Debug, thiserror::Error)]
-pub enum DLTensorError {
-    #[error("Unsupported device type: expected Metal (8), got {0}")]
-    UnsupportedDevice(i32),
-
-    #[error("Unsupported data type: code={code}, bits={bits}, lanes={lanes}")]
-    UnsupportedDataType {
-        code: u8,
-        bits: u8,
-        lanes: u16,
-    },
-
-    #[error("Non-contiguous tensors are not supported (strides must be NULL)")]
-    NonContiguous,
-
-    #[error("Invalid shape: ndim={ndim} but shape pointer is NULL")]
-    InvalidShape {
-        ndim: i32,
-    },
-
-    #[error("Vectorized data types (lanes > 1) are not supported")]
-    VectorizedType,
-
-    #[error("Data pointer is NULL")]
-    NullDataPointer,
-}
 
 /// Extension trait for converting DLTensor to uzu types
 pub trait DLTensorExt {
@@ -174,85 +147,4 @@ impl DLTensorExt for DLTensor {
     }
 }
 
-/// Extension trait for converting uzu types to DLTensor
-pub trait ToDLTensor {
-    /// Convert to DLDataType
-    fn to_dl_datatype(&self) -> DLDataType;
-}
-
-impl ToDLTensor for DataType {
-    fn to_dl_datatype(&self) -> DLDataType {
-        match self {
-            DataType::BF16 => DLDataType {
-                code: DLDataTypeCode::kDLBfloat as u8,
-                bits: 16,
-                lanes: 1,
-            },
-            DataType::F16 => DLDataType {
-                code: DLDataTypeCode::kDLFloat as u8,
-                bits: 16,
-                lanes: 1,
-            },
-            DataType::F32 => DLDataType {
-                code: DLDataTypeCode::kDLFloat as u8,
-                bits: 32,
-                lanes: 1,
-            },
-            DataType::F64 => DLDataType {
-                code: DLDataTypeCode::kDLFloat as u8,
-                bits: 64,
-                lanes: 1,
-            },
-            DataType::I4 => DLDataType {
-                code: DLDataTypeCode::kDLInt as u8,
-                bits: 4,
-                lanes: 1,
-            },
-            DataType::U4 => DLDataType {
-                code: DLDataTypeCode::kDLUInt as u8,
-                bits: 4,
-                lanes: 1,
-            },
-            DataType::I8 => DLDataType {
-                code: DLDataTypeCode::kDLInt as u8,
-                bits: 8,
-                lanes: 1,
-            },
-            DataType::U8 => DLDataType {
-                code: DLDataTypeCode::kDLUInt as u8,
-                bits: 8,
-                lanes: 1,
-            },
-            DataType::I16 => DLDataType {
-                code: DLDataTypeCode::kDLInt as u8,
-                bits: 16,
-                lanes: 1,
-            },
-            DataType::U16 => DLDataType {
-                code: DLDataTypeCode::kDLUInt as u8,
-                bits: 16,
-                lanes: 1,
-            },
-            DataType::I32 => DLDataType {
-                code: DLDataTypeCode::kDLInt as u8,
-                bits: 32,
-                lanes: 1,
-            },
-            DataType::U32 => DLDataType {
-                code: DLDataTypeCode::kDLUInt as u8,
-                bits: 32,
-                lanes: 1,
-            },
-            DataType::I64 => DLDataType {
-                code: DLDataTypeCode::kDLInt as u8,
-                bits: 64,
-                lanes: 1,
-            },
-            DataType::U64 => DLDataType {
-                code: DLDataTypeCode::kDLUInt as u8,
-                bits: 64,
-                lanes: 1,
-            },
-        }
-    }
-}
+// DataType -> DLDataType conversion moved to `device/data_type_ext.rs`
