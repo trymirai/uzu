@@ -717,6 +717,8 @@ pub struct ForwardPassState {
     aux_buffers: AuxBuffers,
     /// [suffix_length] - u32 sampling output buffer
     pub sampling_output: Option<ArrayCell>,
+    /// [suffix_length, vocabulary_size] - u8 bitmask (0 = disallowed, 1 = allowed)
+    pub token_bitmask: Option<ArrayCell>,
     /// Current sampling configuration for this forward pass
     pub sampling_method: Option<SamplingMethod>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
@@ -844,6 +846,15 @@ impl ForwardPassState {
             )
         });
 
+        let vocab_size = decoder_config.vocab_size;
+        let token_bitmask = RefCell::new(unsafe {
+            MetalArray::new(
+                scratch.token_bitmask.clone(),
+                &[suffix_length, vocab_size],
+                DataType::U8,
+            )
+        });
+
         let traces = if trace {
             Some(Rc::new(RefCell::new(DecoderActivationTrace::new(
                 &context,
@@ -864,6 +875,7 @@ impl ForwardPassState {
             shared_buffers,
             aux_buffers,
             sampling_output: Some(sampling_output),
+            token_bitmask: Some(token_bitmask),
             sampling_method: None,
             traces,
         }

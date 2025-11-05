@@ -26,6 +26,7 @@ clap = { version = "4.5.50", features = ["derive"] }
 rand = "0.9.2"
 sysinfo = "0.37.2"
 xgrammar = { package = "xgrammar-rs", version = "0.1.26", features = ["hf"] }
+schemars = "1.0.5"
 
 [dev-dependencies]
 is_close = "0.1.3"

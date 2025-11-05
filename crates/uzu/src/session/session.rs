@@ -2,11 +2,13 @@ use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
+use xgrammar::TokenizerInfo;
 
 use crate::{
     config::ModelMetadata,
     generator::{
         generator::Generator,
+        grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -149,6 +151,21 @@ impl Session {
     {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+
+        let _compiled_grammar: Option<CompiledGrammar> =
+            if let Some(ref grammar_config) = config.grammar_config {
+                let tokenizer_info = TokenizerInfo::from_huggingface(
+                    &self.tokenizer,
+                    None,
+                    None,
+                );
+                Some(CompiledGrammar::from_config(
+                    grammar_config,
+                    &tokenizer_info,
+                )?)
+            } else {
+                None
+            };
 
         let run_start = Instant::now();
         let text =

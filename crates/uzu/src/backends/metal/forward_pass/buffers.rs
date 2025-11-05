@@ -22,6 +22,7 @@ pub struct ForwardPassBuffers {
     pub token_ids: MTLBuffer,
     pub token_positions: MTLBuffer,
     pub sampling_output: MTLBuffer,
+    pub token_bitmask: MTLBuffer,
 
     // 2-D
     pub attention_window_size_to_bias: HashMap<Option<usize>, MTLBuffer>,
@@ -88,11 +89,14 @@ impl ForwardPassBuffers {
             model_shape.attention_partials_shape(max_suffix_len);
         let sums_maxs_shape = model_shape.attention_sums_shape(max_suffix_len);
 
+        let vocab_size = decoder_config.vocab_size;
+
         Self {
             // 1-D
             token_ids: alloc(&[max_suffix_len], DataType::U64),
             token_positions: alloc(&[max_suffix_len], DataType::I32),
             sampling_output: alloc(&[max_suffix_len], DataType::U32),
+            token_bitmask: alloc(&[max_suffix_len, vocab_size], DataType::U8),
 
             // 2-D
             attention_window_size_to_bias: (0..model_shape.num_layers)

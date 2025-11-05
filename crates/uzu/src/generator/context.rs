@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
-use metal::SharedEvent;
+use metal::{Buffer as MTLBuffer, SharedEvent};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
@@ -37,6 +37,7 @@ pub struct GeneratorContext {
     pub executables: DecoderExecutables,
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: SamplingKernelEncodable,
+    pub bitmask_buffer: MTLBuffer,
 }
 
 impl GeneratorContext {
@@ -144,6 +145,12 @@ impl GeneratorContext {
         let kv_update_event = mtl_context.device.new_shared_event();
         let kv_update_signal = 1;
 
+        let bitmask_size = max_suffix_length * decoder_config.vocab_size;
+        let bitmask_buffer = mtl_context.device.new_buffer(
+            bitmask_size as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let context = Self {
             mtl_context,
             command_buffer,
@@ -157,6 +164,7 @@ impl GeneratorContext {
             executables,
             kv_cache_update,
             gpu_sampler,
+            bitmask_buffer,
         };
 
         return Ok(context);

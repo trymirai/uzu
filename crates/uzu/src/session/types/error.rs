@@ -34,4 +34,6 @@ pub enum Error {
     GenerateFailed,
     #[error("Sampling failed")]
     SamplingFailed,
+    #[error("Grammar error")]
+    GrammarError,
 }
