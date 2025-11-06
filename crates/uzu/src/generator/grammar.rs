@@ -28,15 +28,15 @@ impl CompiledGrammar {
                 separators,
                 strict_mode,
             } => {
-                let separators_ref = separators.as_ref().map(|(a, b)| {
-                    (a.as_str(), b.as_str())
-                });
+                let separators_ref =
+                    separators.as_ref().map(|(a, b)| (a.as_str(), b.as_str()));
                 Grammar::from_json_schema(
                     schema,
                     *any_whitespace,
                     *indent,
                     separators_ref,
                     *strict_mode,
+                    None,
                     false,
                 )
             },
@@ -81,13 +81,12 @@ impl CompiledGrammar {
                 "Bitmask vocab size mismatch"
             );
 
-            let mut cpu_mask: Vec<u8> =
-                vec![0u8; batch_size * self.vocab_size];
+            let mut cpu_mask: Vec<u8> = vec![0u8; batch_size * self.vocab_size];
 
             for batch_idx in 0..batch_size {
                 let batch_offset = batch_idx * self.vocab_size;
-                let batch_mask_slice = &mut cpu_mask
-                    [batch_offset..batch_offset + self.vocab_size];
+                let batch_mask_slice =
+                    &mut cpu_mask[batch_offset..batch_offset + self.vocab_size];
 
                 let mut shape_i64 = [self.vocab_size as i64];
                 let mut bitmask_tensor = DLTensor {
@@ -119,7 +118,8 @@ impl CompiledGrammar {
             }
 
             let context = state.mtl_context();
-            context.copy_from_view(&mut bitmask_array, cpu_mask.as_slice().into());
+            context
+                .copy_from_view(&mut bitmask_array, cpu_mask.as_slice().into());
 
             Ok(())
         } else {
@@ -138,4 +138,3 @@ impl CompiledGrammar {
         self.matcher.reset();
     }
 }
-

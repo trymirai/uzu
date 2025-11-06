@@ -38,13 +38,6 @@ fn person_schema_metal_bitmask() {
         return;
     }
 
-    if std::env::var("RUN_XGRAMMAR_JSON_SCHEMA").ok().as_deref() != Some("1") {
-        eprintln!(
-            "Skipping JSON-schema compile part. Set RUN_XGRAMMAR_JSON_SCHEMA=1 to run it."
-        );
-        return;
-    }
-
     let schema_root = schemars::schema_for!(Person);
     let schema_str =
         serde_json::to_string(&schema_root).expect("schema to string");
@@ -56,11 +49,12 @@ fn person_schema_metal_bitmask() {
 
     let grammar = Grammar::from_json_schema(
         &schema_str,
-        true,             // any_whitespace
-        Some(2),          // indent
-        Some((",", ":")), // separators
-        true,             // strict_mode
-        false,            // print_converted_ebnf
+        true,
+        Some(2),
+        Some((",", ":")),
+        true,
+        None,
+        false,
     );
     let mut compiler = GrammarCompiler::new(&tokenizer_info, 8, true, -1);
     let compiled = compiler.compile_grammar(&grammar);
@@ -74,31 +68,30 @@ fn person_schema_metal_bitmask() {
             return;
         },
     };
+    let device_id = device.registry_id() as i32;
     let batch: usize = 1;
     let vocab = tokenizer_info.vocab_size() as usize;
-    let shape = [batch, vocab];
+    // xgrammar uses a dynamic bitset over the vocab, packed into i32 words
+    let buffer_size = (vocab + 31) / 32; // number of i32s required
+    let shape = [batch, buffer_size];
 
-    let bytes = batch * vocab; // assume u8 bitmask
+    // xgrammar expects an int32 mask tensor of shape [buffer_size]
+    let elems = batch * buffer_size;
+    let bytes = (elems * core::mem::size_of::<i32>()) as u64;
     let buffer =
-        device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared);
+        device.new_buffer(bytes, MTLResourceOptions::StorageModeShared);
     let mut metal_bitmask =
-        unsafe { MetalArray::new(buffer, &shape, DataType::U8) };
+        unsafe { MetalArray::new(buffer, &shape, DataType::I32) };
 
-    let mut cpu_mask: Vec<u8> = vec![0u8; vocab];
-
-    let mut shape_i64 = [vocab as i64];
+    let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {
-        data: cpu_mask.as_mut_ptr() as *mut core::ffi::c_void,
+        data: unsafe { metal_bitmask.mtl_buffer().contents() },
         device: DLDevice {
             device_type: DLDeviceType::kDLCPU,
-            device_id: 0,
+            device_id,
         },
         ndim: 1,
-        dtype: DLDataType {
-            code: 1,
-            bits: 8,
-            lanes: 1,
-        },
+        dtype: DataType::I32.into(),
         shape: shape_i64.as_mut_ptr(),
         strides: core::ptr::null_mut(),
         byte_offset: 0,
@@ -106,11 +99,6 @@ fn person_schema_metal_bitmask() {
 
     let _ok = matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
 
-    metal_bitmask
-        .as_slice_mut::<u8>()
-        .expect("slice U8")
-        .copy_from_slice(&cpu_mask);
-
     assert_eq!(metal_bitmask.shape(), &shape);
-    assert_eq!(metal_bitmask.as_slice::<u8>().unwrap().len(), bytes);
+    assert_eq!(metal_bitmask.as_slice::<i32>().unwrap().len(), elems);
 }

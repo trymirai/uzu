@@ -125,14 +125,14 @@ pub trait DeviceContext {
                 if should_be_neg_inf(*row, *col) {
                     f16::NEG_INFINITY
                 } else {
-                    f16::zero()
+                    f16::from_f32(0.0)
                 }
             }),
             DataType::BF16 => self.array_from_shape_fn(&shape, |[row, col]| {
                 if should_be_neg_inf(*row, *col) {
                     bf16::NEG_INFINITY
                 } else {
-                    bf16::zero()
+                    bf16::from_f32(0.0)
                 }
             }),
             DataType::F32 => self.array_from_shape_fn(&shape, |[row, col]| {
@@ -203,7 +203,7 @@ pub trait DeviceContext {
                         buf.push(if should_be_neg_inf(row, col) {
                             f16::NEG_INFINITY
                         } else {
-                            f16::zero()
+                            f16::from_f32(0.0)
                         });
                     }
                 }
@@ -216,7 +216,7 @@ pub trait DeviceContext {
                         buf.push(if should_be_neg_inf(row, col) {
                             bf16::NEG_INFINITY
                         } else {
-                            bf16::zero()
+                            bf16::from_f32(0.0)
                         });
                     }
                 }
