@@ -928,6 +928,76 @@ impl ForwardPassState {
                     ),
                 }
             },
+            ArrayId::SsmPacked(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.packed.clone(),
+                    None => panic!(
+                        "Requested SSM packed for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmX(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.x.clone(),
+                    None => panic!(
+                        "Requested SSM x for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmB(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.b.clone(),
+                    None => panic!(
+                        "Requested SSM b for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmC(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.c.clone(),
+                    None => panic!(
+                        "Requested SSM c for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmDt(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.dt.clone(),
+                    None => panic!(
+                        "Requested SSM dt for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmDecay(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.decay.clone(),
+                    None => panic!(
+                        "Requested SSM decay for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmZ(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.z.clone(),
+                    None => panic!(
+                        "Requested SSM z for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
             ArrayId::AttentionPartials => {
@@ -1124,6 +1194,13 @@ pub enum ArrayId {
     Values(usize),
     SsmConvState(usize),
     SsmState(usize),
+    SsmPacked(usize),
+    SsmX(usize),
+    SsmB(usize),
+    SsmC(usize),
+    SsmDt(usize),
+    SsmDecay(usize),
+    SsmZ(usize),
 
     RotatedQueries,
     RotatedKeys,

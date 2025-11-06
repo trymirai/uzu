@@ -35,8 +35,10 @@ pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub use ssm::{
     Conv1dForwardArguments, Conv1dForwardKernel, Conv1dSwishForwardArguments,
     Conv1dSwishForwardKernel, Conv1dUpdateArguments, Conv1dUpdateKernel,
-    SSDUpdateArguments, SSDUpdateKernel, SSDUpdateNoZArguments,
-    SSDUpdateNoZKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    Cumsum1DArguments, Cumsum1DKernel, SSDUpdateArguments,
+    SSDUpdateKernel, SSDUpdateNoZArguments, SSDUpdateNoZKernel, SSMKernelError,
+    SSMUpdateArguments, SSMUpdateKernel, SegsumFromCumsumArguments,
+    SegsumFromCumsumKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;

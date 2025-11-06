@@ -82,6 +82,10 @@ impl ModelShape {
         self.head_dim
     }
 
+    pub fn num_groups(&self) -> usize {
+        self.num_groups
+    }
+
     pub fn layer_type(
         &self,
         layer_index: usize,
