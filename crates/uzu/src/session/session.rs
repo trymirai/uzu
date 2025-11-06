@@ -30,6 +30,7 @@ pub struct Session {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
+    tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     generator: Option<Generator>,
@@ -65,6 +66,9 @@ impl Session {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        let tokenizer_info =
+            TokenizerInfo::from_huggingface(&tokenizer, None, None);
+
         let input_processor = InputProcessorDefault::new(
             model_metadata.model_config.message_processor_config.clone(),
         );
@@ -84,6 +88,7 @@ impl Session {
             model_path,
             model_metadata,
             tokenizer,
+            tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
             generator: Some(generator),
@@ -154,14 +159,9 @@ impl Session {
 
         let _compiled_grammar: Option<CompiledGrammar> =
             if let Some(ref grammar_config) = config.grammar_config {
-                let tokenizer_info = TokenizerInfo::from_huggingface(
-                    &self.tokenizer,
-                    None,
-                    None,
-                );
                 Some(CompiledGrammar::from_config(
                     grammar_config,
-                    &tokenizer_info,
+                    &self.tokenizer_info,
                 )?)
             } else {
                 None
