@@ -15,7 +15,7 @@ mod tests {
     #[test]
     fn test_has_transition() {
         let mut node = Node::new();
-        node.get_or_insert_next(42);
+        node.get_or_insert_next(42, 0);
 
         assert!(node.has_transition(42));
         assert!(!node.has_transition(43));
@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn test_get_next() {
         let mut node = Node::new();
-        node.get_or_insert_next(1);
+        node.get_or_insert_next(1, 0);
 
         assert!(node.get_next(1).is_some());
         assert!(node.get_next(2).is_none());
@@ -35,20 +35,20 @@ mod tests {
         let mut node = Node::new();
 
         // First insertion should create a new node
-        let node1 = node.get_or_insert_next(1);
+        let node1 = node.get_or_insert_next(1, 0);
         assert!(!node1.has_transition(99));
 
         // Add a transition to the child node
-        node1.get_or_insert_next(99);
+        node1.get_or_insert_next(99, 0);
 
         // Get the same node again
-        let node1_again = node.get_or_insert_next(1);
+        let node1_again = node.get_or_insert_next(1, 0);
 
         // Verify it's the same node by checking it has the transition we added
         assert!(node1_again.has_transition(99));
 
         // Different token should give a different node
-        let node2 = node.get_or_insert_next(2);
+        let node2 = node.get_or_insert_next(2, 0);
         assert!(!node2.has_transition(99));
     }
 
@@ -58,7 +58,7 @@ mod tests {
 
         // Insert several transitions
         for i in 0..5 {
-            node.get_or_insert_next(i);
+            node.get_or_insert_next(i, 0);
         }
 
         // Verify all transitions exist
@@ -75,15 +75,16 @@ mod tests {
     #[test]
     fn test_dfs_with_path_empty_node() {
         let node = Node::new();
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         let mut visited = Vec::new();
 
         node.dfs_with_path(&mut path, &mut |current_path: &[(
             isize,
             u64,
+            u64,
         )]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited.push(tokens);
         });
 
@@ -93,17 +94,18 @@ mod tests {
     #[test]
     fn test_dfs_with_path_single_node() {
         let mut node = Node::new();
-        node.get_or_insert_next(42);
+        node.get_or_insert_next(42, 0);
 
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         let mut visited = Vec::new();
 
         node.dfs_with_path(&mut path, &mut |current_path: &[(
             isize,
             u64,
+            u64,
         )]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited.push(tokens);
         });
 
@@ -116,22 +118,23 @@ mod tests {
         let mut root = Node::new();
 
         // Build a sample trie: [1 -> 2 -> 3], [1 -> 2 -> 4], [1 -> 5], [6]
-        let node1 = root.get_or_insert_next(1);
-        let node2 = node1.get_or_insert_next(2);
-        node2.get_or_insert_next(3);
-        node2.get_or_insert_next(4);
-        node1.get_or_insert_next(5);
-        root.get_or_insert_next(6);
+        let node1 = root.get_or_insert_next(1, 0);
+        let node2 = node1.get_or_insert_next(2, 0);
+        node2.get_or_insert_next(3, 0);
+        node2.get_or_insert_next(4, 0);
+        node1.get_or_insert_next(5, 0);
+        root.get_or_insert_next(6, 0);
 
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         let mut visited = Vec::new();
 
         root.dfs_with_path(&mut path, &mut |current_path: &[(
             isize,
             u64,
+            u64,
         )]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited.push(tokens);
         });
 
@@ -150,14 +153,15 @@ mod tests {
         let mut root = Node::new();
 
         // Build a simple trie: [1], [2]
-        root.get_or_insert_next(1);
-        root.get_or_insert_next(2);
+        root.get_or_insert_next(1, 0);
+        root.get_or_insert_next(2, 0);
 
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         let mut indices = Vec::new();
 
         root.dfs_with_path(&mut path, &mut |current_path: &[(
             isize,
+            u64,
             u64,
         )]| {
             if !current_path.is_empty() {
@@ -176,9 +180,9 @@ mod tests {
         let node = Node::new();
         let mut visited = Vec::new();
 
-        node.dfs(|current_path: &[(isize, u64)]| {
+        node.dfs(|current_path: &[(isize, u64, u64)]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited.push(tokens);
         });
 
@@ -190,18 +194,18 @@ mod tests {
         let mut root = Node::new();
 
         // Build a sample trie: [1 -> 2 -> 3], [1 -> 2 -> 4], [1 -> 5], [6]
-        let node1 = root.get_or_insert_next(1);
-        let node2 = node1.get_or_insert_next(2);
-        node2.get_or_insert_next(3);
-        node2.get_or_insert_next(4);
-        node1.get_or_insert_next(5);
-        root.get_or_insert_next(6);
+        let node1 = root.get_or_insert_next(1, 0);
+        let node2 = node1.get_or_insert_next(2, 0);
+        node2.get_or_insert_next(3, 0);
+        node2.get_or_insert_next(4, 0);
+        node1.get_or_insert_next(5, 0);
+        root.get_or_insert_next(6, 0);
 
         let mut visited = Vec::new();
 
-        root.dfs(|current_path: &[(isize, u64)]| {
+        root.dfs(|current_path: &[(isize, u64, u64)]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited.push(tokens);
         });
 
@@ -220,33 +224,34 @@ mod tests {
         let mut root = Node::new();
 
         // Build a more complex trie
-        let node1 = root.get_or_insert_next(10);
-        let node2 = node1.get_or_insert_next(20);
-        node2.get_or_insert_next(30);
-        node2.get_or_insert_next(40);
-        node1.get_or_insert_next(50);
-        let node3 = root.get_or_insert_next(60);
-        node3.get_or_insert_next(70);
+        let node1 = root.get_or_insert_next(10, 0);
+        let node2 = node1.get_or_insert_next(20, 0);
+        node2.get_or_insert_next(30, 0);
+        node2.get_or_insert_next(40, 0);
+        node1.get_or_insert_next(50, 0);
+        let node3 = root.get_or_insert_next(60, 0);
+        node3.get_or_insert_next(70, 0);
 
         // Get results from dfs_with_path
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         let mut visited1 = Vec::new();
 
         root.dfs_with_path(&mut path, &mut |current_path: &[(
             isize,
             u64,
+            u64,
         )]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited1.push(tokens);
         });
 
         // Get results from simplified dfs
         let mut visited2 = Vec::new();
 
-        root.dfs(|current_path: &[(isize, u64)]| {
+        root.dfs(|current_path: &[(isize, u64, u64)]| {
             let tokens: Vec<u64> =
-                current_path.iter().map(|(_, token)| *token).collect();
+                current_path.iter().map(|(_, token, _)| *token).collect();
             visited2.push(tokens);
         });
 

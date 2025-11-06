@@ -5,11 +5,10 @@ use crate::{
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SamplingMethod {
     Greedy,
-    Temperature {
-        temperature: f32,
-    },
-    TopP {
-        top_p: f32,
+    Stochastic {
+        temperature: Option<f32>,
+        top_k: Option<u32>,
+        top_p: Option<f32>,
     },
 }
 
@@ -42,18 +41,10 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod>
     ) -> SamplingMethod {
         let generation_config = &config.generation_config;
         match self {
-            SamplingPolicy::Default => {
-                if let Some(top_p) = generation_config.top_p {
-                    return SamplingMethod::TopP {
-                        top_p: top_p,
-                    };
-                }
-                if let Some(temperature) = generation_config.temperature {
-                    return SamplingMethod::Temperature {
-                        temperature: temperature,
-                    };
-                }
-                return SamplingMethod::Greedy;
+            SamplingPolicy::Default => SamplingMethod::Stochastic {
+                temperature: generation_config.temperature,
+                top_k: generation_config.top_k,
+                top_p: generation_config.top_p,
             },
             SamplingPolicy::Custom {
                 value,
