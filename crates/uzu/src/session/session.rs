@@ -148,6 +148,15 @@ impl Session {
         Ok(output)
     }
 
+    pub fn reset(&mut self) -> Result<(), Error> {
+        let generator =
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+        generator.reset_state();
+        Ok(())
+    }
+}
+
+impl Session {
     fn extend(
         &mut self,
         input: Input,
@@ -162,6 +171,44 @@ impl Session {
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         Ok((output, new_context))
+    }
+
+    fn reconfigure_generator(
+        &mut self,
+        context: Option<&Context>,
+    ) -> Result<(), Error> {
+        let generator =
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+        generator.reset_state();
+        if let Some(ctx) = context {
+            let mut generator_cache = generator.context.kv_cache.borrow_mut();
+            for (ctx_layer, gen_layer) in
+                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
+            {
+                let copy_rows = ctx_layer.prefix_segment_length();
+                if copy_rows > 0 {
+                    gen_layer.keys.borrow_mut().copy_slice(
+                        &ctx_layer.keys.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                    gen_layer.values.borrow_mut().copy_slice(
+                        &ctx_layer.values.borrow(),
+                        1,
+                        0..copy_rows,
+                        0,
+                    );
+                }
+                gen_layer.state = ctx_layer.state.clone();
+                gen_layer.prefix_token_positions =
+                    ctx_layer.prefix_token_positions.clone();
+            }
+            drop(generator_cache);
+
+            generator.tokens = ctx.tokens.clone();
+        }
+        Ok(())
     }
 
     fn run_internal<F>(
@@ -355,44 +402,6 @@ impl Session {
         generator.clear_cache();
         Ok(generate_output
             .clone_with_duration(run_start.elapsed().as_secs_f64()))
-    }
-
-    fn reconfigure_generator(
-        &mut self,
-        context: Option<&Context>,
-    ) -> Result<(), Error> {
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
-        if let Some(ctx) = context {
-            let mut generator_cache = generator.context.kv_cache.borrow_mut();
-            for (ctx_layer, gen_layer) in
-                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
-            {
-                let copy_rows = ctx_layer.prefix_segment_length();
-                if copy_rows > 0 {
-                    gen_layer.keys.borrow_mut().copy_slice(
-                        &ctx_layer.keys.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                    gen_layer.values.borrow_mut().copy_slice(
-                        &ctx_layer.values.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                }
-                gen_layer.state = ctx_layer.state.clone();
-                gen_layer.prefix_token_positions =
-                    ctx_layer.prefix_token_positions.clone();
-            }
-            drop(generator_cache);
-
-            generator.tokens = ctx.tokens.clone();
-        }
-        Ok(())
     }
 
     fn build_context_from_generator(&self) -> Result<Context, Error> {
