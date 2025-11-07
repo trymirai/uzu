@@ -67,6 +67,7 @@ impl Generator {
         tokens: Vec<u64>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
+        sample_suffix: bool,
     ) -> Result<PrefillResult, Error> {
         assert!(!tokens.is_empty());
 
@@ -172,7 +173,7 @@ impl Generator {
                     ..step_end_token_index)
                     .map(|idx| idx + prefix_offset)
                     .collect();
-                if step == number_of_prefill_steps - 1 {
+                if step == number_of_prefill_steps - 1 && sample_suffix {
                     // Exclude the last token because it belongs to the suffix for sampling.
                     positions_for_step.pop();
                 }
@@ -204,6 +205,13 @@ impl Generator {
         }
 
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
+        if !sample_suffix {
+            self.sync_prefix();
+            return Ok(PrefillResult {
+                tokens: Vec::new(),
+                forwardpass_durations: run_times,
+            });
+        }
         let sampled_tokens = self.sample(&mut final_state)?;
 
         let last_suffix_start =

@@ -1,6 +1,6 @@
 use crate::session::types::{Message, Role};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Input {
     Text(String),
     Messages(Vec<Message>),

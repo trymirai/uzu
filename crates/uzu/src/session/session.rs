@@ -15,7 +15,7 @@ use crate::{
             Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
-        parameter::ConfigResolvableValue,
+        parameter::{ConfigResolvableValue, ContextMode},
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
             TotalStats,
@@ -31,6 +31,7 @@ pub struct Session {
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     generator: Option<Generator>,
+    static_context: Option<Context>,
 }
 
 impl Session {
@@ -85,6 +86,7 @@ impl Session {
             input_processor: Box::new(input_processor),
             output_parser,
             generator: Some(generator),
+            static_context: None,
         })
     }
 
@@ -97,17 +99,56 @@ impl Session {
     where
         F: Fn(Output) -> bool,
     {
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
+        let context_mode = self
+            .generator
+            .as_ref()
+            .ok_or(Error::GeneratorNotLoaded)?
+            .decoding_config
+            .context_mode
+            .clone();
+
+        match &context_mode {
+            ContextMode::None => {
+                let generator =
+                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+                generator.reset_state();
+            },
+            ContextMode::Static {
+                input,
+            } => {
+                if self.static_context.is_none() {
+                    let mut prefill_config = config.clone();
+                    prefill_config.tokens_limit = 0;
+                    let (_out, ctx) =
+                        self.extend(input.clone(), None, prefill_config)?;
+                    self.static_context = Some(ctx);
+                }
+                let tmp = self.static_context.take();
+                if let Some(ref ctx) = tmp {
+                    self.reconfigure_generator(Some(ctx))?;
+                }
+                self.static_context = tmp;
+            },
+            ContextMode::Dynamic => {},
+        }
+
         let output = self.run_internal(input, config, progress)?;
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
+
+        match context_mode {
+            ContextMode::None
+            | ContextMode::Static {
+                ..
+            } => {
+                let generator =
+                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+                generator.reset_state();
+            },
+            ContextMode::Dynamic => {},
+        }
         Ok(output)
     }
 
-    pub fn extend(
+    fn extend(
         &mut self,
         input: Input,
         context: Option<&Context>,
@@ -121,21 +162,6 @@ impl Session {
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
         Ok((output, new_context))
-    }
-
-    pub fn run_with_context(
-        &mut self,
-        input: Input,
-        context: Option<&Context>,
-        config: RunConfig,
-    ) -> Result<Output, Error> {
-        self.reconfigure_generator(context)?;
-        let output =
-            self.run_internal(input, config, None::<fn(Output) -> bool>)?;
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
-        Ok(output)
     }
 
     fn run_internal<F>(
@@ -170,7 +196,7 @@ impl Session {
             return Err(Error::ContextLengthExceeded);
         }
 
-        let prefix_len_before = generator.prefix_len();
+        let prefix_len_before = generator.tokens.len().saturating_sub(1);
 
         let eos_tokens: Vec<u64> = self
             .model_metadata
@@ -223,10 +249,12 @@ impl Session {
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();
 
+        let sample_suffix = config.tokens_limit > 0;
         let prefill_result = generator.prefill(
             tokens.clone(),
             sampling_method,
             prefix_offset,
+            sample_suffix,
         )?;
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
@@ -370,12 +398,11 @@ impl Session {
     fn build_context_from_generator(&self) -> Result<Context, Error> {
         let generator =
             self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
-        let prefix_len = generator.prefix_len();
         let kv_cache = generator
             .context
             .kv_cache
             .borrow()
-            .clone_with_prefix_len(&generator.context.mtl_context, prefix_len);
+            .clone(&generator.context.mtl_context);
         let context = Context::new(
             generator.tokens.clone(),
             kv_cache,
