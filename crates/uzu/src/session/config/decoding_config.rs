@@ -1,6 +1,7 @@
 use crate::session::{
     config::SpeculatorConfig,
     parameter::{ContextLength, PrefillStepSize, SamplingSeed},
+    types::Input,
 };
 
 #[derive(Clone)]
@@ -10,6 +11,16 @@ pub struct DecodingConfig {
     pub speculator_config: SpeculatorConfig,
     pub sampling_seed: SamplingSeed,
     pub allow_pre_encode: bool,
+    pub context_mode: ContextMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum ContextMode {
+    None,
+    Static {
+        input: Input,
+    },
+    Dynamic,
 }
 
 impl DecodingConfig {
@@ -19,6 +30,7 @@ impl DecodingConfig {
         speculator_config: SpeculatorConfig,
         sampling_seed: SamplingSeed,
         allow_pre_encode: bool,
+        context_mode: ContextMode,
     ) -> Self {
         Self {
             prefill_step_size,
@@ -26,6 +38,7 @@ impl DecodingConfig {
             speculator_config,
             sampling_seed,
             allow_pre_encode,
+            context_mode,
         }
     }
 
@@ -42,6 +55,7 @@ impl Default for DecodingConfig {
             speculator_config: SpeculatorConfig::default(),
             sampling_seed: SamplingSeed::default(),
             allow_pre_encode: true,
+            context_mode: ContextMode::None,
         }
     }
 }

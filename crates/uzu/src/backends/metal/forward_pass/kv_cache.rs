@@ -448,12 +448,11 @@ impl KVCache {
         }
     }
 
-    pub fn clone_with_prefix_len(
+    pub fn clone(
         &self,
         context: &MTLContext,
-        prefix_len: usize,
     ) -> Self {
-        let new_total_len = prefix_len + self.max_suffix_length;
+        let mut max_prefix_capacity_across_layers = 0usize;
         let data: Box<[KVCacheLayer]> = self
             .data
             .iter()
@@ -462,15 +461,16 @@ impl KVCache {
                 let num_groups = shape[0];
                 let head_dim = shape[2];
                 let dtype = layer.keys.borrow().data_type();
-                let new_shape = [num_groups, new_total_len, head_dim];
 
+                let copy_rows = layer.prefix_segment_length();
+                let new_total_len = copy_rows + self.max_suffix_length;
+                if copy_rows > max_prefix_capacity_across_layers {
+                    max_prefix_capacity_across_layers = copy_rows;
+                }
+
+                let new_shape = [num_groups, new_total_len, head_dim];
                 let mut new_keys = context.array(&new_shape, dtype);
                 let mut new_values = context.array(&new_shape, dtype);
-
-                let mut copy_rows = layer.prefix_segment_length();
-                if let Some(window_length) = layer.window_length() {
-                    copy_rows = std::cmp::min(copy_rows, window_length);
-                }
 
                 if copy_rows > 0 {
                     new_keys.copy_slice(
@@ -501,7 +501,7 @@ impl KVCache {
 
         Self {
             max_suffix_length: self.max_suffix_length,
-            max_prefix_length: prefix_len,
+            max_prefix_length: max_prefix_capacity_across_layers,
             data,
         }
     }

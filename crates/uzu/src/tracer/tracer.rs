@@ -27,7 +27,7 @@ use crate::{
     },
     parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
     session::{
-        config::{DecodingConfig, SpeculatorConfig},
+        config::{DecodingConfig, SpeculatorConfig, ContextMode},
         parameter::{
             ConfigResolvableValue, ContextLength, PrefillStepSize,
             ResolvableValue, SamplingSeed,
@@ -152,6 +152,7 @@ impl Tracer {
             SpeculatorConfig::default(),
             SamplingSeed::default(),
             false,
+            ContextMode::None,
         );
         let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
@@ -181,6 +182,7 @@ impl Tracer {
             SpeculatorConfig::default(),
             sampling_seed,
             false,
+            ContextMode::None,
         );
         let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();

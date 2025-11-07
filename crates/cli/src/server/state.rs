@@ -1,57 +1,8 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    path::PathBuf,
-    rc::Rc,
-    sync::Mutex,
-};
+use std::{path::PathBuf, sync::Mutex};
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::session::{Session, config::DecodingConfig, helpers::Context};
-
-pub struct ContextCache {
-    pub map: HashMap<String, Rc<Context>>,
-    pub order: VecDeque<String>,
-    pub capacity: usize,
-}
-
-impl ContextCache {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            map: HashMap::new(),
-            order: VecDeque::new(),
-            capacity,
-        }
-    }
-
-    pub fn insert(
-        &mut self,
-        key: String,
-        context: Rc<Context>,
-    ) -> Option<(String, Rc<Context>)> {
-        if self.map.contains_key(&key) {
-            return None;
-        }
-        self.map.insert(key.clone(), context);
-        self.order.push_back(key.clone());
-
-        if self.order.len() > self.capacity {
-            if let Some(old_key) = self.order.pop_front() {
-                if let Some(old_context) = self.map.remove(&old_key) {
-                    return Some((old_key, old_context));
-                }
-            }
-        }
-        None
-    }
-
-    pub fn get(
-        &self,
-        key: &str,
-    ) -> Option<Rc<Context>> {
-        self.map.get(key).cloned()
-    }
-}
+use uzu::session::{Session, config::DecodingConfig};
 
 pub struct SessionWrapper(Mutex<Session>);
 unsafe impl Send for SessionWrapper {}
@@ -69,7 +20,6 @@ impl SessionWrapper {
 pub struct SessionState {
     pub model_name: String,
     pub session_wrapper: SessionWrapper,
-    pub cache: Mutex<ContextCache>,
 }
 
 unsafe impl Send for SessionState {}

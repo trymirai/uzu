@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use uzu::session::{
     Session,
-    config::{DecodingConfig, RunConfig, SpeculatorConfig},
+    config::{ContextMode, DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
         ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
         SamplingSeed,
@@ -22,6 +22,7 @@ fn build_decoding_config() -> DecodingConfig {
         SpeculatorConfig::default(),
         SamplingSeed::Custom(42),
         true,
+        ContextMode::None,
     )
 }
 
