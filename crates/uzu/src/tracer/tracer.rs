@@ -27,9 +27,9 @@ use crate::{
     },
     parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
     session::{
-        config::{DecodingConfig, SpeculatorConfig, ContextMode},
+        config::{DecodingConfig, SpeculatorConfig},
         parameter::{
-            ConfigResolvableValue, ContextLength, PrefillStepSize,
+            ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize,
             ResolvableValue, SamplingSeed,
         },
     },
@@ -147,12 +147,12 @@ impl Tracer {
     pub fn new(model_path: &Path) -> Self {
         let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(prefill_step_size),
+            ContextMode::default(),
             ContextLength::default(),
+            PrefillStepSize::Custom(prefill_step_size),
             SpeculatorConfig::default(),
             SamplingSeed::default(),
             false,
-            ContextMode::None,
         );
         let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();
@@ -177,12 +177,12 @@ impl Tracer {
     ) -> Self {
         let prefill_step_size = Self::determine_prefill_step_size(model_path);
         let decoding_config = DecodingConfig::new(
-            PrefillStepSize::Custom(prefill_step_size),
+            ContextMode::default(),
             max_prefix_length,
+            PrefillStepSize::Custom(prefill_step_size),
             SpeculatorConfig::default(),
             sampling_seed,
             false,
-            ContextMode::None,
         );
         let mut generator_context =
             GeneratorContext::new(model_path, &decoding_config).unwrap();

@@ -1,9 +1,11 @@
 mod context_length;
+mod context_mode;
 mod prefill_step_size;
 mod resolvable_value;
 mod sampling_policy;
 mod sampling_seed;
 pub use context_length::ContextLength;
+pub use context_mode::ContextMode;
 pub use prefill_step_size::PrefillStepSize;
 pub use resolvable_value::{ConfigResolvableValue, ResolvableValue};
 pub use sampling_policy::{SamplingMethod, SamplingPolicy};

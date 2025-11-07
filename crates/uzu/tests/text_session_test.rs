@@ -3,10 +3,10 @@ use std::path::PathBuf;
 
 use uzu::session::{
     Session,
-    config::{ContextMode, DecodingConfig, RunConfig, SpeculatorConfig},
+    config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
-        ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
-        SamplingSeed,
+        ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
+        SamplingPolicy, SamplingSeed,
     },
     types::{Input, Message, Output},
 };
@@ -17,12 +17,12 @@ fn build_model_path() -> PathBuf {
 
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::new(
-        PrefillStepSize::default(),
+        ContextMode::default(),
         ContextLength::default(),
+        PrefillStepSize::default(),
         SpeculatorConfig::default(),
         SamplingSeed::Custom(42),
         true,
-        ContextMode::None,
     )
 }
 

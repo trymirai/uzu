@@ -10,12 +10,12 @@ use crate::{
         result::{GenerateResult, PrefillResult},
     },
     session::{
-        config::{ContextMode, DecodingConfig, RunConfig},
+        config::{DecodingConfig, RunConfig},
         helpers::{
             Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
-        parameter::ConfigResolvableValue,
+        parameter::{ConfigResolvableValue, ContextMode},
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
             TotalStats,
