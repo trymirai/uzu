@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{AttentionConfig, MLPConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct DecoderLayerConfig {
-    pub pre_attention_norm_config: NormalizationConfig,
+pub struct TransformerLayerConfig {
+    pub pre_attention_norm_config: Option<NormalizationConfig>,
     pub attention_config: AttentionConfig,
     pub post_attention_norm_config: Option<NormalizationConfig>,
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    pub sliding_window_size: Option<usize>,
 }
 
 #[cfg(test)]
@@ -27,7 +28,7 @@ mod tests {
     use crate::config::mlp;
 
     #[test]
-    fn test_decoder_layer_config() {
+    fn test_transformer_layer_config() {
         let config_str = r#"
             {
                 "pre_attention_norm_config": {
@@ -35,7 +36,8 @@ mod tests {
                     "accumulation_precision": "float32",
                     "epsilon": 1e-05,
                     "scale_offset": null,
-                    "upcast_mode": "only_normalization"
+                    "upcast_mode": "only_normalization",
+                    "subtract_mean": false
                 },
                 "attention_config": {
                     "qkv_projection_config": {
@@ -56,6 +58,8 @@ mod tests {
                         "lora_rank": 16,
                         "lora_scale": 2.0
                     },
+                    "query_norm_config": null,
+                    "key_norm_config": null,
                     "logit_soft_cap": null,
                     "has_sinks": false,
                     "has_qkv_biases": false,
@@ -67,7 +71,8 @@ mod tests {
                     "accumulation_precision": "float32",
                     "epsilon": 1e-05,
                     "scale_offset": null,
-                    "upcast_mode": "only_normalization"
+                    "upcast_mode": "only_normalization",
+                    "subtract_mean": false
                 },
                 "mlp_config": {
                     "type": "DenseMLPConfig",
@@ -80,21 +85,27 @@ mod tests {
                         "lora_rank": 16,
                         "lora_scale": 2.0
                     },
-                    "activation": {"type": "SiLU"}
+                    "activation": {"type": "SiLU"},
+                    "has_up_biases": false,
+                    "has_down_biases": false,
+                    "gate_clipping": null,
+                    "up_clipping": null,
+                    "activation_to_gate": false
                 },
-                "post_mlp_norm_config": null
+                "post_mlp_norm_config": null,
+                "sliding_window_size": null
             }
         "#;
 
-        let ground_truth_config = DecoderLayerConfig {
-            pre_attention_norm_config: NormalizationConfig {
+        let ground_truth_config = TransformerLayerConfig {
+            pre_attention_norm_config: Some(NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
-            },
+            }),
             pre_mlp_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
@@ -159,9 +170,10 @@ mod tests {
             }),
             post_attention_norm_config: None,
             post_mlp_norm_config: None,
+            sliding_window_size: None,
         };
 
-        let deserialized_config: DecoderLayerConfig =
+        let deserialized_config: TransformerLayerConfig =
             from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
     }

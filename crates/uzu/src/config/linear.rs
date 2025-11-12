@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::common::{ConfigDataType, QuantizationMode};
+use crate::{ConfigDataType, QuantizationMode};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct QuantizationConfig {

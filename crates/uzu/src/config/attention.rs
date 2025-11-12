@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use super::{RMSNormConfig, linear::LinearConfig};
+use crate::{LinearConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AttentionConfig {
     pub qkv_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
 
-    pub query_norm_config: Option<RMSNormConfig>,
-    pub key_norm_config: Option<RMSNormConfig>,
+    pub query_norm_config: Option<NormalizationConfig>,
+    pub key_norm_config: Option<NormalizationConfig>,
 
     pub logit_soft_cap: Option<f32>,
     #[serde(default)]

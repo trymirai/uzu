@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::LanguageModelConfig;
+use crate::{ModelConfig, ModelType};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ModelMetadata {
@@ -12,5 +12,6 @@ pub struct ModelMetadata {
     pub quantization: Option<String>,
     pub repo: String,
     pub use_cases: Vec<String>,
-    pub model_config: LanguageModelConfig,
+    pub model_type: ModelType,
+    pub model_config: ModelConfig,
 }

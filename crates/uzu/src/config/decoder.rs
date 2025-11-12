@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::{
-    decoder_layer::DecoderLayerConfig, embedding::EmbeddingConfig,
-    normalization::RMSNormConfig, rope::RoPEConfig,
+use crate::{
+    DecoderLayerConfig, EmbeddingConfig, NormalizationConfig, RoPEConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -11,7 +10,7 @@ pub struct DecoderConfig {
     pub global_rope_config: RoPEConfig,
     pub local_rope_config: Option<RoPEConfig>,
     pub layer_config: DecoderLayerConfig,
-    pub output_norm_config: RMSNormConfig,
+    pub output_norm_config: NormalizationConfig,
 
     pub vocab_size: usize,
     pub model_dim: usize,
@@ -169,19 +168,21 @@ mod tests {
             },
             local_rope_config: None,
             layer_config: DecoderLayerConfig {
-                pre_attention_norm_config: RMSNormConfig {
+                pre_attention_norm_config: NormalizationConfig {
                     scale_precision: ConfigDataType::BFloat16,
                     accumulation_precision: ConfigDataType::Float32,
                     epsilon: 1e-5,
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
+                    subtract_mean: false,
                 },
-                pre_mlp_norm_config: RMSNormConfig {
+                pre_mlp_norm_config: NormalizationConfig {
                     scale_precision: ConfigDataType::BFloat16,
                     accumulation_precision: ConfigDataType::Float32,
                     epsilon: 1e-5,
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
+                    subtract_mean: false,
                 },
                 attention_config: AttentionConfig {
                     qkv_projection_config: LinearConfig::QLoRA {
@@ -231,16 +232,22 @@ mod tests {
                     activation: Activation::SILU {
                         alpha: 1.0,
                     },
+                    has_up_biases: false,
+                    has_down_biases: false,
+                    gate_clipping: None,
+                    up_clipping: None,
+                    activation_to_gate: false,
                 }),
                 post_attention_norm_config: None,
                 post_mlp_norm_config: None,
             },
-            output_norm_config: RMSNormConfig {
+            output_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
+                subtract_mean: false,
             },
             vocab_size: 128256,
             model_dim: 2048,

@@ -4,7 +4,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::layer_executables::LayerExecutables;
 use crate::{
-    DataType,
+    DataType, DecoderConfig,
     backends::metal::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
@@ -15,7 +15,6 @@ use crate::{
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
     },
-    config::decoder::DecoderConfig,
     parameters::ParameterTree,
 };
 

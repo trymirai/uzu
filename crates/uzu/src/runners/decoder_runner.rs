@@ -7,6 +7,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    DecoderConfig,
     backends::metal::{
         DecoderExecutables, ForwardPassState, KVCache, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
@@ -16,7 +17,7 @@ use crate::{
         },
         utils::{CaptureOptions, StdoutCapture},
     },
-    config::{ModelMetadata, decoder::DecoderConfig},
+    config::ModelMetadata,
     parameters::ParameterLoader,
 };
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,8 +54,15 @@ impl DecoderTestContext {
         let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        // Extract language model config
+        let language_model_config = model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or("Model is not a language model".to_string())?;
+
         let decoder_config =
-            Rc::new(model_metadata.model_config.decoder_config.clone());
+            Rc::new(language_model_config.decoder_config.clone());
         let mtl_device = metal::Device::system_default()
             .ok_or("No Metal device available".to_string())?;
         let mtl_command_queue = mtl_device.new_command_queue();

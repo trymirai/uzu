@@ -4,7 +4,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 use crate::{
-    DataType,
+    DataType, DecoderLayerConfig,
     backends::metal::{
         MTLContext,
         compilation_parameters::CompilationConfig,
@@ -18,7 +18,6 @@ use crate::{
             RMSNormKernelEncodable, TensorAddSwap, TensorCopy,
         },
     },
-    config::decoder_layer::DecoderLayerConfig,
     parameters::ParameterTree,
 };
 

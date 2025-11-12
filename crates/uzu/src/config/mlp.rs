@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{common::Activation, linear::LinearConfig};
+use crate::{Activation, LinearConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -15,6 +15,16 @@ pub enum MLPConfig {
 pub struct DenseMLPConfig {
     pub linear_config: LinearConfig,
     pub activation: Activation,
+    #[serde(default)]
+    pub has_up_biases: bool,
+    #[serde(default)]
+    pub has_down_biases: bool,
+    #[serde(default)]
+    pub gate_clipping: Option<[Option<f32>; 2]>,
+    #[serde(default)]
+    pub up_clipping: Option<[Option<f32>; 2]>,
+    #[serde(default)]
+    pub activation_to_gate: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -83,6 +93,11 @@ mod tests {
             activation: Activation::SILU {
                 alpha: 1.0,
             },
+            has_up_biases: false,
+            has_down_biases: false,
+            gate_clipping: None,
+            up_clipping: None,
+            activation_to_gate: false,
         });
 
         let deserialized_config: MLPConfig = from_str(config_str).unwrap();
