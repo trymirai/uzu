@@ -5,10 +5,12 @@ pub mod linear;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
+pub mod pooling;
 pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
+pub mod sigmoid;
 mod tensor_add_bias;
 mod tensor_add_swap;
 mod tensor_copy;
@@ -25,12 +27,14 @@ pub use moe::{
     MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
+pub use pooling::PoolingKernel;
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,
     RMSNormKernelEncodable, RMSNormKernelType,
 };
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
+pub use sigmoid::SigmoidKernel;
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;

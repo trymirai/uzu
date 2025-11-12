@@ -1045,6 +1045,32 @@ impl Drop for ForwardPassState {
     }
 }
 
+impl super::encodable_with_state::ForwardPassStateInterface
+    for ForwardPassState
+{
+    fn arrays(
+        &self,
+        ids: &[ArrayId],
+    ) -> Box<[ArrayCell]> {
+        self.arrays(ids)
+    }
+
+    fn hashmaps(
+        &self,
+        ids: &[HashMapId],
+    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
+        self.hashmaps(ids)
+    }
+
+    fn aux_buffers_suffix_length(&self) -> usize {
+        self.aux_buffers_suffix_length()
+    }
+
+    fn mtl_context(&self) -> &Rc<MTLContext> {
+        self.mtl_context()
+    }
+}
+
 #[derive(
     Debug,
     Clone,

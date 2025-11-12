@@ -1,6 +1,11 @@
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::ForwardPassState;
+use super::{ArrayId, HashMapId};
+use crate::backends::metal::{MTLContext, MetalArray};
+
+type ArrayCell = RefCell<MetalArray>;
 
 pub struct EncodingParameters {
     pub warmup: bool,
@@ -32,10 +37,24 @@ impl EncodingParameters {
     }
 }
 
-pub trait EncodableWithState {
+/// Common interface that all forward pass state types must implement
+pub trait ForwardPassStateInterface {
+    fn arrays(
+        &self,
+        ids: &[ArrayId],
+    ) -> Box<[ArrayCell]>;
+    fn hashmaps(
+        &self,
+        ids: &[HashMapId],
+    ) -> Box<[HashMap<Option<usize>, ArrayCell>]>;
+    fn aux_buffers_suffix_length(&self) -> usize;
+    fn mtl_context(&self) -> &Rc<MTLContext>;
+}
+
+pub trait EncodableWithState<S: ForwardPassStateInterface + ?Sized> {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut S,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     );

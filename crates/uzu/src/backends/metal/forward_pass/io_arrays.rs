@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap};
 use mpsgraph::TensorData;
 use objc2::rc::Retained;
 
-use super::state::{ArrayId, ForwardPassState};
+use super::{encodable_with_state::ForwardPassStateInterface, state::ArrayId};
 use crate::backends::metal::array::MetalArray;
 
 #[derive(Clone)]
@@ -45,9 +45,9 @@ impl IOArrays {
         potentially_duplicated_results.into()
     }
 
-    pub unsafe fn get_mpsgraph_feeds(
+    pub unsafe fn get_mpsgraph_feeds<S: ForwardPassStateInterface + ?Sized>(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut S,
     ) -> MPSGraphFeeds {
         unsafe {
             let all_ids = self.all_ids();
@@ -76,9 +76,9 @@ impl IOArrays {
         }
     }
 
-    pub unsafe fn get_kernel_feeds(
+    pub unsafe fn get_kernel_feeds<S: ForwardPassStateInterface + ?Sized>(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut S,
     ) -> KernelFeeds {
         let inputs: Box<[RefCell<MetalArray>]> =
             state.arrays(&self.input_arrays);
