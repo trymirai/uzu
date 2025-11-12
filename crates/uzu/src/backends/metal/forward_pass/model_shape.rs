@@ -321,4 +321,108 @@ impl ModelShape {
         //          nan_gate_bits, nan_up_bits]
         [8]
     }
+
+    pub fn max_mamba_inproj_dim(&self) -> Option<usize> {
+        let inner_dim = self.num_heads * self.head_dim;
+        self.layer_types
+            .iter()
+            .filter_map(|layer_type| match layer_type {
+                DecoderLayerType::StateSpace {
+                    conv_dim,
+                    ..
+                } => Some(conv_dim + inner_dim + self.num_heads),
+                _ => None,
+            })
+            .max()
+    }
+
+    pub fn ssm_inproj_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.max_mamba_inproj_dim().map(|dim| [suffix_length, dim])
+    }
+
+    pub fn has_state_space_layers(&self) -> bool {
+        self.layer_types
+            .iter()
+            .any(|layer| matches!(layer, DecoderLayerType::StateSpace { .. }))
+    }
+
+    pub fn max_mamba_conv_dim(&self) -> Option<usize> {
+        self.layer_types
+            .iter()
+            .filter_map(|layer| match layer {
+                DecoderLayerType::StateSpace {
+                    conv_dim,
+                    ..
+                } => Some(*conv_dim),
+                _ => None,
+            })
+            .max()
+    }
+
+    pub fn max_mamba_state_dim(&self) -> Option<usize> {
+        self.layer_types
+            .iter()
+            .filter_map(|layer| match layer {
+                DecoderLayerType::StateSpace {
+                    state_dim,
+                    ..
+                } => Some(*state_dim),
+                _ => None,
+            })
+            .max()
+    }
+
+    pub fn ssm_packed_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.max_mamba_conv_dim().map(|dim| [suffix_length, dim])
+    }
+
+    pub fn ssm_x_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([suffix_length, self.num_heads, self.head_dim])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_z_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        self.ssm_x_shape(suffix_length)
+    }
+
+    pub fn ssm_dt_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        if self.has_state_space_layers() {
+            Some([suffix_length, self.num_heads])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_decay_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ssm_dt_shape(suffix_length)
+    }
+
+    pub fn ssm_bc_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        self.max_mamba_state_dim()
+            .map(|state_dim| [suffix_length, self.num_groups, state_dim])
+    }
 }

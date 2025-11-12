@@ -30,15 +30,23 @@ struct Exp {
   };
 };
 
+// Mamba SSM naming:
+// X – SILU-activated hidden stream after the conv block
+// Z – gate activations that modulate the residual output
+// A – diagonal state transition spectrum (constant per layer)
+// B – input projection that injects X into the state
+// C – output projection from state to residual
+// D – per-head skip/identity weight
+
 template <typename T>
 kernel void ssm_update_kernel(
-    device const T* x [[ buffer(0) ]],      // (b, h)
-    device const T* dt [[ buffer(1) ]],     // (b, h)
-    device const T* A [[ buffer(2) ]],      // (n)
-    device const T* B [[ buffer(3) ]],      // (b, n)
-    device const T* C [[ buffer(4) ]],      // (b, n)
-    device const T* D [[ buffer(5) ]],      // (h)
-    device const T* z [[ buffer(6) ]],      // (b, h)
+    device const T* x [[ buffer(0) ]],      // (b, h) hidden stream X
+    device const T* dt [[ buffer(1) ]],     // (b, h) delta / step size
+    device const T* A [[ buffer(2) ]],      // (n) spectrum A
+    device const T* B [[ buffer(3) ]],      // (b, n) input projection B
+    device const T* C [[ buffer(4) ]],      // (b, n) output projection C
+    device const T* D [[ buffer(5) ]],      // (h) skip weights D
+    device const T* z [[ buffer(6) ]],      // (b, h) gate Z
     device const T* state [[ buffer(7) ]],  // (b, h, n)
     device T* y [[ buffer(8) ]],            // (b, h)
     device T* next_state [[ buffer(9) ]],   // (b, h, n)
@@ -96,5 +104,4 @@ kernel void ssm_update_kernel(
 instantiate_ssm_update_kernel(float, float);
 instantiate_ssm_update_kernel(bfloat, bfloat);
 instantiate_ssm_update_kernel(half, half);
-
 

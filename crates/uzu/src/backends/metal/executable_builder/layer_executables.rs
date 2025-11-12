@@ -14,23 +14,23 @@ use crate::{
             transformer_layer,
         },
         kernel::{
-            AttentionKernelEncodable, KernelDataType, QKNormKernelEncodable,
-            RMSNormKernelEncodable, TensorAddSwap, TensorCopy,
+            AttentionKernelEncodable, KernelDataType, MambaMixerEncodable,
+            QKNormKernelEncodable, RMSNormKernelEncodable, TensorAddSwap,
+            TensorCopy,
         },
     },
-    config::decoder_layer::DecoderLayerConfig,
-    parameters::ParameterTree,
+    config::{
+        DecoderLayerType,
+        decoder_layer::{DecoderLayerConfig, MixerConfig},
+    },
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 pub struct LayerExecutables {
     pub layer_index: usize,
     pub copy_main_to_shortcut: Box<dyn EncodableWithState>,
     pub pre_attention_norm: Box<dyn EncodableWithState>,
-    pub qkv_projection: Box<dyn EncodableWithState>,
-    pub qk_norm: Option<Box<dyn EncodableWithState>>,
-    pub rope: Rc<Box<dyn EncodableWithState>>,
-    pub attention: Box<dyn EncodableWithState>,
-    pub out_projection: Box<dyn EncodableWithState>,
+    pub(crate) mixer: MixerExecutables,
     pub post_attention_norm: Option<Box<dyn EncodableWithState>>,
     pub main_shortcut_add_swap: Box<dyn EncodableWithState>,
     pub pre_mlp_norm: Box<dyn EncodableWithState>,
@@ -38,10 +38,37 @@ pub struct LayerExecutables {
     pub post_mlp_norm: Option<Box<dyn EncodableWithState>>,
 }
 
+pub(crate) enum MixerExecutables {
+    Attention {
+        qkv_projection: Box<dyn EncodableWithState>,
+        qk_norm: Option<Box<dyn EncodableWithState>>,
+        rope: Rc<Box<dyn EncodableWithState>>,
+        attention: Box<dyn EncodableWithState>,
+        out_projection: Box<dyn EncodableWithState>,
+    },
+    StateSpace {
+        mixer: Box<dyn EncodableWithState>,
+    },
+}
+
+fn resolve_subtree<'a>(
+    loader: &'a ParameterTree<Rc<MTLContext>>,
+    candidates: &[&str],
+) -> Result<ParameterTree<'a, Rc<MTLContext>>, ParameterLoaderError> {
+    for name in candidates {
+        if let Ok(tree) = loader.subtree(name) {
+            return Ok(tree);
+        }
+    }
+    loader.subtree(candidates.first().copied().unwrap_or_default())
+}
+
 impl LayerExecutables {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mtl_context: &MTLContext,
         layer_config: &DecoderLayerConfig,
+        layer_type: &DecoderLayerType,
         compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
@@ -51,14 +78,19 @@ impl LayerExecutables {
         num_groups: usize,
         attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
-        rope: Rc<Box<dyn EncodableWithState>>,
+        rope: Option<Rc<Box<dyn EncodableWithState>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let intermediate_data_type: DataType = layer_config
-                .attention_config
-                .qkv_projection_config
-                .activation_precision()
-                .into();
+            let intermediate_data_type: DataType =
+                match &layer_config.mixer_config {
+                    MixerConfig::Attention(attention) => attention
+                        .qkv_projection_config
+                        .activation_precision()
+                        .into(),
+                    MixerConfig::Mamba(mamba) => {
+                        mamba.in_projection_config.activation_precision().into()
+                    },
+                };
             let kernel_data_type: KernelDataType =
                 intermediate_data_type.into();
 
@@ -78,71 +110,133 @@ impl LayerExecutables {
                     layer_config.pre_attention_norm_config.clone(),
                     ArrayId::Main,
                     ArrayId::Main,
-                    &decoder_layer_loader
-                        .subtree("pre_attention_norm")
-                        .unwrap(),
+                    &resolve_subtree(
+                        decoder_layer_loader,
+                        &["pre_attention_norm", "pre_mixer_norm"],
+                    )
+                    .unwrap(),
                 )
                 .expect("Failed to create RMS norm kernel"),
             );
 
-            let qkv_projection = transformer_layer::linear_block(
-                &layer_config.attention_config.qkv_projection_config,
-                layer_config.attention_config.has_qkv_biases,
-                model_dim,
-                [
-                    num_heads * head_dim,
-                    num_groups * head_dim,
-                    num_groups * head_dim,
-                ],
-                mtl_context,
-                &decoder_layer_loader
-                    .subtree("attention.qkv_projection")
-                    .unwrap(),
-                ArrayId::Main,
-                ArrayId::QKV,
-                &compilation_config.descriptor_mlp,
-            );
+            let mixer = match &layer_config.mixer_config {
+                MixerConfig::Attention(attention_config) => {
+                    let rope_block = rope
+                        .clone()
+                        .expect("RoPE encoder missing for attention layer");
 
-            let qk_norm: Option<Box<dyn EncodableWithState>> = if layer_config
-                .attention_config
-                .query_norm_config
-                .is_some()
-                || layer_config.attention_config.key_norm_config.is_some()
-            {
-                match QKNormKernelEncodable::new(
-                    mtl_context,
-                    intermediate_data_type,
-                    layer_config.attention_config.query_norm_config.clone(),
-                    layer_config.attention_config.key_norm_config.clone(),
-                    ArrayId::QKV,
-                    &decoder_layer_loader.subtree("attention").unwrap(),
-                    num_heads,  // num_q_heads
-                    num_groups, // num_kv_heads
-                    head_dim,
-                ) {
-                    Ok(qk_norm) => Some(Box::new(qk_norm)),
-                    Err(e) => panic!(
-                        "Failed to create QK norm kernel for layer {}: {:?}",
-                        layer_index, e
-                    ),
-                }
-            } else {
-                None
+                    let qkv_projection = transformer_layer::linear_block(
+                        &attention_config.qkv_projection_config,
+                        attention_config.has_qkv_biases,
+                        model_dim,
+                        [
+                            num_heads * head_dim,
+                            num_groups * head_dim,
+                            num_groups * head_dim,
+                        ],
+                        mtl_context,
+                        &resolve_subtree(
+                            decoder_layer_loader,
+                            &[
+                                "attention.qkv_projection",
+                                "mixer.qkv_projection",
+                            ],
+                        )
+                        .unwrap(),
+                        ArrayId::Main,
+                        ArrayId::QKV,
+                        &compilation_config.descriptor_mlp,
+                    );
+
+                    let qk_norm: Option<Box<dyn EncodableWithState>> =
+                        if attention_config.query_norm_config.is_some()
+                            || attention_config.key_norm_config.is_some()
+                        {
+                            match QKNormKernelEncodable::new(
+                                mtl_context,
+                                intermediate_data_type,
+                                attention_config.query_norm_config.clone(),
+                                attention_config.key_norm_config.clone(),
+                                ArrayId::QKV,
+                                &resolve_subtree(
+                                    decoder_layer_loader,
+                                    &["attention", "mixer"],
+                                )
+                                .unwrap(),
+                                num_heads,
+                                num_groups,
+                                head_dim,
+                            ) {
+                                Ok(qk_norm) => Some(Box::new(qk_norm)
+                                    as Box<dyn EncodableWithState>),
+                                Err(e) => panic!(
+                                    "Failed to create QK norm kernel for layer {}: {:?}",
+                                    layer_index, e
+                                ),
+                            }
+                        } else {
+                            None
+                        };
+
+                    let out_projection = transformer_layer::linear_block(
+                        &attention_config.out_projection_config,
+                        attention_config.has_out_biases,
+                        num_heads * head_dim,
+                        [model_dim],
+                        mtl_context,
+                        &resolve_subtree(
+                            decoder_layer_loader,
+                            &[
+                                "attention.out_projection",
+                                "mixer.out_projection",
+                            ],
+                        )
+                        .unwrap(),
+                        ArrayId::AttentionOutput,
+                        ArrayId::Main,
+                        &compilation_config.descriptor_mlp,
+                    );
+
+                    let attention = Box::new(
+                        AttentionKernelEncodable::new(
+                            mtl_context,
+                            kernel_data_type,
+                            layer_index,
+                            attention_scale,
+                            attention_config.has_sinks,
+                        )
+                        .expect(
+                            "Failed to create AttentionWrapper with Metal kernel",
+                        ),
+                    );
+
+                    MixerExecutables::Attention {
+                        qkv_projection,
+                        qk_norm,
+                        rope: rope_block,
+                        attention,
+                        out_projection,
+                    }
+                },
+                MixerConfig::Mamba(mamba_config) => {
+                    let mixer: Box<dyn EncodableWithState> =
+                        Box::new(MambaMixerEncodable::new(
+                            mtl_context,
+                            layer_type.clone(),
+                            mamba_config.clone(),
+                            compilation_config.clone(),
+                            layer_index,
+                            model_dim,
+                            num_heads,
+                            head_dim,
+                            num_groups,
+                            decoder_layer_loader,
+                        ));
+                    MixerExecutables::StateSpace {
+                        mixer,
+                    }
+                },
             };
-
-            let out_projection = transformer_layer::linear_block(
-                &layer_config.attention_config.out_projection_config,
-                layer_config.attention_config.has_out_biases,
-                num_heads * head_dim,
-                [model_dim],
-                mtl_context,
-                &decoder_layer_loader
-                    .subtree("attention.out_projection")
-                    .unwrap(),
-                ArrayId::AttentionOutput,
-                ArrayId::Main,
-                &compilation_config.descriptor_mlp,
-            );
 
             let post_attention_norm: Option<Box<dyn EncodableWithState>> =
                 if let Some(norm_config) =
@@ -155,9 +249,11 @@ impl LayerExecutables {
                             norm_config.clone(),
                             ArrayId::Main,
                             ArrayId::Main,
-                            &decoder_layer_loader
-                                .subtree("post_attention_norm")
-                                .unwrap(),
+                            &resolve_subtree(
+                                decoder_layer_loader,
+                                &["post_attention_norm", "post_mixer_norm"],
+                            )
+                            .unwrap(),
                         )
                         .expect("Failed to create RMS norm kernel"),
                     ))
@@ -214,26 +310,11 @@ impl LayerExecutables {
                     None
                 };
 
-            let attention: Box<dyn EncodableWithState> = Box::new(
-                AttentionKernelEncodable::new(
-                    mtl_context,
-                    kernel_data_type,
-                    layer_index,
-                    attention_scale,
-                    layer_config.attention_config.has_sinks,
-                )
-                .expect("Failed to create AttentionWrapper with Metal kernel"),
-            );
-
             Self {
                 layer_index,
                 copy_main_to_shortcut,
                 pre_attention_norm,
-                qkv_projection,
-                qk_norm,
-                rope,
-                attention,
-                out_projection,
+                mixer,
                 post_attention_norm,
                 main_shortcut_add_swap,
                 pre_mlp_norm,
@@ -275,18 +356,39 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        self.qkv_projection.encode(state, command_buffer, parameters);
-        if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(state, command_buffer, parameters);
-        }
-        self.rope.encode(state, command_buffer, parameters);
-        self.attention.encode(state, command_buffer, parameters);
-        self.out_projection.encode(state, command_buffer, parameters);
-        if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
-                ArrayId::Main,
-                layer_traces.borrow().attention.clone(),
-            );
+        match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                qkv_projection.encode(state, command_buffer, parameters);
+                if let Some(norm) = qk_norm {
+                    norm.encode(state, command_buffer, parameters);
+                }
+                rope.encode(state, command_buffer, parameters);
+                attention.encode(state, command_buffer, parameters);
+                out_projection.encode(state, command_buffer, parameters);
+                if let Some(layer_traces) = layer_traces.clone() {
+                    state.copy_array(
+                        ArrayId::Main,
+                        layer_traces.borrow().attention.clone(),
+                    );
+                }
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                mixer.encode(state, command_buffer, parameters);
+                if let Some(layer_traces) = layer_traces.clone() {
+                    state.copy_array(
+                        ArrayId::Main,
+                        layer_traces.borrow().attention.clone(),
+                    );
+                }
+            },
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {

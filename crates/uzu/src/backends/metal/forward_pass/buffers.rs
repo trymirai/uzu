@@ -29,6 +29,14 @@ pub struct ForwardPassBuffers {
     pub attention_output: MTLBuffer,
     pub mlp_fused_up: MTLBuffer,
     pub mlp_hidden: MTLBuffer,
+    pub ssm_inproj: Option<MTLBuffer>,
+    pub ssm_packed: Option<MTLBuffer>,
+    pub ssm_x: Option<MTLBuffer>,
+    pub ssm_b: Option<MTLBuffer>,
+    pub ssm_c: Option<MTLBuffer>,
+    pub ssm_dt: Option<MTLBuffer>,
+    pub ssm_decay: Option<MTLBuffer>,
+    pub ssm_z: Option<MTLBuffer>,
 
     // 3-D
     pub rotated_queries: MTLBuffer,
@@ -120,6 +128,30 @@ impl ForwardPassBuffers {
                 &model_shape.mlp_hidden_shape(max_suffix_len),
                 act_ty,
             ),
+            ssm_inproj: model_shape
+                .ssm_inproj_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_packed: model_shape
+                .ssm_packed_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_x: model_shape
+                .ssm_x_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_b: model_shape
+                .ssm_bc_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_c: model_shape
+                .ssm_bc_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_dt: model_shape
+                .ssm_dt_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_decay: model_shape
+                .ssm_decay_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_z: model_shape
+                .ssm_z_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
 
             // 3-D
             rotated_queries: alloc(

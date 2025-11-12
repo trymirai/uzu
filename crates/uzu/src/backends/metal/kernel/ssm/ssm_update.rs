@@ -11,15 +11,25 @@ pub struct SSMUpdateKernel {
 }
 
 pub struct SSMUpdateArguments<'a> {
-    pub x: &'a MTLBuffer,          // buffer(0)
-    pub dt: &'a MTLBuffer,         // buffer(1)
-    pub a: &'a MTLBuffer,          // buffer(2)
-    pub b: &'a MTLBuffer,          // buffer(3)
-    pub c: &'a MTLBuffer,          // buffer(4)
-    pub d: &'a MTLBuffer,          // buffer(5)
-    pub z: &'a MTLBuffer,          // buffer(6)
-    pub state: &'a MTLBuffer,      // buffer(7)
-    pub y: &'a MTLBuffer,          // buffer(8)
+    /// X – Silu-activated hidden stream (per head/channel) coming from the conv.
+    pub x: &'a MTLBuffer, // buffer(0)
+    /// Δt – learned step sizes per head.
+    pub dt: &'a MTLBuffer, // buffer(1)
+    /// A – diagonal decay coefficients shared across tokens (eigenvalues).
+    pub a: &'a MTLBuffer, // buffer(2)
+    /// B – input projection that injects X into the state space.
+    pub b: &'a MTLBuffer, // buffer(3)
+    /// C – output projection that maps state to residual updates.
+    pub c: &'a MTLBuffer, // buffer(4)
+    /// D – per-head skip/identity weights.
+    pub d: &'a MTLBuffer, // buffer(5)
+    /// Z – post-gate activations that modulate the residual output.
+    pub z: &'a MTLBuffer, // buffer(6)
+    /// Current state tensor.
+    pub state: &'a MTLBuffer, // buffer(7)
+    /// Y – residual output buffer.
+    pub y: &'a MTLBuffer, // buffer(8)
+    /// Next state tensor (same buffer as `state`, but written after update).
     pub next_state: &'a MTLBuffer, // buffer(9)
     pub batch_size: usize,
     pub channels: usize,

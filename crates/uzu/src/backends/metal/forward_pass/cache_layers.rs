@@ -136,18 +136,6 @@ impl CacheLayers {
                     ];
                     let dtype = model_shape.activation_data_type();
 
-                    let packed_shape = [batch_size, *conv_dim];
-                    let x_shape = [
-                        batch_size,
-                        model_shape.num_heads(),
-                        model_shape.head_dim(),
-                    ];
-                    let z_shape = x_shape;
-                    let dt_shape = [batch_size, model_shape.num_heads()];
-                    let decay_shape = dt_shape;
-                    let bc_shape =
-                        [batch_size, model_shape.num_groups(), *state_dim];
-
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: RefCell::new(
                             context.array(&conv_shape, dtype),
@@ -155,15 +143,6 @@ impl CacheLayers {
                         ssm_state: RefCell::new(
                             context.array(&ssm_shape, dtype),
                         ),
-                        packed: RefCell::new(
-                            context.array(&packed_shape, dtype),
-                        ),
-                        x: RefCell::new(context.array(&x_shape, dtype)),
-                        b: RefCell::new(context.array(&bc_shape, dtype)),
-                        c: RefCell::new(context.array(&bc_shape, dtype)),
-                        dt: RefCell::new(context.array(&dt_shape, dtype)),
-                        decay: RefCell::new(context.array(&decay_shape, dtype)),
-                        z: RefCell::new(context.array(&z_shape, dtype)),
                     })
                 },
             })
@@ -335,74 +314,9 @@ impl CacheLayers {
                         new_ssm.copy_from_array(&ssm_src);
                     }
 
-                    let packed_shape = layer.packed.borrow().shape().to_vec();
-                    let packed_dtype = layer.packed.borrow().data_type();
-                    let mut new_packed =
-                        context.array(&packed_shape, packed_dtype);
-                    {
-                        let src = layer.packed.borrow();
-                        new_packed.copy_from_array(&src);
-                    }
-
-                    let x_shape = layer.x.borrow().shape().to_vec();
-                    let x_dtype = layer.x.borrow().data_type();
-                    let mut new_x = context.array(&x_shape, x_dtype);
-                    {
-                        let src = layer.x.borrow();
-                        new_x.copy_from_array(&src);
-                    }
-
-                    let b_shape = layer.b.borrow().shape().to_vec();
-                    let b_dtype = layer.b.borrow().data_type();
-                    let mut new_b = context.array(&b_shape, b_dtype);
-                    {
-                        let src = layer.b.borrow();
-                        new_b.copy_from_array(&src);
-                    }
-
-                    let c_shape = layer.c.borrow().shape().to_vec();
-                    let c_dtype = layer.c.borrow().data_type();
-                    let mut new_c = context.array(&c_shape, c_dtype);
-                    {
-                        let src = layer.c.borrow();
-                        new_c.copy_from_array(&src);
-                    }
-
-                    let dt_shape = layer.dt.borrow().shape().to_vec();
-                    let dt_dtype = layer.dt.borrow().data_type();
-                    let mut new_dt = context.array(&dt_shape, dt_dtype);
-                    {
-                        let src = layer.dt.borrow();
-                        new_dt.copy_from_array(&src);
-                    }
-
-                    let decay_shape = layer.decay.borrow().shape().to_vec();
-                    let decay_dtype = layer.decay.borrow().data_type();
-                    let mut new_decay =
-                        context.array(&decay_shape, decay_dtype);
-                    {
-                        let src = layer.decay.borrow();
-                        new_decay.copy_from_array(&src);
-                    }
-
-                    let z_shape = layer.z.borrow().shape().to_vec();
-                    let z_dtype = layer.z.borrow().data_type();
-                    let mut new_z = context.array(&z_shape, z_dtype);
-                    {
-                        let src = layer.z.borrow();
-                        new_z.copy_from_array(&src);
-                    }
-
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: RefCell::new(new_conv),
                         ssm_state: RefCell::new(new_ssm),
-                        packed: RefCell::new(new_packed),
-                        x: RefCell::new(new_x),
-                        b: RefCell::new(new_b),
-                        c: RefCell::new(new_c),
-                        dt: RefCell::new(new_dt),
-                        decay: RefCell::new(new_decay),
-                        z: RefCell::new(new_z),
                     })
                 },
             })

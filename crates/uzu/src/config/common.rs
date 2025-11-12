@@ -64,8 +64,8 @@ pub enum Activation {
         #[serde(default = "default_silu_alpha")]
         alpha: f32,
     },
-    #[serde(rename = "GELU")]
     GELU,
+    Identity,
 }
 
 fn default_silu_alpha() -> f32 {
@@ -79,6 +79,7 @@ impl Activation {
                 alpha,
             } => *alpha,
             Activation::GELU => 1.0,
+            Activation::Identity => 1.0,
         }
     }
 }

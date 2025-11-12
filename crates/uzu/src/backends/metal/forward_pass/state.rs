@@ -161,7 +161,9 @@ impl RopeBuffers {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
         rope_name: String,
     ) {
-        let rope_tree = parameter_tree.subtree(rope_name.as_str()).unwrap();
+        let Ok(rope_tree) = parameter_tree.subtree(rope_name.as_str()) else {
+            return;
+        };
 
         let cosines_view = rope_tree.leaf("cosines").unwrap();
         self.cosines.borrow_mut().copy_from_array(&cosines_view);
@@ -173,7 +175,7 @@ impl RopeBuffers {
 
 pub struct SharedBuffers {
     pub embeddings: EmbeddingsBuffers,
-    pub global_rope: RopeBuffers,
+    pub global_rope: Option<RopeBuffers>,
     pub local_rope: Option<RopeBuffers>,
     pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
     pub attention_sinks: Option<Vec<ArrayCell>>,
@@ -197,7 +199,11 @@ impl SharedBuffers {
             model_shape,
         );
 
-        let global_rope = RopeBuffers::new(context, model_shape);
+        let global_rope = if decoder_config.global_rope_config.is_some() {
+            Some(RopeBuffers::new(context, model_shape))
+        } else {
+            None
+        };
 
         let local_rope = if decoder_config.local_rope_config.is_some() {
             Some(RopeBuffers::new(context, model_shape))
@@ -214,8 +220,10 @@ impl SharedBuffers {
             None
         };
 
-        let attention_sinks =
-            if decoder_config.layer_config.attention_config.has_sinks {
+        let attention_sinks = if let Some(attention_config) =
+            decoder_config.layer_config.attention_config()
+        {
+            if attention_config.has_sinks {
                 let num_heads = decoder_config.num_heads;
                 Some(
                     (0..decoder_config.num_layers)
@@ -229,7 +237,10 @@ impl SharedBuffers {
                 )
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         Self {
             embeddings,
@@ -245,8 +256,10 @@ impl SharedBuffers {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) {
         self.embeddings.update_data(parameter_tree);
-        self.global_rope
-            .update_data(parameter_tree, String::from("global_rope"));
+        if let Some(global_rope) = &mut self.global_rope {
+            global_rope
+                .update_data(parameter_tree, String::from("global_rope"));
+        }
         if let Some(local_rope) = &mut self.local_rope {
             local_rope.update_data(parameter_tree, String::from("local_rope"));
         }
@@ -308,6 +321,22 @@ struct AuxBuffers {
     mlp_fused_up: ArrayCell,
     /// [suffix_length, hidden_dim]
     mlp_hidden: ArrayCell,
+    /// [suffix_length, max_mamba_inproj_dim]
+    ssm_inproj: Option<ArrayCell>,
+    /// [suffix_length, max_conv_dim]
+    ssm_packed: Option<ArrayCell>,
+    /// [suffix_length, num_heads, head_dim]
+    ssm_x: Option<ArrayCell>,
+    /// [suffix_length, num_groups, state_dim]
+    ssm_b: Option<ArrayCell>,
+    /// [suffix_length, num_groups, state_dim]
+    ssm_c: Option<ArrayCell>,
+    /// [suffix_length, num_heads]
+    ssm_dt: Option<ArrayCell>,
+    /// [suffix_length, num_heads]
+    ssm_decay: Option<ArrayCell>,
+    /// [suffix_length, num_heads, head_dim]
+    ssm_z: Option<ArrayCell>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -381,6 +410,78 @@ impl AuxBuffers {
                     &model_shape.mlp_hidden_shape(suffix_length),
                     act_dtype,
                 )),
+                ssm_inproj: match (
+                    scratch.ssm_inproj.as_ref(),
+                    model_shape.ssm_inproj_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_packed: match (
+                    scratch.ssm_packed.as_ref(),
+                    model_shape.ssm_packed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_x: match (
+                    scratch.ssm_x.as_ref(),
+                    model_shape.ssm_x_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_b: match (
+                    scratch.ssm_b.as_ref(),
+                    model_shape.ssm_bc_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_c: match (
+                    scratch.ssm_c.as_ref(),
+                    model_shape.ssm_bc_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_dt: match (
+                    scratch.ssm_dt.as_ref(),
+                    model_shape.ssm_dt_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_decay: match (
+                    scratch.ssm_decay.as_ref(),
+                    model_shape.ssm_decay_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_z: match (
+                    scratch.ssm_z.as_ref(),
+                    model_shape.ssm_z_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
                 rotated_queries: RefCell::new(MetalArray::new(
                     scratch.rotated_queries.clone(),
                     &model_shape.rotated_queries_shape(suffix_length),
@@ -888,6 +989,12 @@ impl ForwardPassState {
             },
             ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
+            ArrayId::SsmInProj => self
+                .aux_buffers
+                .ssm_inproj
+                .as_ref()
+                .expect("SSM in-projection buffer requested but not initialized")
+                .clone(),
             ArrayId::Keys(layer_index) => {
                 let cache = self.cache_layers.borrow();
                 match cache.data[layer_index].as_transformer() {
@@ -929,74 +1036,60 @@ impl ForwardPassState {
                 }
             },
             ArrayId::SsmPacked(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.packed.clone(),
-                    None => panic!(
-                        "Requested SSM packed for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_packed
+                    .as_ref()
+                    .expect("SSM packed buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmX(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.x.clone(),
-                    None => panic!(
-                        "Requested SSM x for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_x
+                    .as_ref()
+                    .expect("SSM x buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmB(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.b.clone(),
-                    None => panic!(
-                        "Requested SSM b for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_b
+                    .as_ref()
+                    .expect("SSM b buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmC(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.c.clone(),
-                    None => panic!(
-                        "Requested SSM c for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_c
+                    .as_ref()
+                    .expect("SSM c buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmDt(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.dt.clone(),
-                    None => panic!(
-                        "Requested SSM dt for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_dt
+                    .as_ref()
+                    .expect("SSM dt buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmDecay(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.decay.clone(),
-                    None => panic!(
-                        "Requested SSM decay for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_decay
+                    .as_ref()
+                    .expect("SSM decay buffer not initialized")
+                    .clone()
             },
             ArrayId::SsmZ(layer_index) => {
-                let cache = self.cache_layers.borrow();
-                match cache.data[layer_index].as_state_space() {
-                    Some(layer) => layer.z.clone(),
-                    None => panic!(
-                        "Requested SSM z for transformer layer {}",
-                        layer_index
-                    ),
-                }
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_z
+                    .as_ref()
+                    .expect("SSM z buffer not initialized")
+                    .clone()
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
@@ -1047,7 +1140,13 @@ impl ForwardPassState {
             },
             ArrayId::RopeCosines(rope_type) => match rope_type {
                 RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.cosines.clone()
+                    let shared_buffers = self.shared_buffers.borrow();
+                    shared_buffers
+                        .global_rope
+                        .as_ref()
+                        .expect("Global rope requested but not initialized")
+                        .cosines
+                        .clone()
                 },
                 RopeType::Local => self
                     .shared_buffers
@@ -1060,7 +1159,13 @@ impl ForwardPassState {
             },
             ArrayId::RopeSines(rope_type) => match rope_type {
                 RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.sines.clone()
+                    let shared_buffers = self.shared_buffers.borrow();
+                    shared_buffers
+                        .global_rope
+                        .as_ref()
+                        .expect("Global rope requested but not initialized")
+                        .sines
+                        .clone()
                 },
                 RopeType::Local => self
                     .shared_buffers
@@ -1189,6 +1294,7 @@ pub enum ArrayId {
     AttentionOutput,
     MlpFusedUp,
     MlpHidden,
+    SsmInProj,
 
     Keys(usize),
     Values(usize),

@@ -93,6 +93,9 @@ impl MlpGateActMulKernel {
                 ..
             } => 0,
             Activation::GELU => 1,
+            Activation::Identity => {
+                panic!("Identity activation is not supported for MLP kernels")
+            },
         }
     }
 

@@ -32,13 +32,18 @@ pub use rms_norm::{
 };
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
+pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
-    Conv1dForwardArguments, Conv1dForwardKernel, Conv1dSwishForwardArguments,
-    Conv1dSwishForwardKernel, Conv1dUpdateArguments, Conv1dUpdateKernel,
-    Cumsum1DArguments, Cumsum1DKernel, SSDUpdateArguments,
-    SSDUpdateKernel, SSDUpdateNoZArguments, SSDUpdateNoZKernel, SSMKernelError,
+    ActivationArguments, ActivationKernel, ActivationType,
+    Conv1dForwardArguments, Conv1dForwardKernel, Conv1dScanArguments,
+    Conv1dScanKernel, Conv1dSwishForwardArguments, Conv1dSwishForwardKernel,
+    Conv1dUpdateArguments, Conv1dUpdateKernel, Cumsum1DArguments,
+    Cumsum1DKernel, DtDecayArguments, DtDecayKernel, SSDPrefillArguments,
+    SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
+    SSDUpdateNoZArguments, SSDUpdateNoZKernel, SSMKernelError,
     SSMUpdateArguments, SSMUpdateKernel, SegsumFromCumsumArguments,
-    SegsumFromCumsumKernel,
+    SegsumFromCumsumKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
+    SplitInProjArguments, SplitInProjKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;

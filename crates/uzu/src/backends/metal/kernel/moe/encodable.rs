@@ -282,6 +282,9 @@ impl MoeBlockEncodable {
             Activation::SILU {
                 ..
             } => 2,
+            Activation::Identity => {
+                panic!("Identity activation is not supported for MoE kernels")
+            },
         }
     }
 }

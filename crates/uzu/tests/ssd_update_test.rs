@@ -7,9 +7,7 @@ use uzu::{
     backends::metal::{KernelDataType, MTLContext},
 };
 
-use uzu::backends::metal::kernel::{
-    SSDUpdateNoZArguments, SSDUpdateNoZKernel,
-};
+use uzu::backends::metal::kernel::{SSDUpdateNoZArguments, SSDUpdateNoZKernel};
 
 fn create_test_context() -> Option<MTLContext> {
     let device = Device::system_default()?;
@@ -27,13 +25,13 @@ fn create_test_context() -> Option<MTLContext> {
 }
 
 fn ssd_update_cpu_no_z(
-    x: &[f32],          // (b,h,dh)
-    dt: &[f32],         // (b,h)
-    decay: &[f32],      // (b,h)
-    b: &[f32],          // (b,g,n)
-    c: &[f32],          // (b,g,n)
-    d: &[f32],          // (h)
-    state: &[f32],      // (b,h,dh,n)
+    x: &[f32],     // (b,h,dh)
+    dt: &[f32],    // (b,h)
+    decay: &[f32], // (b,h)
+    b: &[f32],     // (b,g,n)
+    c: &[f32],     // (b,g,n)
+    d: &[f32],     // (h)
+    state: &[f32], // (b,h,dh,n)
     bsz: usize,
     h: usize,
     dh: usize,
@@ -58,10 +56,8 @@ fn ssd_update_cpu_no_z(
                 let mut acc = 0.0f32;
                 for s in 0..n {
                     let cb_idx = b_i * (g * n) + g_i * n + s;
-                    let state_idx = b_i * (h * dh * n)
-                        + h_i * (dh * n)
-                        + dh_i * n
-                        + s;
+                    let state_idx =
+                        b_i * (h * dh * n) + h_i * (dh * n) + dh_i * n + s;
                     let new_state = state[state_idx] * this_decay
                         + b[cb_idx] * this_dt * this_x;
                     next_state[state_idx] = new_state;
@@ -77,7 +73,9 @@ fn ssd_update_cpu_no_z(
 
 #[test]
 fn ssd_update_no_z_matches_cpu() {
-    let Some(context) = create_test_context() else { return; };
+    let Some(context) = create_test_context() else {
+        return;
+    };
 
     // Dimensions
     let bsz = 2usize;
@@ -103,31 +101,45 @@ fn ssd_update_no_z_matches_cpu() {
     // Initialize with deterministic values
     {
         let xs = x.as_slice_mut::<f32>().unwrap();
-        for (i, v) in xs.iter_mut().enumerate() { *v = (i as f32 % 13.0) / 13.0; }
+        for (i, v) in xs.iter_mut().enumerate() {
+            *v = (i as f32 % 13.0) / 13.0;
+        }
     }
     {
         let dts = dt.as_slice_mut::<f32>().unwrap();
-        for (i, v) in dts.iter_mut().enumerate() { *v = 0.1 + (i as f32 % 7.0) / 10.0; }
+        for (i, v) in dts.iter_mut().enumerate() {
+            *v = 0.1 + (i as f32 % 7.0) / 10.0;
+        }
     }
     {
         let dec = decay.as_slice_mut::<f32>().unwrap();
-        for (i, v) in dec.iter_mut().enumerate() { *v = 0.8 + (i as f32 % 5.0) / 50.0; }
+        for (i, v) in dec.iter_mut().enumerate() {
+            *v = 0.8 + (i as f32 % 5.0) / 50.0;
+        }
     }
     {
         let bs = bb.as_slice_mut::<f32>().unwrap();
-        for (i, v) in bs.iter_mut().enumerate() { *v = ((i * 7 % 17) as f32) / 50.0; }
+        for (i, v) in bs.iter_mut().enumerate() {
+            *v = ((i * 7 % 17) as f32) / 50.0;
+        }
     }
     {
         let cs = cc.as_slice_mut::<f32>().unwrap();
-        for (i, v) in cs.iter_mut().enumerate() { *v = ((i * 5 % 19) as f32) / 40.0; }
+        for (i, v) in cs.iter_mut().enumerate() {
+            *v = ((i * 5 % 19) as f32) / 40.0;
+        }
     }
     {
         let ds = dd.as_slice_mut::<f32>().unwrap();
-        for (i, v) in ds.iter_mut().enumerate() { *v = (i as f32 % 3.0) / 7.0; }
+        for (i, v) in ds.iter_mut().enumerate() {
+            *v = (i as f32 % 3.0) / 7.0;
+        }
     }
     {
         let st = state.as_slice_mut::<f32>().unwrap();
-        for (i, v) in st.iter_mut().enumerate() { *v = (i as f32 % 11.0) / 17.0; }
+        for (i, v) in st.iter_mut().enumerate() {
+            *v = (i as f32 % 11.0) / 17.0;
+        }
     }
 
     // CPU reference
@@ -139,12 +151,17 @@ fn ssd_update_no_z_matches_cpu() {
         cc.as_slice::<f32>().unwrap(),
         dd.as_slice::<f32>().unwrap(),
         state.as_slice::<f32>().unwrap(),
-        bsz, h, dh, g, n,
+        bsz,
+        h,
+        dh,
+        g,
+        n,
     );
 
     // GPU invoke
     let kernel = SSDUpdateNoZKernel::new(&context, kdt).expect("kernel new");
-    let command_buffer = CommandBuffer::from_command_queue(&context.command_queue);
+    let command_buffer =
+        CommandBuffer::from_command_queue(&context.command_queue);
     let root = command_buffer.root_command_buffer().to_owned();
     let compute = root.new_compute_command_encoder();
 
@@ -203,12 +220,26 @@ fn ssd_update_no_z_matches_cpu() {
     let tol = 1e-3f32;
     for (i, (a, b)) in y_gpu.iter().zip(y_cpu.iter()).enumerate() {
         let diff = (a - b).abs();
-        assert!(diff <= tol, "y mismatch at {}: gpu={} cpu={} diff={}", i, a, b, diff);
+        assert!(
+            diff <= tol,
+            "y mismatch at {}: gpu={} cpu={} diff={}",
+            i,
+            a,
+            b,
+            diff
+        );
     }
-    for (i, (a, b)) in next_state_gpu.iter().zip(next_state_cpu.iter()).enumerate() {
+    for (i, (a, b)) in
+        next_state_gpu.iter().zip(next_state_cpu.iter()).enumerate()
+    {
         let diff = (a - b).abs();
-        assert!(diff <= tol, "state mismatch at {}: gpu={} cpu={} diff={}", i, a, b, diff);
+        assert!(
+            diff <= tol,
+            "state mismatch at {}: gpu={} cpu={} diff={}",
+            i,
+            a,
+            b,
+            diff
+        );
     }
 }
-
-
