@@ -11,7 +11,7 @@ use crate::{
     backends::metal::{
         MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -172,6 +172,16 @@ impl Classifier {
                 &self.context.command_buffer,
                 &encoding_params,
             );
+            // Trace: embedding_norm
+            if enable_traces {
+                if let Some(traces) = state.classifier_traces().cloned() {
+                    state.encode_copy_array(
+                        &self.context.command_buffer,
+                        ArrayId::Main,
+                        traces.borrow().embedding_norm.clone(),
+                    );
+                }
+            }
 
             eprintln!(
                 "[DEBUG] forward_pass - Encoding {} layers...",
@@ -198,6 +208,16 @@ impl Classifier {
                 &self.context.command_buffer,
                 &encoding_params,
             );
+            // Trace: output_norm
+            if enable_traces {
+                if let Some(traces) = state.classifier_traces().cloned() {
+                    state.encode_copy_array(
+                        &self.context.command_buffer,
+                        ArrayId::Main,
+                        traces.borrow().output_norm.clone(),
+                    );
+                }
+            }
 
             // Commit and wait for GPU to complete embedding + transformer + output norm
             eprintln!("[DEBUG] forward_pass - Committing command buffer...");
@@ -237,13 +257,13 @@ impl Classifier {
 
             // Apply prediction head: [batch, model_dim] → [batch, num_labels]
             eprintln!("[DEBUG] forward_pass - Applying prediction head...");
-            let logits_with_sigmoid =
-                self.apply_prediction_head(&pooled_output)?;
+            let logits_linear_array =
+                self.apply_prediction_head(&mut state, &pooled_output)?;
             eprintln!("[DEBUG] forward_pass - Prediction head completed");
 
             // Copy result from GPU to CPU
             eprintln!("[DEBUG] forward_pass - Copying logits to CPU...");
-            let logits = self.copy_logits_to_cpu(&logits_with_sigmoid)?;
+            let logits = self.copy_logits_to_cpu(&logits_linear_array)?;
             eprintln!("[DEBUG] forward_pass - All done");
 
             let traces = if enable_traces {
@@ -337,6 +357,38 @@ impl Classifier {
         root_owned.wait_until_completed();
         eprintln!("[DEBUG] apply_pooling - Pooling GPU work completed");
 
+        // Trace: output_pooling
+        if let Some(traces_rc) = state.classifier_traces().cloned() {
+            eprintln!(
+                "[DEBUG] apply_pooling - Copying pooled output to trace buffer..."
+            );
+            let traces_ref = traces_rc.borrow();
+            let mut trace_arr = traces_ref.output_pooling.borrow_mut();
+            // blit copy pooled_output -> trace_arr
+            let dst_buf = unsafe { trace_arr.mtl_buffer().to_owned() };
+            drop(trace_arr);
+            drop(traces_ref);
+            // start a fresh command buffer for blit
+            self.context.reset_command_buffer();
+            let root2 = self.context.command_buffer.root_command_buffer();
+            let blit = root2.new_blit_command_encoder();
+            blit.copy_from_buffer(
+                &output_buffer,
+                0,
+                &dst_buf,
+                0,
+                (batch_size * model_dim * data_type.size_in_bytes()) as u64,
+            );
+            blit.end_encoding();
+            // commit and wait for the blit to complete
+            let root_owned2 = root2.to_owned();
+            self.context.command_buffer.commit_and_continue();
+            root_owned2.wait_until_completed();
+            eprintln!(
+                "[DEBUG] apply_pooling - Pooled output trace copy completed"
+            );
+        }
+
         let pooled_array = unsafe {
             MetalArray::new(
                 output_buffer.clone(),
@@ -345,16 +397,30 @@ impl Classifier {
             )
         };
 
+        // Debug: print a few pooled feature values as f32
+        {
+            use crate::Array;
+            let bytes = Array::buffer(&pooled_array);
+            let floats: &[f32] = bytemuck::cast_slice(bytes);
+            let to_show = floats.len().min(8);
+            eprintln!(
+                "[DEBUG] apply_pooling - pooled first {} values: {:?}",
+                to_show,
+                &floats[..to_show]
+            );
+        }
+
         eprintln!("[DEBUG] apply_pooling - Done");
         Ok(pooled_array)
     }
 
     fn apply_prediction_head(
         &mut self,
+        state: &mut ClassificationForwardPassState,
         pooled_input: &MetalArray,
     ) -> Result<MetalArray, Error> {
         eprintln!("[DEBUG] apply_prediction_head - Start");
-        // Prediction head: dense → GELU → norm → final_linear → sigmoid
+        // Prediction head: dense → GELU → norm → final_linear
         // All operations on Metal
 
         let batch_size = {
@@ -487,74 +553,102 @@ impl Classifier {
             "[DEBUG] apply_prediction_head - Prediction head GPU work completed"
         );
 
-        // Now apply sigmoid to convert logits to probabilities
-        // Read from Logits array which has the correct shape [1, num_labels]
-        eprintln!("[DEBUG] apply_prediction_head - Getting logits array...");
-        let logits_arrays = pred_state.arrays(&[ArrayId::Logits]);
-        let mut logits_array = logits_arrays[0].borrow_mut();
+        // Now apply sigmoid to convert linear outputs to probabilities.
+        // IMPORTANT: Prediction head writes to Main buffer with shape [batch, num_labels].
         eprintln!(
-            "[DEBUG] apply_prediction_head - logits array shape: {:?}",
+            "[DEBUG] apply_prediction_head - Getting linear output from Main..."
+        );
+        let main_after_arrays = pred_state.arrays(&[ArrayId::Main]);
+        let mut main_after = main_after_arrays[0].borrow_mut();
+        eprintln!(
+            "[DEBUG] apply_prediction_head - Main array shape after final_linear: {:?}",
             {
                 use crate::Array;
-                Array::shape(&*logits_array)
+                Array::shape(&*main_after)
             }
         );
-        // Log logits values before sigmoid
-        let logits_cpu_buffer = {
+        // Log linear outputs before sigmoid as f32
+        let linear_cpu_buffer = {
             use crate::Array;
-            Array::buffer(&*logits_array)
+            Array::buffer(&*main_after)
         };
-        eprintln!(
-            "[DEBUG] apply_prediction_head - first 20 bytes of logits: {:?}",
-            &logits_cpu_buffer[..logits_cpu_buffer.len().min(20)]
-        );
-        let logits_buffer = unsafe { logits_array.mtl_buffer() };
+        {
+            let floats: &[f32] = bytemuck::cast_slice(linear_cpu_buffer);
+            let to_show = floats.len().min(8);
+            eprintln!(
+                "[DEBUG] apply_prediction_head - linear first {} values: {:?}",
+                to_show,
+                &floats[..to_show]
+            );
+        }
+        let linear_output_buffer =
+            unsafe { main_after.mtl_buffer().to_owned() };
 
-        // Allocate output buffer for sigmoid result
+        // Copy linear outputs (first num_labels values) into a dedicated logits buffer
         eprintln!(
-            "[DEBUG] apply_prediction_head - Creating sigmoid output buffer..."
+            "[DEBUG] apply_prediction_head - Copying linear outputs to final logits buffer..."
         );
         let output_size = batch_size * num_labels;
-        let sigmoid_output_buffer = self.context.mtl_context.device.new_buffer(
-            (output_size * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let copy_size_bytes = (output_size * data_type.size_in_bytes()) as u64;
+        let dst_buf = self.context.final_logits_buffer.clone();
 
-        // Reset command buffer for sigmoid
-        eprintln!("[DEBUG] apply_prediction_head - Encoding sigmoid...");
+        // Reset command buffer for blit copy
+        eprintln!("[DEBUG] apply_prediction_head - Encoding blit copy...");
         self.context.reset_command_buffer();
         let root = self.context.command_buffer.root_command_buffer();
-        let encoder = root.new_compute_command_encoder();
+        let blit = root.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &linear_output_buffer,
+            0,
+            &dst_buf,
+            0,
+            copy_size_bytes,
+        );
+        blit.end_encoding();
+        drop(main_after);
 
-        // Apply sigmoid
-        self.context
-            .sigmoid_kernel
-            .encode(
-                encoder,
-                logits_buffer,
-                &sigmoid_output_buffer,
-                output_size as i32,
-            )
-            .map_err(|_| Error::GenerateFailed)?;
-
-        eprintln!("[DEBUG] apply_prediction_head - Ending sigmoid encoding...");
-        encoder.end_encoding();
-        drop(logits_array);
-
-        // Commit and wait for sigmoid to complete
-        eprintln!("[DEBUG] apply_prediction_head - Committing sigmoid...");
+        // Commit and wait for blit to complete
+        eprintln!("[DEBUG] apply_prediction_head - Committing blit copy...");
         let root_owned = root.to_owned();
         self.context.command_buffer.commit_and_continue();
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Waiting for sigmoid GPU work..."
-        );
+        eprintln!("[DEBUG] apply_prediction_head - Waiting for GPU blit...");
         root_owned.wait_until_completed();
-        eprintln!("[DEBUG] apply_prediction_head - Sigmoid GPU work completed");
+        eprintln!("[DEBUG] apply_prediction_head - Blit copy completed");
 
-        // Return sigmoid output (probabilities)
+        // Trace: logits (copy linear outputs to trace buffer)
+        if let Some(traces_rc) = state.classifier_traces().cloned() {
+            eprintln!(
+                "[DEBUG] apply_prediction_head - Copying logits to trace buffer..."
+            );
+            let traces_ref = traces_rc.borrow();
+            let mut trace_logits = traces_ref.logits.borrow_mut();
+            let dst_trace_buf = unsafe { trace_logits.mtl_buffer().to_owned() };
+            drop(trace_logits);
+            drop(traces_ref);
+            // start a fresh command buffer for blit
+            self.context.reset_command_buffer();
+            let root2 = self.context.command_buffer.root_command_buffer();
+            let blit2 = root2.new_blit_command_encoder();
+            blit2.copy_from_buffer(
+                &dst_buf,
+                0,
+                &dst_trace_buf,
+                0,
+                copy_size_bytes,
+            );
+            blit2.end_encoding();
+            let root_owned2 = root2.to_owned();
+            self.context.command_buffer.commit_and_continue();
+            root_owned2.wait_until_completed();
+            eprintln!(
+                "[DEBUG] apply_prediction_head - Logits trace copy completed"
+            );
+        }
+
+        // Return linear logits array [batch_size, num_labels]
         let output_array = unsafe {
             MetalArray::new(
-                sigmoid_output_buffer,
+                dst_buf.clone(),
                 &[batch_size, num_labels],
                 data_type,
             )
@@ -599,6 +693,7 @@ impl Classifier {
             &self.context.model_config.classifier_config.output_labels;
         let mut probabilities = HashMap::new();
 
+        // Apply sigmoid on CPU to convert linear logits to probabilities
         for (idx, &logit) in logits.iter().enumerate() {
             let prob = 1.0 / (1.0 + (-logit).exp());
 

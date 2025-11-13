@@ -42,6 +42,8 @@ impl ClassificationSession {
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
+        // Keep tokenizer padding enabled (pads to 2048) to match Lalamo's behavior.
+        // Mean pooling in Lalamo averages over all tokens including padding.
 
         // Extract classifier model config
         let classifier_model_config = model_metadata

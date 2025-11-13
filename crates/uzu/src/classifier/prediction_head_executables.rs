@@ -14,7 +14,7 @@ use crate::{
             transformer_layer::linear_block,
         },
         graph::{common::activation, placeholder, shaped_type},
-        kernel::RMSNormKernelEncodable,
+        kernel::create_normalization_encodable,
     },
     config::PredictionHeadConfig,
     parameters::ParameterTree,
@@ -59,17 +59,15 @@ impl PredictionHeadExecutables {
             &compilation_config,
         );
 
-        let norm = Box::new(
-            RMSNormKernelEncodable::new(
-                &mtl_context,
-                data_type,
-                config.normalization_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &parameter_tree.subtree("norm").unwrap(),
-            )
-            .expect("Failed to create prediction head norm kernel"),
-        );
+        let norm = create_normalization_encodable(
+            &mtl_context,
+            data_type,
+            config.normalization_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &parameter_tree.subtree("norm").unwrap(),
+        )
+        .expect("Failed to create prediction head norm kernel");
 
         let final_linear = linear_block::<1>(
             &config.final_linear_config,

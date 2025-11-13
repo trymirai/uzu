@@ -13,10 +13,7 @@ use crate::{
             encodable_with_state::EncodableWithState,
             transformer_layer::embed_block,
         },
-        kernel::{
-            PoolingKernel, RMSNormKernelEncodable, RopeKernelEncodable,
-            SigmoidKernel,
-        },
+        kernel::{PoolingKernel, RopeKernelEncodable, SigmoidKernel},
     },
     classifier::{ClassifierLayerExecutable, PredictionHeadExecutables},
     config::{ClassifierModelConfig, ModelMetadata},
@@ -199,21 +196,19 @@ impl ClassifierContext {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let output_norm = Box::new(
-            RMSNormKernelEncodable::new(
-                &mtl_context,
-                data_type,
-                classifier_model_config
-                    .classifier_config
-                    .transformer_config
-                    .output_norm_config
-                    .clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &transformer_loader.subtree("output_norm").unwrap(),
-            )
-            .expect("Failed to create output norm kernel"),
-        );
+        let output_norm = create_normalization_encodable(
+            &mtl_context,
+            data_type,
+            classifier_model_config
+                .classifier_config
+                .transformer_config
+                .output_norm_config
+                .clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &transformer_loader.subtree("output_norm").unwrap(),
+        )
+        .expect("Failed to create output norm kernel");
 
         let context_length =
             classifier_model_config.classifier_config.context_length;
@@ -235,21 +230,21 @@ impl ClassifierContext {
         eprintln!(
             "[DEBUG] ClassifierContext::new - Creating embedding normalization..."
         );
-        use crate::backends::metal::forward_pass::ArrayId;
-        let embedding_norm = Box::new(
-            RMSNormKernelEncodable::new(
-                &mtl_context,
-                data_type,
-                classifier_model_config
-                    .classifier_config
-                    .embedding_norm_config
-                    .clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &root_loader_view.subtree("embedding_norm").unwrap(),
-            )
-            .expect("Failed to create embedding norm kernel"),
-        );
+        use crate::backends::metal::{
+            forward_pass::ArrayId, kernel::create_normalization_encodable,
+        };
+        let embedding_norm = create_normalization_encodable(
+            &mtl_context,
+            data_type,
+            classifier_model_config
+                .classifier_config
+                .embedding_norm_config
+                .clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &root_loader_view.subtree("embedding_norm").unwrap(),
+        )
+        .expect("Failed to create embedding norm kernel");
 
         eprintln!(
             "[DEBUG] ClassifierContext::new - Creating prediction head..."

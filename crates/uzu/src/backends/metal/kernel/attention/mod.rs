@@ -689,6 +689,11 @@ impl EncodableWithState for AttentionKernelEncodable {
         let mut qkv_array = qkv_binding[0].borrow_mut();
         let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
 
+        // Prepare command encoder early (used for optional value extraction)
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.kv_cache().is_some();
         let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
@@ -706,8 +711,35 @@ impl EncodableWithState for AttentionKernelEncodable {
 
             (key_cache_buf, value_cache_buf)
         } else {
-            // For classifiers, use rotated keys/values directly (no cache)
-            (rotated_keys_buffer.clone(), qkv_buffer.clone())
+            // For classifiers, we need a values buffer with [num_groups, suffix_length, head_dim] layout.
+            // Use the KV cache update kernel to extract values from QKV into a dedicated rotated_values buffer.
+            let rotated_values_binding =
+                state.arrays(&[ArrayId::RotatedValues]);
+            let mut rotated_values_array =
+                rotated_values_binding[0].borrow_mut();
+            let rotated_values_buf =
+                unsafe { rotated_values_array.mtl_buffer().clone() };
+
+            // Reuse the KV cache update kernel to write values into rotated_values_buf.
+            if let Err(e) = self.kernel.encode_kv_cache_update(
+                &compute_encoder,
+                KVCacheUpdateArguments {
+                    rotated_keys_buffer: &rotated_keys_buffer,
+                    qkv_buffer: &qkv_buffer,
+                    key_cache_buffer: &rotated_keys_buffer, // keys already in desired layout; harmless overwrite
+                    value_cache_buffer: &rotated_values_buf,
+                    num_groups,
+                    num_heads,
+                    head_dim,
+                    suffix_length,
+                    segment_prefix_length: 0,
+                    max_sequence_length,
+                },
+            ) {
+                eprintln!("Failed to prepare rotated values buffer: {:?}", e);
+            }
+
+            (rotated_keys_buffer.clone(), rotated_values_buf)
         };
 
         let mut queries_array = rotated_queries_binding[0].borrow_mut();
@@ -747,11 +779,6 @@ impl EncodableWithState for AttentionKernelEncodable {
         let sinks_buffer = sinks_binding.as_ref().map(|binding| unsafe {
             binding[0].borrow_mut().mtl_buffer().clone()
         });
-
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {

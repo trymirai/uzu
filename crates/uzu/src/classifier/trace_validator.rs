@@ -21,7 +21,7 @@ use crate::{
 
 pub struct ClassifierTraceValidator {
     model_path: PathBuf,
-    classifier: Classifier,
+    pub classifier: Classifier,
 }
 
 impl ClassifierTraceValidator {

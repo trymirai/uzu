@@ -54,6 +54,8 @@ struct AuxBuffers {
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
     rotated_keys: ArrayCell,
+    /// [num_groups, max_suffix_length, head_dim]
+    rotated_values: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count * head_dim]
     attention_partials: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
@@ -127,6 +129,13 @@ impl AuxBuffers {
                     model_shape.activation_data_type(),
                 )
             }),
+            rotated_values: RefCell::new(unsafe {
+                MetalArray::new(
+                    scratch.rotated_values.clone(),
+                    &model_shape.rotated_values_shape(suffix_length),
+                    model_shape.activation_data_type(),
+                )
+            }),
             attention_partials: RefCell::new(unsafe {
                 MetalArray::new(
                     scratch.attention_partials.clone(),
@@ -157,6 +166,7 @@ impl AuxBuffers {
 }
 
 impl ClassificationForwardPassState {
+    #[allow(unused_variables)]
     pub fn new(
         context: Rc<MTLContext>,
         _decoder_config: &DecoderConfig,
@@ -298,6 +308,7 @@ impl ClassificationForwardPassState {
             ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
+            ArrayId::RotatedValues => self.aux_buffers.rotated_values.clone(),
             ArrayId::AttentionPartials => {
                 self.aux_buffers.attention_partials.clone()
             },

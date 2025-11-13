@@ -33,6 +33,7 @@ pub struct ForwardPassBuffers {
     // 3-D
     pub rotated_queries: MTLBuffer,
     pub rotated_keys: MTLBuffer,
+    pub rotated_values: MTLBuffer,
 
     // 2-pass attention intermediate buffers
     pub attention_partials: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
@@ -128,6 +129,10 @@ impl ForwardPassBuffers {
             ),
             rotated_keys: alloc(
                 &model_shape.rotated_keys_shape(max_suffix_len),
+                act_ty,
+            ),
+            rotated_values: alloc(
+                &model_shape.rotated_values_shape(max_suffix_len),
                 act_ty,
             ),
 

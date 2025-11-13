@@ -313,6 +313,8 @@ struct AuxBuffers {
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
     rotated_keys: ArrayCell,
+    /// [num_groups, max_suffix_length, head_dim]
+    rotated_values: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count * head_dim]
     attention_partials: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
@@ -390,6 +392,11 @@ impl AuxBuffers {
                 rotated_keys: RefCell::new(MetalArray::new(
                     scratch.rotated_keys.clone(),
                     &model_shape.rotated_keys_shape(suffix_length),
+                    act_dtype,
+                )),
+                rotated_values: RefCell::new(MetalArray::new(
+                    scratch.rotated_values.clone(),
+                    &model_shape.rotated_values_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_partials: RefCell::new(MetalArray::new(
@@ -897,6 +904,7 @@ impl ForwardPassState {
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
+            ArrayId::RotatedValues => self.aux_buffers.rotated_values.clone(),
             ArrayId::AttentionPartials => {
                 self.aux_buffers.attention_partials.clone()
             },
@@ -1148,6 +1156,7 @@ pub enum ArrayId {
 
     RotatedQueries,
     RotatedKeys,
+    RotatedValues,
 
     AttentionPartials,
     AttentionSums,

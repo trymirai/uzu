@@ -1,10 +1,12 @@
 pub mod attention;
 mod data_type;
 pub mod kv_cache_update;
+pub mod layer_norm;
 pub mod linear;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
+mod normalization_factory;
 pub mod pooling;
 pub mod quant_matmul;
 pub mod rms_norm;
@@ -18,6 +20,9 @@ mod tensor_copy;
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
+pub use layer_norm::{
+    LayerNormArguments, LayerNormKernel, LayerNormKernelEncodable,
+};
 pub use moe::{
     MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
@@ -27,6 +32,7 @@ pub use moe::{
     MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
+pub use normalization_factory::create_normalization_encodable;
 pub use pooling::PoolingKernel;
 pub use rms_norm::{
     QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,

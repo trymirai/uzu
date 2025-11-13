@@ -14,8 +14,8 @@ use crate::{
             transformer_layer,
         },
         kernel::{
-            AttentionKernelEncodable, KernelDataType, RMSNormKernelEncodable,
-            TensorAddSwap, TensorCopy,
+            AttentionKernelEncodable, KernelDataType, TensorAddSwap,
+            TensorCopy, create_normalization_encodable,
         },
     },
     classifier::ClassificationForwardPassState,
@@ -75,8 +75,8 @@ impl ClassifierLayerExecutable {
                     &layer_config.pre_attention_norm_config
                 {
                     if layer_loader.subtree("pre_attention_norm").is_ok() {
-                        Some(Box::new(
-                            RMSNormKernelEncodable::new(
+                        Some(
+                            create_normalization_encodable(
                                 mtl_context,
                                 intermediate_data_type,
                                 norm_config.clone(),
@@ -89,7 +89,7 @@ impl ClassifierLayerExecutable {
                             .expect(
                                 "Failed to create pre-attention norm kernel",
                             ),
-                        ))
+                        )
                     } else {
                         None
                     }
@@ -134,8 +134,8 @@ impl ClassifierLayerExecutable {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableWithState> = Box::new(
-                RMSNormKernelEncodable::new(
+            let pre_mlp_norm: Box<dyn EncodableWithState> =
+                create_normalization_encodable(
                     mtl_context,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
@@ -143,8 +143,7 @@ impl ClassifierLayerExecutable {
                     ArrayId::Main,
                     &layer_loader.subtree("pre_mlp_norm").unwrap(),
                 )
-                .expect("Failed to create pre-MLP norm kernel"),
-            );
+                .expect("Failed to create pre-MLP norm kernel");
 
             let mlp = transformer_layer::mlp_block(
                 &layer_config.mlp_config,
@@ -228,6 +227,15 @@ impl EncodableWithState for ClassifierLayerExecutable {
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(state, command_buffer, parameters);
+            if let Some(layer_traces) = layer_traces.clone() {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().pre_attention_norm.clone(),
+                );
+            }
+        } else {
+            // If no pre_attention_norm, copy inputs directly (for Lalamo trace parity)
             if let Some(layer_traces) = layer_traces.clone() {
                 state.encode_copy_array(
                     command_buffer,
