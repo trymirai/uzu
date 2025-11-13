@@ -5,7 +5,7 @@ use mpsgraph::{
 use objc2::rc::Retained;
 
 use super::{
-    encodable_with_state::{EncodableWithState, ForwardPassStateInterface},
+    ForwardPassStateTrait, encodable_with_state::EncodableWithState,
     io_arrays::IOArrays,
 };
 use crate::backends::metal::forward_pass::encodable_with_state::EncodingParameters;
@@ -58,12 +58,10 @@ impl MPSGraphBlock {
     // }
 }
 
-impl<S: ForwardPassStateInterface + ?Sized> EncodableWithState<S>
-    for MPSGraphBlock
-{
+impl EncodableWithState for MPSGraphBlock {
     fn encode(
         &self,
-        state: &mut S,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

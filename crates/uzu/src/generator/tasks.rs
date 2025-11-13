@@ -1,8 +1,9 @@
 use super::context::GeneratorContext;
 use crate::backends::metal::{
     ForwardPassState,
-    forward_pass::encodable_with_state::{
-        EncodableWithState, EncodingParameters,
+    forward_pass::{
+        ForwardPassStateTrait,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
 
@@ -60,7 +61,7 @@ impl GeneratorRunTask {
     pub fn build_encoded_task(
         &self,
         context: &GeneratorContext,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         parameters: &EncodingParameters,
         key: String,
     ) -> GeneratorEncodedTask {

@@ -9,7 +9,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -220,6 +220,7 @@ impl LayerExecutables {
                     layer_index,
                     attention_scale,
                     layer_config.attention_config.has_sinks,
+                    true, // is_causal - LLM uses causal (autoregressive) attention
                 )
                 .expect("Failed to create AttentionWrapper with Metal kernel"),
             );
@@ -246,11 +247,11 @@ impl LayerExecutables {
 impl EncodableWithState for LayerExecutables {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let layer_traces = if let Some(traces) = state.traces.clone() {
+        let layer_traces = if let Some(traces) = state.traces().cloned() {
             traces.borrow().layer_results.get(self.layer_index).cloned()
         } else {
             None

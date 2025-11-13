@@ -12,7 +12,7 @@ use crate::{
     backends::metal::{
         KernelDataType, MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState, RopeType,
+            ArrayId, ForwardPassStateTrait, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -153,7 +153,7 @@ impl RopeKernelEncodable {
 impl EncodableWithState for RopeKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

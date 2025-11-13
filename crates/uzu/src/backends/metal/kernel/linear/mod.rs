@@ -12,7 +12,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -204,7 +204,7 @@ impl QuantizedLinearKernelBlock {
 impl EncodableWithState for QuantizedLinearKernelBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         _parameters: &EncodingParameters,
     ) {

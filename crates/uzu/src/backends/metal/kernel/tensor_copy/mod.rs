@@ -12,7 +12,7 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ArrayId, ForwardPassState,
+        ArrayId, ForwardPassStateTrait,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
@@ -66,7 +66,7 @@ impl TensorCopy {
 impl EncodableWithState for TensorCopy {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

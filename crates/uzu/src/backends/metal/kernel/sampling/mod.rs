@@ -12,7 +12,7 @@ use crate::{
     backends::metal::{
         KernelDataType, MTLContext, MTLError,
         forward_pass::{
-            ForwardPassState,
+            ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -799,11 +799,11 @@ impl SamplingKernelEncodable {
 impl EncodableWithState for SamplingKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let sampling_method = state.sampling_method.unwrap_or_default();
+        let sampling_method = state.sampling_method().unwrap_or_default();
 
         let logits_binding = state
             .arrays(&[crate::backends::metal::forward_pass::ArrayId::Logits]);
@@ -817,7 +817,7 @@ impl EncodableWithState for SamplingKernelEncodable {
         drop(logits);
 
         assert!(
-            state.sampling_output.is_some(),
+            state.sampling_output().is_some(),
             "Sampling output buffer must be pre-allocated"
         );
 
@@ -826,7 +826,7 @@ impl EncodableWithState for SamplingKernelEncodable {
         let mut logits = logits_binding[0].borrow_mut();
 
         let mut output_buffer_ref =
-            state.sampling_output.as_ref().unwrap().borrow_mut();
+            state.sampling_output().unwrap().borrow_mut();
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();

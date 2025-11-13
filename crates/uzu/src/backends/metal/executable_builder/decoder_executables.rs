@@ -9,7 +9,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState, RopeType,
+            ArrayId, ForwardPassStateTrait, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::{embed_block, readout_block},
         },
@@ -147,7 +147,7 @@ impl DecoderExecutables {
 impl EncodableWithState for DecoderExecutables {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -158,13 +158,13 @@ impl EncodableWithState for DecoderExecutables {
         }
 
         self.norm.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
+        if let Some(traces) = state.traces().cloned() {
             state
                 .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
         self.readout.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
+        if let Some(traces) = state.traces().cloned() {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
     }

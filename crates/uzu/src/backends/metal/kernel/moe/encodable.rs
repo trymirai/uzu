@@ -15,7 +15,7 @@ use crate::{
     backends::metal::{
         KernelDataType, MTLContext, MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -286,7 +286,7 @@ impl MoeBlockEncodable {
 impl EncodableWithState for MoeBlockEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

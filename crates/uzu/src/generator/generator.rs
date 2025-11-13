@@ -11,7 +11,7 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ForwardPassState,
+        ForwardPassState, ForwardPassStateTrait,
         encodable_with_state::{EncodableWithState, EncodingParameters},
         kv_cache::INVALID_POSITION,
     },
@@ -379,7 +379,9 @@ impl Generator {
             let run_start = Instant::now();
 
             let mut state = task.create_state(&mut self.context, None);
-            state.sampling_method = Some(sampling_method);
+            if let Some(method) = state.sampling_method_mut() {
+                *method = Some(sampling_method);
+            }
 
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture =
@@ -452,9 +454,9 @@ impl Generator {
 
     fn sample(
         &mut self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
     ) -> Result<Vec<u64>, Error> {
-        let sampling_output = state.sampling_output.as_ref()
+        let sampling_output = state.sampling_output()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();

@@ -21,6 +21,7 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
+#[allow(dead_code)]
 pub enum EmbeddingsBuffers {
     Tied {
         /// [vocab_size, model_dim]
@@ -1039,15 +1040,7 @@ impl ForwardPassState {
     }
 }
 
-impl Drop for ForwardPassState {
-    fn drop(&mut self) {
-        // Nothing extra to clean up now that heap is removed.
-    }
-}
-
-impl super::encodable_with_state::ForwardPassStateInterface
-    for ForwardPassState
-{
+impl super::state_trait::ForwardPassStateTrait for ForwardPassState {
     fn arrays(
         &self,
         ids: &[ArrayId],
@@ -1068,6 +1061,40 @@ impl super::encodable_with_state::ForwardPassStateInterface
 
     fn mtl_context(&self) -> &Rc<MTLContext> {
         self.mtl_context()
+    }
+
+    fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
+        &self.shared_buffers
+    }
+
+    fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
+        Some(&self.kv_cache)
+    }
+
+    fn sampling_output(&self) -> Option<&ArrayCell> {
+        self.sampling_output.as_ref()
+    }
+
+    fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
+        self.traces.as_ref()
+    }
+
+    fn sampling_method_mut(
+        &mut self
+    ) -> Option<&mut Option<crate::session::parameter::SamplingMethod>> {
+        Some(&mut self.sampling_method)
+    }
+
+    fn sampling_method(
+        &self
+    ) -> Option<crate::session::parameter::SamplingMethod> {
+        self.sampling_method
+    }
+}
+
+impl Drop for ForwardPassState {
+    fn drop(&mut self) {
+        // Nothing extra to clean up now that heap is removed.
     }
 }
 

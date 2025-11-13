@@ -7,11 +7,11 @@ use super::{
     ClassifierContext,
 };
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MetalArray,
         forward_pass::{
-            ArrayId,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -133,12 +133,13 @@ impl Classifier {
             // Debug: Check embeddings output
             eprintln!("[DEBUG] forward_pass - Checking embeddings output...");
             {
+                use crate::Array;
                 let main_arrays = state.arrays(&[ArrayId::Main]);
                 let main_array = main_arrays[0].borrow();
-                let buffer = main_array.buffer();
+                let buffer = Array::buffer(&*main_array);
                 eprintln!(
                     "[DEBUG] forward_pass - embeddings Main array shape: {:?}, buffer len: {}",
-                    main_array.shape(),
+                    Array::shape(&*main_array),
                     buffer.len()
                 );
                 eprintln!(
@@ -198,12 +199,13 @@ impl Classifier {
             // Debug: Check transformer output before pooling
             eprintln!("[DEBUG] forward_pass - Checking transformer output...");
             {
+                use crate::Array;
                 let main_arrays = state.arrays(&[ArrayId::Main]);
                 let main_array = main_arrays[0].borrow();
-                let buffer = main_array.buffer();
+                let buffer = Array::buffer(&*main_array);
                 eprintln!(
                     "[DEBUG] forward_pass - transformer Main array shape: {:?}, buffer len: {}",
-                    main_array.shape(),
+                    Array::shape(&*main_array),
                     buffer.len()
                 );
                 eprintln!(
@@ -234,7 +236,7 @@ impl Classifier {
 
     fn apply_pooling(
         &mut self,
-        state: &mut ForwardPassState,
+        state: &mut ClassificationForwardPassState,
     ) -> Result<MetalArray, Error> {
         eprintln!("[DEBUG] apply_pooling - Start");
         let batch_size = 1;
@@ -247,7 +249,10 @@ impl Classifier {
 
         eprintln!("[DEBUG] apply_pooling - Getting arrays...");
         let arrays = state.arrays(&[ArrayId::Main]);
-        let data_type = arrays[0].borrow().data_type();
+        let data_type = {
+            use crate::Array;
+            Array::data_type(&*arrays[0].borrow())
+        };
         let mut main_array = arrays[0].borrow_mut();
         let input_buffer = unsafe { main_array.mtl_buffer() };
 
@@ -321,9 +326,15 @@ impl Classifier {
         // Prediction head: dense → GELU → norm → final_linear → sigmoid
         // All operations on Metal
 
-        let batch_size = pooled_input.shape()[0];
+        let batch_size = {
+            use crate::Array;
+            Array::shape(pooled_input)[0]
+        };
         let num_labels = self.context.model_config.classifier_config.num_labels;
-        let data_type = pooled_input.data_type();
+        let data_type = {
+            use crate::Array;
+            Array::data_type(pooled_input)
+        };
         eprintln!(
             "[DEBUG] apply_prediction_head - batch_size={}, num_labels={}",
             batch_size, num_labels
@@ -358,12 +369,13 @@ impl Classifier {
         );
         let main_arrays = pred_state.arrays(&[ArrayId::Main]);
         {
-            let pooled_buffer = pooled_input.buffer();
-            let pooled_shape = pooled_input.shape();
+            use crate::Array;
+            let pooled_buffer = Array::buffer(pooled_input);
+            let pooled_shape = Array::shape(pooled_input);
 
             let mut main_array = main_arrays[0].borrow_mut();
-            let main_shape = main_array.shape().to_vec();
-            let buffer = main_array.buffer_mut();
+            let main_shape = Array::shape(&*main_array).to_vec();
+            let buffer = Array::buffer_mut(&mut *main_array);
 
             eprintln!(
                 "[DEBUG] apply_prediction_head - main_array shape: {:?}, pooled shape: {:?}",
@@ -451,10 +463,16 @@ impl Classifier {
         let mut logits_array = logits_arrays[0].borrow_mut();
         eprintln!(
             "[DEBUG] apply_prediction_head - logits array shape: {:?}",
-            logits_array.shape()
+            {
+                use crate::Array;
+                Array::shape(&*logits_array)
+            }
         );
         // Log logits values before sigmoid
-        let logits_cpu_buffer = logits_array.buffer();
+        let logits_cpu_buffer = {
+            use crate::Array;
+            Array::buffer(&*logits_array)
+        };
         eprintln!(
             "[DEBUG] apply_prediction_head - first 20 bytes of logits: {:?}",
             &logits_cpu_buffer[..logits_cpu_buffer.len().min(20)]
@@ -519,10 +537,11 @@ impl Classifier {
         &self,
         logits_array: &MetalArray,
     ) -> Result<Vec<f32>, Error> {
+        use crate::Array;
         let num_labels = self.context.model_config.classifier_config.num_labels;
-        let buffer = logits_array.buffer();
+        let buffer = Array::buffer(logits_array);
 
-        match logits_array.data_type() {
+        match Array::data_type(logits_array) {
             DataType::F32 => {
                 let slice: &[f32] = bytemuck::cast_slice(buffer);
                 Ok(slice[..num_labels].to_vec())

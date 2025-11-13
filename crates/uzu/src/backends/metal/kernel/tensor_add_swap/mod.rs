@@ -14,7 +14,7 @@ use crate::{
     backends::metal::{
         error::MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -73,7 +73,7 @@ impl TensorAddSwap {
 impl EncodableWithState for TensorAddSwap {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

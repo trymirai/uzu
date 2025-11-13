@@ -1,12 +1,12 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    Array, DataType, DeviceContext,
+    DataType, DeviceContext,
     backends::metal::{
         MTLContext, MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassBuffers, ForwardPassStateInterface, HashMapId,
-            ModelShape, SharedBuffers,
+            ArrayId, ForwardPassBuffers, ForwardPassStateTrait, HashMapId,
+            ModelShape, RopeType, SharedBuffers,
         },
     },
     config::DecoderConfig,
@@ -267,27 +267,102 @@ impl ClassificationForwardPassState {
     fn array_cell(
         &self,
         id: ArrayId,
-    ) -> &ArrayCell {
+    ) -> ArrayCell {
         match id {
-            ArrayId::TokenIds => &self.token_ids,
-            ArrayId::TokenPositions => &self.token_positions,
-            ArrayId::Main => &self.aux_buffers.main,
-            ArrayId::Shortcut => &self.aux_buffers.shortcut,
-            ArrayId::QKV => &self.aux_buffers.qkv,
-            ArrayId::AttentionOutput => &self.aux_buffers.attention_output,
-            ArrayId::MlpFusedUp => &self.aux_buffers.mlp_fused_up,
-            ArrayId::MlpHidden => &self.aux_buffers.mlp_hidden,
-            ArrayId::RotatedQueries => &self.aux_buffers.rotated_queries,
-            ArrayId::RotatedKeys => &self.aux_buffers.rotated_keys,
-            ArrayId::AttentionPartials => &self.aux_buffers.attention_partials,
-            ArrayId::AttentionSums => &self.aux_buffers.attention_sums,
-            ArrayId::AttentionMaxs => &self.aux_buffers.attention_maxs,
+            ArrayId::TokenIds => self.token_ids.clone(),
+            ArrayId::TokenPositions => self.token_positions.clone(),
+            ArrayId::Main => self.aux_buffers.main.clone(),
+            ArrayId::Shortcut => self.aux_buffers.shortcut.clone(),
+            ArrayId::QKV => self.aux_buffers.qkv.clone(),
+            ArrayId::AttentionOutput => {
+                self.aux_buffers.attention_output.clone()
+            },
+            ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
+            ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
+            ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
+            ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
+            ArrayId::AttentionPartials => {
+                self.aux_buffers.attention_partials.clone()
+            },
+            ArrayId::AttentionSums => self.aux_buffers.attention_sums.clone(),
+            ArrayId::AttentionMaxs => self.aux_buffers.attention_maxs.clone(),
+
+            // Shared buffers access
+            ArrayId::EmbeddingsInputWeights => {
+                use crate::backends::metal::forward_pass::EmbeddingsBuffers;
+                match &self.shared_buffers.borrow().embeddings {
+                    EmbeddingsBuffers::Tied {
+                        weights,
+                    } => weights.clone(),
+                    EmbeddingsBuffers::Untied {
+                        input_weights,
+                        ..
+                    } => input_weights.clone(),
+                    EmbeddingsBuffers::QuantizedTied {
+                        weights,
+                        ..
+                    } => weights.clone(),
+                }
+            },
+            ArrayId::EmbeddingsOutputWeights => {
+                use crate::backends::metal::forward_pass::EmbeddingsBuffers;
+                match &self.shared_buffers.borrow().embeddings {
+                    EmbeddingsBuffers::Tied {
+                        weights,
+                    } => weights.clone(),
+                    EmbeddingsBuffers::Untied {
+                        output_weights,
+                        ..
+                    } => output_weights.clone(),
+                    EmbeddingsBuffers::QuantizedTied {
+                        weights,
+                        ..
+                    } => weights.clone(),
+                }
+            },
+            ArrayId::EmbeddingsScales => {
+                use crate::backends::metal::forward_pass::EmbeddingsBuffers;
+                match &self.shared_buffers.borrow().embeddings {
+                    EmbeddingsBuffers::QuantizedTied {
+                        scales,
+                        ..
+                    } => scales.clone(),
+                    _ => panic!("Expected EmbeddingsBuffers::QuantizedTied"),
+                }
+            },
+            ArrayId::RopeCosines(rope_type) => match rope_type {
+                RopeType::Global => {
+                    self.shared_buffers.borrow().global_rope.cosines.clone()
+                },
+                RopeType::Local => self
+                    .shared_buffers
+                    .borrow()
+                    .local_rope
+                    .as_ref()
+                    .expect("Local rope requested but not initialized")
+                    .cosines
+                    .clone(),
+            },
+            ArrayId::RopeSines(rope_type) => match rope_type {
+                RopeType::Global => {
+                    self.shared_buffers.borrow().global_rope.sines.clone()
+                },
+                RopeType::Local => self
+                    .shared_buffers
+                    .borrow()
+                    .local_rope
+                    .as_ref()
+                    .expect("Local rope requested but not initialized")
+                    .sines
+                    .clone(),
+            },
+
             ArrayId::Logits => {
                 panic!(
                     "ClassificationForwardPassState doesn't support Logits array - use Main for classifier output"
                 )
             },
-            _ => panic!("Unsupported ArrayId: {:?}", id),
+            _ => panic!("Unsupported ArrayId for classifier: {:?}", id),
         }
     }
 
@@ -297,7 +372,6 @@ impl ClassificationForwardPassState {
     ) -> &HashMap<Option<usize>, ArrayCell> {
         match id {
             HashMapId::AttentionBias => &self.attention_bias,
-            _ => panic!("Unsupported HashMapId: {:?}", id),
         }
     }
 
@@ -312,7 +386,7 @@ impl ClassificationForwardPassState {
         &self,
         ids: &[ArrayId],
     ) -> Box<[ArrayCell]> {
-        ids.iter().map(|id| self.array_cell(*id).clone()).collect()
+        ids.iter().map(|id| self.array_cell(*id)).collect()
     }
 
     pub fn aux_buffers_suffix_length(&self) -> usize {
@@ -324,26 +398,51 @@ impl ClassificationForwardPassState {
     }
 }
 
-impl ForwardPassStateInterface for ClassificationForwardPassState {
+impl ForwardPassStateTrait for ClassificationForwardPassState {
     fn arrays(
         &self,
         ids: &[ArrayId],
     ) -> Box<[ArrayCell]> {
-        self.arrays(ids)
+        ids.iter().map(|id| self.array_cell(*id)).collect()
     }
 
     fn hashmaps(
         &self,
         ids: &[HashMapId],
     ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
-        self.hashmaps(ids)
+        ids.iter().map(|id| self.hashmap_cell(id).clone()).collect()
     }
 
     fn aux_buffers_suffix_length(&self) -> usize {
-        self.aux_buffers_suffix_length()
+        self.aux_buffers.suffix_length()
     }
 
     fn mtl_context(&self) -> &Rc<MTLContext> {
-        self.mtl_context()
+        &self.context
+    }
+
+    fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
+        &self.shared_buffers
+    }
+
+    fn kv_cache(
+        &self
+    ) -> Option<&Rc<RefCell<crate::backends::metal::forward_pass::KVCache>>>
+    {
+        None
+    }
+
+    fn sampling_output(&self) -> Option<&ArrayCell> {
+        None
+    }
+
+    fn traces(
+        &self,
+    ) -> Option<
+        &Rc<
+            RefCell<crate::backends::metal::forward_pass::traces::DecoderActivationTrace>,
+        >,
+    >{
+        None
     }
 }

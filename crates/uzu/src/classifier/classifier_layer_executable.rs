@@ -9,7 +9,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassStateTrait,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -171,6 +171,7 @@ impl ClassifierLayerExecutable {
                     layer_index,
                     attention_scale,
                     layer_config.attention_config.has_sinks,
+                    false, // is_causal - Classifier uses bidirectional attention
                 )
                 .expect("Failed to create attention kernel"),
             );
@@ -194,7 +195,7 @@ impl ClassifierLayerExecutable {
 impl EncodableWithState for ClassifierLayerExecutable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassStateTrait,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

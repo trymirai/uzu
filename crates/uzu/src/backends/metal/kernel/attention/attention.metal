@@ -6,10 +6,10 @@ using namespace metal;
 
 constant bool has_mask [[function_constant(20)]];
 constant bool query_transposed [[function_constant(21)]];
-constant bool do_causal [[function_constant(22)]];
 constant bool bool_mask [[function_constant(23)]];
 constant bool float_mask [[function_constant(24)]];
 constant bool has_sinks [[function_constant(25)]];
+constant bool is_causal [[function_constant(26)]];
 
 template <typename T, int head_dim, int value_dim = head_dim>
 void attention_single_pass_impl(
@@ -90,7 +90,7 @@ void attention_single_pass_impl(
     // For each key
     for (int i = simd_gid; i < sequence_length; i += sequence_block_size) {
         bool use_key = true;
-        if (do_causal) {
+        if (is_causal) {
             use_key = i <= (sequence_length - int(tpg.y) + int(q_seq_idx));
         } else if (bool_mask) {
             use_key = bmask[0];
@@ -248,7 +248,7 @@ void attention_2pass_1_impl(
     // For each key
     for (int i = block_idx * sequence_block_size + simd_gid; i < sequence_length; i += total_blocks_count * sequence_block_size) {
         bool use_key = true;
-        if (do_causal) {
+        if (is_causal) {
             use_key = i <= (sequence_length - int(tpg.y) + int(q_seq_idx));
         } else if (bool_mask) {
             use_key = bmask[0];
