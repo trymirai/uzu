@@ -18,11 +18,13 @@ use crate::{
             TensorAddSwap, TensorCopy,
         },
     },
+    classifier::ClassificationForwardPassState,
     config::TransformerLayerConfig,
     parameters::ParameterTree,
 };
 
 pub struct ClassifierLayerExecutable {
+    layer_index: usize,
     copy_main_to_shortcut: Box<dyn EncodableWithState>,
     pre_attention_norm: Option<Box<dyn EncodableWithState>>,
     qkv_projection: Box<dyn EncodableWithState>,
@@ -177,6 +179,7 @@ impl ClassifierLayerExecutable {
             );
 
             Self {
+                layer_index,
                 copy_main_to_shortcut,
                 pre_attention_norm,
                 qkv_projection,
@@ -199,22 +202,89 @@ impl EncodableWithState for ClassifierLayerExecutable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        // Try to get classifier traces if available
+        let layer_traces = if let Some(classifier_state) =
+            state.as_any().downcast_ref::<ClassificationForwardPassState>()
+        {
+            if let Some(traces) = classifier_state.classifier_traces() {
+                traces.borrow().layer_results.get(self.layer_index).cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Capture inputs
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().inputs.clone(),
+            );
+        }
+
         self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(state, command_buffer, parameters);
+            if let Some(layer_traces) = layer_traces.clone() {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().pre_attention_norm.clone(),
+                );
+            }
         }
 
         self.qkv_projection.encode(state, command_buffer, parameters);
         self.rope.encode(state, command_buffer, parameters);
         self.attention.encode(state, command_buffer, parameters);
         self.out_projection.encode(state, command_buffer, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().attention.clone(),
+            );
+        }
 
         self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        // Capture mlp_inputs (input + attention_result)
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().mlp_inputs.clone(),
+            );
+        }
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().pre_mlp_norm.clone(),
+            );
+        }
+
         self.mlp.encode(state, command_buffer, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().mlp.clone(),
+            );
+        }
 
         self.main_shortcut_add_swap_2.encode(state, command_buffer, parameters);
+        // Capture outputs (input + attention_result + mlp_result)
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().outputs.clone(),
+            );
+        }
     }
 }

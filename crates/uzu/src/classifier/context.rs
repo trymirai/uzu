@@ -182,7 +182,10 @@ impl ClassifierContext {
                     compilation_config.clone(),
                     layer_index,
                     classifier_model_config.classifier_config.model_dim,
-                    classifier_model_config.classifier_config.hidden_dim,
+                    classifier_model_config
+                        .classifier_config
+                        .transformer_config
+                        .hidden_dim,
                     classifier_model_config.classifier_config.num_heads,
                     classifier_model_config.classifier_config.head_dim,
                     classifier_model_config.classifier_config.num_groups,

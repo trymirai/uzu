@@ -1090,6 +1090,10 @@ impl super::state_trait::ForwardPassStateTrait for ForwardPassState {
     ) -> Option<crate::session::parameter::SamplingMethod> {
         self.sampling_method
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Drop for ForwardPassState {

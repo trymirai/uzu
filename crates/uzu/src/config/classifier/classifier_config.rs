@@ -73,7 +73,7 @@ impl ClassifierConfig {
                 .clone(),
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
-            hidden_dim: self.hidden_dim,
+            hidden_dim: self.transformer_config.hidden_dim,
             num_heads: self.num_heads,
             num_groups: self.num_groups,
             head_dim: self.head_dim,

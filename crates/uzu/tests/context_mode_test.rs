@@ -181,7 +181,8 @@ fn test_context_mode_dynamic() {
 
     let answer_5 = ask(
         &mut session,
-        "At what age did the last promotion occur?".to_string(),
+        "Answer with a number only: At what age did the last promotion occur?"
+            .to_string(),
     );
     println!("Answer 5: {}", answer_5);
     assert!(answer_5.to_lowercase().contains("32"));

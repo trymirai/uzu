@@ -159,13 +159,20 @@ impl EncodableWithState for DecoderExecutables {
 
         self.norm.encode(state, command_buffer, parameters);
         if let Some(traces) = state.traces().cloned() {
-            state
-                .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                traces.borrow().output_norm.clone(),
+            );
         }
 
         self.readout.encode(state, command_buffer, parameters);
         if let Some(traces) = state.traces().cloned() {
-            state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Logits,
+                traces.borrow().logits.clone(),
+            );
         }
     }
 }

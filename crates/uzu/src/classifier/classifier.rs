@@ -1,4 +1,4 @@
-use std::{path::Path, time::Instant};
+use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
 
 use objc2::rc::autoreleasepool;
 
@@ -45,7 +45,8 @@ impl Classifier {
             let forward_start = Instant::now();
             eprintln!("[DEBUG] classify_tokens - Running forward pass...");
 
-            let logits = self.forward_pass(&token_ids, &token_positions)?;
+            let (logits, _traces) =
+                self.forward_pass(&token_ids, &token_positions, false)?;
 
             let forward_duration = forward_start.elapsed().as_secs_f64();
             eprintln!(
@@ -76,15 +77,28 @@ impl Classifier {
         })
     }
 
+    pub fn forward_pass_with_traces(
+        &mut self,
+        token_ids: &[u64],
+        token_positions: &[usize],
+    ) -> Result<(Vec<f32>, Rc<RefCell<super::ClassifierActivationTrace>>), Error>
+    {
+        self.forward_pass(token_ids, token_positions, true)
+    }
+
     fn forward_pass(
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<Vec<f32>, Error> {
+        enable_traces: bool,
+    ) -> Result<(Vec<f32>, Rc<RefCell<super::ClassifierActivationTrace>>), Error>
+    {
         autoreleasepool(|_| {
             eprintln!("[DEBUG] forward_pass - Creating forward pass state...");
             // Create ClassificationForwardPassState with bidirectional attention
             // No KV cache, no vocabulary-sized buffers - designed for classification
+            let num_labels =
+                self.context.model_config.classifier_config.num_labels;
             let mut state = ClassificationForwardPassState::new(
                 self.context.mtl_context.clone(),
                 &self
@@ -98,6 +112,8 @@ impl Classifier {
                 token_ids,
                 token_positions,
                 true, // Bidirectional attention for BERT
+                enable_traces,
+                num_labels,
             );
             eprintln!("[DEBUG] forward_pass - State created");
 
@@ -230,7 +246,22 @@ impl Classifier {
             let logits = self.copy_logits_to_cpu(&logits_with_sigmoid)?;
             eprintln!("[DEBUG] forward_pass - All done");
 
-            Ok(logits)
+            let traces = if enable_traces {
+                state
+                    .classifier_traces()
+                    .expect("Traces should be enabled")
+                    .clone()
+            } else {
+                // Allocate a minimal non-zero-sized traces object to avoid zero-sized Metal buffers
+                Rc::new(RefCell::new(super::ClassifierActivationTrace::new(
+                    &self.context.mtl_context,
+                    &self.context.model_shape,
+                    1,
+                    1,
+                )))
+            };
+
+            Ok((logits, traces))
         })
     }
 
@@ -256,12 +287,8 @@ impl Classifier {
         let mut main_array = arrays[0].borrow_mut();
         let input_buffer = unsafe { main_array.mtl_buffer() };
 
-        eprintln!("[DEBUG] apply_pooling - Creating output buffer...");
-        let output_size = batch_size * model_dim;
-        let output_buffer = self.context.mtl_context.device.new_buffer(
-            (output_size * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        // Use pre-allocated pooling buffer from context (clone to avoid borrow issues)
+        let output_buffer = self.context.pooled_buffer.clone();
 
         eprintln!("[DEBUG] apply_pooling - Encoding pooling operation...");
         self.context.reset_command_buffer();
@@ -311,7 +338,11 @@ impl Classifier {
         eprintln!("[DEBUG] apply_pooling - Pooling GPU work completed");
 
         let pooled_array = unsafe {
-            MetalArray::new(output_buffer, &[batch_size, model_dim], data_type)
+            MetalArray::new(
+                output_buffer.clone(),
+                &[batch_size, model_dim],
+                data_type,
+            )
         };
 
         eprintln!("[DEBUG] apply_pooling - Done");

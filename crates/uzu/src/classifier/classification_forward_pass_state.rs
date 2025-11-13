@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     DataType, DeviceContext,
@@ -9,6 +9,7 @@ use crate::{
             ModelShape, RopeType, SharedBuffers,
         },
     },
+    classifier::ClassifierActivationTrace,
     config::DecoderConfig,
 };
 
@@ -31,6 +32,8 @@ pub struct ClassificationForwardPassState {
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     /// Auxiliary buffers for transformer operations
     aux_buffers: AuxBuffers,
+    /// Optional traces for validation
+    pub traces: Option<Rc<RefCell<ClassifierActivationTrace>>>,
 }
 
 struct AuxBuffers {
@@ -156,13 +159,15 @@ impl AuxBuffers {
 impl ClassificationForwardPassState {
     pub fn new(
         context: Rc<MTLContext>,
-        decoder_config: &DecoderConfig,
+        _decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
         bidirectional_attention: bool, // true for BERT-style bidirectional attention
+        trace: bool,
+        num_labels: usize,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -173,7 +178,7 @@ impl ClassificationForwardPassState {
 
         let aux_buffers = AuxBuffers::new(
             scratch,
-            decoder_config,
+            _decoder_config,
             model_shape,
             suffix_length,
         );
@@ -254,6 +259,17 @@ impl ClassificationForwardPassState {
                 .map(|(k, v)| (k, RefCell::new(v)))
                 .collect();
 
+        let traces = if trace {
+            Some(Rc::new(RefCell::new(ClassifierActivationTrace::new(
+                &context,
+                model_shape,
+                suffix_length,
+                num_labels,
+            ))))
+        } else {
+            None
+        };
+
         Self {
             context,
             token_ids: token_ids_refcell,
@@ -261,6 +277,7 @@ impl ClassificationForwardPassState {
             attention_bias,
             shared_buffers,
             aux_buffers,
+            traces,
         }
     }
 
@@ -396,6 +413,12 @@ impl ClassificationForwardPassState {
     pub fn mtl_context(&self) -> &Rc<MTLContext> {
         &self.context
     }
+
+    pub fn classifier_traces(
+        &self
+    ) -> Option<&Rc<RefCell<ClassifierActivationTrace>>> {
+        self.traces.as_ref()
+    }
 }
 
 impl ForwardPassStateTrait for ClassificationForwardPassState {
@@ -444,5 +467,9 @@ impl ForwardPassStateTrait for ClassificationForwardPassState {
         >,
     >{
         None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

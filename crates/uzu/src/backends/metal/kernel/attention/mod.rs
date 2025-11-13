@@ -8,14 +8,11 @@ use metal::{
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
-use crate::{
-    Array,
-    backends::metal::{
-        KernelDataType, MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassStateTrait, HashMapId,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-        },
+use crate::backends::metal::{
+    KernelDataType, MTLContext, MTLError,
+    forward_pass::{
+        ArrayId, ForwardPassStateTrait, HashMapId,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
 
