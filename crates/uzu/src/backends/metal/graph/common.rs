@@ -201,6 +201,19 @@ pub fn load_constant(
     expected_data_type: DataType,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let parameter = parameter_tree.leaf(name)?;
+
+    // Debug: log weight loading
+    if name == "weights"
+        && parameter_tree.path_prefix() == Some("prediction_head.dense")
+    {
+        use crate::Array;
+        let actual_shape = Array::shape(&parameter).to_vec();
+        let buffer_len = Array::buffer(&parameter).len();
+        eprintln!(
+            "[DEBUG] load_constant - Loading prediction_head.dense.weights: shape={:?}, buffer_len={} bytes, expected_shape={:?}",
+            actual_shape, buffer_len, expected_shape
+        );
+    }
     let result = if expected_data_type == DataType::U4 {
         if parameter.data_type() != DataType::U8 {
             return Err(GraphConstructionError::IncompatibleDataTypes {

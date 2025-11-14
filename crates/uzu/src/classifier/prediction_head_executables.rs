@@ -39,6 +39,10 @@ impl PredictionHeadExecutables {
         let data_type: DataType =
             config.dense_config.activation_precision().into();
 
+        eprintln!(
+            "[DEBUG] PredictionHeadExecutables::new - Creating dense layer: input_dim={}, output_dim={}, has_bias={}",
+            model_dim, model_dim, config.use_dense_bias
+        );
         let dense = linear_block::<1>(
             &config.dense_config,
             config.use_dense_bias,
@@ -49,6 +53,9 @@ impl PredictionHeadExecutables {
             ArrayId::Main,
             ArrayId::Main,
             &compilation_config.descriptor_general,
+        );
+        eprintln!(
+            "[DEBUG] PredictionHeadExecutables::new - Dense layer created"
         );
 
         let activation_block = Self::create_activation_block(

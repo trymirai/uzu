@@ -73,6 +73,9 @@ pub struct ClassifierActivationTrace {
     pub layer_results: Vec<Rc<RefCell<ClassifierLayerActivationTrace>>>,
     pub output_norm: ArrayCell,
     pub output_pooling: ArrayCell,
+    pub prediction_dense_output: ArrayCell,
+    pub prediction_gelu_output: ArrayCell,
+    pub prediction_norm_output: ArrayCell,
     pub logits: ArrayCell,
 }
 
@@ -92,6 +95,7 @@ impl ClassifierActivationTrace {
                 )))
             })
             .collect();
+        let model_dim = model_shape.main_shape(1)[1];
         unsafe {
             Self {
                 embedding_norm: RefCell::new(context.array_uninitialized(
@@ -104,9 +108,27 @@ impl ClassifierActivationTrace {
                     model_shape.activation_data_type(),
                 )),
                 output_pooling: RefCell::new(context.array_uninitialized(
-                    &[1, model_shape.main_shape(1)[1]],
+                    &[1, model_dim],
                     model_shape.activation_data_type(),
                 )),
+                prediction_dense_output: RefCell::new(
+                    context.array_uninitialized(
+                        &[1, model_dim],
+                        model_shape.activation_data_type(),
+                    ),
+                ),
+                prediction_gelu_output: RefCell::new(
+                    context.array_uninitialized(
+                        &[1, model_dim],
+                        model_shape.activation_data_type(),
+                    ),
+                ),
+                prediction_norm_output: RefCell::new(
+                    context.array_uninitialized(
+                        &[1, model_dim],
+                        model_shape.activation_data_type(),
+                    ),
+                ),
                 logits: RefCell::new(context.array_uninitialized(
                     &[1, num_labels],
                     model_shape.activation_data_type(),
