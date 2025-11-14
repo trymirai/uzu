@@ -67,7 +67,7 @@ struct AuxBuffers {
 impl AuxBuffers {
     fn new(
         scratch: &ForwardPassBuffers,
-        decoder_config: &DecoderConfig,
+        _decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
@@ -245,14 +245,20 @@ impl ClassificationForwardPassState {
         // For causal attention, we'd set upper triangle to -inf
         // For sliding window, mask tokens outside the window
         for (window, bias_array) in attention_bias_map.iter_mut() {
-            eprintln!("[DEBUG] Filling attention bias for window: {:?}, suffix_length: {}", window, suffix_length);
+            eprintln!(
+                "[DEBUG] Filling attention bias for window: {:?}, suffix_length: {}",
+                window, suffix_length
+            );
             if bidirectional_attention {
                 if let Some(window_size) = window {
                     // Bidirectional with sliding window: mask tokens outside ±window_size/2
                     // Matches Lalamo: top_zeroed = tril(result, k=window_size//2)
                     //                 result = triu(top_zeroed, k=-window_size//2)
                     let half_window = (window_size / 2) as isize;
-                    eprintln!("[DEBUG] Using sliding window: half_window = {}", half_window);
+                    eprintln!(
+                        "[DEBUG] Using sliding window: half_window = {}",
+                        half_window
+                    );
                     context.fill_attention_bias(
                         bias_array,
                         suffix_length,

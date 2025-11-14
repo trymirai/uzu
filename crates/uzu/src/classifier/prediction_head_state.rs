@@ -30,10 +30,6 @@ impl PredictionHeadState {
     ) -> Self {
         // Allocate buffer for [batch, features]
         let buffer_size = batch_size * feature_dim * data_type.size_in_bytes();
-        eprintln!(
-            "[DEBUG] PredictionHeadState::new - Allocating buffer: batch_size={}, feature_dim={}, data_type={:?}, buffer_size={} bytes",
-            batch_size, feature_dim, data_type, buffer_size
-        );
         let mtl_buffer = context.device.new_buffer(
             buffer_size as u64,
             metal::MTLResourceOptions::StorageModeShared,
@@ -42,11 +38,6 @@ impl PredictionHeadState {
         let main_buffer = unsafe {
             MetalArray::new(mtl_buffer, &[batch_size, feature_dim], data_type)
         };
-
-        eprintln!(
-            "[DEBUG] PredictionHeadState::new - Created MetalArray with shape [{}, {}]",
-            batch_size, feature_dim
-        );
 
         Self {
             context,
@@ -74,19 +65,7 @@ impl PredictionHeadState {
     ) -> Box<[ArrayCell]> {
         ids.iter()
             .map(|id| match id {
-                ArrayId::Main => {
-                    // Debug: verify shape when accessed
-                    use crate::Array;
-                    let array_ref = self.main_buffer.borrow();
-                    let shape = Array::shape(&*array_ref).to_vec();
-                    let buffer_len = Array::buffer(&*array_ref).len();
-                    drop(array_ref);
-                    eprintln!(
-                        "[DEBUG] PredictionHeadState::arrays - Returning Main: shape={:?}, buffer_len={} bytes",
-                        shape, buffer_len
-                    );
-                    self.main_buffer.clone()
-                },
+                ArrayId::Main => self.main_buffer.clone(),
                 _ => panic!("PredictionHeadState only supports ArrayId::Main"),
             })
             .collect()

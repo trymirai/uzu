@@ -39,10 +39,8 @@ impl PredictionHeadExecutables {
         let data_type: DataType =
             config.dense_config.activation_precision().into();
 
-        eprintln!(
-            "[DEBUG] PredictionHeadExecutables::new - Creating dense layer: input_dim={}, output_dim={}, has_bias={}",
-            model_dim, model_dim, config.use_dense_bias
-        );
+        // Use DIFFERENT ArrayIds for input/output to avoid in-place operations
+        // Pipeline: Main → Shortcut → MlpFusedUp → MlpHidden → Main
         let dense = linear_block::<1>(
             &config.dense_config,
             config.use_dense_bias,
@@ -50,12 +48,9 @@ impl PredictionHeadExecutables {
             [model_dim],
             &mtl_context,
             &parameter_tree.subtree("dense").unwrap(),
-            ArrayId::Main,
-            ArrayId::Main,
+            ArrayId::Main,     // Input: pooled vector
+            ArrayId::Shortcut, // Output: dense result
             &compilation_config.descriptor_general,
-        );
-        eprintln!(
-            "[DEBUG] PredictionHeadExecutables::new - Dense layer created"
         );
 
         let activation_block = Self::create_activation_block(
@@ -63,6 +58,7 @@ impl PredictionHeadExecutables {
             &config.activation,
             data_type,
             model_dim,
+            ArrayId::Shortcut, // Input and output: GELU in-place
             &compilation_config,
         );
 
@@ -70,8 +66,8 @@ impl PredictionHeadExecutables {
             &mtl_context,
             data_type,
             config.normalization_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
+            ArrayId::Shortcut,   // Input: GELU output
+            ArrayId::MlpFusedUp, // Output: norm result
             &parameter_tree.subtree("norm").unwrap(),
         )
         .expect("Failed to create prediction head norm kernel");
@@ -83,8 +79,8 @@ impl PredictionHeadExecutables {
             [num_labels],
             &mtl_context,
             &parameter_tree.subtree("final_linear").unwrap(),
-            ArrayId::Main, // Input from Main [batch, model_dim]
-            ArrayId::Main, // Output to Main [batch, num_labels] - MPSGraph writes num_labels elements
+            ArrayId::MlpFusedUp, // Input: norm output
+            ArrayId::Main,       // Output: final logits
             &compilation_config.descriptor_general,
         );
 
@@ -101,6 +97,7 @@ impl PredictionHeadExecutables {
         activation_config: &crate::config::Activation,
         data_type: DataType,
         model_dim: usize,
+        array_id: ArrayId,
         compilation_config: &CompilationConfig,
     ) -> Box<dyn EncodableWithState> {
         autoreleasepool(|_| {
@@ -130,8 +127,8 @@ impl PredictionHeadExecutables {
             );
 
             let arguments = IOArrays::new(
-                vec![ArrayId::Main].into_boxed_slice(),
-                vec![ArrayId::Main].into_boxed_slice(),
+                vec![array_id].into_boxed_slice(),
+                vec![array_id].into_boxed_slice(),
             );
 
             let execution_descriptor =

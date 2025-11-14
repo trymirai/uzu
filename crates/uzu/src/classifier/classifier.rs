@@ -410,29 +410,6 @@ impl Classifier {
             )
         };
 
-        // Debug: print pooled feature values and verify buffer
-        {
-            use crate::Array;
-            let bytes = Array::buffer(&pooled_array);
-            let floats: &[f32] = bytemuck::cast_slice(bytes);
-            let mtl_buf = unsafe { Array::buffer(&pooled_array) };
-            eprintln!(
-                "[DEBUG] apply_pooling - pooled output: MetalArray shape={:?}, CPU buffer len={} floats, GPU buffer len={} bytes",
-                Array::shape(&pooled_array),
-                floats.len(),
-                output_buffer.length()
-            );
-            eprintln!("  First 5: {:?}", &floats[..5]);
-            eprintln!("  Last 5: {:?}", &floats[floats.len() - 5..]);
-            eprintln!(
-                "  Buffer ptr match: {}",
-                std::ptr::eq(
-                    mtl_buf.as_ptr(),
-                    output_buffer.contents() as *const u8
-                )
-            );
-        }
-
         eprintln!("[DEBUG] apply_pooling - Done");
         Ok(pooled_array)
     }
@@ -552,49 +529,48 @@ impl Classifier {
         );
 
         // Map ArrayIds to dedicated buffers
+        // Pipeline: Main (pooled) → Shortcut (dense) → Shortcut (gelu) → MlpFusedUp (norm) → Main (final logits)
         let mut buffers_map = std::collections::HashMap::new();
 
-        // For dense: Main is used for both input and output in the executable
-        // We'll map Main to dense_output_buffer, then manually copy input first
-        let dense_buf_array = unsafe {
+        // Main: pooled_input (this is already the pooled_buffer from context)
+        let main_array = unsafe {
+            let pooled_buf = pooled_input.mtl_buffer().to_owned();
+            MetalArray::new(pooled_buf, &[batch_size, model_dim], data_type)
+        };
+        buffers_map.insert(ArrayId::Main, RefCell::new(main_array));
+
+        // Shortcut: dense_output_buffer (for dense output and GELU in-place)
+        let shortcut_array = unsafe {
             MetalArray::new(
                 self.context.dense_output_buffer.clone(),
                 &[batch_size, model_dim],
                 data_type,
             )
         };
-        buffers_map.insert(ArrayId::Main, RefCell::new(dense_buf_array));
+        buffers_map.insert(ArrayId::Shortcut, RefCell::new(shortcut_array));
 
-        let mut dense_state = PredHeadState::with_buffers(
+        // MlpFusedUp: norm_output_buffer (for norm output)
+        let mlp_fused_up_array = unsafe {
+            MetalArray::new(
+                self.context.norm_output_buffer.clone(),
+                &[batch_size, model_dim],
+                data_type,
+            )
+        };
+        buffers_map
+            .insert(ArrayId::MlpFusedUp, RefCell::new(mlp_fused_up_array));
+
+        let mut pred_state = PredHeadState::with_buffers(
             self.context.mtl_context.clone(),
             buffers_map,
         );
 
-        // Copy pooled_input INTO dense_output_buffer before operation
-        {
-            let pooled_buf = unsafe { pooled_input.mtl_buffer().to_owned() };
-            let copy_size =
-                (batch_size * model_dim * data_type.size_in_bytes()) as u64;
+        // RUN ALL 4 PREDICTION HEAD OPERATIONS
+        // Pipeline: Main → Shortcut → Shortcut → MlpFusedUp → Main
 
-            self.context.reset_command_buffer();
-            let root = self.context.command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
-            blit.copy_from_buffer(
-                &pooled_buf,
-                0,
-                &self.context.dense_output_buffer,
-                0,
-                copy_size,
-            );
-            blit.end_encoding();
-            let root_owned = root.to_owned();
-            self.context.command_buffer.commit_and_continue();
-            root_owned.wait_until_completed();
-        }
-
-        // Now run dense layer (reads from dense_output_buffer, writes to dense_output_buffer)
+        // Step 1: Dense (Main → Shortcut)
         self.context.prediction_head.dense.encode(
-            &mut dense_state,
+            &mut pred_state,
             &self.context.command_buffer,
             &encoding_params,
         );
@@ -602,43 +578,15 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Debug: Check dense output from dedicated buffer
-        {
-            use crate::Array;
-            let dense_out_array = unsafe {
-                MetalArray::new(
-                    self.context.dense_output_buffer.clone(),
-                    &[batch_size, model_dim],
-                    data_type,
-                )
-            };
-            let buffer = Array::buffer(&dense_out_array);
-            let floats: &[f32] = bytemuck::cast_slice(buffer);
-            eprintln!(
-                "[DEBUG] apply_prediction_head - dense output: len={}, first 5={:?}, last 5={:?}",
-                floats.len(),
-                &floats[..5],
-                &floats[floats.len() - 5..]
-            );
-            eprintln!("[DEBUG] apply_prediction_head - dense output sample:");
-            for &i in &[100, 200, 400, 600, 700, 760, 766, 767] {
-                if i < floats.len() {
-                    eprintln!("  Index {:3}: {:10.4}", i, floats[i]);
-                }
-            }
-        }
-
-        // Trace: prediction_dense_output (after dense, before GELU)
+        // Trace: prediction_dense_output (copy from Shortcut buffer)
         if let Some(traces_rc) = state.classifier_traces().cloned() {
-            let model_dim =
-                self.context.model_config.classifier_config.model_dim;
             let copy_size_bytes =
                 (batch_size * data_type.size_in_bytes() * model_dim) as u64;
 
-            let main_arrays = pred_state.arrays(&[ArrayId::Main]);
-            let mut main_array = main_arrays[0].borrow_mut();
-            let src_buf = unsafe { main_array.mtl_buffer().to_owned() };
-            drop(main_array);
+            let shortcut_arrays = pred_state.arrays(&[ArrayId::Shortcut]);
+            let mut shortcut_array = shortcut_arrays[0].borrow_mut();
+            let src_buf = unsafe { shortcut_array.mtl_buffer().to_owned() };
+            drop(shortcut_array);
 
             let traces_ref = traces_rc.borrow();
             let mut trace_arr = traces_ref.prediction_dense_output.borrow_mut();
@@ -657,33 +605,11 @@ impl Classifier {
                 self.context.command_buffer.root_command_buffer().to_owned();
             self.context.command_buffer.commit_and_continue();
             root.wait_until_completed();
-
-            // Debug: Check what was copied to trace buffer
-            {
-                use crate::Array;
-                let trace_ref = traces_rc.borrow();
-                let trace_arr = trace_ref.prediction_dense_output.borrow();
-                let buffer = Array::buffer(&*trace_arr);
-                let floats: &[f32] = bytemuck::cast_slice(buffer);
-                let total_vals = floats.len();
-                eprintln!(
-                    "[DEBUG] apply_prediction_head - TRACE prediction_dense_output: len={}, first 5={:?}, last 5={:?}",
-                    total_vals,
-                    &floats[..5.min(total_vals)],
-                    &floats[(total_vals.saturating_sub(5))..total_vals]
-                );
-                if total_vals > 768 {
-                    eprintln!(
-                        "[DEBUG] apply_prediction_head - WARNING: trace buffer has {} values, expected 768!",
-                        total_vals
-                    );
-                }
-            }
         }
 
-        // 2. Activation (GELU)
+        // Step 2: GELU (Shortcut → Shortcut, in-place)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Encoding activation (GELU)..."
+            "[DEBUG] apply_prediction_head - Step 2: GELU (Shortcut → Shortcut)"
         );
         self.context.prediction_head.activation.encode(
             &mut pred_state,
@@ -694,15 +620,15 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Trace: prediction_gelu_output (after GELU, before norm)
+        // Trace: prediction_gelu_output (copy from Shortcut buffer)
         if let Some(traces_rc) = state.classifier_traces().cloned() {
             let copy_size_bytes =
                 (batch_size * data_type.size_in_bytes() * model_dim) as u64;
 
-            let main_arrays = pred_state.arrays(&[ArrayId::Main]);
-            let mut main_array = main_arrays[0].borrow_mut();
-            let src_buf = unsafe { main_array.mtl_buffer().to_owned() };
-            drop(main_array);
+            let shortcut_arrays = pred_state.arrays(&[ArrayId::Shortcut]);
+            let mut shortcut_array = shortcut_arrays[0].borrow_mut();
+            let src_buf = unsafe { shortcut_array.mtl_buffer().to_owned() };
+            drop(shortcut_array);
 
             let traces_ref = traces_rc.borrow();
             let mut trace_arr = traces_ref.prediction_gelu_output.borrow_mut();
@@ -723,8 +649,10 @@ impl Classifier {
             root.wait_until_completed();
         }
 
-        // 3. Normalization
-        eprintln!("[DEBUG] apply_prediction_head - Encoding normalization...");
+        // Step 3: Norm (Shortcut → MlpFusedUp)
+        eprintln!(
+            "[DEBUG] apply_prediction_head - Step 3: Norm (Shortcut → MlpFusedUp)"
+        );
         self.context.prediction_head.norm.encode(
             &mut pred_state,
             &self.context.command_buffer,
@@ -734,15 +662,15 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Trace: prediction_norm_output (after norm, before final linear)
+        // Trace: prediction_norm_output (copy from MlpFusedUp buffer)
         if let Some(traces_rc) = state.classifier_traces().cloned() {
             let copy_size_bytes =
                 (batch_size * data_type.size_in_bytes() * model_dim) as u64;
 
-            let main_arrays = pred_state.arrays(&[ArrayId::Main]);
-            let mut main_array = main_arrays[0].borrow_mut();
-            let src_buf = unsafe { main_array.mtl_buffer().to_owned() };
-            drop(main_array);
+            let mlp_arrays = pred_state.arrays(&[ArrayId::MlpFusedUp]);
+            let mut mlp_array = mlp_arrays[0].borrow_mut();
+            let src_buf = unsafe { mlp_array.mtl_buffer().to_owned() };
+            drop(mlp_array);
 
             let traces_ref = traces_rc.borrow();
             let mut trace_arr = traces_ref.prediction_norm_output.borrow_mut();
@@ -763,37 +691,23 @@ impl Classifier {
             root.wait_until_completed();
         }
 
-        // 4. Final linear layer
+        // Step 4: Final linear (MlpFusedUp → Main)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Encoding final linear layer..."
+            "[DEBUG] apply_prediction_head - Step 4: Final linear (MlpFusedUp → Main)"
         );
         self.context.prediction_head.final_linear.encode(
             &mut pred_state,
             &self.context.command_buffer,
             &encoding_params,
         );
-
-        // Commit and wait for prediction head to complete
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Committing prediction head..."
-        );
         let root = self.context.command_buffer.root_command_buffer().to_owned();
         self.context.command_buffer.commit_and_continue();
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Waiting for prediction head GPU work..."
-        );
         root.wait_until_completed();
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Prediction head GPU work completed"
-        );
+        eprintln!("[DEBUG] apply_prediction_head - Final linear completed");
 
-        // Now apply sigmoid to convert linear outputs to probabilities.
-        // IMPORTANT: Prediction head writes to Main buffer with shape [batch, num_labels].
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Getting linear output from Main..."
-        );
-        let main_after_arrays = pred_state.arrays(&[ArrayId::Main]);
-        let mut main_after = main_after_arrays[0].borrow_mut();
+        // Get result from Main buffer (output of final_linear)
+        let main_arrays = pred_state.arrays(&[ArrayId::Main]);
+        let mut main_after = main_arrays[0].borrow_mut();
         eprintln!(
             "[DEBUG] apply_prediction_head - Main array shape after final_linear: {:?}",
             {
