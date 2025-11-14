@@ -37,13 +37,26 @@ pub fn mlp_subgraph(
             let up_proj = &split_results[0];
             let gate = &split_results[1];
 
-            let activated_gate = activation(
-                graph,
-                &dense.activation,
-                &*gate,
-                dense.linear_config.activation_precision().into(),
-            );
-            let hidden = graph.multiplication(&activated_gate, up_proj, None);
+            // Apply activation based on activation_to_gate flag
+            let hidden = if dense.activation_to_gate {
+                // activation_to_gate=true: activate gate, multiply with up_proj
+                let activated_gate = activation(
+                    graph,
+                    &dense.activation,
+                    &*gate,
+                    dense.linear_config.activation_precision().into(),
+                );
+                graph.multiplication(&activated_gate, up_proj, None)
+            } else {
+                // activation_to_gate=false: activate up_proj, multiply with gate
+                let activated_up = activation(
+                    graph,
+                    &dense.activation,
+                    &*up_proj,
+                    dense.linear_config.activation_precision().into(),
+                );
+                graph.multiplication(&activated_up, gate, None)
+            };
 
             let result = linear_subgraph(
                 graph,

@@ -90,11 +90,22 @@ impl ClassifierTraceValidator {
 
         let mut validate =
             |expected_array_path: &str, produced_array: &Ref<MetalArray>| {
+                eprintln!(
+                    "[TRACE_VALIDATOR] Comparing tensor: {}",
+                    expected_array_path
+                );
                 let metrics = Self::validate_array_with_name(
                     data_type,
                     traces_view,
                     expected_array_path.to_string(),
                     produced_array,
+                );
+                eprintln!(
+                    "[TRACE_VALIDATOR]   Shape: {:?}, Violations: {}/{}, Max error: {:.6}",
+                    metrics.reference_shape,
+                    metrics.num_violations,
+                    metrics.max_allowed_violations,
+                    metrics.max_err
                 );
                 results.push(TracerValidationResult {
                     name: expected_array_path.to_string(),
@@ -105,9 +116,14 @@ impl ClassifierTraceValidator {
         // Note: embedding_norm_output is not exported by lalamo, so we skip it
 
         // Validate each layer
+        eprintln!(
+            "[TRACE_VALIDATOR] Starting validation of {} layers",
+            traces.borrow().layer_results.len()
+        );
         for (index, layer_traces) in
             traces.borrow().layer_results.iter().enumerate()
         {
+            eprintln!("[TRACE_VALIDATOR] === Layer {} ===", index);
             let path = |suffix: &str| -> String {
                 format!(
                     "activation_trace.layer_results.{}.activation_trace.{}",
@@ -149,6 +165,7 @@ impl ClassifierTraceValidator {
         }
 
         // Validate output_norm
+        eprintln!("[TRACE_VALIDATOR] === Global Tensors ===");
         validate(
             "activation_trace.output_norm",
             &traces.borrow().output_norm.borrow(),
@@ -162,6 +179,11 @@ impl ClassifierTraceValidator {
 
         // Validate logits
         validate("activation_trace.logits", &traces.borrow().logits.borrow());
+
+        eprintln!(
+            "[TRACE_VALIDATOR] Validation complete. Total tensors compared: {}",
+            results.len()
+        );
 
         TracerValidationResults {
             suffix_length,
@@ -250,9 +272,10 @@ impl ClassifierTraceValidator {
         };
 
         // Compute validation metrics
-        let atol = 0.05;
-        let rtol = 0.01;
-        let fraction_of_allowed_violations = 0.03;
+        // Using same thresholds as LLM tracer for consistency
+        let atol = 1e-2; // 0.01 - same as LLM
+        let rtol = 0.03; // 3% - same as LLM
+        let fraction_of_allowed_violations = 0.01; // 1% - same as LLM
 
         let expected_flat: Vec<f32> =
             expected_data.iter().map(|x| x.to_f32().unwrap_or(0.0)).collect();

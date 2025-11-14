@@ -569,6 +569,7 @@ pub struct AttentionKernelEncodable {
     attention_scale: Option<f32>,
     has_sinks: bool,
     is_causal: bool,
+    sliding_window_size: Option<usize>,
 }
 
 impl AttentionKernelEncodable {
@@ -579,6 +580,7 @@ impl AttentionKernelEncodable {
         attention_scale: Option<f32>,
         has_sinks: bool,
         is_causal: bool,
+        sliding_window_size: Option<usize>,
     ) -> Result<Self, AttentionError> {
         let kernel = AttentionKernel::new(context, data_type)?;
         Ok(Self {
@@ -587,6 +589,7 @@ impl AttentionKernelEncodable {
             attention_scale,
             has_sinks,
             is_causal,
+            sliding_window_size,
         })
     }
 }
@@ -652,8 +655,7 @@ impl EncodableWithState for AttentionKernelEncodable {
         let window_length = state
             .kv_cache()
             .map(|kv| kv.borrow().data[self.layer_index].window_length())
-            .or(Some(None))
-            .flatten();
+            .unwrap_or(self.sliding_window_size);
 
         let gqa_factor = num_heads / num_groups;
         let scale =

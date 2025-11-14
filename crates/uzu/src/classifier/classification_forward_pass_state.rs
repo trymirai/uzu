@@ -243,17 +243,38 @@ impl ClassificationForwardPassState {
 
         // Fill attention bias: For bidirectional attention, all values are 0 (no masking)
         // For causal attention, we'd set upper triangle to -inf
-        for (_window, bias_array) in attention_bias_map.iter_mut() {
+        // For sliding window, mask tokens outside the window
+        for (window, bias_array) in attention_bias_map.iter_mut() {
+            eprintln!("[DEBUG] Filling attention bias for window: {:?}, suffix_length: {}", window, suffix_length);
             if bidirectional_attention {
-                // All zeros = no masking (full bidirectional attention)
-                context.fill_attention_bias(
-                    bias_array,
-                    suffix_length,
-                    0,                  // no prefix
-                    |_row, _col| false, // never mask
-                );
+                if let Some(window_size) = window {
+                    // Bidirectional with sliding window: mask tokens outside ±window_size/2
+                    // Matches Lalamo: top_zeroed = tril(result, k=window_size//2)
+                    //                 result = triu(top_zeroed, k=-window_size//2)
+                    let half_window = (window_size / 2) as isize;
+                    eprintln!("[DEBUG] Using sliding window: half_window = {}", half_window);
+                    context.fill_attention_bias(
+                        bias_array,
+                        suffix_length,
+                        0,
+                        |row, col| {
+                            let distance = (row as isize) - (col as isize);
+                            distance.abs() > half_window
+                        },
+                    );
+                } else {
+                    // All zeros = no masking (full bidirectional attention)
+                    eprintln!("[DEBUG] Using full bidirectional (no window)");
+                    context.fill_attention_bias(
+                        bias_array,
+                        suffix_length,
+                        0,                  // no prefix
+                        |_row, _col| false, // never mask
+                    );
+                }
             } else {
                 // Causal masking
+                eprintln!("[DEBUG] Using causal masking");
                 context.fill_attention_bias(
                     bias_array,
                     suffix_length,

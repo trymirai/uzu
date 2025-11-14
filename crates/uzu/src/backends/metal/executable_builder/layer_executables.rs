@@ -221,6 +221,7 @@ impl LayerExecutables {
                     attention_scale,
                     layer_config.attention_config.has_sinks,
                     true, // is_causal - LLM uses causal (autoregressive) attention
+                    None, // sliding_window_size - handled at decoder config level for LLMs
                 )
                 .expect("Failed to create AttentionWrapper with Metal kernel"),
             );

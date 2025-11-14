@@ -173,6 +173,7 @@ impl ClassifierLayerExecutable {
                     attention_scale,
                     layer_config.attention_config.has_sinks,
                     false, // is_causal - Classifier uses bidirectional attention
+                    layer_config.sliding_window_size, // Pass sliding window size
                 )
                 .expect("Failed to create attention kernel"),
             );

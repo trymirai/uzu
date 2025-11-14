@@ -198,6 +198,18 @@ impl Classifier {
                     &self.context.command_buffer,
                     &encoding_params,
                 );
+
+                // If tracing is enabled, commit and wait after each layer
+                // to ensure trace copies complete before next layer starts
+                if enable_traces {
+                    let root = self
+                        .context
+                        .command_buffer
+                        .root_command_buffer()
+                        .to_owned();
+                    self.context.command_buffer.commit_and_continue();
+                    root.wait_until_completed();
+                }
             }
 
             eprintln!(
