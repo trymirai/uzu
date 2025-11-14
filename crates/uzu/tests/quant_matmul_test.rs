@@ -7,7 +7,7 @@ use uzu::{
     backends::metal::{
         MTLContext,
         kernel::quant_matmul::{
-            QuantizedMatmulArguments, QuantizedMatmulKernel,
+            QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
         },
     },
 };
@@ -191,8 +191,13 @@ fn execute_quantized_matmul(
     );
 
     // Create kernel
-    let kernel =
-        QuantizedMatmulKernel::new(&ctx, DataType::F16, kernel_name).unwrap();
+    let kernel = QuantizedMatmulKernel::new(
+        &ctx,
+        DataType::F16,
+        kernel_name,
+        QuantizationType::ZeroPoint,
+    )
+    .unwrap();
 
     // Warmup (only for benchmarks)
     if iterations > 1 {
@@ -201,11 +206,12 @@ fn execute_quantized_matmul(
                 a_buffer: &x_buf,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
-                zero_points_buffer: &b_buf,
+                zero_points_or_biases_buffer: &b_buf,
                 output_buffer: &y_buf,
                 m: n as i32,
                 n: m as i32,
                 k: k as i32,
+                quantization_type: QuantizationType::ZeroPoint,
             };
             let cb_ref = ctx.command_queue.new_command_buffer();
             let encoder = cb_ref.new_compute_command_encoder();
@@ -223,11 +229,12 @@ fn execute_quantized_matmul(
             a_buffer: &x_buf,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
-            zero_points_buffer: &b_buf,
+            zero_points_or_biases_buffer: &b_buf,
             output_buffer: &y_buf,
             m: n as i32,
             n: m as i32,
             k: k as i32,
+            quantization_type: QuantizationType::ZeroPoint,
         };
         let cb_ref = ctx.command_queue.new_command_buffer();
         let encoder = cb_ref.new_compute_command_encoder();

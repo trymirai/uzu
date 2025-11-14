@@ -82,6 +82,59 @@ fn quantized_weights_subgraph<const N: usize>(
     Ok(result)
 }
 
+fn mlx_quantized_weights_subgraph<const N: usize>(
+    graph: &Graph,
+    config: &QuantizationConfig,
+    input_dim: usize,
+    output_dims: [usize; N],
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+) -> Result<Retained<Tensor>, GraphConstructionError> {
+    if config.weight_quantization_mode != QuantizationMode::UInt4 {
+        return Err(GraphConstructionError::IncompatibleDataTypes {
+            node_path: parameter_tree.path_prefix().map(str::to_string),
+            node_name: "weights".to_string(),
+            expected: DataType::U4,
+            actual: DataType::U8,
+        });
+    }
+    let output_dim_sum: usize = output_dims.iter().sum();
+
+    let weights = load_constant(
+        graph,
+        parameter_tree,
+        "weights",
+        &[input_dim, output_dim_sum],
+        DataType::U4,
+    )?;
+
+    let scales = load_constant(
+        graph,
+        parameter_tree,
+        "scales",
+        &[input_dim, output_dim_sum / config.group_size],
+        config.activation_precision.into(),
+    )?;
+
+    let deq_biases = load_constant(
+        graph,
+        parameter_tree,
+        "deq_biases",
+        &[input_dim, output_dim_sum / config.group_size],
+        config.activation_precision.into(),
+    )?;
+
+    let result = graph.dequantize(
+        &weights,
+        DequantizationArguments::ScaleTensorZeroPointTensorDataType {
+            scale_tensor: &scales,
+            zero_point_tensor: &deq_biases,
+            data_type: scales.data_type(),
+        },
+        None,
+    );
+    Ok(result)
+}
+
 fn biases_subgraph<const N: usize>(
     graph: &Graph,
     precision: DataType,
@@ -166,6 +219,24 @@ fn quantized_matmul_subgraph<const N: usize>(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
     let weights = quantized_weights_subgraph::<N>(
+        graph,
+        config,
+        input_dim,
+        output_dims,
+        parameter_tree,
+    )?;
+    Ok(graph.matrix_multiplication(input, &weights, None))
+}
+
+fn mlx_quantized_matmul_subgraph<const N: usize>(
+    graph: &Graph,
+    config: &QuantizationConfig,
+    input_dim: usize,
+    output_dims: [usize; N],
+    input: &Tensor,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+) -> Result<Retained<Tensor>, GraphConstructionError> {
+    let weights = mlx_quantized_weights_subgraph::<N>(
         graph,
         config,
         input_dim,
@@ -298,6 +369,16 @@ pub fn linear_subgraph<const N: usize>(
         )?,
         LinearConfig::Quantized(quantization_config) => {
             quantized_matmul_subgraph(
+                graph,
+                quantization_config,
+                input_dim,
+                output_dims,
+                input,
+                parameter_tree,
+            )?
+        },
+        LinearConfig::MLXQuantized(quantization_config) => {
+            mlx_quantized_matmul_subgraph(
                 graph,
                 quantization_config,
                 input_dim,

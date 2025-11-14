@@ -71,17 +71,40 @@ impl EmbeddingsBuffers {
                     )),
                 },
                 EmbeddingConfig::QuantizedTied {
-                    embedding_quantization_mode,
+                    embedding_quantization_mode: _,
                     ..
-                } => Self::QuantizedTied {
-                    weights: RefCell::new(context.array_uninitialized(
-                        &model_shape.quantized_embeddings_weights_shape(),
-                        (*embedding_quantization_mode).into(),
-                    )),
-                    scales: RefCell::new(context.array_uninitialized(
-                        &model_shape.quantized_embeddings_scales_shape(),
-                        model_shape.activation_data_type(),
-                    )),
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    Self::QuantizedTied {
+                        weights: RefCell::new(context.array_uninitialized(
+                            &[vocab_size, model_dim / 2],
+                            DataType::U8,
+                        )),
+                        scales: RefCell::new(context.array_uninitialized(
+                            &model_shape.quantized_embeddings_scales_shape(),
+                            model_shape.activation_data_type(),
+                        )),
+                    }
+                },
+                EmbeddingConfig::MLXQuantizedTied {
+                    group_size,
+                    embedding_quantization_mode: _,
+                    ..
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    let num_groups = model_dim / group_size;
+                    Self::QuantizedTied {
+                        weights: RefCell::new(context.array_uninitialized(
+                            &[vocab_size, model_dim / 2],
+                            DataType::U8,
+                        )),
+                        scales: RefCell::new(context.array_uninitialized(
+                            &[vocab_size, num_groups],
+                            model_shape.activation_data_type(),
+                        )),
+                    }
                 },
             }
         }

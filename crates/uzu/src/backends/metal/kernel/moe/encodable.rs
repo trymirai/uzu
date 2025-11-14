@@ -95,6 +95,11 @@ impl MoeBlockEncodable {
                     "Quantized router with fused router+topk not yet supported"
                 );
             },
+            LinearConfig::MLXQuantized(_) => {
+                unimplemented!(
+                    "MLX quantized router with fused router+topk not yet supported"
+                );
+            },
             LinearConfig::FullPrecision {
                 ..
             } => {

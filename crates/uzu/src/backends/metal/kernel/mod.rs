@@ -1,5 +1,6 @@
 pub mod attention;
 mod data_type;
+pub mod embedding;
 pub mod kv_cache_update;
 pub mod linear;
 pub mod media_kernels;

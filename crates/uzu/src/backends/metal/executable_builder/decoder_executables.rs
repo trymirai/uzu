@@ -39,12 +39,14 @@ impl DecoderExecutables {
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
+            decoder_weight_loader,
         );
 
         let readout = readout_block(
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
+            decoder_weight_loader,
         );
 
         let attention_data_type = Self::attention_data_type(&decoder_config);

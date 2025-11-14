@@ -8,6 +8,14 @@ use metal::{
 use super::super::MTLContext;
 use crate::{DataType, backends::metal::MTLError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationType {
+    /// GroupQuantized style: uses zero-points
+    ZeroPoint,
+    /// MLX style: uses pre-computed biases
+    Mlx,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum QuantizedMatmulError {
     #[error("Metal error: {0}")]
@@ -34,11 +42,14 @@ pub struct QuantizedMatmulArguments<'a> {
     pub a_buffer: &'a MTLBuffer, // Input A (float)
     pub b_buffer: &'a MTLBuffer, // Input B (quantized)
     pub scales_buffer: &'a MTLBuffer,
-    pub zero_points_buffer: &'a MTLBuffer,
+    /// For ZeroPoint quantization: packed zero-points
+    /// For MLX quantization: pre-computed biases (deq_biases)
+    pub zero_points_or_biases_buffer: &'a MTLBuffer,
     pub output_buffer: &'a MTLBuffer,
     pub m: i32,
     pub n: i32,
     pub k: i32,
+    pub quantization_type: QuantizationType,
 }
 
 impl QuantizedMatmulKernel {
@@ -46,13 +57,26 @@ impl QuantizedMatmulKernel {
         mtl_context: &MTLContext,
         data_type: DataType,
         kernel_name: &str,
+        quantization_type: QuantizationType,
     ) -> Result<Self, QuantizedMatmulError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16) {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
-        let pipeline = mtl_context
-            .compute_pipeline_state(kernel_name, None)
+        // Create function constants for quantization type
+        let function_constants = metal::FunctionConstantValues::new();
+        let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
+        function_constants.set_constant_value_at_index(
+            &use_mlx_quant as *const bool as *const std::ffi::c_void,
+            metal::MTLDataType::Bool,
+            40,
+        );
+
+        let (pipeline, _) = mtl_context
+            .compute_pipeline_state_with_reflection(
+                kernel_name,
+                Some(&function_constants),
+            )
             .map_err(QuantizedMatmulError::MetalError)?;
 
         let kind = if kernel_name.starts_with("qmv") {
@@ -90,7 +114,7 @@ impl QuantizedMatmulKernel {
         // Set buffers
         encoder.set_buffer(0, Some(args.b_buffer), 0);
         encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        encoder.set_buffer(2, Some(args.zero_points_buffer), 0);
+        encoder.set_buffer(2, Some(args.zero_points_or_biases_buffer), 0);
         encoder.set_buffer(3, Some(args.a_buffer), 0);
         encoder.set_buffer(4, Some(args.output_buffer), 0);
 
@@ -179,19 +203,19 @@ pub fn encode_quantized_matmul(
         other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
     };
 
-    let kernel_name = match (type_suffix, group_size, transpose) {
-        ("f16", 32, false) => "qmm_f16_g32_b4".to_string(),
-        ("f16", 32, true) => "qmm_transposed_f16_g32_b4".to_string(),
-        ("f16", 64, false) => "qmm_f16_g64_b4".to_string(),
-        ("f16", 64, true) => "qmm_transposed_f16_g64_b4".to_string(),
-        ("f16", 128, false) => "qmm_f16_g128_b4".to_string(),
-        ("f16", 128, true) => "qmm_transposed_f16_g128_b4".to_string(),
-        ("bf16", 32, false) => "qmm_bf16_g32_b4".to_string(),
-        ("bf16", 32, true) => "qmm_transposed_bf16_g32_b4".to_string(),
-        ("bf16", 64, false) => "qmm_bf16_g64_b4".to_string(),
-        ("bf16", 64, true) => "qmm_transposed_bf16_g64_b4".to_string(),
-        ("bf16", 128, false) => "qmm_bf16_g128_b4".to_string(),
-        ("bf16", 128, true) => "qmm_transposed_bf16_g128_b4".to_string(),
+    let transpose_infix = if transpose {
+        "_transposed"
+    } else {
+        ""
+    };
+
+    let kernel_name = match (type_suffix, group_size) {
+        ("f16", 32) => format!("qmm{}_f16_g32_b4", transpose_infix),
+        ("f16", 64) => format!("qmm{}_f16_g64_b4", transpose_infix),
+        ("f16", 128) => format!("qmm{}_f16_g128_b4", transpose_infix),
+        ("bf16", 32) => format!("qmm{}_bf16_g32_b4", transpose_infix),
+        ("bf16", 64) => format!("qmm{}_bf16_g64_b4", transpose_infix),
+        ("bf16", 128) => format!("qmm{}_bf16_g128_b4", transpose_infix),
         _ => {
             return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
         },
@@ -201,6 +225,7 @@ pub fn encode_quantized_matmul(
         mtl_context,
         kernel_data_type,
         &kernel_name,
+        args.quantization_type,
     )?;
     kernel.encode(encoder, args)
 }
