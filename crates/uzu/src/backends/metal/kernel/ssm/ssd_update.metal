@@ -54,13 +54,17 @@ kernel void ssd_update_kernel(
     T this_D = D[h_idx];
     T this_z = z[x_idx];
     this_z = SILU{}(this_z);
+    float dt_f = fmax(float(this_dt), 1e-6f);
+    float mix = 1.0f - float(this_decay);
+    float mix_over_dt = mix / dt_f;
+    T scaled_input = static_cast<T>(mix_over_dt * float(this_x));
 
     T temp = T(0);
     #pragma unroll
     for (int i = 0; i < state_size; ++i) {
         int CB_idx = CB_start_idx + i;
         int state_idx = state_start_idx + i;
-        T this_new_state = state[state_idx] * this_decay + B[CB_idx] * this_dt * this_x;
+        T this_new_state = state[state_idx] * this_decay + B[CB_idx] * scaled_input;
         next_state[state_idx] = this_new_state;
         temp = temp + this_new_state * C[CB_idx];
     }

@@ -19,6 +19,11 @@ pub struct ModelShape {
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
     pub layer_types: Box<[DecoderLayerType]>,
+    max_mamba_value_heads: usize,
+    max_mamba_groups: usize,
+    max_mamba_head_dim: usize,
+    max_mamba_conv_dim: usize,
+    max_mamba_state_dim: usize,
 }
 
 impl ModelShape {
@@ -47,6 +52,29 @@ impl ModelShape {
         } else {
             vec![DecoderLayerType::Transformer; num_layers].into_boxed_slice()
         };
+        let mut max_mamba_value_heads = 0;
+        let mut max_mamba_groups = 0;
+        let mut max_mamba_head_dim = 0;
+        let mut max_mamba_conv_dim = 0;
+        let mut max_mamba_state_dim = 0;
+        for layer in layer_types.iter() {
+            if let DecoderLayerType::StateSpace {
+                conv_dim,
+                state_dim,
+                num_value_heads,
+                num_groups,
+                head_dim,
+                ..
+            } = layer
+            {
+                max_mamba_value_heads =
+                    max_mamba_value_heads.max(*num_value_heads);
+                max_mamba_groups = max_mamba_groups.max(*num_groups);
+                max_mamba_head_dim = max_mamba_head_dim.max(*head_dim);
+                max_mamba_conv_dim = max_mamba_conv_dim.max(*conv_dim);
+                max_mamba_state_dim = max_mamba_state_dim.max(*state_dim);
+            }
+        }
         Self {
             activation_type,
             kv_cache_type: activation_type,
@@ -63,6 +91,11 @@ impl ModelShape {
                 .clone()
                 .unwrap_or(vec![None; num_layers].into_boxed_slice()),
             layer_types,
+            max_mamba_value_heads,
+            max_mamba_groups,
+            max_mamba_head_dim,
+            max_mamba_conv_dim,
+            max_mamba_state_dim,
         }
     }
 
@@ -322,57 +355,31 @@ impl ModelShape {
         [8]
     }
 
-    pub fn max_mamba_inproj_dim(&self) -> Option<usize> {
-        let inner_dim = self.num_heads * self.head_dim;
-        self.layer_types
-            .iter()
-            .filter_map(|layer_type| match layer_type {
-                DecoderLayerType::StateSpace {
-                    conv_dim,
-                    ..
-                } => Some(conv_dim + inner_dim + self.num_heads),
-                _ => None,
-            })
-            .max()
-    }
-
     pub fn ssm_inproj_shape(
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
-        self.max_mamba_inproj_dim().map(|dim| [suffix_length, dim])
+        self.max_mamba_inproj_dim_internal().map(|dim| [suffix_length, dim])
     }
 
     pub fn has_state_space_layers(&self) -> bool {
-        self.layer_types
-            .iter()
-            .any(|layer| matches!(layer, DecoderLayerType::StateSpace { .. }))
+        self.max_mamba_value_heads > 0
     }
 
     pub fn max_mamba_conv_dim(&self) -> Option<usize> {
-        self.layer_types
-            .iter()
-            .filter_map(|layer| match layer {
-                DecoderLayerType::StateSpace {
-                    conv_dim,
-                    ..
-                } => Some(*conv_dim),
-                _ => None,
-            })
-            .max()
+        if self.max_mamba_conv_dim == 0 {
+            None
+        } else {
+            Some(self.max_mamba_conv_dim)
+        }
     }
 
     pub fn max_mamba_state_dim(&self) -> Option<usize> {
-        self.layer_types
-            .iter()
-            .filter_map(|layer| match layer {
-                DecoderLayerType::StateSpace {
-                    state_dim,
-                    ..
-                } => Some(*state_dim),
-                _ => None,
-            })
-            .max()
+        if self.max_mamba_state_dim == 0 {
+            None
+        } else {
+            Some(self.max_mamba_state_dim)
+        }
     }
 
     pub fn ssm_packed_shape(
@@ -387,7 +394,11 @@ impl ModelShape {
         suffix_length: usize,
     ) -> Option<[usize; 3]> {
         if self.has_state_space_layers() {
-            Some([suffix_length, self.num_heads, self.head_dim])
+            Some([
+                suffix_length,
+                self.max_mamba_value_heads,
+                self.max_mamba_head_dim,
+            ])
         } else {
             None
         }
@@ -405,7 +416,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
         if self.has_state_space_layers() {
-            Some([suffix_length, self.num_heads])
+            Some([suffix_length, self.max_mamba_value_heads])
         } else {
             None
         }
@@ -422,7 +433,30 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 3]> {
-        self.max_mamba_state_dim()
-            .map(|state_dim| [suffix_length, self.num_groups, state_dim])
+        if self.has_state_space_layers() {
+            self.max_mamba_state_dim().map(|state_dim| {
+                [suffix_length, self.max_mamba_groups, state_dim]
+            })
+        } else {
+            None
+        }
+    }
+
+    fn max_mamba_inproj_dim_internal(&self) -> Option<usize> {
+        self.layer_types
+            .iter()
+            .filter_map(|layer_type| match layer_type {
+                DecoderLayerType::StateSpace {
+                    conv_dim,
+                    num_value_heads,
+                    head_dim,
+                    ..
+                } => {
+                    let inner_dim = num_value_heads * head_dim;
+                    Some(conv_dim + inner_dim + num_value_heads)
+                },
+                _ => None,
+            })
+            .max()
     }
 }

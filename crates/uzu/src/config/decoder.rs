@@ -19,6 +19,9 @@ pub enum DecoderLayerType {
         conv_dim: usize,
         kernel_size: usize,
         state_dim: usize,
+        num_value_heads: usize,
+        num_groups: usize,
+        head_dim: usize,
     },
 }
 
@@ -216,6 +219,9 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
             conv_dim: config.conv_dim(),
             kernel_size: config.conv_config.kernel_size,
             state_dim: config.state_dim,
+            num_value_heads: config.num_value_heads,
+            num_groups: config.num_groups,
+            head_dim: config.head_dim,
         },
     }
 }

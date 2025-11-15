@@ -124,14 +124,17 @@ impl CacheLayers {
                     conv_dim,
                     kernel_size,
                     state_dim,
+                    num_value_heads,
+                    head_dim,
+                    ..
                 } => {
                     let batch_size = max_suffix_length;
                     let conv_shape =
                         [batch_size, *conv_dim, kernel_size.saturating_sub(1)];
                     let ssm_shape = [
                         batch_size,
-                        model_shape.num_heads(),
-                        model_shape.head_dim(),
+                        *num_value_heads,
+                        *head_dim,
                         *state_dim,
                     ];
                     let dtype = model_shape.activation_data_type();
