@@ -58,9 +58,8 @@ kernel void ssd_prefill_kernel(
         const T this_D = D[h_idx];
         const T this_z = SILU{}(z[x_idx]);
         const float dt_f = fmax(float(this_dt), 1e-6f);
-        const float mix = 1.0f - float(this_decay);
-        const float mix_over_dt = mix / dt_f;
-        const T scaled_input = static_cast<T>(mix_over_dt * float(this_x));
+        const float normalized_x = float(this_x) / dt_f;
+        const T dt_scaled_input = static_cast<T>(normalized_x) * this_dt;
 
         T acc = T(0);
         int s = 0;
@@ -71,7 +70,7 @@ kernel void ssd_prefill_kernel(
             auto prev_state = *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
             auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(B + cb_idx);
             auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(C + cb_idx);
-            vec<T, 4> new_state = prev_state * this_decay + b_vec * scaled_input;
+            vec<T, 4> new_state = prev_state * this_decay + b_vec * dt_scaled_input;
             *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx) = new_state;
             vec<T, 4> prod = new_state * c_vec;
             acc += prod.x + prod.y + prod.z + prod.w;
@@ -80,7 +79,7 @@ kernel void ssd_prefill_kernel(
             const size_t state_idx = s * state_strides[2];
             const T prev_state = state_row[state_idx];
             const size_t cb_idx = cb_base + s * cb_strides[2];
-            const T new_state = prev_state * this_decay + B[cb_idx] * scaled_input;
+            const T new_state = prev_state * this_decay + B[cb_idx] * dt_scaled_input;
             state_row[state_idx] = new_state;
             acc += new_state * C[cb_idx];
         }
