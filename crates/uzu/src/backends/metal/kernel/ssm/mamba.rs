@@ -170,7 +170,7 @@ impl MambaMixerEncodable {
         self.split_inproj(state, command_buffer, suffix_length);
         self.add_gate_bias(state, command_buffer, suffix_length);
         self.run_dt_decay(state, command_buffer, suffix_length);
-        self.run_conv_scan(state, command_buffer, suffix_length);
+        self.run_conv_scan(state, command_buffer, active_suffix_length);
         self.split_conv_outputs(state, command_buffer, suffix_length);
 
         if suffix_length == 1 {
