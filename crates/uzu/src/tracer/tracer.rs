@@ -310,6 +310,7 @@ impl Tracer {
             self.generator_context.shared_buffers.clone(),
             &token_ids,
             &token_positions,
+            token_ids.len(),
             true,
             None,
         );

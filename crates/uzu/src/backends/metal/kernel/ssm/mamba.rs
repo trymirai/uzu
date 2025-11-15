@@ -166,7 +166,8 @@ impl MambaMixerEncodable {
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.aux_buffers_suffix_length();
-        if suffix_length == 0 {
+        let active_suffix_length = state.active_suffix_length();
+        if suffix_length == 0 || active_suffix_length == 0 {
             return;
         }
 
@@ -181,7 +182,7 @@ impl MambaMixerEncodable {
         if suffix_length == 1 {
             self.run_decode_ssm(state, command_buffer, suffix_length);
         } else {
-            self.run_prefill_ssm(state, command_buffer, suffix_length);
+            self.run_prefill_ssm(state, command_buffer, active_suffix_length);
         }
 
         self.out_projection.encode(state, command_buffer, parameters);

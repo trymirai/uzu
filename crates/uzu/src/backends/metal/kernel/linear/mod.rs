@@ -5,7 +5,9 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     KernelDataType, TensorAddBias,
-    quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
+    quant_matmul::{
+        QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+    },
 };
 use crate::{
     Array, DataType,
@@ -105,14 +107,15 @@ impl QuantizedLinearKernelBlock {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
-                    let biases_buf = unsafe { deq_biases.mtl_buffer() }.to_owned();
+                    let scales_buffer =
+                        unsafe { scales.mtl_buffer() }.to_owned();
+                    let biases_buf =
+                        unsafe { deq_biases.mtl_buffer() }.to_owned();
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
-                }
+                },
                 Err(_) => {
-                    let mut zero_points = parameter_tree
-                        .leaf("zero_points")
-                        .map_err(|e| {
+                    let mut zero_points =
+                        parameter_tree.leaf("zero_points").map_err(|e| {
                             MTLError::Generic(format!(
                                 "Failed to load zero_points: {:?}",
                                 e
@@ -134,10 +137,12 @@ impl QuantizedLinearKernelBlock {
                             zero_points.data_type()
                         )));
                     }
-                    let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
-                    let zps_buf = unsafe { zero_points.mtl_buffer() }.to_owned();
+                    let scales_buffer =
+                        unsafe { scales.mtl_buffer() }.to_owned();
+                    let zps_buf =
+                        unsafe { zero_points.mtl_buffer() }.to_owned();
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
-                }
+                },
             }
         };
 

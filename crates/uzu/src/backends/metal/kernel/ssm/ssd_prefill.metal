@@ -41,8 +41,7 @@ kernel void ssd_prefill_kernel(
     }
 
     const uint group_idx = h_idx / group_size;
-    device T* state_row =
-        state + h_idx * state_strides[0] + dh_idx * state_strides[1];
+    device T* state_row = state + h_idx * state_strides[0] + dh_idx * state_strides[1];
 
     for (size_t token = 0; token < suffix_len; ++token) {
         const size_t x_idx = token * x_strides[0]
@@ -69,16 +68,11 @@ kernel void ssd_prefill_kernel(
         for (; s < vec_bound; s += 4) {
             const size_t state_idx = s * state_strides[2];
             const size_t cb_idx = cb_base + s * cb_strides[2];
-            auto prev_state = *reinterpret_cast<device vec<T, 4>*>(
-                state_row + state_idx);
-            auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(
-                B + cb_idx);
-            auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(
-                C + cb_idx);
-            vec<T, 4> new_state =
-                prev_state * this_decay + b_vec * scaled_input;
-            *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx) =
-                new_state;
+            auto prev_state = *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
+            auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(B + cb_idx);
+            auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(C + cb_idx);
+            vec<T, 4> new_state = prev_state * this_decay + b_vec * scaled_input;
+            *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx) = new_state;
             vec<T, 4> prod = new_state * c_vec;
             acc += prod.x + prod.y + prod.z + prod.w;
         }
@@ -86,8 +80,7 @@ kernel void ssd_prefill_kernel(
             const size_t state_idx = s * state_strides[2];
             const T prev_state = state_row[state_idx];
             const size_t cb_idx = cb_base + s * cb_strides[2];
-            const T new_state =
-                prev_state * this_decay + B[cb_idx] * scaled_input;
+            const T new_state = prev_state * this_decay + B[cb_idx] * scaled_input;
             state_row[state_idx] = new_state;
             acc += new_state * C[cb_idx];
         }

@@ -67,89 +67,81 @@ impl CacheLayers {
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .collect();
 
-        let data: Box<[CacheLayer]> = model_shape
-            .layer_types()
-            .iter()
-            .enumerate()
-            .map(|(layer_idx, layer_type)| match layer_type {
-                DecoderLayerType::Transformer => {
-                    let shape = kv_shapes[layer_idx];
-                    let window_length = model_shape
-                        .sliding_window_length_per_layer[layer_idx]
-                        .filter(|&window_size| {
-                            window_size < total_context_length
-                        });
+        let data: Box<[CacheLayer]> =
+            model_shape
+                .layer_types()
+                .iter()
+                .enumerate()
+                .map(|(layer_idx, layer_type)| match layer_type {
+                    DecoderLayerType::Transformer => {
+                        let shape = kv_shapes[layer_idx];
+                        let window_length = model_shape
+                            .sliding_window_length_per_layer[layer_idx]
+                            .filter(|&window_size| {
+                                window_size < total_context_length
+                            });
 
-                    let state = if let Some(w) = window_length {
-                        KVCacheLayerState::Windowed {
-                            ring_offset: 0,
-                            ring_length: 0,
-                            window_length: w,
-                        }
-                    } else {
-                        KVCacheLayerState::Full {
-                            prefix_len: 0,
-                        }
-                    };
-
-                    CacheLayer::Transformer(KVCacheLayer {
-                        state: state.clone(),
-                        keys: RefCell::new(
-                            context.array(
-                                &shape,
-                                model_shape.kv_cache_data_type(),
-                            ),
-                        ),
-                        values: RefCell::new(
-                            context.array(
-                                &shape,
-                                model_shape.kv_cache_data_type(),
-                            ),
-                        ),
-                        prefix_token_positions: match &state {
-                            KVCacheLayerState::Full {
-                                ..
-                            } => Vec::with_capacity(max_prefix_length),
+                        let state = if let Some(w) = window_length {
                             KVCacheLayerState::Windowed {
-                                window_length,
-                                ..
-                            } => (0..*window_length)
-                                .map(|_| INVALID_POSITION)
-                                .collect(),
-                        },
-                        max_suffix_length,
-                    })
-                },
-                DecoderLayerType::StateSpace {
-                    conv_dim,
-                    kernel_size,
-                    state_dim,
-                    num_value_heads,
-                    head_dim,
-                    ..
-                } => {
-                    let batch_size = max_suffix_length;
-                    let conv_shape =
-                        [batch_size, *conv_dim, kernel_size.saturating_sub(1)];
-                    let ssm_shape = [
-                        batch_size,
-                        *num_value_heads,
-                        *head_dim,
-                        *state_dim,
-                    ];
-                    let dtype = model_shape.activation_data_type();
+                                ring_offset: 0,
+                                ring_length: 0,
+                                window_length: w,
+                            }
+                        } else {
+                            KVCacheLayerState::Full {
+                                prefix_len: 0,
+                            }
+                        };
 
-                    CacheLayer::StateSpace(SSMLayer {
-                        conv_state: RefCell::new(
-                            context.array(&conv_shape, dtype),
-                        ),
-                        ssm_state: RefCell::new(
-                            context.array(&ssm_shape, dtype),
-                        ),
-                    })
-                },
-            })
-            .collect();
+                        CacheLayer::Transformer(KVCacheLayer {
+                            state: state.clone(),
+                            keys: RefCell::new(context.array(
+                                &shape,
+                                model_shape.kv_cache_data_type(),
+                            )),
+                            values: RefCell::new(context.array(
+                                &shape,
+                                model_shape.kv_cache_data_type(),
+                            )),
+                            prefix_token_positions: match &state {
+                                KVCacheLayerState::Full {
+                                    ..
+                                } => Vec::with_capacity(max_prefix_length),
+                                KVCacheLayerState::Windowed {
+                                    window_length,
+                                    ..
+                                } => (0..*window_length)
+                                    .map(|_| INVALID_POSITION)
+                                    .collect(),
+                            },
+                            max_suffix_length,
+                        })
+                    },
+                    DecoderLayerType::StateSpace {
+                        conv_dim,
+                        kernel_size,
+                        state_dim,
+                        num_value_heads,
+                        head_dim,
+                        ..
+                    } => {
+                        let conv_shape =
+                            [*conv_dim, kernel_size.saturating_sub(1)];
+                        let ssm_shape =
+                            [*num_value_heads, *head_dim, *state_dim];
+                        let dtype = model_shape.activation_data_type();
+
+                        CacheLayer::StateSpace(SSMLayer {
+                            conv_state: RefCell::new(
+                                context.array(&conv_shape, dtype),
+                            ),
+                            ssm_state: RefCell::new(
+                                context.array(&ssm_shape, dtype),
+                            ),
+                        })
+                    },
+                })
+                .collect();
 
         Self {
             max_suffix_length,

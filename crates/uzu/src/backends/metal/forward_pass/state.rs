@@ -820,10 +820,6 @@ impl AuxBuffers {
             }
         }
     }
-
-    fn suffix_length(&self) -> usize {
-        self.suffix_length
-    }
 }
 
 pub struct ForwardPassState {
@@ -844,6 +840,7 @@ pub struct ForwardPassState {
     /// Current sampling configuration for this forward pass
     pub sampling_method: Option<SamplingMethod>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
+    active_suffix_length: usize,
 }
 
 impl ForwardPassState {
@@ -856,6 +853,7 @@ impl ForwardPassState {
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
+        active_suffix_length: usize,
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> Self {
@@ -872,6 +870,10 @@ impl ForwardPassState {
             "KV cache size can only accomodate a suffix of length up to {}, but tried to use a suffix of length {}",
             cache_layers.borrow().max_suffix_length(),
             suffix_length
+        );
+        assert!(
+            active_suffix_length <= suffix_length,
+            "Active suffix length ({active_suffix_length}) must be <= suffix length ({suffix_length})"
         );
         let aux_buffers = AuxBuffers::new(
             scratch,
@@ -993,6 +995,7 @@ impl ForwardPassState {
             sampling_output: Some(sampling_output),
             sampling_method: None,
             traces,
+            active_suffix_length,
         }
     }
 
@@ -1263,7 +1266,11 @@ impl ForwardPassState {
     }
 
     pub fn aux_buffers_suffix_length(&self) -> usize {
-        self.aux_buffers.suffix_length()
+        self.aux_buffers.suffix_length
+    }
+
+    pub fn active_suffix_length(&self) -> usize {
+        self.active_suffix_length
     }
 
     pub fn mtl_context(&self) -> &Rc<MTLContext> {

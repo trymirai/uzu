@@ -127,6 +127,10 @@ impl Generator {
                 &padded_tokens[tokens_start_index..tokens_end_index];
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
+            let active_suffix_length = positions_for_step
+                .iter()
+                .position(|&pos| pos == INVALID_POSITION)
+                .unwrap_or(prefill_step_size);
 
             let is_first_prefill = step == 0;
             let should_capture =
@@ -146,6 +150,7 @@ impl Generator {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
                 expected_number_of_new_tokens: prefill_step_size,
+                active_suffix_length,
             };
 
             let (state, run_time) = self.run_model(
@@ -281,11 +286,13 @@ impl Generator {
                 std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
             )
             .collect();
+        let active_suffix_length = speculated_suffix.tokens.len();
 
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
             token_positions: padded_positions,
             expected_number_of_new_tokens: 1,
+            active_suffix_length,
         };
 
         let (mut state, run_time) = self.run_model(
@@ -354,6 +361,7 @@ impl Generator {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
             expected_number_of_new_tokens: suffix_length,
+            active_suffix_length: suffix_length,
         };
 
         let (_, _) = self.run_model(task, true, false, SamplingMethod::Greedy);

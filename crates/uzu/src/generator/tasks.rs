@@ -15,6 +15,7 @@ pub struct GeneratorRunTask {
     pub token_ids: Vec<u64>,
     pub token_positions: Vec<usize>,
     pub expected_number_of_new_tokens: usize,
+    pub active_suffix_length: usize,
 }
 
 impl GeneratorRunTask {
@@ -23,6 +24,7 @@ impl GeneratorRunTask {
             token_ids: self.token_ids.clone(),
             token_positions: self.token_positions.clone(),
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
+            active_suffix_length: self.active_suffix_length,
         }
     }
 
@@ -50,6 +52,7 @@ impl GeneratorRunTask {
             context.shared_buffers.clone(),
             &self.token_ids,
             &self.token_positions,
+            self.active_suffix_length,
             false,
             external_bias_fn,
         );
