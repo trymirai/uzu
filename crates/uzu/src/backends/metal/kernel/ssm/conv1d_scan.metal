@@ -68,7 +68,6 @@ kernel void conv1d_scan_kernel(
         }
         acc += w_row[tap_count] * input_val;
 
-        // Apply activation (fused)
         y[x_idx] = apply_activation(acc, activation_type);
 
         if (tap_count > 0) {

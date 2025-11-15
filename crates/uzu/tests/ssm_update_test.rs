@@ -5,8 +5,8 @@ use metal::MTLResourceOptions;
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::ssm::{
-        SSDUpdateArguments, SSDUpdateKernel, SSDUpdateNoZArguments,
-        SSDUpdateNoZKernel, SSMUpdateArguments, SSMUpdateKernel,
+        SSDUpdateArguments, SSDUpdateKernel, SSDUpdateNoZKernel,
+        SSMUpdateArguments, SSMUpdateKernel,
     },
 };
 fn ssm_update_ref_bf16(
@@ -282,143 +282,6 @@ fn ssm_update_bf16() {
     let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
     let ns_ptr = ns_buf.contents() as *const bf16;
     let ns_out = unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * n) };
-    let ns_out_f32: Vec<f32> = ns_out.iter().map(|&v| v.to_f32()).collect();
-    let tol = 2e-2;
-    for (i, (a, b)) in y_out_f32.iter().zip(y_exp_f32.iter()).enumerate() {
-        assert!((a - b).abs() < tol, "y {} {} {}", i, a, b);
-    }
-    for (i, (a, b)) in ns_out_f32.iter().zip(ns_exp_f32.iter()).enumerate() {
-        assert!((a - b).abs() < tol, "ns {} {} {}", i, a, b);
-    }
-}
-
-#[test]
-fn ssd_update_no_z_bf16() {
-    let Some(ctx) = create_context() else {
-        eprintln!("Skipping: no Metal device");
-        return;
-    };
-    let bsz = 1usize;
-    let h = 4usize;
-    let dh = 3usize;
-    let g = 2usize;
-    let n = 8usize;
-
-    let x: Vec<bf16> = (0..bsz * h * dh)
-        .map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.2))
-        .collect();
-    let dt: Vec<bf16> =
-        (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.03)).collect();
-    let decay: Vec<bf16> = (0..bsz * h)
-        .map(|i| bf16::from_f32(0.8 + ((i % 3) as f32) * 0.01))
-        .collect();
-    let b: Vec<bf16> = (0..bsz * g * n)
-        .map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.05))
-        .collect();
-    let c: Vec<bf16> = (0..bsz * g * n)
-        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.015))
-        .collect();
-    let d: Vec<bf16> =
-        (0..h).map(|i| bf16::from_f32(((i % 3) as f32) * 0.05)).collect();
-    let state: Vec<bf16> = (0..bsz * h * dh * n)
-        .map(|i| bf16::from_f32(((i % 23) as f32) * 0.01 - 0.05))
-        .collect();
-
-    let (y_exp, ns_exp) = ssd_update_no_z_ref_bf16(
-        &x, &dt, &decay, &b, &c, &d, &state, bsz, h, dh, g, n,
-    );
-    let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
-    let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
-
-    let x_strides = [h * dh, dh, 1usize];
-    let dt_strides = [h, 1usize];
-    let cb_strides = [g * n, n, 1usize];
-    let state_strides = [h * dh * n, dh * n, n, 1usize];
-
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dt_buf = ctx.device.new_buffer_with_data(
-        dt.as_ptr() as *const _,
-        (dt.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let decay_buf = ctx.device.new_buffer_with_data(
-        decay.as_ptr() as *const _,
-        (decay.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let b_buf = ctx.device.new_buffer_with_data(
-        b.as_ptr() as *const _,
-        (b.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let c_buf = ctx.device.new_buffer_with_data(
-        c.as_ptr() as *const _,
-        (c.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let d_buf = ctx.device.new_buffer_with_data(
-        d.as_ptr() as *const _,
-        (d.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let state_buf = ctx.device.new_buffer_with_data(
-        state.as_ptr() as *const _,
-        (state.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_buf = ctx.device.new_buffer(
-        (bsz * h * dh * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let ns_buf = ctx.device.new_buffer(
-        (bsz * h * dh * n * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let kernel =
-        SSDUpdateNoZKernel::new(&ctx, KernelDataType::BFloat16).unwrap();
-    let cb_ref = ctx.command_queue.new_command_buffer();
-    let cb = cb_ref.to_owned();
-    let enc = cb.new_compute_command_encoder();
-    kernel
-        .encode(
-            &enc,
-            SSDUpdateNoZArguments {
-                x: &x_buf,
-                dt: &dt_buf,
-                decay: &decay_buf,
-                b: &b_buf,
-                c: &c_buf,
-                d: &d_buf,
-                state: &state_buf,
-                y: &y_buf,
-                next_state: &ns_buf,
-                group_size: (h / g) as i32,
-                state_size: n as i32,
-                x_strides,
-                dt_strides,
-                cb_strides,
-                state_strides,
-                b_size: bsz,
-                h_size: h,
-                dh_size: dh,
-            },
-        )
-        .unwrap();
-    enc.end_encoding();
-    cb_ref.commit();
-    cb_ref.wait_until_completed();
-
-    let y_ptr = y_buf.contents() as *const bf16;
-    let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };
-    let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
-    let ns_ptr = ns_buf.contents() as *const bf16;
-    let ns_out =
-        unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * dh * n) };
     let ns_out_f32: Vec<f32> = ns_out.iter().map(|&v| v.to_f32()).collect();
     let tol = 2e-2;
     for (i, (a, b)) in y_out_f32.iter().zip(y_exp_f32.iter()).enumerate() {
