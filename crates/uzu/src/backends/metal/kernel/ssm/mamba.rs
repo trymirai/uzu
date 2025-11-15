@@ -3,9 +3,8 @@ use std::rc::Rc;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
-    ActivationArguments, ActivationKernel, ActivationType, Conv1dScanArguments,
-    Conv1dScanKernel, DtDecayArguments, DtDecayKernel, SSDPrefillArguments,
-    SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
+    Conv1dScanArguments, Conv1dScanKernel, DtDecayArguments, DtDecayKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
     SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
     SplitInProjKernel,
 };
@@ -21,21 +20,19 @@ use crate::{
         },
         kernel::TensorAddBias,
     },
-    config::{Activation, DecoderLayerType, mamba::Mamba2Config},
+    config::{DecoderLayerType, mamba::Mamba2Config},
     parameters::ParameterTree,
 };
 
 pub(crate) struct MambaMixerEncodable {
     layer_index: usize,
     config: Mamba2Config,
-    activation: Activation,
     in_projection: Box<dyn EncodableWithState>,
     out_projection: Box<dyn EncodableWithState>,
     split_inproj: SplitInProjKernel,
     tensor_add_bias: TensorAddBias,
     dt_decay: DtDecayKernel,
     conv_scan: Conv1dScanKernel,
-    activation_kernel: ActivationKernel,
     split_conv_outputs: SplitConvOutputsKernel,
     ssm_prefill: SSDPrefillKernel,
     ssd_update: SSDUpdateKernel,
@@ -72,7 +69,6 @@ impl MambaMixerEncodable {
         let data_type: DataType =
             mamba_config.in_projection_config.activation_precision().into();
         let kernel_data_type: KernelDataType = data_type.into();
-        let activation = mamba_config.conv_config.activation.clone();
 
         let in_projection = transformer_layer::linear_block(
             &mamba_config.in_projection_config,
@@ -125,11 +121,12 @@ impl MambaMixerEncodable {
             .expect("Failed to create tensor add bias kernel");
         let dt_decay = DtDecayKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create dt/decay kernel");
-        let conv_scan = Conv1dScanKernel::new(mtl_context, kernel_data_type)
-            .expect("Failed to create conv scan kernel");
-        let activation_kernel =
-            ActivationKernel::new(mtl_context, kernel_data_type)
-                .expect("Failed to create activation kernel");
+        let conv_scan = Conv1dScanKernel::new(
+            mtl_context,
+            kernel_data_type,
+            &mamba_config.conv_config.activation,
+        )
+        .expect("Failed to create conv scan kernel");
         let split_conv_outputs =
             SplitConvOutputsKernel::new(mtl_context, kernel_data_type)
                 .expect("Failed to create split conv outputs kernel");
@@ -141,14 +138,12 @@ impl MambaMixerEncodable {
         Self {
             layer_index,
             config: mamba_config,
-            activation,
             in_projection,
             out_projection,
             split_inproj,
             tensor_add_bias,
             dt_decay,
             conv_scan,
-            activation_kernel,
             split_conv_outputs,
             ssm_prefill,
             ssd_update,
@@ -176,7 +171,6 @@ impl MambaMixerEncodable {
         self.add_gate_bias(state, command_buffer, suffix_length);
         self.run_dt_decay(state, command_buffer, suffix_length);
         self.run_conv_scan(state, command_buffer, suffix_length);
-        self.apply_activation(state, command_buffer, suffix_length);
         self.split_conv_outputs(state, command_buffer, suffix_length);
 
         if suffix_length == 1 {
@@ -330,31 +324,6 @@ impl MambaMixerEncodable {
                 },
             )
             .expect("Failed to encode conv scan kernel");
-        compute.end_encoding();
-    }
-
-    fn apply_activation(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        suffix_length: usize,
-    ) {
-        let arrays = state.arrays(&[ArrayId::SsmPacked(self.layer_index)]);
-        let mut conv_out = arrays[0].borrow_mut();
-        let buf = unsafe { conv_out.mtl_buffer().to_owned() };
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
-        self.activation_kernel
-            .encode(
-                &compute,
-                ActivationArguments {
-                    data: &buf,
-                    row_stride: self.config.conv_dim(),
-                    suffix_length,
-                    activation: self.activation_type(),
-                },
-            )
-            .expect("Failed to encode activation kernel");
         compute.end_encoding();
     }
 
@@ -575,16 +544,6 @@ impl MambaMixerEncodable {
             )
             .expect("Failed to encode SSD decode kernel");
         compute.end_encoding();
-    }
-
-    fn activation_type(&self) -> ActivationType {
-        match self.activation {
-            Activation::SILU {
-                ..
-            } => ActivationType::Silu,
-            Activation::GELU => ActivationType::Gelu,
-            Activation::Identity => ActivationType::Identity,
-        }
     }
 }
 

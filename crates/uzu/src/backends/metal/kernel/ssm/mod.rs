@@ -12,7 +12,6 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-pub mod activation;
 pub mod conv1d_forward;
 pub mod conv1d_scan;
 pub mod conv1d_swish_forward;
@@ -27,7 +26,6 @@ pub mod ssd_update;
 pub mod ssd_update_no_z;
 pub mod ssm_update;
 
-pub use activation::{ActivationArguments, ActivationKernel, ActivationType};
 pub use conv1d_forward::{Conv1dForwardArguments, Conv1dForwardKernel};
 pub use conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel};
 pub use conv1d_swish_forward::{

@@ -3,6 +3,37 @@
 
 using namespace metal;
 
+constant int activation_type [[function_constant(0)]];
+
+constant int ACTIVATION_IDENTITY = 0;
+constant int ACTIVATION_SILU = 1;
+constant int ACTIVATION_GELU = 2;
+
+template <typename T>
+inline T apply_silu(T x) {
+    float xf = float(x);
+    float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
+    float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
+    return static_cast<T>(out);
+}
+
+template <typename T>
+inline T apply_gelu(T x) {
+    float xf = float(x);
+    return static_cast<T>(0.5f * xf * (1.0f + fast::tanh(0.797885f * (xf + 0.044715f * xf * xf * xf))));
+}
+
+template <typename T>
+inline T apply_activation(T x, int activation_type) {
+    if (activation_type == ACTIVATION_SILU) {
+        return apply_silu(x);
+    } else if (activation_type == ACTIVATION_GELU) {
+        return apply_gelu(x);
+    } else {
+        return x; // Identity
+    }
+}
+
 template <typename T>
 kernel void conv1d_scan_kernel(
     device const T* x [[ buffer(0) ]],      // (suffix, channels)
@@ -36,7 +67,9 @@ kernel void conv1d_scan_kernel(
             acc += w_row[tap] * state_row[tap];
         }
         acc += w_row[tap_count] * input_val;
-        y[x_idx] = acc;
+
+        // Apply activation (fused)
+        y[x_idx] = apply_activation(acc, activation_type);
 
         if (tap_count > 0) {
             for (int tap = 0; tap < tap_count - 1; ++tap) {

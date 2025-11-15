@@ -35,7 +35,6 @@ pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
-    ActivationArguments, ActivationKernel, ActivationType,
     Conv1dForwardArguments, Conv1dForwardKernel, Conv1dScanArguments,
     Conv1dScanKernel, Conv1dSwishForwardArguments, Conv1dSwishForwardKernel,
     Conv1dUpdateArguments, Conv1dUpdateKernel, Cumsum1DArguments,

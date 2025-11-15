@@ -2,12 +2,42 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
+    MTLDataType, MTLSize,
 };
 
-use crate::backends::metal::{KernelDataType, MTLContext};
-
 use super::{SSMKernelError, fn_suffix};
+use crate::{
+    backends::metal::{KernelDataType, MTLContext},
+    config::Activation,
+};
+
+const ACTIVATION_IDENTITY: i32 = 0;
+const ACTIVATION_SILU: i32 = 1;
+const ACTIVATION_GELU: i32 = 2;
+
+fn activation_to_int(activation: &Activation) -> i32 {
+    match activation {
+        Activation::Identity => ACTIVATION_IDENTITY,
+        Activation::SILU {
+            ..
+        } => ACTIVATION_SILU,
+        Activation::GELU => ACTIVATION_GELU,
+    }
+}
+
+fn make_function_constants(activation: &Activation) -> FunctionConstantValues {
+    let function_constants = FunctionConstantValues::new();
+    let activation_type = activation_to_int(activation);
+
+    function_constants.set_constant_value_at_index(
+        &activation_type as *const i32 as *const std::ffi::c_void,
+        MTLDataType::Int,
+        0,
+    );
+
+    function_constants
+}
 
 pub struct Conv1dScanKernel {
     pipeline: MTLComputePipelineState,
@@ -30,10 +60,12 @@ impl Conv1dScanKernel {
     pub fn new(
         context: &MTLContext,
         data_type: KernelDataType,
+        activation: &Activation,
     ) -> Result<Self, SSMKernelError> {
         let fn_name = format!("conv1d_scan_kernel_{}", fn_suffix(data_type));
+        let function_constants = make_function_constants(activation);
         let pipeline = context
-            .compute_pipeline_state(&fn_name, None)
+            .compute_pipeline_state(&fn_name, Some(&function_constants))
             .map_err(SSMKernelError::MetalError)?;
         Ok(Self {
             pipeline,
