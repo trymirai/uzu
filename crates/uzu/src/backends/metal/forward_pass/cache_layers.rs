@@ -121,14 +121,13 @@ impl CacheLayers {
                         conv_dim,
                         kernel_size,
                         state_dim,
-                        num_value_heads,
+                        num_heads,
                         head_dim,
                         ..
                     } => {
                         let conv_shape =
                             [*conv_dim, kernel_size.saturating_sub(1)];
-                        let ssm_shape =
-                            [*num_value_heads, *head_dim, *state_dim];
+                        let ssm_shape = [*num_heads, *head_dim, *state_dim];
                         let dtype = model_shape.activation_data_type();
 
                         CacheLayer::StateSpace(SSMLayer {

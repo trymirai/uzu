@@ -7,6 +7,7 @@ use super::{
     KernelDataType, TensorAddBias,
     quant_matmul::{
         QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+        quantized_kernel_names,
     },
 };
 use crate::{
@@ -179,44 +180,26 @@ impl QuantizedLinearKernelBlock {
             };
 
         let g = config.group_size;
-        let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
-            (DataType::F16, 32) => {
-                ("qmm_transposed_f16_g32_b4", "qmv_f16_g32_b4")
-            },
-            (DataType::F16, 64) => {
-                ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4")
-            },
-            (DataType::F16, 128) => {
-                ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4")
-            },
-            (DataType::BF16, 32) => {
-                ("qmm_transposed_bf16_g32_b4", "qmv_bf16_g32_b4")
-            },
-            (DataType::BF16, 64) => {
-                ("qmm_transposed_bf16_g64_b4", "qmv_bf16_g64_b4")
-            },
-            (DataType::BF16, 128) => {
-                ("qmm_transposed_bf16_g128_b4", "qmv_bf16_g128_b4")
-            },
-            (dtype, other) => {
-                return Err(MTLError::Generic(format!(
-                    "Unsupported group size {} for transposed {:?} kernel",
-                    other, dtype
-                )));
-            },
+        let Some((kernel_name_mm, kernel_name_mv)) =
+            quantized_kernel_names(kernel_data_type, g)
+        else {
+            return Err(MTLError::Generic(format!(
+                "Unsupported group size {} for transposed {:?} kernel",
+                g, kernel_data_type
+            )));
         };
 
         let kernel_mm = QuantizedMatmulKernel::new(
             mtl_context,
             kernel_data_type,
-            kernel_name_mm,
+            &kernel_name_mm,
             quantization_type,
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
         let kernel_mv = QuantizedMatmulKernel::new(
             mtl_context,
             kernel_data_type,
-            kernel_name_mv,
+            &kernel_name_mv,
             quantization_type,
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;

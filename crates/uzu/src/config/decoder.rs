@@ -19,7 +19,7 @@ pub enum DecoderLayerType {
         conv_dim: usize,
         kernel_size: usize,
         state_dim: usize,
-        num_value_heads: usize,
+        num_heads: usize,
         num_groups: usize,
         head_dim: usize,
     },
@@ -217,9 +217,9 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
         MixerConfig::Attention(_) => DecoderLayerType::Transformer,
         MixerConfig::Mamba(config) => DecoderLayerType::StateSpace {
             conv_dim: config.conv_dim(),
-            kernel_size: config.conv_config.kernel_size,
+            kernel_size: config.kernel_size,
             state_dim: config.state_dim,
-            num_value_heads: config.num_value_heads,
+            num_heads: config.num_heads,
             num_groups: config.num_groups,
             head_dim: config.head_dim,
         },
@@ -279,7 +279,8 @@ mod tests {
                         "scale_offset": null,
                         "upcast_mode": "only_normalization"
                     },
-                    "attention_config": {
+                    "mixer_config": {
+                        "type": "AttentionConfig",
                         "qkv_projection_config": {
                             "type": "QLoRALinearConfig",
                             "group_size": 32,
@@ -287,7 +288,7 @@ mod tests {
                             "activation_quantization_mode": "int8",
                             "activation_precision": "bfloat16",
                             "lora_rank": 16,
-                            "lora_scale": 2.0,
+                            "lora_scale": 2.0
                         },
                         "out_projection_config": {
                             "type": "QLoRALinearConfig",
@@ -296,10 +297,10 @@ mod tests {
                             "activation_quantization_mode": "int8",
                             "activation_precision": "bfloat16",
                             "lora_rank": 16,
-                            "lora_scale": 2.0,
+                            "lora_scale": 2.0
                         },
                         "logit_soft_cap": null,
-                "has_sinks": false,
+                        "has_sinks": false,
                         "has_qkv_biases": false,
                         "has_out_biases": false
                     },
@@ -434,7 +435,7 @@ mod tests {
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SILU {
+                    activation: Activation::SiLU {
                         alpha: 1.0,
                     },
                 }),

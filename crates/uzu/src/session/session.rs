@@ -53,9 +53,13 @@ impl Session {
         }
         let config_file =
             File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|_| Error::UnableToLoadConfig)?;
+        let model_metadata: ModelMetadata = serde_json::from_reader(
+            BufReader::new(config_file),
+        )
+        .map_err(|err| {
+            eprintln!("Failed to parse config.json: {err}");
+            Error::UnableToLoadConfig
+        })?;
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {

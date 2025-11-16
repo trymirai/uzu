@@ -381,6 +381,51 @@ pub fn embed_block(
 
             Box::new(block)
         },
+        EmbeddingConfig::MLXSemiQuantizedUntied {
+            activation_precision,
+            ..
+        } => {
+            let weights_shape =
+                [config.vocab_size as isize, config.model_dim as isize];
+            let weights_data_type: DataType = activation_precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let output = embeddings_embed_subgraph(
+                &graph,
+                &config.embedding_config,
+                &input_placeholder,
+                &weights_placeholder,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                None,
+                Some(&compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Main].into_boxed_slice(),
+                ),
+            );
+
+            Box::new(block)
+        },
         EmbeddingConfig::QuantizedTied {
             embedding_quantization_mode: _,
             ..
@@ -580,6 +625,28 @@ pub fn readout_block(
                     vec![ArrayId::Logits].into_boxed_slice(),
                 ),
             );
+
+            Box::new(block)
+        },
+        EmbeddingConfig::MLXSemiQuantizedUntied {
+            group_size,
+            activation_precision,
+            ..
+        } => {
+            let data_type: DataType = activation_precision.into();
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+
+            let block = QuantizedEmbeddingReadoutKernelBlock::new(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                &embeddings_tree,
+            )
+            .expect("Failed to create quantized embedding readout kernel");
 
             Box::new(block)
         },

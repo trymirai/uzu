@@ -35,12 +35,11 @@ pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
-    Conv1dScanArguments, Conv1dScanKernel, Cumsum1DArguments,
-    Cumsum1DKernel, DtDecayArguments, DtDecayKernel, SSDPrefillArguments,
-    SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel, SSMKernelError,
-    SSMUpdateArguments, SSMUpdateKernel, SegsumFromCumsumArguments,
-    SegsumFromCumsumKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
-    SplitInProjArguments, SplitInProjKernel,
+    Conv1dScanArguments, Conv1dScanKernel, DtDecayArguments, DtDecayKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
+    SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
+    SplitInProjKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;

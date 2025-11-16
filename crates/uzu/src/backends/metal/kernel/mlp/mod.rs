@@ -89,10 +89,10 @@ impl MlpGateActMulKernel {
 
     fn act_code(act: &Activation) -> u16 {
         match act {
-            Activation::SILU {
+            Activation::SiLU {
                 ..
             } => 0,
-            Activation::GELU => 1,
+            Activation::Gelu => 1,
             Activation::Identity => {
                 panic!("Identity activation is not supported for MLP kernels")
             },

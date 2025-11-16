@@ -6,9 +6,11 @@ use super::{
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum MixerConfig {
+    #[serde(rename = "AttentionConfig")]
     Attention(AttentionConfig),
+    #[serde(rename = "Mamba2Config")]
     Mamba(Mamba2Config),
 }
 
@@ -30,7 +32,7 @@ impl MixerConfig {
     pub fn num_heads(&self) -> Option<usize> {
         match self {
             MixerConfig::Attention(config) => config.num_heads,
-            MixerConfig::Mamba(config) => Some(config.num_value_heads),
+            MixerConfig::Mamba(config) => Some(config.num_heads),
         }
     }
 
@@ -109,7 +111,8 @@ mod tests {
                     "scale_offset": null,
                     "upcast_mode": "only_normalization"
                 },
-                "attention_config": {
+                "mixer_config": {
+                    "type": "AttentionConfig",
                     "qkv_projection_config": {
                         "type": "QLoRALinearConfig",
                         "group_size": 32,
@@ -224,7 +227,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SILU {
+                activation: Activation::SiLU {
                     alpha: 1.0,
                 },
             }),

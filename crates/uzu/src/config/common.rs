@@ -60,11 +60,13 @@ impl Into<DataType> for QuantizationMode {
 #[serde(tag = "type")]
 pub enum Activation {
     #[serde(rename = "SiLU")]
-    SILU {
+    SiLU {
         #[serde(default = "default_silu_alpha")]
         alpha: f32,
     },
-    GELU,
+    #[serde(rename = "GELU")]
+    Gelu,
+    #[serde(rename = "Identity")]
     Identity,
 }
 
@@ -75,10 +77,10 @@ fn default_silu_alpha() -> f32 {
 impl Activation {
     pub fn alpha(&self) -> f32 {
         match self {
-            Activation::SILU {
+            Activation::SiLU {
                 alpha,
             } => *alpha,
-            Activation::GELU => 1.0,
+            Activation::Gelu => 1.0,
             Activation::Identity => 1.0,
         }
     }

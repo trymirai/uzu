@@ -182,6 +182,26 @@ impl QuantizedMatmulKernel {
     }
 }
 
+pub fn quantized_kernel_names(
+    data_type: DataType,
+    group_size: usize,
+) -> Option<(String, String)> {
+    let dtype_suffix = match data_type {
+        DataType::F16 => "f16",
+        DataType::BF16 => "bf16",
+        _ => return None,
+    };
+
+    match group_size {
+        32 | 64 | 128 => {
+            let mm = format!("qmm_transposed_{dtype_suffix}_g{group_size}_b4");
+            let mv = format!("qmv_{dtype_suffix}_g{group_size}_b4");
+            Some((mm, mv))
+        },
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KernelKind {
     Qmm,

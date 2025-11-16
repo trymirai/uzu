@@ -38,6 +38,16 @@ pub enum EmbeddingsBuffers {
         /// [vocab_size]
         scales: ArrayCell,
     },
+    MLXSemiQuantizedUntied {
+        /// [vocab_size, model_dim]
+        input_weights: ArrayCell,
+        /// [vocab_size, model_dim]
+        packed_output_weights: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_scales: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_biases: ArrayCell,
+    },
 }
 
 impl EmbeddingsBuffers {
@@ -106,6 +116,41 @@ impl EmbeddingsBuffers {
                         )),
                     }
                 },
+                EmbeddingConfig::MLXSemiQuantizedUntied {
+                    group_size,
+                    embedding_quantization_mode: _,
+                    ..
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    let num_groups = model_dim / group_size;
+                    Self::MLXSemiQuantizedUntied {
+                        input_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &model_shape.embeddings_input_shape(),
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        packed_output_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, model_dim / 2],
+                                DataType::U8,
+                            ),
+                        ),
+                        output_scales: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        output_biases: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                    }
+                },
             }
         }
     }
@@ -140,6 +185,23 @@ impl EmbeddingsBuffers {
                 scales,
             } => {
                 let mapping = vec![("weights", weights), ("scales", scales)];
+                for (name, buffer) in mapping {
+                    let view = embeddings_tree.leaf(name).unwrap();
+                    buffer.borrow_mut().copy_from_array(&view);
+                }
+            },
+            EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                input_weights,
+                packed_output_weights,
+                output_scales,
+                output_biases,
+            } => {
+                let mapping = vec![
+                    ("input_weights", input_weights),
+                    ("output_weights", packed_output_weights),
+                    ("output_scales", output_scales),
+                    ("output_biases", output_biases),
+                ];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
                     buffer.borrow_mut().copy_from_array(&view);
@@ -1138,6 +1200,10 @@ impl ForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        input_weights,
+                        ..
+                    } => input_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsOutputWeights => {
@@ -1153,6 +1219,10 @@ impl ForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        packed_output_weights,
+                        ..
+                    } => packed_output_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsScales => {
@@ -1161,7 +1231,13 @@ impl ForwardPassState {
                         scales,
                         ..
                     } => scales.clone(),
-                    _ => panic!("Expected EmbeddingsBuffers::QuantizedTied"),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        output_scales,
+                        ..
+                    } => output_scales.clone(),
+                    _ => panic!(
+                        "Expected EmbeddingsBuffers::QuantizedTied or MLXSemiQuantizedUntied"
+                    ),
                 }
             },
             ArrayId::RopeCosines(rope_type) => match rope_type {

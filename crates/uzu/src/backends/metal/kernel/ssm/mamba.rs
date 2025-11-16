@@ -77,7 +77,7 @@ impl MambaMixerEncodable {
             [
                 mamba_config.conv_dim(),
                 mamba_config.inner_dim(),
-                mamba_config.num_value_heads,
+                mamba_config.num_heads,
             ],
             mtl_context,
             &resolve_subtree(
@@ -104,9 +104,9 @@ impl MambaMixerEncodable {
             &compilation_config.descriptor_mlp,
         );
 
-        let conv_weight = conv_tree.leaf("weight").unwrap().clone();
+        let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf("bias").unwrap().clone())
+            Some(conv_tree.leaf("biases").unwrap().clone())
         } else {
             None
         };
@@ -124,7 +124,7 @@ impl MambaMixerEncodable {
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
             kernel_data_type,
-            &mamba_config.conv_config.activation,
+            &mamba_config.activation,
         )
         .expect("Failed to create conv scan kernel");
         let split_conv_outputs =
@@ -206,7 +206,7 @@ impl MambaMixerEncodable {
 
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
-        let num_heads = self.config.num_value_heads;
+        let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
 
         let mtl_command_buffer =
@@ -273,7 +273,7 @@ impl MambaMixerEncodable {
                 DtDecayArguments {
                     dt: &dt_buf,
                     decay: &decay_buf,
-                    num_heads: self.config.num_value_heads,
+                    num_heads: self.config.num_heads,
                     suffix_length,
                 },
             )
@@ -303,8 +303,7 @@ impl MambaMixerEncodable {
         });
 
         let conv_dim = self.config.conv_dim();
-        let state_stride =
-            self.config.conv_config.kernel_size.saturating_sub(1);
+        let state_stride = self.config.kernel_size.saturating_sub(1);
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
         self.conv_scan
@@ -317,7 +316,7 @@ impl MambaMixerEncodable {
                     state: &state_buf,
                     y: &input_buf,
                     suffix_len: suffix_length,
-                    kernel_size: self.config.conv_config.kernel_size as i32,
+                    kernel_size: self.config.kernel_size as i32,
                     row_stride: conv_dim,
                     state_stride,
                     channels: conv_dim,
@@ -433,16 +432,15 @@ impl MambaMixerEncodable {
                     state: &state_raw,
                     y: &out_buf,
                     suffix_len: suffix_length,
-                    group_size: (self.config.num_value_heads
-                        / self.config.num_groups)
+                    group_size: (self.config.num_heads / self.config.num_groups)
                         as i32,
                     state_size: self.config.state_dim as i32,
                     x_strides: [
-                        self.config.num_value_heads * self.config.head_dim,
+                        self.config.num_heads * self.config.head_dim,
                         self.config.head_dim,
                         1,
                     ],
-                    dt_strides: [self.config.num_value_heads, 1],
+                    dt_strides: [self.config.num_heads, 1],
                     cb_strides: [
                         self.config.num_groups * self.config.state_dim,
                         self.config.state_dim,
@@ -453,7 +451,7 @@ impl MambaMixerEncodable {
                         self.config.state_dim,
                         1,
                     ],
-                    channels: self.config.num_value_heads,
+                    channels: self.config.num_heads,
                     head_dim: self.config.head_dim,
                 },
             )
@@ -503,7 +501,7 @@ impl MambaMixerEncodable {
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip_buf = unsafe { skip_weights.mtl_buffer().to_owned() };
 
-        let h = self.config.num_value_heads;
+        let h = self.config.num_heads;
         let g = self.config.num_groups;
         let dh = self.config.head_dim;
         let n = self.config.state_dim;

@@ -283,8 +283,8 @@ impl MoeBlockEncodable {
 
     fn gating_code_from_activation(activation: &Activation) -> u32 {
         match activation {
-            Activation::GELU => 3,
-            Activation::SILU {
+            Activation::Gelu => 3,
+            Activation::SiLU {
                 ..
             } => 2,
             Activation::Identity => {

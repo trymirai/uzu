@@ -7,8 +7,6 @@ use super::{
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct CausalConv1dConfig {
-    pub kernel_size: usize,
-    pub activation: Activation,
     pub precision: ConfigDataType,
     pub has_biases: bool,
 }
@@ -18,18 +16,20 @@ pub struct Mamba2Config {
     pub in_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
     pub conv_config: CausalConv1dConfig,
-    pub num_value_heads: usize,
+    pub activation: Activation,
+    pub kernel_size: usize,
+    pub num_heads: usize,
     pub num_groups: usize,
     pub head_dim: usize,
     pub state_dim: usize,
-    pub expand: usize,
+    pub expansion_factor: usize,
     pub has_in_biases: bool,
     pub has_out_biases: bool,
 }
 
 impl Mamba2Config {
     pub fn inner_dim(&self) -> usize {
-        self.num_value_heads * self.head_dim
+        self.num_heads * self.head_dim
     }
 
     pub fn conv_dim(&self) -> usize {

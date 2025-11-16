@@ -141,12 +141,15 @@ impl QuantizedEmbeddingLookupKernelBlock {
             QuantizedEmbeddingLookupKernel::new(mtl_context, data_type)?;
 
         // Load weights [vocab_size, model_dim/2] as U8
-        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load weights: {:?}",
-                e
-            )))
-        })?;
+        let mut weights = match parameter_tree.leaf("weights") {
+            Ok(weights) => weights,
+            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load weights: {:?}",
+                    e
+                )))
+            })?,
+        };
 
         if weights.data_type() != DataType::U8 {
             return Err(QuantizedEmbeddingError::MetalError(
@@ -158,12 +161,15 @@ impl QuantizedEmbeddingLookupKernelBlock {
         }
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = parameter_tree.leaf("scales").map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load scales: {:?}",
-                e
-            )))
-        })?;
+        let mut scales = match parameter_tree.leaf("scales") {
+            Ok(scales) => scales,
+            Err(_) => parameter_tree.leaf("output_scales").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load scales: {:?}",
+                    e
+                )))
+            })?,
+        };
 
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -194,7 +200,10 @@ impl QuantizedEmbeddingLookupKernelBlock {
         }
 
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
-        let biases_buffer: MTLBuffer = match parameter_tree.leaf("biases") {
+        let biases_buffer: MTLBuffer = match parameter_tree
+            .leaf("biases")
+            .or_else(|_| parameter_tree.leaf("output_biases"))
+        {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(QuantizedEmbeddingError::MetalError(
@@ -297,7 +306,8 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
 
 // Quantized embedding readout block - uses quantized matmul for efficiency
 pub struct QuantizedEmbeddingReadoutKernelBlock {
-    kernel: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
+    kernel_mm: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
+    kernel_mv: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
     biases_buffer: MTLBuffer,
@@ -315,20 +325,26 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
-        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load weights: {:?}",
-                e
-            )))
-        })?;
+        let mut weights = match parameter_tree.leaf("weights") {
+            Ok(weights) => weights,
+            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load weights: {:?}",
+                    e
+                )))
+            })?,
+        };
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = parameter_tree.leaf("scales").map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load scales: {:?}",
-                e
-            )))
-        })?;
+        let mut scales = match parameter_tree.leaf("scales") {
+            Ok(scales) => scales,
+            Err(_) => parameter_tree.leaf("output_scales").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load scales: {:?}",
+                    e
+                )))
+            })?,
+        };
 
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -359,7 +375,10 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: MTLBuffer = match parameter_tree.leaf("biases") {
+        let biases_buffer: MTLBuffer = match parameter_tree
+            .leaf("biases")
+            .or_else(|_| parameter_tree.leaf("output_biases"))
+        {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(QuantizedEmbeddingError::MetalError(
@@ -408,32 +427,39 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
         let scales_buffer = unsafe { scales.mtl_buffer().to_owned() };
 
-        // Create kernel for transposed matrix multiplication
-        // For readout: [batch, model_dim] @ [model_dim, vocab] -> [batch, vocab]
-        // Weights are [vocab, model_dim] so we need transposed matmul
-
-        let type_suffix = match data_type {
-            DataType::F16 => "f16",
-            DataType::BF16 => "bf16",
-            _ => {
-                return Err(QuantizedEmbeddingError::UnsupportedDataType(
-                    data_type,
-                ));
-            },
-        };
-
-        let kernel_name =
-            format!("qmm_transposed_{}_g{}_b4", type_suffix, group_size);
-
         use super::super::kernel::quant_matmul::{
-            QuantizationType, QuantizedMatmulKernel,
+            QuantizationType, QuantizedMatmulKernel, quantized_kernel_names,
         };
 
-        let kernel = QuantizedMatmulKernel::new(
+        let Some((kernel_name_mm, kernel_name_mv)) =
+            quantized_kernel_names(data_type, group_size)
+        else {
+            return Err(QuantizedEmbeddingError::MetalError(
+                MTLError::Generic(format!(
+                    "Unsupported group size {} for transposed {:?} kernel",
+                    group_size, data_type
+                )),
+            ));
+        };
+
+        let kernel_mm = QuantizedMatmulKernel::new(
             mtl_context,
             data_type,
-            &kernel_name,
-            QuantizationType::Mlx, // MLX-style quantization
+            &kernel_name_mm,
+            QuantizationType::Mlx,
+        )
+        .map_err(|e| {
+            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                "Failed to create kernel: {:?}",
+                e
+            )))
+        })?;
+
+        let kernel_mv = QuantizedMatmulKernel::new(
+            mtl_context,
+            data_type,
+            &kernel_name_mv,
+            QuantizationType::Mlx,
         )
         .map_err(|e| {
             QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
@@ -443,7 +469,8 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         })?;
 
         Ok(Self {
-            kernel,
+            kernel_mm,
+            kernel_mv,
             weights_buffer,
             scales_buffer,
             biases_buffer,
@@ -491,8 +518,13 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
             k: self.model_dim as i32,
             quantization_type: QuantizationType::Mlx,
         };
+        let kernel = if batch_size == 1 {
+            &self.kernel_mv
+        } else {
+            &self.kernel_mm
+        };
 
-        self.kernel
+        kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
 

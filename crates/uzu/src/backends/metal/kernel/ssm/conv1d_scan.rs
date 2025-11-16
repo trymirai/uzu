@@ -19,10 +19,10 @@ const ACTIVATION_GELU: i32 = 2;
 fn activation_to_int(activation: &Activation) -> i32 {
     match activation {
         Activation::Identity => ACTIVATION_IDENTITY,
-        Activation::SILU {
+        Activation::SiLU {
             ..
         } => ACTIVATION_SILU,
-        Activation::GELU => ACTIVATION_GELU,
+        Activation::Gelu => ACTIVATION_GELU,
     }
 }
 
