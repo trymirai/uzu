@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use half::f16;
-use metal::{Device, MTLResourceOptions};
+use half::{bf16, f16};
+use metal::{Buffer, Device, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::metal::{
@@ -43,8 +43,8 @@ fn cpu_reference(
     scales: &[f32], // scales for B (N x ceil(K/group_size))
     biases: &[f32], // biases for B (N x ceil(K/group_size))
     transpose_b: bool, // Whether B matrix weights are stored in transposed layout
+    group_size: usize,
 ) -> Vec<f32> {
-    let group_size = 64;
     let num_groups = (k + group_size - 1) / group_size;
     let mut y = vec![0.0f32; m * n];
     for i in 0..m {
@@ -97,6 +97,41 @@ fn cpu_reference(
     y
 }
 
+fn buffer_from_f32_slice(
+    ctx: &MTLContext,
+    dtype: DataType,
+    values: &[f32],
+) -> Buffer {
+    match dtype {
+        DataType::F16 => {
+            let data: Vec<f16> =
+                values.iter().map(|&v| f16::from_f32(v)).collect();
+            ctx.device.new_buffer_with_data(
+                data.as_ptr() as *const std::ffi::c_void,
+                (data.len() * std::mem::size_of::<f16>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        },
+        DataType::BF16 => {
+            let data: Vec<bf16> =
+                values.iter().map(|&v| bf16::from_f32(v)).collect();
+            ctx.device.new_buffer_with_data(
+                data.as_ptr() as *const std::ffi::c_void,
+                (data.len() * std::mem::size_of::<bf16>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        },
+        DataType::F32 => ctx.device.new_buffer_with_data(
+            values.as_ptr() as *const std::ffi::c_void,
+            (values.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        ),
+        other => {
+            panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
+        },
+    }
+}
+
 fn execute_quantized_matmul(
     ctx: &MTLContext,
     m: usize,
@@ -107,6 +142,8 @@ fn execute_quantized_matmul(
     iterations: usize,
     validate: bool,
     randomize_zp: bool,
+    group_size: usize,
+    data_type: DataType,
 ) -> f64 {
     // Prepare deterministic weights: w(row,k) = row+1
     // Always create weights in the same layout (test_m × test_k)
@@ -119,26 +156,23 @@ fn execute_quantized_matmul(
     }
     let weights_packed = pack_u4_weights(&weights_q4);
 
-    let num_groups = (k + 63) / 64;
-    let scales: Vec<f16> = vec![f16::from_f32(1.0); m * num_groups];
-    let mut biases: Vec<f16> = vec![f16::from_f32(0.0); m * num_groups];
+    let num_groups = (k + group_size - 1) / group_size;
+    let scales_f32: Vec<f32> = vec![1.0; m * num_groups];
+    let mut biases_f32: Vec<f32> = vec![0.0; m * num_groups];
 
     // Prepare input data
-    let (x_f32, x_f16) = if n == 1 {
+    let x_f32: Vec<f32> = if n == 1 {
         // GEMV case: single input vector
-        let x_f32: Vec<f32> = (1..=k).map(|i| i as f32 / k as f32).collect();
-        let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
-        (x_f32, x_f16)
+        (1..=k).map(|i| i as f32 / k as f32).collect()
     } else {
         // GEMM case: multiple input vectors (column-major)
-        let mut x_f32: Vec<f32> = Vec::with_capacity(k * n);
+        let mut x_vals: Vec<f32> = Vec::with_capacity(k * n);
         for _col in 0..n {
             for i in 0..k {
-                x_f32.push((i + 1) as f32 / k as f32);
+                x_vals.push((i + 1) as f32 / k as f32);
             }
         }
-        let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
-        (x_f32, x_f16)
+        x_vals
     };
 
     // Create buffers
@@ -147,11 +181,7 @@ fn execute_quantized_matmul(
         (weights_packed.len() * std::mem::size_of::<u8>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let s_buf = ctx.device.new_buffer_with_data(
-        scales.as_ptr() as *const _,
-        (scales.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let s_buf = buffer_from_f32_slice(ctx, data_type, &scales_f32);
     // Build zero-points buffer
     let mut zps_bytes = vec![0u8; m * ((num_groups + 1) / 2)];
     if randomize_zp {
@@ -169,9 +199,9 @@ fn execute_quantized_matmul(
                         (zps_bytes[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
                 }
                 // bias = -scale * zp
-                let s = scales[j * num_groups + g].to_f32();
+                let s = scales_f32[j * num_groups + g];
                 let b = -s * (zp_val as f32);
-                biases[j * num_groups + g] = f16::from_f32(b);
+                biases_f32[j * num_groups + g] = b;
             }
         }
     }
@@ -180,20 +210,16 @@ fn execute_quantized_matmul(
         (zps_bytes.len() * std::mem::size_of::<u8>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let x_buf = ctx.device.new_buffer_with_data(
-        x_f16.as_ptr() as *const _,
-        (x_f16.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx.device.new_buffer(
-        (m * n * std::mem::size_of::<f16>()) as u64,
+        (m * n * data_type.size_in_bytes()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
 
     // Create kernel
     let kernel = QuantizedMatmulKernel::new(
         &ctx,
-        DataType::F16,
+        data_type,
         kernel_name,
         QuantizationType::ZeroPoint,
     )
@@ -257,14 +283,30 @@ fn execute_quantized_matmul(
             gpu_k,
             &x_f32,
             &weights_packed,
-            &scales.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
-            &biases.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
+            &scales_f32,
+            &biases_f32,
             cpu_transpose,
+            group_size,
         );
 
-        let y_ptr = y_buf.contents() as *const f16;
-        let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
-        let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
+        let y_out_f32: Vec<f32> = match data_type {
+            DataType::F16 => {
+                let y_ptr = y_buf.contents() as *const f16;
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
+                y_out.iter().map(|&v| v.to_f32()).collect()
+            },
+            DataType::BF16 => {
+                let y_ptr = y_buf.contents() as *const bf16;
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
+                y_out.iter().map(|&v| v.to_f32()).collect()
+            },
+            DataType::F32 => {
+                let y_ptr = y_buf.contents() as *const f32;
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
+                y_out.to_vec()
+            },
+            other => panic!("Unsupported dtype for validation: {:?}", other),
+        };
 
         let tol = if randomize_zp {
             2.5
@@ -325,6 +367,8 @@ fn run_gemv_test(
         1,
         true,
         true,
+        64,
+        DataType::F16,
     );
     println!("✅ GEMV M={}, K={} passed", m, k);
 }
@@ -346,6 +390,8 @@ fn run_qvm_test(
         1,
         true,
         true,
+        64,
+        DataType::F16,
     );
     println!("✅ QVM N={}, K={} passed", n, k);
 }
@@ -410,6 +456,8 @@ fn run_gemm_test(
         1,
         true,
         false,
+        64,
+        DataType::F16,
     );
     println!("✅ GEMM M={}, N={}, K={} passed", m, n, k);
 }
@@ -432,6 +480,8 @@ fn run_gemm_transposed_test(
         1,
         true,
         true,
+        64,
+        DataType::F16,
     );
     println!("✅ GEMM Transposed M={}, N={}, K={} passed", m, n, k);
 }
@@ -470,6 +520,73 @@ fn test_quant_gemm_transposed() {
     run_gemm_transposed_test(&ctx, 25, 17, 128);
 }
 
+#[test]
+fn test_quant_f32_kernels() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping f32 kernel test");
+            return;
+        },
+    };
+
+    execute_quantized_matmul(
+        &ctx,
+        5,
+        1,
+        96,
+        "qmv_f32_g32_b4",
+        false,
+        1,
+        true,
+        true,
+        32,
+        DataType::F32,
+    );
+
+    execute_quantized_matmul(
+        &ctx,
+        1,
+        5,
+        96,
+        "qvm_f32_g32_b4",
+        false,
+        1,
+        true,
+        true,
+        32,
+        DataType::F32,
+    );
+
+    execute_quantized_matmul(
+        &ctx,
+        4,
+        3,
+        96,
+        "qmm_f32_g32_b4",
+        true,
+        1,
+        true,
+        false,
+        32,
+        DataType::F32,
+    );
+
+    execute_quantized_matmul(
+        &ctx,
+        3,
+        4,
+        96,
+        "qmm_transposed_f32_g32_b4",
+        false,
+        1,
+        true,
+        true,
+        32,
+        DataType::F32,
+    );
+}
+
 fn benchmark_quantized_gemv(
     ctx: &MTLContext,
     m: usize,
@@ -486,6 +603,8 @@ fn benchmark_quantized_gemv(
         iterations,
         false,
         true,
+        64,
+        DataType::F16,
     )
 }
 
@@ -505,6 +624,8 @@ fn benchmark_quantized_qevm(
         iterations,
         false,
         true,
+        64,
+        DataType::F16,
     )
 }
 
@@ -525,6 +646,8 @@ fn benchmark_quantized_gemm(
         iterations,
         false,
         true,
+        64,
+        DataType::F16,
     )
 }
 

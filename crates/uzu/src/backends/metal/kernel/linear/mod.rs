@@ -54,7 +54,10 @@ impl QuantizedLinearKernelBlock {
     ) -> Result<Self, MTLError> {
         let kernel_data_type: DataType = config.activation_precision.into();
 
-        if !matches!(kernel_data_type, DataType::F16 | DataType::BF16) {
+        if !matches!(
+            kernel_data_type,
+            DataType::F16 | DataType::BF16 | DataType::F32
+        ) {
             return Err(MTLError::Generic(format!(
                 "Unsupported data type for quantized kernel: {:?}",
                 kernel_data_type

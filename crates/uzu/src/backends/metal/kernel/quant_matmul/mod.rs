@@ -59,7 +59,8 @@ impl QuantizedMatmulKernel {
         kernel_name: &str,
         quantization_type: QuantizationType,
     ) -> Result<Self, QuantizedMatmulError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16) {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
+        {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
@@ -98,6 +99,7 @@ impl QuantizedMatmulKernel {
         let type_suffix = match data_type {
             DataType::F16 => "f16",
             DataType::BF16 => "bf16",
+            DataType::F32 => "f32",
             _ => unreachable!(),
         };
 
@@ -189,6 +191,7 @@ pub fn quantized_kernel_names(
     let dtype_suffix = match data_type {
         DataType::F16 => "f16",
         DataType::BF16 => "bf16",
+        DataType::F32 => "f32",
         _ => return None,
     };
 
@@ -220,6 +223,7 @@ pub fn encode_quantized_matmul(
     let type_suffix = match kernel_data_type {
         DataType::F16 => "f16",
         DataType::BF16 => "bf16",
+        DataType::F32 => "f32",
         other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
     };
 
@@ -236,6 +240,9 @@ pub fn encode_quantized_matmul(
         ("bf16", 32) => format!("qmm{}_bf16_g32_b4", transpose_infix),
         ("bf16", 64) => format!("qmm{}_bf16_g64_b4", transpose_infix),
         ("bf16", 128) => format!("qmm{}_bf16_g128_b4", transpose_infix),
+        ("f32", 32) => format!("qmm{}_f32_g32_b4", transpose_infix),
+        ("f32", 64) => format!("qmm{}_f32_g64_b4", transpose_infix),
+        ("f32", 128) => format!("qmm{}_f32_g128_b4", transpose_infix),
         _ => {
             return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
         },

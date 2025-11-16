@@ -5,8 +5,8 @@ use metal::MTLResourceOptions;
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::ssm::{
-        SSDUpdateArguments, SSDUpdateKernel, SSDUpdateNoZKernel,
-        SSMUpdateArguments, SSMUpdateKernel,
+        SSDUpdateArguments, SSDUpdateKernel, SSMUpdateArguments,
+        SSMUpdateKernel,
     },
 };
 fn ssm_update_ref_bf16(
