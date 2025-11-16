@@ -37,6 +37,9 @@ pub struct ForwardPassBuffers {
     pub ssm_dt: Option<MTLBuffer>,
     pub ssm_decay: Option<MTLBuffer>,
     pub ssm_z: Option<MTLBuffer>,
+    pub ssm_chunk_a: Option<MTLBuffer>,
+    pub ssm_chunk_b: Option<MTLBuffer>,
+    pub ssm_chunk_prefix: Option<MTLBuffer>,
 
     // 3-D
     pub rotated_queries: MTLBuffer,
@@ -152,7 +155,15 @@ impl ForwardPassBuffers {
             ssm_z: model_shape
                 .ssm_z_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty)),
-
+            ssm_chunk_a: model_shape
+                .ssm_chunk_a_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32)),
+            ssm_chunk_b: model_shape
+                .ssm_chunk_state_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32)),
+            ssm_chunk_prefix: model_shape
+                .ssm_chunk_state_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32)),
             // 3-D
             rotated_queries: alloc(
                 &model_shape.rotated_queries_shape(max_suffix_len),

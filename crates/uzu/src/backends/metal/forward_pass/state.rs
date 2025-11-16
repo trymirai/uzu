@@ -422,6 +422,12 @@ struct AuxBuffers {
     ssm_decay: Option<ArrayCell>,
     /// [suffix_length, num_heads, head_dim]
     ssm_z: Option<ArrayCell>,
+    /// [max_chunks, num_heads, head_dim]
+    ssm_chunk_a: Option<ArrayCell>,
+    /// [max_chunks, num_heads, head_dim, state_dim]
+    ssm_chunk_b: Option<ArrayCell>,
+    /// [max_chunks, num_heads, head_dim, state_dim]
+    ssm_chunk_prefix: Option<ArrayCell>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -564,6 +570,33 @@ impl AuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => Some(RefCell::new(
                         MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_chunk_a: match (
+                    scratch.ssm_chunk_a.as_ref(),
+                    model_shape.ssm_chunk_a_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_chunk_b: match (
+                    scratch.ssm_chunk_b.as_ref(),
+                    model_shape.ssm_chunk_state_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_chunk_prefix: match (
+                    scratch.ssm_chunk_prefix.as_ref(),
+                    model_shape.ssm_chunk_state_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
                     )),
                     _ => None,
                 },
@@ -1179,6 +1212,30 @@ impl ForwardPassState {
                     .expect("SSM z buffer not initialized")
                     .clone()
             },
+            ArrayId::SsmChunkA(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_chunk_a
+                    .as_ref()
+                    .expect("SSM chunk A buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmChunkB(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_chunk_b
+                    .as_ref()
+                    .expect("SSM chunk B buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmChunkPrefix(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_chunk_prefix
+                    .as_ref()
+                    .expect("SSM chunk prefix buffer not initialized")
+                    .clone()
+            },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
             ArrayId::AttentionPartials => {
@@ -1413,6 +1470,9 @@ pub enum ArrayId {
     SsmDt(usize),
     SsmDecay(usize),
     SsmZ(usize),
+    SsmChunkA(usize),
+    SsmChunkB(usize),
+    SsmChunkPrefix(usize),
 
     RotatedQueries,
     RotatedKeys,

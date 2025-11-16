@@ -28,6 +28,6 @@ pub use split_conv_outputs::{
     SplitConvOutputsArguments, SplitConvOutputsKernel,
 };
 pub use split_inproj::{SplitInProjArguments, SplitInProjKernel};
-pub use ssd_prefill::{SSDPrefillArguments, SSDPrefillKernel};
+pub use ssd_prefill::{SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode};
 pub use ssd_update::{SSDUpdateArguments, SSDUpdateKernel};
 pub use ssm_update::{SSMUpdateArguments, SSMUpdateKernel};

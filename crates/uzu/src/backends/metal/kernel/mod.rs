@@ -36,8 +36,8 @@ pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
     Conv1dScanArguments, Conv1dScanKernel, DtDecayArguments, DtDecayKernel,
-    SSDPrefillArguments, SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
-    SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
     SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
     SplitInProjKernel,
 };

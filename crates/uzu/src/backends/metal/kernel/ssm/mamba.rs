@@ -1,12 +1,12 @@
-use std::rc::Rc;
+use std::{env, rc::Rc};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     Conv1dScanArguments, Conv1dScanKernel, DtDecayArguments, DtDecayKernel,
-    SSDPrefillArguments, SSDPrefillKernel, SSDUpdateArguments, SSDUpdateKernel,
-    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
-    SplitInProjKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
+    SplitInProjArguments, SplitInProjKernel,
 };
 use crate::{
     DataType,
@@ -40,6 +40,7 @@ pub(crate) struct MambaMixerEncodable {
     conv_bias: Option<MetalArray>,
     gate_bias: MetalArray,
     skip_connection_weight: MetalArray,
+    prefill_mode: SSDPrefillMode,
 }
 
 impl MambaMixerEncodable {
@@ -134,6 +135,7 @@ impl MambaMixerEncodable {
             .expect("Failed to create SSD prefill kernel");
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD decode kernel");
+        let prefill_mode = resolve_prefill_mode_from_env();
 
         Self {
             layer_index,
@@ -151,6 +153,7 @@ impl MambaMixerEncodable {
             conv_bias,
             gate_bias,
             skip_connection_weight,
+            prefill_mode,
         }
     }
 
@@ -380,7 +383,7 @@ impl MambaMixerEncodable {
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
+        let base_arrays = state.arrays(&[
             ArrayId::SsmX(self.layer_index),
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
@@ -390,29 +393,59 @@ impl MambaMixerEncodable {
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
-        let mut x = arrays[0].borrow_mut();
+        let mut x = base_arrays[0].borrow_mut();
         let x_buf = unsafe { x.mtl_buffer().to_owned() };
         drop(x);
-        let mut b = arrays[1].borrow_mut();
+        let mut b = base_arrays[1].borrow_mut();
         let b_buf = unsafe { b.mtl_buffer().to_owned() };
         drop(b);
-        let mut c = arrays[2].borrow_mut();
+        let mut c = base_arrays[2].borrow_mut();
         let c_buf = unsafe { c.mtl_buffer().to_owned() };
         drop(c);
-        let mut dt = arrays[3].borrow_mut();
+        let mut dt = base_arrays[3].borrow_mut();
         let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
         drop(dt);
-        let mut decay = arrays[4].borrow_mut();
+        let mut decay = base_arrays[4].borrow_mut();
         let decay_buf = unsafe { decay.mtl_buffer().to_owned() };
         drop(decay);
-        let mut z = arrays[5].borrow_mut();
+        let mut z = base_arrays[5].borrow_mut();
         let z_buf = unsafe { z.mtl_buffer().to_owned() };
         drop(z);
-        let mut state_buf = arrays[6].borrow_mut();
+        let mut state_buf = base_arrays[6].borrow_mut();
         let state_raw = unsafe { state_buf.mtl_buffer().to_owned() };
         drop(state_buf);
-        let mut out = arrays[7].borrow_mut();
+        let mut out = base_arrays[7].borrow_mut();
         let out_buf = unsafe { out.mtl_buffer().to_owned() };
+        drop(out);
+
+        let chunk_buffers =
+            if matches!(self.prefill_mode, SSDPrefillMode::MultiPass) {
+                let chunk_arrays = state.arrays(&[
+                    ArrayId::SsmChunkA(self.layer_index),
+                    ArrayId::SsmChunkB(self.layer_index),
+                    ArrayId::SsmChunkPrefix(self.layer_index),
+                ]);
+                let mut chunk_a = chunk_arrays[0].borrow_mut();
+                let chunk_a_buf = unsafe { chunk_a.mtl_buffer().to_owned() };
+                drop(chunk_a);
+                let mut chunk_b = chunk_arrays[1].borrow_mut();
+                let chunk_b_buf = unsafe { chunk_b.mtl_buffer().to_owned() };
+                drop(chunk_b);
+                let mut chunk_prefix = chunk_arrays[2].borrow_mut();
+                let chunk_prefix_buf =
+                    unsafe { chunk_prefix.mtl_buffer().to_owned() };
+                drop(chunk_prefix);
+                Some((chunk_a_buf, chunk_b_buf, chunk_prefix_buf))
+            } else {
+                None
+            };
+        let (chunk_a_buf, chunk_b_buf, chunk_prefix_buf) =
+            if let Some(buffers) = chunk_buffers {
+                buffers
+            } else {
+                let fallback = state_raw.clone();
+                (fallback.clone(), fallback.clone(), fallback)
+            };
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
@@ -431,6 +464,9 @@ impl MambaMixerEncodable {
                     z: &z_buf,
                     state: &state_raw,
                     y: &out_buf,
+                    chunk_a: &chunk_a_buf,
+                    chunk_b: &chunk_b_buf,
+                    chunk_prefix: &chunk_prefix_buf,
                     suffix_len: suffix_length,
                     group_size: (self.config.num_heads / self.config.num_groups)
                         as i32,
@@ -454,6 +490,7 @@ impl MambaMixerEncodable {
                     channels: self.config.num_heads,
                     head_dim: self.config.head_dim,
                 },
+                self.prefill_mode,
             )
             .expect("Failed to encode SSD prefill kernel");
         compute.end_encoding();
@@ -542,6 +579,21 @@ impl MambaMixerEncodable {
             )
             .expect("Failed to encode SSD decode kernel");
         compute.end_encoding();
+    }
+}
+
+fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
+    match env::var("UZU_SSM_PREFILL_MODE") {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "single" | "singlepass" | "single_pass" | "1pass" | "one" => {
+                SSDPrefillMode::SinglePass
+            },
+            "multi" | "multipass" | "multi_pass" | "2pass" | "two" => {
+                SSDPrefillMode::MultiPass
+            },
+            _ => SSDPrefillMode::SinglePass,
+        },
+        Err(_) => SSDPrefillMode::SinglePass,
     }
 }
 
