@@ -312,7 +312,8 @@ impl MambaMixerEncodable {
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
         let state_stride = self.config.kernel_size.saturating_sub(1);
-        let scratch = if state_stride > 0 {
+        let use_scratch = state_stride > 0 && suffix_length > 1;
+        let scratch = if use_scratch {
             state.conv_state_scratch(self.layer_index)
         } else {
             None
@@ -345,11 +346,9 @@ impl MambaMixerEncodable {
 
         if let Some(out_buf) = tmp_state_buf {
             let bytes = (state_shape[0] * state_stride) * state_dtype_size;
-            if bytes > 0 {
-                let blit = cmd.new_blit_command_encoder();
-                blit.copy_from_buffer(&out_buf, 0, &state_buf, 0, bytes as u64);
-                blit.end_encoding();
-            }
+            let blit = cmd.new_blit_command_encoder();
+            blit.copy_from_buffer(&out_buf, 0, &state_buf, 0, bytes as u64);
+            blit.end_encoding();
         }
     }
 
