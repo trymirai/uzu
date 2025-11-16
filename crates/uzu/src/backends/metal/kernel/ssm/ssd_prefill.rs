@@ -176,7 +176,8 @@ impl SSDPrefillKernel {
             height: 1,
             depth: 1,
         };
-        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder
+            .dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 

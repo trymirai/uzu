@@ -5,6 +5,9 @@ using namespace metal;
 
 constant ushort SSM_PREFILL_CHUNK = 64;
 constant ushort SSM_PREFILL_MAX_STATE = 64;
+constant ushort SSM_PREFILL_TOKENS_PER_LANE = 4;
+constant ushort SSM_PREFILL_STRIP_TOKENS =
+    SSM_PREFILL_CHUNK * SSM_PREFILL_TOKENS_PER_LANE;
 
 struct SILU {
   template <typename T>
@@ -75,11 +78,9 @@ kernel void ssd_prefill_kernel(
     const float d_scalar = float(D[h_idx]);
 
     threadgroup float shared_state[SSM_PREFILL_MAX_STATE];
-    threadgroup float reduction_shared[SSM_PREFILL_CHUNK];
-    threadgroup float scalar_decay;
-    threadgroup float scalar_dt_scaled_input;
-    threadgroup float scalar_gate;
-    threadgroup float scalar_skip;
+    threadgroup float strip_a_shared[SSM_PREFILL_CHUNK];
+    threadgroup float strip_b_shared[
+        SSM_PREFILL_CHUNK * SSM_PREFILL_MAX_STATE];
 
     if (lane < state_dim) {
         const size_t idx = state_base + size_t(lane) * state_inner_stride;
@@ -87,39 +88,177 @@ kernel void ssd_prefill_kernel(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (size_t token = 0; token < suffix_len; ++token) {
-        if (lane == 0) {
-            const size_t x_idx = token * x_token_stride + x_base;
-            const size_t dt_idx = token * dt_token_stride + dt_base;
-            scalar_decay = float(decay[dt_idx]);
-            const float x_val = float(x[x_idx]);
-            const float dt_val = float(dt[dt_idx]);
-            const float dt_safe = fmax(dt_val, 1e-6f);
-            const float normalized_x = x_val / dt_safe;
-            scalar_dt_scaled_input = normalized_x * dt_val;
-            scalar_gate = SILU{}(float(z[x_idx]));
-            scalar_skip = d_scalar * x_val;
+    const size_t strip_tokens = size_t(SSM_PREFILL_STRIP_TOKENS);
+    for (size_t strip_base = 0; strip_base < suffix_len; strip_base += strip_tokens) {
+        const size_t remaining = suffix_len - strip_base;
+        const size_t needed_lanes = (remaining + size_t(SSM_PREFILL_TOKENS_PER_LANE) - 1)
+            / size_t(SSM_PREFILL_TOKENS_PER_LANE);
+        const ushort active_lanes = ushort(
+            min(needed_lanes, size_t(SSM_PREFILL_CHUNK)));
+        const bool lane_active = lane < active_lanes;
+        const size_t lane_offset_tokens =
+            size_t(lane) * size_t(SSM_PREFILL_TOKENS_PER_LANE);
+        const size_t lane_token_base = strip_base + lane_offset_tokens;
+
+        ushort lane_token_count = 0;
+        float decay_cache[SSM_PREFILL_TOKENS_PER_LANE];
+        float dt_cache[SSM_PREFILL_TOKENS_PER_LANE];
+        float gate_cache[SSM_PREFILL_TOKENS_PER_LANE];
+        float skip_cache[SSM_PREFILL_TOKENS_PER_LANE];
+
+        float lane_a = 1.0f;
+        threadgroup float* lane_slot =
+            strip_b_shared + size_t(lane) * SSM_PREFILL_MAX_STATE;
+
+        if (lane_active) {
+            const size_t lane_remaining =
+                min(remaining - lane_offset_tokens,
+                    size_t(SSM_PREFILL_TOKENS_PER_LANE));
+            lane_token_count = ushort(lane_remaining);
+
+            thread float zero_state[SSM_PREFILL_MAX_STATE];
+            for (int s = 0; s < state_dim; ++s) {
+                zero_state[s] = 0.0f;
+            }
+
+            for (ushort t = 0; t < lane_token_count; ++t) {
+                const size_t token = lane_token_base + size_t(t);
+                const size_t x_idx = token * x_token_stride + x_base;
+                const size_t dt_idx = token * dt_token_stride + dt_base;
+                const size_t cb_idx = token * cb_token_stride + cb_group_base;
+
+                const float x_val = float(x[x_idx]);
+                const float dt_val = float(dt[dt_idx]);
+                const float decay_val = float(decay[dt_idx]);
+                const float dt_safe = fmax(dt_val, 1e-6f);
+                const float normalized_x = x_val / dt_safe;
+                const float dt_scaled_input = normalized_x * dt_val;
+
+                decay_cache[t] = decay_val;
+                dt_cache[t] = dt_scaled_input;
+                gate_cache[t] = SILU{}(float(z[x_idx]));
+                skip_cache[t] = d_scalar * x_val;
+
+                for (int s = 0; s < state_dim; ++s) {
+                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
+                    const float b_coeff = float(B[offset]);
+                    zero_state[s] =
+                        decay_val * zero_state[s] + dt_scaled_input * b_coeff;
+                }
+
+                lane_a *= decay_val;
+            }
+
+            for (int s = 0; s < state_dim; ++s) {
+                lane_slot[s] = zero_state[s];
+            }
+        } else {
+            for (int s = 0; s < state_dim; ++s) {
+                lane_slot[s] = 0.0f;
+            }
+        }
+        strip_a_shared[lane] = lane_active ? lane_a : 1.0f;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Up-sweep: build block transforms in-place using Blelloch scan style.
+        for (ushort offset = 1; offset < active_lanes; offset <<= 1) {
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            const ushort index = ((lane + 1) * offset * 2) - 1;
+            if (lane < active_lanes && index < active_lanes) {
+                const ushort left = index - offset;
+                const float right_a = strip_a_shared[index];
+                const float left_a = strip_a_shared[left];
+                threadgroup float* right_b =
+                    strip_b_shared + size_t(index) * SSM_PREFILL_MAX_STATE;
+                threadgroup const float* left_b =
+                    strip_b_shared + size_t(left) * SSM_PREFILL_MAX_STATE;
+                for (int s = 0; s < state_dim; ++s) {
+                    right_b[s] = right_b[s] + right_a * left_b[s];
+                }
+                strip_a_shared[index] = right_a * left_a;
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        float contrib = 0.0f;
-        if (lane < state_dim) {
-            const size_t cb_idx = token * cb_token_stride + cb_group_base
-                + size_t(lane) * cb_state_stride;
-            const float b_coeff = float(B[cb_idx]);
-            const float c_coeff = float(C[cb_idx]);
-            float new_state =
-                scalar_decay * shared_state[lane]
-                + scalar_dt_scaled_input * b_coeff;
-            shared_state[lane] = new_state;
-            contrib = new_state * c_coeff;
+        if (lane == 0 && active_lanes > 0) {
+            const ushort last = active_lanes - 1;
+            strip_a_shared[last] = 1.0f;
+            threadgroup float* root_b =
+                strip_b_shared + size_t(last) * SSM_PREFILL_MAX_STATE;
+            for (int s = 0; s < state_dim; ++s) {
+                root_b[s] = 0.0f;
+            }
         }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        float dot = threadgroup_cooperative_reduce_sum<SSM_PREFILL_CHUNK>(
-            contrib, reduction_shared, lane);
-        if (lane == 0) {
-            const size_t x_idx = token * x_token_stride + x_base;
-            y[x_idx] = static_cast<T>((scalar_skip + dot) * scalar_gate);
+        // Down-sweep: convert block totals into exclusive prefixes.
+        for (ushort offset = active_lanes >> 1; offset > 0; offset >>= 1) {
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            const ushort index = ((lane + 1) * offset * 2) - 1;
+            if (lane < active_lanes && index < active_lanes) {
+                const ushort left = index - offset;
+                const float parent_a = strip_a_shared[index];
+                const float child_a = strip_a_shared[left];
+                threadgroup float* parent_b =
+                    strip_b_shared + size_t(index) * SSM_PREFILL_MAX_STATE;
+                threadgroup float* child_b =
+                    strip_b_shared + size_t(left) * SSM_PREFILL_MAX_STATE;
+
+                strip_a_shared[left] = parent_a;
+                const float composed_a = child_a * parent_a;
+                for (int s = 0; s < state_dim; ++s) {
+                    const float parent_val = parent_b[s];
+                    const float child_val = child_b[s];
+                    child_b[s] = parent_val;
+                    parent_b[s] = child_val + child_a * parent_val;
+                }
+                strip_a_shared[index] = composed_a;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (lane_active) {
+            thread float lane_state[SSM_PREFILL_MAX_STATE];
+            for (int s = 0; s < state_dim; ++s) {
+                lane_state[s] = shared_state[s];
+            }
+            const float prefix_a = strip_a_shared[lane];
+            threadgroup const float* prefix_b =
+                strip_b_shared + size_t(lane) * SSM_PREFILL_MAX_STATE;
+            for (int s = 0; s < state_dim; ++s) {
+                lane_state[s] = prefix_a * lane_state[s] + prefix_b[s];
+            }
+
+            for (ushort t = 0; t < lane_token_count; ++t) {
+                const size_t token = lane_token_base + size_t(t);
+                const float decay_val = decay_cache[t];
+                const float dt_scaled_input = dt_cache[t];
+                const size_t cb_idx =
+                    token * cb_token_stride + cb_group_base;
+
+                for (int s = 0; s < state_dim; ++s) {
+                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
+                    const float b_coeff = float(B[offset]);
+                    lane_state[s] =
+                        decay_val * lane_state[s] + dt_scaled_input * b_coeff;
+                }
+
+                float acc = skip_cache[t];
+                for (int s = 0; s < state_dim; ++s) {
+                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
+                    const float c_coeff = float(C[offset]);
+                    acc += lane_state[s] * c_coeff;
+                }
+
+                const size_t x_idx = token * x_token_stride + x_base;
+                y[x_idx] = static_cast<T>(acc * gate_cache[t]);
+            }
+
+            if (lane == active_lanes - 1) {
+                for (int s = 0; s < state_dim; ++s) {
+                    shared_state[s] = lane_state[s];
+                }
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }

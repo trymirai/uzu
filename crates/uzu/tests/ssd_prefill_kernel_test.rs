@@ -1,18 +1,21 @@
 #![cfg(target_os = "macos")]
 
 use metal::MTLResourceOptions;
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::ssm::{
-        SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
-    },
-};
 use uzu::backends::metal::kernel::ssm::conv1d_scan::{
     Conv1dScanArguments, Conv1dScanKernel,
+};
+use uzu::backends::metal::{
+    KernelDataType, MTLContext,
+    kernel::ssm::{SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode},
 };
 use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::StorageModeShared;
+
+fn silu_scalar(x: f32) -> f32 {
+    let y = 1.0 / (1.0 + (-x).exp());
+    x * y
+}
 
 fn create_context() -> Option<MTLContext> {
     let device = metal::Device::system_default()?;
@@ -20,7 +23,10 @@ fn create_context() -> Option<MTLContext> {
     MTLContext::new(device, command_queue).ok()
 }
 
-fn write_buffer(buf: &metal::BufferRef, data: &[f32]) {
+fn write_buffer(
+    buf: &metal::BufferRef,
+    data: &[f32],
+) {
     unsafe {
         std::ptr::copy_nonoverlapping(
             data.as_ptr(),
@@ -30,7 +36,10 @@ fn write_buffer(buf: &metal::BufferRef, data: &[f32]) {
     }
 }
 
-fn read_buffer(buf: &metal::BufferRef, len: usize) -> Vec<f32> {
+fn read_buffer(
+    buf: &metal::BufferRef,
+    len: usize,
+) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     unsafe {
         std::ptr::copy_nonoverlapping(
@@ -44,11 +53,161 @@ fn read_buffer(buf: &metal::BufferRef, len: usize) -> Vec<f32> {
 
 fn zero_buffer(buf: &metal::BufferRef) {
     unsafe {
-        std::ptr::write_bytes(
-            buf.contents(),
-            0,
-            buf.length() as usize,
-        );
+        std::ptr::write_bytes(buf.contents(), 0, buf.length() as usize);
+    }
+}
+
+fn ssd_prefill_cpu_reference(
+    suffix_len: usize,
+    num_heads: usize,
+    head_dim: usize,
+    state_dim: usize,
+    group_size: i32,
+    x_data: &[f32],
+    dt_data: &[f32],
+    decay_data: &[f32],
+    b_data: &[f32],
+    c_data: &[f32],
+    d_data: &[f32],
+    z_data: &[f32],
+    state_init: &[f32],
+    x_strides: [usize; 3],
+    dt_strides: [usize; 2],
+    cb_strides: [usize; 3],
+    state_strides: [usize; 3],
+) -> (Vec<f32>, Vec<f32>) {
+    let total_pairs = suffix_len * num_heads * head_dim;
+    let mut y_out = vec![0.0f32; total_pairs];
+    let mut state = state_init.to_vec();
+    let safe_group = group_size.max(1) as usize;
+
+    for h in 0..num_heads {
+        let group_idx = h / safe_group;
+        for dh in 0..head_dim {
+            let state_base = h * state_strides[0] + dh * state_strides[1];
+            for token in 0..suffix_len {
+                let x_idx =
+                    token * x_strides[0] + h * x_strides[1] + dh * x_strides[2];
+                let dt_idx = token * dt_strides[0] + h * dt_strides[1];
+                let cb_base = token * cb_strides[0] + group_idx * cb_strides[1];
+
+                let x_val = x_data[x_idx];
+                let dt_val = dt_data[dt_idx];
+                let decay_val = decay_data[dt_idx];
+                let dt_safe = dt_val.max(1e-6);
+                let dt_scaled_input = (x_val / dt_safe) * dt_val;
+                let gate = silu_scalar(z_data[x_idx]);
+                let mut acc = d_data[h] * x_val;
+
+                for s in 0..state_dim {
+                    let state_idx = state_base + s * state_strides[2];
+                    let cb_idx = cb_base + s * cb_strides[2];
+                    let b_coeff = b_data[cb_idx];
+                    let c_coeff = c_data[cb_idx];
+                    let new_state = decay_val * state[state_idx]
+                        + dt_scaled_input * b_coeff;
+                    state[state_idx] = new_state;
+                    acc += new_state * c_coeff;
+                }
+
+                y_out[x_idx] = acc * gate;
+            }
+        }
+    }
+
+    (y_out, state)
+}
+
+struct SSDPrefillFixture {
+    suffix_len: usize,
+    num_heads: usize,
+    head_dim: usize,
+    state_dim: usize,
+    group_size: i32,
+    chunk_count: usize,
+    total_pairs: usize,
+    total_x: usize,
+    total_dt: usize,
+    total_cb: usize,
+    total_state: usize,
+    x_strides: [usize; 3],
+    dt_strides: [usize; 2],
+    cb_strides: [usize; 3],
+    state_strides: [usize; 3],
+    x_data: Vec<f32>,
+    dt_data: Vec<f32>,
+    decay_data: Vec<f32>,
+    b_data: Vec<f32>,
+    c_data: Vec<f32>,
+    d_data: Vec<f32>,
+    z_data: Vec<f32>,
+    state_init: Vec<f32>,
+}
+
+impl SSDPrefillFixture {
+    fn new() -> Self {
+        let suffix_len = 512usize;
+        let num_heads = 32usize;
+        let head_dim = 64usize;
+        let state_dim = 64usize;
+        let group_size = 1i32;
+        let chunk_size =
+            uzu::backends::metal::kernel::ssm::ssd_prefill::SSD_PREFILL_CHUNK;
+        let chunk_count = (suffix_len + chunk_size - 1) / chunk_size;
+        let group_count = num_heads / (group_size as usize);
+        let total_pairs = num_heads * head_dim;
+        let total_x = suffix_len * total_pairs;
+        let total_dt = suffix_len * num_heads;
+        let total_cb = suffix_len * group_count * state_dim;
+        let total_state = num_heads * head_dim * state_dim;
+
+        let x_data: Vec<f32> =
+            (0..total_x).map(|i| ((i % 17) as f32) * 0.01 - 0.05).collect();
+        let dt_data: Vec<f32> =
+            (0..total_dt).map(|i| 0.01 + ((i % 13) as f32) * 0.005).collect();
+        let decay_data: Vec<f32> =
+            (0..total_dt).map(|i| 0.5 + ((i % 7) as f32) * 0.01).collect();
+        let b_data: Vec<f32> =
+            (0..total_cb).map(|i| ((i % 11) as f32) * 0.02 - 0.05).collect();
+        let c_data: Vec<f32> =
+            (0..total_cb).map(|i| ((i % 19) as f32) * 0.01 - 0.02).collect();
+        let d_data: Vec<f32> =
+            (0..num_heads).map(|i| ((i % 3) as f32) * 0.05 - 0.05).collect();
+        let z_data: Vec<f32> =
+            (0..total_x).map(|i| ((i % 23) as f32) * 0.02 - 0.1).collect();
+        let state_init: Vec<f32> =
+            (0..total_state).map(|i| ((i % 29) as f32) * 0.03 - 0.4).collect();
+
+        let x_strides = [num_heads * head_dim, head_dim, 1usize];
+        let dt_strides = [num_heads, 1usize];
+        let cb_strides = [group_count * state_dim, state_dim, 1usize];
+        let state_strides = [head_dim * state_dim, state_dim, 1usize];
+
+        Self {
+            suffix_len,
+            num_heads,
+            head_dim,
+            state_dim,
+            group_size,
+            chunk_count,
+            total_pairs,
+            total_x,
+            total_dt,
+            total_cb,
+            total_state,
+            x_strides,
+            dt_strides,
+            cb_strides,
+            state_strides,
+            x_data,
+            dt_data,
+            decay_data,
+            b_data,
+            c_data,
+            d_data,
+            z_data,
+            state_init,
+        }
     }
 }
 
@@ -58,123 +217,80 @@ fn ssd_prefill_single_pass_is_deterministic() {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel =
-        SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
 
-    let suffix_len = 512usize;
-    let num_heads = 32usize;
-    let head_dim = 64usize;
-    let state_dim = 64usize;
-    let group_size = 1i32;
+    let fixture = SSDPrefillFixture::new();
+    let suffix_len = fixture.suffix_len;
+    let num_heads = fixture.num_heads;
+    let head_dim = fixture.head_dim;
+    let state_dim = fixture.state_dim;
+    let group_size = fixture.group_size;
     let state_size = state_dim as i32;
-    let chunk_size = uzu::backends::metal::kernel::ssm::ssd_prefill::SSD_PREFILL_CHUNK;
-    let chunk_count = (suffix_len + chunk_size - 1) / chunk_size;
-    let group_count = num_heads / (group_size as usize);
-
-    let total_pairs = num_heads * head_dim;
-    let total_x = suffix_len * total_pairs;
-    let total_dt = suffix_len * num_heads;
-    let total_cb = suffix_len * group_count * state_dim;
-    let total_state = num_heads * head_dim * state_dim;
-
-    let x_data: Vec<f32> = (0..total_x)
-        .map(|i| ((i % 17) as f32) * 0.01 - 0.05)
-        .collect();
-    let dt_data: Vec<f32> = (0..total_dt)
-        .map(|i| 0.01 + ((i % 13) as f32) * 0.005)
-        .collect();
-    let decay_data: Vec<f32> = (0..total_dt)
-        .map(|i| 0.5 + ((i % 7) as f32) * 0.01)
-        .collect();
-    let b_data: Vec<f32> = (0..total_cb)
-        .map(|i| ((i % 11) as f32) * 0.02 - 0.05)
-        .collect();
-    let c_data: Vec<f32> = (0..total_cb)
-        .map(|i| ((i % 19) as f32) * 0.01 - 0.02)
-        .collect();
-    let d_data: Vec<f32> = (0..num_heads)
-        .map(|i| ((i % 3) as f32) * 0.05 - 0.05)
-        .collect();
-    let z_data: Vec<f32> = (0..total_x)
-        .map(|i| ((i % 23) as f32) * 0.02 - 0.1)
-        .collect();
-    let state_init: Vec<f32> = (0..total_state)
-        .map(|i| ((i % 29) as f32) * 0.03 - 0.4)
-        .collect();
+    let chunk_count = fixture.chunk_count;
+    let total_pairs = fixture.total_pairs;
+    let total_x = fixture.total_x;
+    let total_dt = fixture.total_dt;
+    let total_cb = fixture.total_cb;
+    let total_state = fixture.total_state;
 
     let device = &ctx.device;
     let x_buf = device.new_buffer_with_data(
-        x_data.as_ptr() as *const _,
+        fixture.x_data.as_ptr() as *const _,
         (total_x * 4) as u64,
         STORAGE_MODE,
     );
     let dt_buf = device.new_buffer_with_data(
-        dt_data.as_ptr() as *const _,
+        fixture.dt_data.as_ptr() as *const _,
         (total_dt * 4) as u64,
         STORAGE_MODE,
     );
     let decay_buf = device.new_buffer_with_data(
-        decay_data.as_ptr() as *const _,
+        fixture.decay_data.as_ptr() as *const _,
         (total_dt * 4) as u64,
         STORAGE_MODE,
     );
     let b_buf = device.new_buffer_with_data(
-        b_data.as_ptr() as *const _,
+        fixture.b_data.as_ptr() as *const _,
         (total_cb * 4) as u64,
         STORAGE_MODE,
     );
     let c_buf = device.new_buffer_with_data(
-        c_data.as_ptr() as *const _,
+        fixture.c_data.as_ptr() as *const _,
         (total_cb * 4) as u64,
         STORAGE_MODE,
     );
     let d_buf = device.new_buffer_with_data(
-        d_data.as_ptr() as *const _,
+        fixture.d_data.as_ptr() as *const _,
         (num_heads * 4) as u64,
         STORAGE_MODE,
     );
     let z_buf = device.new_buffer_with_data(
-        z_data.as_ptr() as *const _,
+        fixture.z_data.as_ptr() as *const _,
         (total_x * 4) as u64,
         STORAGE_MODE,
     );
 
-    let state_buf =
-        device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
+    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
     let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
 
     // Dummy chunk buffers (unused in single-pass mode but required by API).
     let chunk_a_len = chunk_count * total_pairs;
     let chunk_b_len = chunk_a_len * state_dim;
     let chunk_prefix_len = chunk_count * total_pairs * state_dim;
-    let chunk_a_buf =
-        device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
-    let chunk_b_buf =
-        device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
+    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
+    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
     let chunk_prefix_buf =
         device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
 
-    let x_strides = [
-        num_heads * head_dim,
-        head_dim,
-        1usize,
-    ];
-    let dt_strides = [num_heads, 1usize];
-    let cb_strides = [
-        group_count * state_dim,
-        state_dim,
-        1usize,
-    ];
-    let state_strides = [
-        head_dim * state_dim,
-        state_dim,
-        1usize,
-    ];
+    let x_strides = fixture.x_strides;
+    let dt_strides = fixture.dt_strides;
+    let cb_strides = fixture.cb_strides;
+    let state_strides = fixture.state_strides;
 
     let mut results = Vec::new();
 
     for _run in 0..2 {
-        write_buffer(&state_buf, &state_init);
+        write_buffer(&state_buf, &fixture.state_init);
         zero_buffer(&y_buf);
         zero_buffer(&chunk_a_buf);
         zero_buffer(&chunk_b_buf);
@@ -206,9 +322,7 @@ fn ssd_prefill_single_pass_is_deterministic() {
 
         let command_buffer = ctx.command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
-        kernel
-            .encode(encoder, args, SSDPrefillMode::SinglePass)
-            .unwrap();
+        kernel.encode(encoder, args, SSDPrefillMode::SinglePass).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -219,7 +333,8 @@ fn ssd_prefill_single_pass_is_deterministic() {
     }
 
     let mut max_diff = 0.0f32;
-    for (idx, (lhs, rhs)) in results[0].0.iter().zip(&results[1].0).enumerate() {
+    for (idx, (lhs, rhs)) in results[0].0.iter().zip(&results[1].0).enumerate()
+    {
         if lhs != rhs {
             let diff = (lhs - rhs).abs();
             if diff > max_diff {
@@ -229,7 +344,8 @@ fn ssd_prefill_single_pass_is_deterministic() {
             break;
         }
     }
-    for (idx, (lhs, rhs)) in results[0].1.iter().zip(&results[1].1).enumerate() {
+    for (idx, (lhs, rhs)) in results[0].1.iter().zip(&results[1].1).enumerate()
+    {
         if lhs != rhs {
             let diff = (lhs - rhs).abs();
             if diff > max_diff {
@@ -239,8 +355,166 @@ fn ssd_prefill_single_pass_is_deterministic() {
             break;
         }
     }
-    assert_eq!(results[0].0, results[1].0, "Prefill outputs differ (max diff {max_diff})");
-    assert_eq!(results[0].1, results[1].1, "Prefill states differ (max diff {max_diff})");
+    assert_eq!(
+        results[0].0, results[1].0,
+        "Prefill outputs differ (max diff {max_diff})"
+    );
+    assert_eq!(
+        results[0].1, results[1].1,
+        "Prefill states differ (max diff {max_diff})"
+    );
+}
+
+#[test]
+fn ssd_prefill_single_pass_matches_cpu_reference() {
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping SSD prefill reference test: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let fixture = SSDPrefillFixture::new();
+
+    let device = &ctx.device;
+    let x_buf = device.new_buffer_with_data(
+        fixture.x_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let dt_buf = device.new_buffer_with_data(
+        fixture.dt_data.as_ptr() as *const _,
+        (fixture.total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let decay_buf = device.new_buffer_with_data(
+        fixture.decay_data.as_ptr() as *const _,
+        (fixture.total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        fixture.b_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        fixture.c_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let d_buf = device.new_buffer_with_data(
+        fixture.d_data.as_ptr() as *const _,
+        (fixture.num_heads * 4) as u64,
+        STORAGE_MODE,
+    );
+    let z_buf = device.new_buffer_with_data(
+        fixture.z_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf =
+        device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+
+    let chunk_a_len = fixture.chunk_count * fixture.total_pairs;
+    let chunk_b_len = chunk_a_len * fixture.state_dim;
+    let chunk_prefix_len =
+        fixture.chunk_count * fixture.total_pairs * fixture.state_dim;
+    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
+    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
+    let chunk_prefix_buf =
+        device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
+
+    write_buffer(&state_buf, &fixture.state_init);
+    zero_buffer(&y_buf);
+    zero_buffer(&chunk_a_buf);
+    zero_buffer(&chunk_b_buf);
+    zero_buffer(&chunk_prefix_buf);
+
+    let args = SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        decay: &decay_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &state_buf,
+        y: &y_buf,
+        chunk_a: &chunk_a_buf,
+        chunk_b: &chunk_b_buf,
+        chunk_prefix: &chunk_prefix_buf,
+        suffix_len: fixture.suffix_len,
+        group_size: fixture.group_size,
+        state_size: fixture.state_dim as i32,
+        x_strides: fixture.x_strides,
+        dt_strides: fixture.dt_strides,
+        cb_strides: fixture.cb_strides,
+        state_strides: fixture.state_strides,
+        channels: fixture.num_heads,
+        head_dim: fixture.head_dim,
+    };
+
+    let command_buffer = ctx.command_queue.new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    kernel.encode(encoder, args, SSDPrefillMode::SinglePass).unwrap();
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    let y_gpu = read_buffer(&y_buf, fixture.total_x);
+    let state_gpu = read_buffer(&state_buf, fixture.total_state);
+
+    let (y_ref, state_ref) = ssd_prefill_cpu_reference(
+        fixture.suffix_len,
+        fixture.num_heads,
+        fixture.head_dim,
+        fixture.state_dim,
+        fixture.group_size,
+        &fixture.x_data,
+        &fixture.dt_data,
+        &fixture.decay_data,
+        &fixture.b_data,
+        &fixture.c_data,
+        &fixture.d_data,
+        &fixture.z_data,
+        &fixture.state_init,
+        fixture.x_strides,
+        fixture.dt_strides,
+        fixture.cb_strides,
+        fixture.state_strides,
+    );
+
+    let tolerance = 5e-5f32;
+    let mut max_y_diff = 0.0f32;
+    let mut max_y_idx = 0usize;
+    for (idx, (&lhs, &rhs)) in y_gpu.iter().zip(&y_ref).enumerate() {
+        let diff = (lhs - rhs).abs();
+        if diff > max_y_diff {
+            max_y_diff = diff;
+            max_y_idx = idx;
+        }
+    }
+    assert!(
+        max_y_diff <= tolerance,
+        "Prefill outputs diverge at idx {max_y_idx}: metal={} cpu={} (diff {max_y_diff})",
+        y_gpu[max_y_idx],
+        y_ref[max_y_idx]
+    );
+
+    let mut max_state_diff = 0.0f32;
+    let mut max_state_idx = 0usize;
+    for (idx, (&lhs, &rhs)) in state_gpu.iter().zip(&state_ref).enumerate() {
+        let diff = (lhs - rhs).abs();
+        if diff > max_state_diff {
+            max_state_diff = diff;
+            max_state_idx = idx;
+        }
+    }
+    assert!(
+        max_state_diff <= tolerance,
+        "Prefill states diverge at idx {max_state_idx}: metal={} cpu={} (diff {max_state_diff})",
+        state_gpu[max_state_idx],
+        state_ref[max_state_idx]
+    );
 }
 
 #[test]
@@ -262,18 +536,15 @@ fn conv1d_scan_is_deterministic() {
     let total_x = suffix_len * channels;
     let total_state = channels * tap_count;
 
-    let x_data: Vec<f32> = (0..total_x)
-        .map(|i| ((i % 31) as f32) * 0.02 - 0.3)
-        .collect();
+    let x_data: Vec<f32> =
+        (0..total_x).map(|i| ((i % 31) as f32) * 0.02 - 0.3).collect();
     let w_data: Vec<f32> = (0..(channels * kernel_size as usize))
         .map(|i| ((i % 17) as f32) * 0.01 - 0.04)
         .collect();
-    let b_data: Vec<f32> = (0..channels)
-        .map(|i| ((i % 5) as f32) * 0.03 - 0.07)
-        .collect();
-    let state_init: Vec<f32> = (0..total_state)
-        .map(|i| ((i % 23) as f32) * 0.02 - 0.1)
-        .collect();
+    let b_data: Vec<f32> =
+        (0..channels).map(|i| ((i % 5) as f32) * 0.03 - 0.07).collect();
+    let state_init: Vec<f32> =
+        (0..total_state).map(|i| ((i % 23) as f32) * 0.02 - 0.1).collect();
 
     let device = &ctx.device;
     let x_buf = device.new_buffer_with_data(
@@ -291,7 +562,8 @@ fn conv1d_scan_is_deterministic() {
         (channels * 4) as u64,
         STORAGE_MODE,
     );
-    let state_buf =
+    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
+    let conv_state_out_buf =
         device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
     let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
 
@@ -302,14 +574,16 @@ fn conv1d_scan_is_deterministic() {
 
     for _run in 0..2 {
         write_buffer(&state_buf, &state_init);
+        zero_buffer(&conv_state_out_buf);
         zero_buffer(&y_buf);
 
         let args = Conv1dScanArguments {
             x: &x_buf,
             w: &w_buf,
             b: Some(&b_buf),
-            state: &state_buf,
+            state_in: &state_buf,
             y: &y_buf,
+            state_out: &conv_state_out_buf,
             suffix_len,
             kernel_size,
             row_stride,
@@ -325,7 +599,7 @@ fn conv1d_scan_is_deterministic() {
         command_buffer.wait_until_completed();
 
         let y_vec = read_buffer(&y_buf, total_x);
-        let state_vec = read_buffer(&state_buf, total_state);
+        let state_vec = read_buffer(&conv_state_out_buf, total_state);
         results.push((y_vec, state_vec));
     }
 
