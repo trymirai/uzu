@@ -21,6 +21,7 @@ use crate::{
         kernel::TensorAddBias,
     },
     config::{DecoderLayerType, mamba::Mamba2Config},
+    device::array::Array,
     parameters::ParameterTree,
 };
 
@@ -170,14 +171,14 @@ impl MambaMixerEncodable {
         }
 
         self.in_projection.encode(state, command_buffer, parameters);
-        self.split_inproj(state, command_buffer, suffix_length);
-        self.add_gate_bias(state, command_buffer, suffix_length);
-        self.run_dt_decay(state, command_buffer, suffix_length);
+        self.split_inproj(state, command_buffer, active_suffix_length);
+        self.add_gate_bias(state, command_buffer, active_suffix_length);
+        self.run_dt_decay(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
-        self.split_conv_outputs(state, command_buffer, suffix_length);
+        self.split_conv_outputs(state, command_buffer, active_suffix_length);
 
         if suffix_length == 1 {
-            self.run_decode_ssm(state, command_buffer, suffix_length);
+            self.run_decode_ssm(state, command_buffer, active_suffix_length);
         } else {
             self.run_prefill_ssm(state, command_buffer, active_suffix_length);
         }
@@ -296,6 +297,8 @@ impl MambaMixerEncodable {
         ]);
         let mut conv_inputs = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
+        let state_dtype_size = conv_state.data_type().size_in_bytes();
+        let state_shape = conv_state.shape().to_vec();
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let mut weight_storage = self.conv_weight.clone();
@@ -306,9 +309,20 @@ impl MambaMixerEncodable {
         });
 
         let conv_dim = self.config.conv_dim();
-        let state_stride = self.config.kernel_size.saturating_sub(1);
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
+        let state_stride = self.config.kernel_size.saturating_sub(1);
+        let scratch = if state_stride > 0 {
+            state.conv_state_scratch(self.layer_index)
+        } else {
+            None
+        };
+        let tmp_state_buf = scratch.as_ref().map(|cell| {
+            let mut tmp = cell.borrow_mut();
+            unsafe { tmp.mtl_buffer().to_owned() }
+        });
+        drop(conv_state);
+
         self.conv_scan
             .encode(
                 &compute,
@@ -316,8 +330,9 @@ impl MambaMixerEncodable {
                     x: &input_buf,
                     w: &weight_buf,
                     b: bias_buf.as_ref(),
-                    state: &state_buf,
+                    state_in: &state_buf,
                     y: &input_buf,
+                    state_out: tmp_state_buf.as_ref().unwrap_or(&state_buf),
                     suffix_len: suffix_length,
                     kernel_size: self.config.kernel_size as i32,
                     row_stride: conv_dim,
@@ -327,6 +342,15 @@ impl MambaMixerEncodable {
             )
             .expect("Failed to encode conv scan kernel");
         compute.end_encoding();
+
+        if let Some(out_buf) = tmp_state_buf {
+            let bytes = (state_shape[0] * state_stride) * state_dtype_size;
+            if bytes > 0 {
+                let blit = cmd.new_blit_command_encoder();
+                blit.copy_from_buffer(&out_buf, 0, &state_buf, 0, bytes as u64);
+                blit.end_encoding();
+            }
+        }
     }
 
     fn split_conv_outputs(

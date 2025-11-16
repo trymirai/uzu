@@ -13,7 +13,7 @@ use super::{
 use crate::{
     DataType, DeviceContext,
     backends::metal::forward_pass::traces::DecoderActivationTrace,
-    config::{DecoderConfig, EmbeddingConfig, MLPConfig},
+    config::{DecoderConfig, DecoderLayerType, EmbeddingConfig, MLPConfig},
     device::array::Array,
     parameters::ParameterTree,
     session::parameter::SamplingMethod,
@@ -458,16 +458,43 @@ struct AuxBuffers {
     moe_scatter_partials: Option<ArrayCell>,
     moe_scatter_block_bases: Option<ArrayCell>,
     moe_block_alloc: Option<ArrayCell>,
+    ssm_conv_state_tmp: Option<Vec<Option<ArrayCell>>>,
 }
 
 impl AuxBuffers {
     fn new(
+        context: &MTLContext,
         scratch: &ForwardPassBuffers,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
         let act_dtype = model_shape.activation_data_type();
+        let ssm_conv_state_tmp = if model_shape.has_state_space_layers() {
+            let mut tmp = Vec::with_capacity(model_shape.layer_types().len());
+            for layer in model_shape.layer_types() {
+                if let DecoderLayerType::StateSpace {
+                    conv_dim,
+                    kernel_size,
+                    ..
+                } = layer
+                {
+                    if *kernel_size > 1 && *conv_dim > 0 {
+                        let shape = [*conv_dim, kernel_size.saturating_sub(1)];
+                        tmp.push(Some(RefCell::new(
+                            context.array(&shape, act_dtype),
+                        )));
+                    } else {
+                        tmp.push(None);
+                    }
+                } else {
+                    tmp.push(None);
+                }
+            }
+            Some(tmp)
+        } else {
+            None
+        };
         unsafe {
             Self {
                 suffix_length,
@@ -912,8 +939,19 @@ impl AuxBuffers {
                         _ => unreachable!(),
                     }
                 }),
+                ssm_conv_state_tmp,
             }
         }
+    }
+
+    fn conv_state_tmp(
+        &self,
+        layer_index: usize,
+    ) -> Option<ArrayCell> {
+        self.ssm_conv_state_tmp
+            .as_ref()
+            .and_then(|vec| vec.get(layer_index))
+            .and_then(|cell| cell.clone())
     }
 }
 
@@ -971,6 +1009,7 @@ impl ForwardPassState {
             "Active suffix length ({active_suffix_length}) must be <= suffix length ({suffix_length})"
         );
         let aux_buffers = AuxBuffers::new(
+            &context,
             scratch,
             decoder_config,
             model_shape,
@@ -1408,6 +1447,13 @@ impl ForwardPassState {
 
     pub fn mtl_context(&self) -> &Rc<MTLContext> {
         &self.context
+    }
+
+    pub fn conv_state_scratch(
+        &self,
+        layer_index: usize,
+    ) -> Option<ArrayCell> {
+        self.aux_buffers.conv_state_tmp(layer_index)
     }
 }
 

@@ -10,7 +10,6 @@ constant int ACTIVATION_SILU = 1;
 constant int ACTIVATION_GELU = 2;
 
 constant uint CONV_SCAN_THREADS = 32u;
-constant uint CONV_MAX_TAP = 32u;
 
 template <typename T>
 inline T apply_silu(T x) {
@@ -37,117 +36,88 @@ inline T apply_activation_fn(T x, int activation_type) {
     }
 }
 
-static inline void shift_register(thread float* state, int tap_count, float input_val) {
-    if (tap_count <= 0) {
-        return;
-    }
-    for (int tap = 0; tap < tap_count - 1; ++tap) {
-        state[tap] = state[tap + 1];
-    }
-    state[tap_count - 1] = input_val;
-}
-
 template <typename T>
 kernel void conv1d_scan_kernel(
     device const T* x [[ buffer(0) ]],      // (suffix, channels)
     device const T* w [[ buffer(1) ]],      // (channels, kernel)
     device const T* b [[ buffer(2) ]],      // optional (channels)
-    device T* state [[ buffer(3) ]],        // (channels, kernel-1)
+    device const T* state_in [[ buffer(3) ]],// (channels, kernel-1)
     device T* y [[ buffer(4) ]],            // (suffix, channels)
-    constant const size_t& suffix_len [[ buffer(5) ]],
-    constant const int& kernel_size [[ buffer(6) ]],
-    constant const size_t& row_stride [[ buffer(7) ]],
-    constant const size_t& state_stride [[ buffer(8) ]],
-    constant const uint& num_channels [[ buffer(9) ]],
-    uint channel_block [[ threadgroup_position_in_grid ]],
-    uint lane [[ thread_position_in_threadgroup ]]
+    device T* state_out [[ buffer(5) ]],    // (channels, kernel-1)
+    constant const size_t& suffix_len [[ buffer(6) ]],
+    constant const int& kernel_size [[ buffer(7) ]],
+    constant const size_t& row_stride [[ buffer(8) ]],
+    constant const size_t& state_stride [[ buffer(9) ]],
+    constant const uint& num_channels [[ buffer(10) ]],
+    uint3 grid_idx [[ thread_position_in_grid ]]
 ) {
-    const uint channel_idx = channel_block;
-    if (channel_idx >= num_channels || lane >= CONV_SCAN_THREADS) {
-        return;
-    }
-
     const int kernel_value = kernel_size;
     if (kernel_value <= 0) {
         return;
     }
 
     const int tap_count = max(kernel_value - 1, 0);
-    if (tap_count > int(CONV_MAX_TAP)) {
+    const size_t work_len = suffix_len + size_t(tap_count);
+
+    const uint token_idx = grid_idx.x;
+    const uint channel_idx = grid_idx.y;
+    if (channel_idx >= num_channels || token_idx >= work_len) {
         return;
     }
 
-    const size_t state_offset = channel_idx * state_stride;
+    const size_t state_offset = size_t(channel_idx) * state_stride;
     const size_t weight_offset = size_t(channel_idx) * size_t(kernel_value);
     const device T* w_row = w + weight_offset;
     const bool has_bias = b != nullptr;
-    const float bias = has_bias ? float(b[channel_idx]) : 0.0f;
 
-    threadgroup float state_shared[CONV_MAX_TAP];
-    threadgroup float weight_shared[CONV_MAX_TAP + 1];
-    threadgroup float reduction_shared[CONV_SCAN_THREADS];
-    threadgroup float shared_input;
-
-    for (int tap = int(lane); tap < tap_count; tap += int(CONV_SCAN_THREADS)) {
-        state_shared[tap] = float(state[state_offset + tap]);
-    }
-    for (int tap = int(lane); tap < kernel_value; tap += int(CONV_SCAN_THREADS)) {
-        weight_shared[tap] = float(w_row[tap]);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (size_t token = 0; token < suffix_len; ++token) {
-        const size_t x_idx = token * row_stride + channel_idx;
-        if (lane == 0) {
-            shared_input = float(x[x_idx]);
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        float contrib = 0.0f;
-        if (tap_count > 0 && lane < tap_count) {
-            contrib = weight_shared[lane] * state_shared[lane];
-        }
-        float dot = threadgroup_cooperative_reduce_sum<CONV_SCAN_THREADS>(
-            contrib, reduction_shared, lane);
-
-        if (lane == 0) {
-            float acc = bias + dot + weight_shared[tap_count] * shared_input;
-            y[x_idx] = apply_activation_fn(static_cast<T>(acc), activation_type);
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        if (tap_count > 0) {
-            if (lane < tap_count - 1) {
-                state_shared[lane] = state_shared[lane + 1];
-            } else if (lane == tap_count - 1) {
-                state_shared[lane] = shared_input;
+    if (token_idx < suffix_len) {
+        float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+        for (int tap = 0; tap < kernel_value; ++tap) {
+            const size_t padded_idx = size_t(token_idx) + size_t(tap);
+            float sample = 0.0f;
+            if (padded_idx < size_t(tap_count)) {
+                sample = float(state_in[state_offset + padded_idx]);
+            } else {
+                const size_t x_idx = (padded_idx - size_t(tap_count)) * row_stride + channel_idx;
+                sample = float(x[x_idx]);
             }
+            acc += float(w_row[tap]) * sample;
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
 
-    if (tap_count > 0) {
-        for (int tap = int(lane); tap < tap_count; tap += int(CONV_SCAN_THREADS)) {
-            state[state_offset + tap] = static_cast<T>(state_shared[tap]);
+        const size_t y_idx = size_t(token_idx) * row_stride + channel_idx;
+        y[y_idx] = apply_activation_fn(static_cast<T>(acc), activation_type);
+    } else if (tap_count > 0) {
+        const size_t tap = size_t(token_idx - suffix_len);
+        if (tap >= size_t(tap_count)) {
+            return;
         }
+        const size_t padded_idx = suffix_len + tap;
+        float sample = 0.0f;
+        if (padded_idx < size_t(tap_count)) {
+            sample = float(state_in[state_offset + padded_idx]);
+        } else {
+            const size_t x_idx = (padded_idx - size_t(tap_count)) * row_stride + channel_idx;
+            sample = float(x[x_idx]);
+        }
+        state_out[state_offset + tap] = static_cast<T>(sample);
     }
 }
 
-#define instantiate_conv1d_scan_kernel(type_name, type)      \
-  template [[host_name("conv1d_scan_kernel_" #type_name)]]   \
-  kernel void conv1d_scan_kernel<type>(                      \
-    device const type* x [[ buffer(0) ]],                    \
-    device const type* w [[ buffer(1) ]],                    \
-    device const type* b [[ buffer(2) ]],                    \
-    device type* state [[ buffer(3) ]],                      \
-    device type* y [[ buffer(4) ]],                          \
-    constant const size_t& suffix_len [[ buffer(5) ]],       \
-    constant const int& kernel_size [[ buffer(6) ]],         \
-    constant const size_t& row_stride [[ buffer(7) ]],       \
-    constant const size_t& state_stride [[ buffer(8) ]],     \
-    constant const uint& num_channels [[ buffer(9) ]],       \
-    uint channel_block [[ threadgroup_position_in_grid ]],   \
-    uint lane [[ thread_position_in_threadgroup ]]           \
+#define instantiate_conv1d_scan_kernel(type_name, type)       \
+  template [[host_name("conv1d_scan_kernel_" #type_name)]]    \
+  kernel void conv1d_scan_kernel<type>(                       \
+    device const type* x [[ buffer(0) ]],                     \
+    device const type* w [[ buffer(1) ]],                     \
+    device const type* b [[ buffer(2) ]],                     \
+    device const type* state_in [[ buffer(3) ]],              \
+    device type* y [[ buffer(4) ]],                           \
+    device type* state_out [[ buffer(5) ]],                   \
+    constant const size_t& suffix_len [[ buffer(6) ]],        \
+    constant const int& kernel_size [[ buffer(7) ]],          \
+    constant const size_t& row_stride [[ buffer(8) ]],        \
+    constant const size_t& state_stride [[ buffer(9) ]],      \
+    constant const uint& num_channels [[ buffer(10) ]],       \
+    uint3 grid_idx [[ thread_position_in_grid ]]              \
   );
 
 instantiate_conv1d_scan_kernel(float, float);
