@@ -9,6 +9,8 @@ use crate::backends::metal::{KernelDataType, MTLContext};
 
 use super::{SSMKernelError, fn_suffix};
 
+const SSD_PREFILL_THREADGROUP_WIDTH: u64 = 64;
+
 pub struct SSDPrefillKernel {
     pipeline: MTLComputePipelineState,
 }
@@ -100,19 +102,31 @@ impl SSDPrefillKernel {
             (3 * size_of::<usize>()) as u64,
             args.state_strides.as_ptr() as *const _,
         );
+        let channels = args.channels as u32;
+        let head_dim = args.head_dim as u32;
+        compute_encoder.set_bytes(
+            16,
+            size_of::<u32>() as u64,
+            &channels as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            17,
+            size_of::<u32>() as u64,
+            &head_dim as *const u32 as *const _,
+        );
 
         let threads_per_threadgroup = MTLSize {
-            width: 32,
-            height: 32,
+            width: SSD_PREFILL_THREADGROUP_WIDTH,
+            height: 1,
             depth: 1,
         };
         let total_threads = MTLSize {
-            width: args.channels as u64,
-            height: args.head_dim as u64,
+            width: args.channels as u64 * args.head_dim as u64
+                * SSD_PREFILL_THREADGROUP_WIDTH,
+            height: 1,
             depth: 1,
         };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 }

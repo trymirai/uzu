@@ -3,9 +3,12 @@
 
 using namespace metal;
 
+constant ushort SSM_PREFILL_CHUNK = 64;
+constant ushort SSM_PREFILL_MAX_STATE = 64;
+
 struct SILU {
   template <typename T>
-  T operator()(T x) {
+  T operator()(T x) const {
     float xf = float(x);
     float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
     float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
@@ -31,62 +34,175 @@ kernel void ssd_prefill_kernel(
     constant const size_t* dt_strides [[ buffer(13) ]],
     constant const size_t* cb_strides [[ buffer(14) ]],
     constant const size_t* state_strides [[ buffer(15) ]],
-    uint3 tid [[ thread_position_in_grid ]],
-    uint3 grid_dim [[ threads_per_grid ]]
+    constant const uint& num_heads [[ buffer(16) ]],
+    constant const uint& head_dim [[ buffer(17) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    ushort lane [[ thread_index_in_threadgroup ]]
 ) {
-    const uint h_idx = tid.x;
-    const uint dh_idx = tid.y;
-    if (h_idx >= grid_dim.x || dh_idx >= grid_dim.y) {
+    const int state_dim = state_size;
+    if (state_dim <= 0 || state_dim > int(SSM_PREFILL_MAX_STATE)) {
         return;
     }
 
-    const uint group_idx = h_idx / group_size;
-    device T* state_row = state + h_idx * state_strides[0] + dh_idx * state_strides[1];
+    const uint total_pairs = num_heads * head_dim;
+    const uint pair_idx = tg_pos.x;
+    if (pair_idx >= total_pairs || lane >= SSM_PREFILL_CHUNK) {
+        return;
+    }
 
-    for (size_t token = 0; token < suffix_len; ++token) {
-        const size_t x_idx = token * x_strides[0]
-            + size_t(h_idx) * x_strides[1]
-            + size_t(dh_idx) * x_strides[2];
-        const size_t dt_idx =
-            token * dt_strides[0] + size_t(h_idx) * dt_strides[1];
-        const size_t cb_base =
-            token * cb_strides[0] + group_idx * cb_strides[1];
+    const uint h_idx = pair_idx / head_dim;
+    const uint dh_idx = pair_idx % head_dim;
+    const uint safe_group = uint(max(group_size, 1));
+    const uint group_idx = h_idx / safe_group;
 
-        const T this_x = x[x_idx];
-        const T this_dt = dt[dt_idx];
-        const T this_decay = decay[dt_idx];
-        const T this_D = D[h_idx];
-        const T this_z = SILU{}(z[x_idx]);
-        const float dt_f = fmax(float(this_dt), 1e-6f);
-        const float normalized_x = float(this_x) / dt_f;
-        const T dt_scaled_input = static_cast<T>(normalized_x) * this_dt;
+    const size_t x_token_stride = x_strides[0];
+    const size_t x_head_stride = x_strides[1];
+    const size_t x_dim_stride = x_strides[2];
+    const size_t dt_token_stride = dt_strides[0];
+    const size_t dt_head_stride = dt_strides[1];
+    const size_t cb_token_stride = cb_strides[0];
+    const size_t cb_group_stride = cb_strides[1];
+    const size_t cb_state_stride = cb_strides[2];
+    const size_t state_head_stride = state_strides[0];
+    const size_t state_dim_stride = state_strides[1];
+    const size_t state_inner_stride = state_strides[2];
 
-        T acc = T(0);
-        int s = 0;
-        const int vec_bound = (state_size / 4) * 4;
-        for (; s < vec_bound; s += 4) {
-            const size_t state_idx = s * state_strides[2];
-            const size_t cb_idx = cb_base + s * cb_strides[2];
-            auto prev_state = *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
-            auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(B + cb_idx);
-            auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(C + cb_idx);
-            vec<T, 4> new_state = prev_state * this_decay + b_vec * dt_scaled_input;
-            *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx) = new_state;
-            vec<T, 4> prod = new_state * c_vec;
-            acc += prod.x + prod.y + prod.z + prod.w;
+    const size_t x_base = h_idx * x_head_stride + dh_idx * x_dim_stride;
+    const size_t dt_base = h_idx * dt_head_stride;
+    const size_t cb_group_base = group_idx * cb_group_stride;
+    const size_t state_base = h_idx * state_head_stride + dh_idx * state_dim_stride;
+    const float d_scalar = float(D[h_idx]);
+
+threadgroup float shared_state[SSM_PREFILL_MAX_STATE];
+threadgroup float state_block_start[SSM_PREFILL_MAX_STATE];
+threadgroup float chunk_end_state[SSM_PREFILL_MAX_STATE];
+threadgroup float chunk_a[SSM_PREFILL_CHUNK];
+threadgroup float chunk_b[SSM_PREFILL_CHUNK * SSM_PREFILL_MAX_STATE];
+
+    // Load persistent state into threadgroup memory (strided across lanes)
+    for (int s = lane; s < state_dim; s += SSM_PREFILL_CHUNK) {
+        const size_t idx = state_base + size_t(s) * state_inner_stride;
+        shared_state[s] = float(state[idx]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const size_t chunk_count =
+        (suffix_len + size_t(SSM_PREFILL_CHUNK) - 1) / size_t(SSM_PREFILL_CHUNK);
+
+    for (size_t chunk = 0; chunk < chunk_count; ++chunk) {
+        const size_t chunk_start = chunk * size_t(SSM_PREFILL_CHUNK);
+        if (chunk_start >= suffix_len) {
+            break;
         }
-        for (; s < state_size; ++s) {
-            const size_t state_idx = s * state_strides[2];
-            const T prev_state = state_row[state_idx];
-            const size_t cb_idx = cb_base + s * cb_strides[2];
-            const T new_state = prev_state * this_decay + B[cb_idx] * dt_scaled_input;
-            state_row[state_idx] = new_state;
-            acc += new_state * C[cb_idx];
+        const ushort chunk_len = ushort(min(
+            size_t(SSM_PREFILL_CHUNK), suffix_len - chunk_start));
+        if (chunk_len == 0) {
+            break;
         }
 
-        acc += this_D * this_x;
-        acc *= this_z;
-        y[x_idx] = acc;
+        // Snapshot current state before processing this chunk
+        for (int s = lane; s < state_dim; s += SSM_PREFILL_CHUNK) {
+            state_block_start[s] = shared_state[s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        const bool lane_active = lane < chunk_len;
+        float gate = 0.0f;
+        float skip = 0.0f;
+        size_t y_idx = 0;
+        float c_vec[SSM_PREFILL_MAX_STATE];
+
+        threadgroup float* b_slot = chunk_b + size_t(lane) * SSM_PREFILL_MAX_STATE;
+        for (int s = 0; s < state_dim; ++s) {
+            b_slot[s] = 0.0f;
+        }
+        chunk_a[lane] = 1.0f;
+
+        if (lane_active) {
+            const size_t token = chunk_start + size_t(lane);
+            const size_t x_idx = token * x_token_stride + x_base;
+            const size_t dt_idx = token * dt_token_stride + dt_base;
+            const size_t cb_idx = token * cb_token_stride + cb_group_base;
+
+            const float x_val = float(x[x_idx]);
+            const float dt_val = float(dt[dt_idx]);
+            const float decay_val = float(decay[dt_idx]);
+            const float dt_safe = fmax(dt_val, 1e-6f);
+            const float normalized_x = x_val / dt_safe;
+            const float dt_scaled_input = normalized_x * dt_val;
+
+            chunk_a[lane] = decay_val;
+            gate = SILU{}(float(z[x_idx]));
+            skip = d_scalar * x_val;
+            y_idx = x_idx;
+
+            int s = 0;
+            for (; s + 4 <= state_dim; s += 4) {
+                const size_t offset = cb_idx + size_t(s) * cb_state_stride;
+                auto b_vals = *reinterpret_cast<device const vec<T, 4>*>(B + offset);
+                auto c_vals = *reinterpret_cast<device const vec<T, 4>*>(C + offset);
+                float4 scaled = float4(b_vals) * dt_scaled_input;
+                float4 c_pack = float4(c_vals);
+                *reinterpret_cast<threadgroup float4*>(b_slot + s) = scaled;
+                *reinterpret_cast<thread float4*>(c_vec + s) = c_pack;
+            }
+            for (; s < state_dim; ++s) {
+                const size_t offset = cb_idx + size_t(s) * cb_state_stride;
+                const float b_coeff = float(B[offset]);
+                const float c_coeff = float(C[offset]);
+                b_slot[s] = b_coeff * dt_scaled_input;
+                c_vec[s] = c_coeff;
+            }
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (ushort stride = 1; stride < chunk_len; stride <<= 1) {
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (lane_active && lane >= stride) {
+                const float prev_a = chunk_a[lane - stride];
+                float curr_a = chunk_a[lane];
+                threadgroup const float* prev_b =
+                    chunk_b + size_t(lane - stride) * SSM_PREFILL_MAX_STATE;
+                threadgroup float* curr_b =
+                    chunk_b + size_t(lane) * SSM_PREFILL_MAX_STATE;
+                for (int s = 0; s < state_dim; ++s) {
+                    curr_b[s] = curr_b[s] + curr_a * prev_b[s];
+                }
+                chunk_a[lane] = curr_a * prev_a;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (lane_active) {
+            const float prefix_a = chunk_a[lane];
+            threadgroup const float* prefix_b =
+                chunk_b + size_t(lane) * SSM_PREFILL_MAX_STATE;
+            float acc = skip;
+            for (int s = 0; s < state_dim; ++s) {
+                const float new_state =
+                    prefix_a * state_block_start[s] + prefix_b[s];
+                acc += new_state * c_vec[s];
+                if (lane == chunk_len - 1) {
+                    chunk_end_state[s] = new_state;
+                }
+            }
+            y[y_idx] = static_cast<T>(acc * gate);
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < chunk_len) {
+            for (int s = lane; s < state_dim; s += chunk_len) {
+                shared_state[s] = chunk_end_state[s];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Persist the updated state back to global memory
+    for (int s = lane; s < state_dim; s += SSM_PREFILL_CHUNK) {
+        const size_t idx = state_base + size_t(s) * state_inner_stride;
+        state[idx] = static_cast<T>(shared_state[s]);
     }
 }
 
@@ -109,8 +225,10 @@ kernel void ssd_prefill_kernel(
     constant const size_t* dt_strides [[ buffer(13) ]],      \
     constant const size_t* cb_strides [[ buffer(14) ]],      \
     constant const size_t* state_strides [[ buffer(15) ]],   \
-    uint3 tid [[ thread_position_in_grid ]],                 \
-    uint3 grid_dim [[ threads_per_grid ]]                    \
+    constant const uint& num_heads [[ buffer(16) ]],         \
+    constant const uint& head_dim [[ buffer(17) ]],          \
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],         \
+    ushort lane [[ thread_index_in_threadgroup ]]            \
   );
 
 instantiate_ssd_prefill_kernel(float, float);

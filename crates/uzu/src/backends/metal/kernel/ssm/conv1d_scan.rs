@@ -12,6 +12,8 @@ use crate::{
     config::Activation,
 };
 
+const CONV1D_SCAN_THREADGROUP_SIZE: u64 = 32;
+
 const ACTIVATION_IDENTITY: i32 = 0;
 const ACTIVATION_SILU: i32 = 1;
 const ACTIVATION_GELU: i32 = 2;
@@ -109,19 +111,24 @@ impl Conv1dScanKernel {
             size_of::<usize>() as u64,
             &args.state_stride as *const usize as *const _,
         );
+        let channels = args.channels as u32;
+        compute_encoder.set_bytes(
+            9,
+            size_of::<u32>() as u64,
+            &channels as *const u32 as *const _,
+        );
 
         let threads_per_threadgroup = MTLSize {
-            width: 256.min(args.channels as u64),
+            width: CONV1D_SCAN_THREADGROUP_SIZE,
             height: 1,
             depth: 1,
         };
         let total_threads = MTLSize {
-            width: args.channels as u64,
+            width: args.channels as u64 * CONV1D_SCAN_THREADGROUP_SIZE,
             height: 1,
             depth: 1,
         };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 }
