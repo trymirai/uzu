@@ -501,6 +501,150 @@ impl ModelShape {
         }
     }
 
+    pub fn ssm_matrix_dt_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ssm_dt_shape(suffix_length)
+    }
+
+    pub fn ssm_matrix_chunk_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ssm_chunk_count(suffix_length)
+            .map(|chunks| [chunks, self.max_mamba_heads])
+    }
+
+    pub fn ssm_matrix_group_pack_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            self.max_mamba_state_dim().map(|state_dim| {
+                [self.max_mamba_groups, suffix_length, state_dim]
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_group_pack_transposed_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            self.max_mamba_state_dim().map(|state_dim| {
+                [self.max_mamba_groups, state_dim, suffix_length]
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_group_square_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_groups, suffix_length, suffix_length])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_head_square_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_heads, suffix_length, suffix_length])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_decay_last_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_heads, suffix_length])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_b_head_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            self.max_mamba_state_dim().map(|state_dim| {
+                [self.max_mamba_heads, suffix_length, state_dim]
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_dtx_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_heads, suffix_length, self.max_mamba_head_dim])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_dtxdecay_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_heads, self.max_mamba_head_dim, suffix_length])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_c_transposed_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            self.max_mamba_state_dim().map(|state_dim| {
+                [self.max_mamba_heads, state_dim, suffix_length]
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_state_decay_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        if self.has_state_space_layers() {
+            Some([suffix_length, self.max_mamba_heads])
+        } else {
+            None
+        }
+    }
+
+    pub fn ssm_matrix_state_contrib_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 3]> {
+        if self.has_state_space_layers() {
+            Some([self.max_mamba_heads, self.max_mamba_head_dim, suffix_length])
+        } else {
+            None
+        }
+    }
+
     fn max_mamba_inproj_dim_internal(&self) -> Option<usize> {
         self.layer_types
             .iter()

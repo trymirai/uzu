@@ -430,6 +430,44 @@ struct AuxBuffers {
     ssm_chunk_b: Option<ArrayCell>,
     /// [max_chunks, num_heads, head_dim, state_dim]
     ssm_chunk_prefix: Option<ArrayCell>,
+    /// [suffix_length, num_heads] float32 (dt prefix sums)
+    ssm_matrix_dt_a: Option<ArrayCell>,
+    /// [suffix_length, num_heads] float32
+    ssm_matrix_prefix: Option<ArrayCell>,
+    /// [max_chunks, num_heads] float32
+    ssm_matrix_chunk_sums: Option<ArrayCell>,
+    /// [max_chunks, num_heads] float32
+    ssm_matrix_chunk_offsets: Option<ArrayCell>,
+    /// [num_heads, suffix_length, suffix_length]
+    ssm_matrix_decay: Option<ArrayCell>,
+    /// [num_heads, suffix_length]
+    ssm_matrix_decay_last: Option<ArrayCell>,
+    /// [num_groups, suffix_length, state_dim]
+    ssm_matrix_c_packed: Option<ArrayCell>,
+    /// [num_groups, state_dim, suffix_length]
+    ssm_matrix_b_packed: Option<ArrayCell>,
+    /// [num_groups, suffix_length, suffix_length]
+    ssm_matrix_cb_groups: Option<ArrayCell>,
+    /// [num_heads, suffix_length, suffix_length]
+    ssm_matrix_cb_heads: Option<ArrayCell>,
+    /// [num_heads, state_dim, suffix_length] (transposed C per head)
+    ssm_matrix_c_head: Option<ArrayCell>,
+    /// [num_heads, state_dim, suffix_length] (decay-scaled C)
+    ssm_matrix_c_scaled: Option<ArrayCell>,
+    /// [suffix_length, num_heads] float32
+    ssm_matrix_state_decay: Option<ArrayCell>,
+    /// [num_heads, head_dim, suffix_length]
+    ssm_matrix_state_contrib: Option<ArrayCell>,
+    /// [num_heads, suffix_length, suffix_length]
+    ssm_matrix_attn: Option<ArrayCell>,
+    /// [num_heads, suffix_length, head_dim]
+    ssm_matrix_dtx: Option<ArrayCell>,
+    /// [num_heads, suffix_length, head_dim]
+    ssm_matrix_y_tmp: Option<ArrayCell>,
+    /// [num_heads, head_dim, suffix_length]
+    ssm_matrix_dtxdecay: Option<ArrayCell>,
+    /// [num_heads, suffix_length, state_dim]
+    ssm_matrix_b_head: Option<ArrayCell>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -608,6 +646,178 @@ impl AuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => Some(RefCell::new(
                         MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_dt_a: match (
+                    scratch.ssm_matrix_dt_a.as_ref(),
+                    model_shape.ssm_matrix_dt_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_prefix: match (
+                    scratch.ssm_matrix_prefix.as_ref(),
+                    model_shape.ssm_matrix_dt_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_chunk_sums: match (
+                    scratch.ssm_matrix_chunk_sums.as_ref(),
+                    model_shape.ssm_matrix_chunk_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_chunk_offsets: match (
+                    scratch.ssm_matrix_chunk_offsets.as_ref(),
+                    model_shape.ssm_matrix_chunk_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_decay: match (
+                    scratch.ssm_matrix_decay.as_ref(),
+                    model_shape.ssm_matrix_head_square_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_decay_last: match (
+                    scratch.ssm_matrix_decay_last.as_ref(),
+                    model_shape.ssm_matrix_decay_last_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_c_packed: match (
+                    scratch.ssm_matrix_c_packed.as_ref(),
+                    model_shape.ssm_matrix_group_pack_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_b_packed: match (
+                    scratch.ssm_matrix_b_packed.as_ref(),
+                    model_shape
+                        .ssm_matrix_group_pack_transposed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_cb_groups: match (
+                    scratch.ssm_matrix_cb_groups.as_ref(),
+                    model_shape.ssm_matrix_group_square_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_cb_heads: match (
+                    scratch.ssm_matrix_cb_heads.as_ref(),
+                    model_shape.ssm_matrix_head_square_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_c_head: match (
+                    scratch.ssm_matrix_c_head.as_ref(),
+                    model_shape.ssm_matrix_c_transposed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_c_scaled: match (
+                    scratch.ssm_matrix_c_scaled.as_ref(),
+                    model_shape.ssm_matrix_c_transposed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_state_decay: match (
+                    scratch.ssm_matrix_state_decay.as_ref(),
+                    model_shape.ssm_matrix_state_decay_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, DataType::F32),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_state_contrib: match (
+                    scratch.ssm_matrix_state_contrib.as_ref(),
+                    model_shape.ssm_matrix_state_contrib_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_attn: match (
+                    scratch.ssm_matrix_attn.as_ref(),
+                    model_shape.ssm_matrix_head_square_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_dtx: match (
+                    scratch.ssm_matrix_dtx.as_ref(),
+                    model_shape.ssm_matrix_dtx_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_y_tmp: match (
+                    scratch.ssm_matrix_y_tmp.as_ref(),
+                    model_shape.ssm_matrix_dtx_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_dtxdecay: match (
+                    scratch.ssm_matrix_dtxdecay.as_ref(),
+                    model_shape.ssm_matrix_dtxdecay_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_matrix_b_head: match (
+                    scratch.ssm_matrix_b_head.as_ref(),
+                    model_shape.ssm_matrix_b_head_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
                     )),
                     _ => None,
                 },
@@ -1247,6 +1457,158 @@ impl ForwardPassState {
                     .expect("SSM chunk prefix buffer not initialized")
                     .clone()
             },
+            ArrayId::SsmMatrixDtA(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_dt_a
+                    .as_ref()
+                    .expect("SSM matrix dt_a buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixPrefix(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_prefix
+                    .as_ref()
+                    .expect("SSM matrix prefix buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixChunkSums(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_chunk_sums
+                    .as_ref()
+                    .expect("SSM matrix chunk sums buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixChunkOffsets(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_chunk_offsets
+                    .as_ref()
+                    .expect("SSM matrix chunk offsets buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixDecay(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_decay
+                    .as_ref()
+                    .expect("SSM matrix decay buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixDecayLast(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_decay_last
+                    .as_ref()
+                    .expect("SSM matrix decay_last buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixCPacked(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_c_packed
+                    .as_ref()
+                    .expect("SSM matrix C packed buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixBPacked(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_b_packed
+                    .as_ref()
+                    .expect("SSM matrix B packed buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixCBGroups(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_cb_groups
+                    .as_ref()
+                    .expect("SSM matrix CB groups buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixCBHeads(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_cb_heads
+                    .as_ref()
+                    .expect("SSM matrix CB heads buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixAttn(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_attn
+                    .as_ref()
+                    .expect("SSM matrix attention buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixDtx(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_dtx
+                    .as_ref()
+                    .expect("SSM matrix dtx buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixYTmp(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_y_tmp
+                    .as_ref()
+                    .expect("SSM matrix y_tmp buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixDtxDecay(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_dtxdecay
+                    .as_ref()
+                    .expect("SSM matrix dtxdecay buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixBHead(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_b_head
+                    .as_ref()
+                    .expect("SSM matrix B head buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixCHeadTransposed(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_c_head
+                    .as_ref()
+                    .expect("SSM matrix C head buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixCScaled(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_c_scaled
+                    .as_ref()
+                    .expect("SSM matrix C scaled buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixStateDecay(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_state_decay
+                    .as_ref()
+                    .expect("SSM matrix state decay buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmMatrixStateContrib(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_matrix_state_contrib
+                    .as_ref()
+                    .expect("SSM matrix state contrib buffer not initialized")
+                    .clone()
+            },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
             ArrayId::AttentionPartials => {
@@ -1488,6 +1850,25 @@ pub enum ArrayId {
     SsmChunkA(usize),
     SsmChunkB(usize),
     SsmChunkPrefix(usize),
+    SsmMatrixDtA(usize),
+    SsmMatrixPrefix(usize),
+    SsmMatrixChunkSums(usize),
+    SsmMatrixChunkOffsets(usize),
+    SsmMatrixDecay(usize),
+    SsmMatrixDecayLast(usize),
+    SsmMatrixCPacked(usize),
+    SsmMatrixBPacked(usize),
+    SsmMatrixCBGroups(usize),
+    SsmMatrixCBHeads(usize),
+    SsmMatrixAttn(usize),
+    SsmMatrixDtx(usize),
+    SsmMatrixYTmp(usize),
+    SsmMatrixDtxDecay(usize),
+    SsmMatrixBHead(usize),
+    SsmMatrixCHeadTransposed(usize),
+    SsmMatrixCScaled(usize),
+    SsmMatrixStateDecay(usize),
+    SsmMatrixStateContrib(usize),
 
     RotatedQueries,
     RotatedKeys,

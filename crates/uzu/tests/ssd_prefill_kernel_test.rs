@@ -257,17 +257,14 @@ fn run_prefill_kernel_mode(
     );
     let state_buf =
         device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
-    let y_buf =
-        device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
 
     let chunk_a_len = fixture.chunk_count * fixture.total_pairs;
     let chunk_b_len = chunk_a_len * fixture.state_dim;
     let chunk_prefix_len =
         fixture.chunk_count * fixture.total_pairs * fixture.state_dim;
-    let chunk_a_buf =
-        device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
-    let chunk_b_buf =
-        device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
+    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
+    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
     let chunk_prefix_buf =
         device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
 
@@ -276,6 +273,58 @@ fn run_prefill_kernel_mode(
     zero_buffer(&chunk_a_buf);
     zero_buffer(&chunk_b_buf);
     zero_buffer(&chunk_prefix_buf);
+
+    let matrix_args = if matches!(mode, SSDPrefillMode::Matrix) {
+        let dt_total = fixture.total_dt;
+        let chunk_total = fixture.chunk_count * fixture.num_heads;
+        let group_count = fixture.num_heads / (fixture.group_size as usize);
+        let square_heads =
+            fixture.num_heads * fixture.suffix_len * fixture.suffix_len;
+        let square_groups =
+            group_count * fixture.suffix_len * fixture.suffix_len;
+        let pack_group = group_count * fixture.suffix_len * fixture.state_dim;
+        let pack_group_t = group_count * fixture.state_dim * fixture.suffix_len;
+        let dtx_total =
+            fixture.num_heads * fixture.suffix_len * fixture.head_dim;
+        let dtx_decay_total =
+            fixture.num_heads * fixture.head_dim * fixture.suffix_len;
+        let b_head_total =
+            fixture.num_heads * fixture.suffix_len * fixture.state_dim;
+        let c_head_total =
+            fixture.num_heads * fixture.state_dim * fixture.suffix_len;
+        let state_decay_total = dt_total;
+        let state_contrib_total = dtx_total;
+
+        let make_zero = |len: usize| -> metal::Buffer {
+            let buf = device.new_buffer((len * 4) as u64, STORAGE_MODE);
+            zero_buffer(&buf);
+            buf
+        };
+
+        Some(uzu::backends::metal::kernel::ssm::ssd_prefill::SSDPrefillMatrixArguments {
+            dt_a: make_zero(dt_total),
+            prefix: make_zero(dt_total),
+            chunk_sums: make_zero(chunk_total),
+            chunk_offsets: make_zero(chunk_total),
+            decay_matrix: make_zero(square_heads),
+            decay_last: make_zero(dt_total),
+            c_packed: make_zero(pack_group),
+            b_packed: make_zero(pack_group_t),
+            cb_groups: make_zero(square_groups),
+            cb_heads: make_zero(square_heads),
+            attn: make_zero(square_heads),
+            dtx: make_zero(dtx_total),
+            y_tmp: make_zero(dtx_total),
+            dtxdecay: make_zero(dtx_decay_total),
+            b_head: make_zero(b_head_total),
+            c_head_transposed: make_zero(c_head_total),
+            c_scaled: make_zero(c_head_total),
+            state_decay: make_zero(state_decay_total),
+            state_contrib: make_zero(state_contrib_total),
+        })
+    } else {
+        None
+    };
 
     let args = SSDPrefillArguments {
         x: &x_buf,
@@ -299,6 +348,7 @@ fn run_prefill_kernel_mode(
         state_strides: fixture.state_strides,
         channels: fixture.num_heads,
         head_dim: fixture.head_dim,
+        matrix: matrix_args,
     };
 
     let command_buffer = ctx.command_queue.new_command_buffer();
@@ -339,8 +389,8 @@ fn run_conv_scan_once(
             STORAGE_MODE,
         )
     } else {
-        let buf =
-            device.new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
+        let buf = device
+            .new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
         zero_buffer(&buf);
         buf
     };
@@ -354,16 +404,17 @@ fn run_conv_scan_once(
         (channels * size_of::<f32>()) as u64,
         STORAGE_MODE,
     );
-    let state_buf =
-        device.new_buffer((total_state * size_of::<f32>()) as u64, STORAGE_MODE);
-    let scratch_buf = if use_scratch && tap_count > 0 {
-        Some(device.new_buffer(
-            (total_state * size_of::<f32>()) as u64,
-            STORAGE_MODE,
-        ))
-    } else {
-        None
-    };
+    let state_buf = device
+        .new_buffer((total_state * size_of::<f32>()) as u64, STORAGE_MODE);
+    let scratch_buf =
+        if use_scratch && tap_count > 0 {
+            Some(device.new_buffer(
+                (total_state * size_of::<f32>()) as u64,
+                STORAGE_MODE,
+            ))
+        } else {
+            None
+        };
 
     write_buffer(&state_buf, state_init);
     if let Some(ref scratch) = scratch_buf {
@@ -379,8 +430,7 @@ fn run_conv_scan_once(
         let mut host = vec![0.0f32; padded_len * channels];
         for tap in 0..tap_count {
             for ch in 0..channels {
-                host[tap * channels + ch] =
-                    state_init[ch * tap_count + tap];
+                host[tap * channels + ch] = state_init[ch * tap_count + tap];
             }
         }
         for token in 0..suffix_len {
@@ -438,16 +488,8 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
     let run_a = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
     let run_b = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
 
-    assert_eq!(
-        run_a.0, run_b.0,
-        "Prefill outputs differ in {:?} mode",
-        mode
-    );
-    assert_eq!(
-        run_a.1, run_b.1,
-        "Prefill states differ in {:?} mode",
-        mode
-    );
+    assert_eq!(run_a.0, run_b.0, "Prefill outputs differ in {:?} mode", mode);
+    assert_eq!(run_a.1, run_b.1, "Prefill states differ in {:?} mode", mode);
 }
 
 fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
@@ -547,6 +589,16 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 #[ignore = "Multi-pass kernels still under investigation for determinism"]
 fn ssd_prefill_multi_pass_matches_cpu_reference() {
     assert_matches_cpu_reference(SSDPrefillMode::MultiPass);
+}
+
+#[test]
+fn ssd_prefill_matrix_is_deterministic() {
+    assert_deterministic_for_mode(SSDPrefillMode::Matrix);
+}
+
+#[test]
+fn ssd_prefill_matrix_matches_cpu_reference() {
+    assert_matches_cpu_reference(SSDPrefillMode::Matrix);
 }
 
 #[test]

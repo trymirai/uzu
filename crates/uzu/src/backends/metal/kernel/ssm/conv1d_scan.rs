@@ -47,10 +47,10 @@ pub struct Conv1dScanKernel {
 }
 
 pub struct Conv1dScanArguments<'a> {
-    pub padded: &'a MTLBuffer,    // buffer(0) [prefix+suffix, channels]
-    pub w: &'a MTLBuffer,         // buffer(1) [channels, kernel]
+    pub padded: &'a MTLBuffer, // buffer(0) [prefix+suffix, channels]
+    pub w: &'a MTLBuffer,      // buffer(1) [channels, kernel]
     pub b: Option<&'a MTLBuffer>, // buffer(2) [channels]
-    pub y: &'a MTLBuffer,         // buffer(3) [suffix, channels]
+    pub y: &'a MTLBuffer,      // buffer(3) [suffix, channels]
     pub state_out: &'a MTLBuffer, // buffer(4) [channels, kernel-1]
     pub suffix_len: usize,
     pub kernel_size: i32,
@@ -76,10 +76,8 @@ impl Conv1dScanKernel {
         activation: &Activation,
     ) -> Result<Self, SSMKernelError> {
         let fn_name = format!("conv1d_scan_kernel_{}", fn_suffix(data_type));
-        let pack_name = format!(
-            "conv1d_pack_prefix_kernel_{}",
-            fn_suffix(data_type)
-        );
+        let pack_name =
+            format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
         let function_constants = make_function_constants(activation);
         let pipeline = context
             .compute_pipeline_state(&fn_name, Some(&function_constants))
