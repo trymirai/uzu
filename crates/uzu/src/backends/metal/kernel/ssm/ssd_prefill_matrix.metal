@@ -97,16 +97,66 @@ kernel void ssd_m2_dtA_chunk_scan_kernel(
     device       float* chunk_offsets [[ buffer(1) ]],
     constant const uint& num_chunks   [[ buffer(2) ]],
     constant const uint& H            [[ buffer(3) ]],
-    uint h [[ thread_position_in_grid ]]
+    uint2 tg_pos  [[ threadgroup_position_in_grid ]],
+    ushort lid    [[ thread_index_in_threadgroup ]]
 ) {
-    if (h >= H) {
+    const uint h = tg_pos.x;
+    if (h >= H || num_chunks == 0) {
         return;
     }
+
+    threadgroup float shared_vals[SSD_M2_CHUNK];
+    threadgroup float block_total_shared;
+
     float running = 0.0f;
-    for (uint c = 0; c < num_chunks; ++c) {
-        const size_t idx = size_t(c) * H + h;
-        chunk_offsets[idx] = running;
-        running += chunk_sums[idx];
+    uint chunk_start = 0;
+    while (chunk_start < num_chunks) {
+        const uint remaining = num_chunks - chunk_start;
+        const ushort block_len = ushort(min(
+            size_t(SSD_M2_CHUNK),
+            size_t(remaining)));
+        if (block_len == 0) {
+            break;
+        }
+        const bool lane_active = lid < block_len;
+        float value = 0.0f;
+        if (lane_active) {
+            const uint chunk_idx = chunk_start + lid;
+            const size_t idx = size_t(chunk_idx) * H + h;
+            value = chunk_sums[idx];
+        }
+
+        shared_vals[lid] = value;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        ushort offset = 1;
+        while (offset < block_len) {
+            float addend = 0.0f;
+            if (lane_active && lid >= offset) {
+                addend = shared_vals[lid - offset];
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (lane_active) {
+                shared_vals[lid] += addend;
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            offset <<= 1;
+        }
+
+        if (lane_active) {
+            const float inclusive = shared_vals[lid];
+            const float exclusive = inclusive - value;
+            const uint chunk_idx = chunk_start + lid;
+            const size_t idx = size_t(chunk_idx) * H + h;
+            chunk_offsets[idx] = running + exclusive;
+            if (lid == block_len - 1) {
+                block_total_shared = inclusive;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        running += block_total_shared;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        chunk_start += SSD_M2_CHUNK;
     }
 }
 

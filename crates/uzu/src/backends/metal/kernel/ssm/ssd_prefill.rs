@@ -500,17 +500,17 @@ impl SSDPrefillKernel {
             size_of::<u32>() as u64,
             &channels_u32 as *const u32 as *const _,
         );
-        let threads = MTLSize {
+        let tg_grid = MTLSize {
             width: channels as u64,
             height: 1,
             depth: 1,
         };
         let threads_per_tg = MTLSize {
-            width: 64,
+            width: SSD_PREFILL_THREADGROUP_WIDTH,
             height: 1,
             depth: 1,
         };
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
+        compute_encoder.dispatch_thread_groups(tg_grid, threads_per_tg);
 
         // apply chunk offsets
         compute_encoder
@@ -532,6 +532,11 @@ impl SSDPrefillKernel {
             size_of::<u32>() as u64,
             &chunk_count_u32 as *const u32 as *const _,
         );
+        let tg_grid = MTLSize {
+            width: channels as u64,
+            height: chunk_count as u64,
+            depth: 1,
+        };
         compute_encoder.dispatch_thread_groups(tg_grid, chunk_threads);
 
         // decay last row
