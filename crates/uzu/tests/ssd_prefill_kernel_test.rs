@@ -292,8 +292,6 @@ fn run_prefill_kernel_mode(
             fixture.num_heads * fixture.suffix_len * fixture.state_dim;
         let c_head_total =
             fixture.num_heads * fixture.state_dim * fixture.suffix_len;
-        let state_decay_total = dt_total;
-        let state_contrib_total = dtx_total;
 
         let make_zero = |len: usize| -> metal::Buffer {
             let buf = device.new_buffer((len * 4) as u64, STORAGE_MODE);
@@ -318,9 +316,6 @@ fn run_prefill_kernel_mode(
             dtxdecay: make_zero(dtx_decay_total),
             b_head: make_zero(b_head_total),
             c_head_transposed: make_zero(c_head_total),
-            c_scaled: make_zero(c_head_total),
-            state_decay: make_zero(state_decay_total),
-            state_contrib: make_zero(state_contrib_total),
         })
     } else {
         None

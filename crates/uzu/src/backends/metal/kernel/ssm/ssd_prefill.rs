@@ -84,9 +84,6 @@ pub struct SSDPrefillMatrixArguments {
     pub cb_groups: MTLBuffer,
     pub cb_heads: MTLBuffer,
     pub c_head_transposed: MTLBuffer,
-    pub c_scaled: MTLBuffer,
-    pub state_decay: MTLBuffer,
-    pub state_contrib: MTLBuffer,
     pub attn: MTLBuffer,
     pub dtx: MTLBuffer,
     pub y_tmp: MTLBuffer,
@@ -260,10 +257,8 @@ impl SSDPrefillKernel {
                 );
                 SSMKernelError::MetalError(err)
             })?;
-        let matrix_pack_c_head_name = format!(
-            "ssd_m2_pack_c_head_kernel_{}",
-            fn_suffix(data_type)
-        );
+        let matrix_pack_c_head_name =
+            format!("ssd_m2_pack_c_head_kernel_{}", fn_suffix(data_type));
         let matrix_pack_c_head = context
             .compute_pipeline_state(&matrix_pack_c_head_name, None)
             .map_err(|err| {
@@ -569,32 +564,6 @@ impl SSDPrefillKernel {
         );
         compute_encoder.dispatch_thread_groups(tg_grid, chunk_threads);
 
-        // per-token state decay for initial state contribution
-        compute_encoder.set_compute_pipeline_state(&self.matrix_state_decay);
-        compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.state_decay), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &suffix_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &channels_u32 as *const u32 as *const _,
-        );
-        let threads = MTLSize {
-            width: suffix_len as u64,
-            height: channels as u64,
-            depth: 1,
-        };
-        let threads_per_tg = MTLSize {
-            width: 32,
-            height: 4,
-            depth: 1,
-        };
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
-
         // decay matrix
         compute_encoder.set_compute_pipeline_state(&self.matrix_decay);
         compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
@@ -647,6 +616,32 @@ impl SSDPrefillKernel {
         };
         compute_encoder.dispatch_threads(threads, threads_per_tg);
 
+        // per-token state-decay factors (reuse prefix buffer)
+        compute_encoder.set_compute_pipeline_state(&self.matrix_state_decay);
+        compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.prefix), 0);
+        compute_encoder.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &suffix_u32 as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &channels_u32 as *const u32 as *const _,
+        );
+        let threads = MTLSize {
+            width: suffix_len as u64,
+            height: channels as u64,
+            depth: 1,
+        };
+        let threads_per_tg = MTLSize {
+            width: 32,
+            height: 4,
+            depth: 1,
+        };
+        compute_encoder.dispatch_threads(threads, threads_per_tg);
+
         // pack C per head
         compute_encoder.set_compute_pipeline_state(&self.matrix_pack_c_head);
         compute_encoder.set_buffer(0, Some(args.c), 0);
@@ -686,8 +681,8 @@ impl SSDPrefillKernel {
         // scale C entries with decay prefix
         compute_encoder.set_compute_pipeline_state(&self.matrix_scale_c_head);
         compute_encoder.set_buffer(0, Some(&matrix.c_head_transposed), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.state_decay), 0);
-        compute_encoder.set_buffer(2, Some(&matrix.c_scaled), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.prefix), 0);
+        compute_encoder.set_buffer(2, Some(&matrix.c_head_transposed), 0);
         compute_encoder.set_bytes(
             3,
             size_of::<u32>() as u64,
@@ -710,11 +705,11 @@ impl SSDPrefillKernel {
         };
         compute_encoder.dispatch_threads(threads, threads_per_tg);
 
-        // preload state contribution from initial state
+        // preload state contribution from initial state (writes into dtxdecay scratch)
         compute_encoder.set_compute_pipeline_state(&self.matrix_gemm);
         compute_encoder.set_buffer(0, Some(args.state), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.c_scaled), 0);
-        compute_encoder.set_buffer(2, Some(&matrix.state_contrib), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.c_head_transposed), 0);
+        compute_encoder.set_buffer(2, Some(&matrix.dtxdecay), 0);
         self.dispatch_gemm(
             compute_encoder,
             head_dim_u32,
@@ -919,7 +914,7 @@ impl SSDPrefillKernel {
         // add initial state contribution into y_tmp
         compute_encoder
             .set_compute_pipeline_state(&self.matrix_accumulate_state);
-        compute_encoder.set_buffer(0, Some(&matrix.state_contrib), 0);
+        compute_encoder.set_buffer(0, Some(&matrix.dtxdecay), 0);
         compute_encoder.set_buffer(1, Some(&matrix.y_tmp), 0);
         compute_encoder.set_bytes(
             2,

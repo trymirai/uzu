@@ -14,6 +14,26 @@ use crate::{
 ///
 /// Per-iteration code merely *wraps* the buffer into a `MetalArray` with the runtime shape.
 #[derive(Debug)]
+pub struct SsmMatrixBuffers {
+    pub dt_a: MTLBuffer,
+    pub prefix: MTLBuffer,
+    pub chunk_sums: MTLBuffer,
+    pub chunk_offsets: MTLBuffer,
+    pub decay: MTLBuffer,
+    pub decay_last: MTLBuffer,
+    pub c_packed: MTLBuffer,
+    pub b_packed: MTLBuffer,
+    pub cb_groups: MTLBuffer,
+    pub cb_heads: MTLBuffer,
+    pub c_head_transposed: MTLBuffer,
+    pub attn: MTLBuffer,
+    pub dtx: MTLBuffer,
+    pub y_tmp: MTLBuffer,
+    pub dtxdecay: MTLBuffer,
+    pub b_head: MTLBuffer,
+}
+
+#[derive(Debug)]
 pub struct ForwardPassBuffers {
     // 1-D
     pub token_ids: MTLBuffer,
@@ -41,25 +61,7 @@ pub struct ForwardPassBuffers {
     pub ssm_chunk_a: Option<MTLBuffer>,
     pub ssm_chunk_b: Option<MTLBuffer>,
     pub ssm_chunk_prefix: Option<MTLBuffer>,
-    pub ssm_matrix_dt_a: Option<MTLBuffer>,
-    pub ssm_matrix_prefix: Option<MTLBuffer>,
-    pub ssm_matrix_chunk_sums: Option<MTLBuffer>,
-    pub ssm_matrix_chunk_offsets: Option<MTLBuffer>,
-    pub ssm_matrix_decay: Option<MTLBuffer>,
-    pub ssm_matrix_decay_last: Option<MTLBuffer>,
-    pub ssm_matrix_c_packed: Option<MTLBuffer>,
-    pub ssm_matrix_b_packed: Option<MTLBuffer>,
-    pub ssm_matrix_cb_groups: Option<MTLBuffer>,
-    pub ssm_matrix_cb_heads: Option<MTLBuffer>,
-    pub ssm_matrix_attn: Option<MTLBuffer>,
-    pub ssm_matrix_dtx: Option<MTLBuffer>,
-    pub ssm_matrix_y_tmp: Option<MTLBuffer>,
-    pub ssm_matrix_dtxdecay: Option<MTLBuffer>,
-    pub ssm_matrix_b_head: Option<MTLBuffer>,
-    pub ssm_matrix_c_head: Option<MTLBuffer>,
-    pub ssm_matrix_c_scaled: Option<MTLBuffer>,
-    pub ssm_matrix_state_decay: Option<MTLBuffer>,
-    pub ssm_matrix_state_contrib: Option<MTLBuffer>,
+    pub ssm_matrix: Option<SsmMatrixBuffers>,
 
     // 3-D
     pub rotated_queries: MTLBuffer,
@@ -115,6 +117,62 @@ impl ForwardPassBuffers {
         let partials_shape =
             model_shape.attention_partials_shape(max_suffix_len);
         let sums_maxs_shape = model_shape.attention_sums_shape(max_suffix_len);
+
+        let ssm_matrix = if model_shape.has_state_space_layers() {
+            let dt_shape = model_shape
+                .ssm_matrix_dt_shape(max_suffix_len)
+                .expect("matrix dt shape missing");
+            let chunk_shape = model_shape
+                .ssm_matrix_chunk_shape(max_suffix_len)
+                .expect("matrix chunk shape missing");
+            let head_square_shape = model_shape
+                .ssm_matrix_head_square_shape(max_suffix_len)
+                .expect("matrix head square shape missing");
+            let group_pack_shape = model_shape
+                .ssm_matrix_group_pack_shape(max_suffix_len)
+                .expect("matrix group pack shape missing");
+            let group_pack_t_shape = model_shape
+                .ssm_matrix_group_pack_transposed_shape(max_suffix_len)
+                .expect("matrix group pack T shape missing");
+            let group_square_shape = model_shape
+                .ssm_matrix_group_square_shape(max_suffix_len)
+                .expect("matrix group square shape missing");
+            let decay_last_shape = model_shape
+                .ssm_matrix_decay_last_shape(max_suffix_len)
+                .expect("matrix decay_last shape missing");
+            let dtx_shape = model_shape
+                .ssm_matrix_dtx_shape(max_suffix_len)
+                .expect("matrix dtx shape missing");
+            let dtxdecay_shape = model_shape
+                .ssm_matrix_dtxdecay_shape(max_suffix_len)
+                .expect("matrix dtxdecay shape missing");
+            let b_head_shape = model_shape
+                .ssm_matrix_b_head_shape(max_suffix_len)
+                .expect("matrix b_head shape missing");
+            let c_transposed_shape = model_shape
+                .ssm_matrix_c_transposed_shape(max_suffix_len)
+                .expect("matrix c_head shape missing");
+            Some(SsmMatrixBuffers {
+                dt_a: alloc(&dt_shape, DataType::F32),
+                prefix: alloc(&dt_shape, DataType::F32),
+                chunk_sums: alloc(&chunk_shape, DataType::F32),
+                chunk_offsets: alloc(&chunk_shape, DataType::F32),
+                decay: alloc(&head_square_shape, act_ty),
+                decay_last: alloc(&decay_last_shape, act_ty),
+                c_packed: alloc(&group_pack_shape, act_ty),
+                b_packed: alloc(&group_pack_t_shape, act_ty),
+                cb_groups: alloc(&group_square_shape, act_ty),
+                cb_heads: alloc(&head_square_shape, act_ty),
+                c_head_transposed: alloc(&c_transposed_shape, act_ty),
+                attn: alloc(&head_square_shape, act_ty),
+                dtx: alloc(&dtx_shape, act_ty),
+                y_tmp: alloc(&dtx_shape, act_ty),
+                dtxdecay: alloc(&dtxdecay_shape, act_ty),
+                b_head: alloc(&b_head_shape, act_ty),
+            })
+        } else {
+            None
+        };
 
         Self {
             // 1-D
@@ -187,63 +245,7 @@ impl ForwardPassBuffers {
             ssm_chunk_prefix: model_shape
                 .ssm_chunk_state_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_dt_a: model_shape
-                .ssm_matrix_dt_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_prefix: model_shape
-                .ssm_matrix_dt_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_chunk_sums: model_shape
-                .ssm_matrix_chunk_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_chunk_offsets: model_shape
-                .ssm_matrix_chunk_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_decay: model_shape
-                .ssm_matrix_head_square_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_decay_last: model_shape
-                .ssm_matrix_decay_last_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_c_packed: model_shape
-                .ssm_matrix_group_pack_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_b_packed: model_shape
-                .ssm_matrix_group_pack_transposed_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_cb_groups: model_shape
-                .ssm_matrix_group_square_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_cb_heads: model_shape
-                .ssm_matrix_head_square_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_attn: model_shape
-                .ssm_matrix_head_square_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_dtx: model_shape
-                .ssm_matrix_dtx_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_y_tmp: model_shape
-                .ssm_matrix_dtx_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_dtxdecay: model_shape
-                .ssm_matrix_dtxdecay_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_b_head: model_shape
-                .ssm_matrix_b_head_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_c_head: model_shape
-                .ssm_matrix_c_transposed_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_c_scaled: model_shape
-                .ssm_matrix_c_transposed_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
-            ssm_matrix_state_decay: model_shape
-                .ssm_matrix_state_decay_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_matrix_state_contrib: model_shape
-                .ssm_matrix_state_contrib_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
+            ssm_matrix,
             // 3-D
             rotated_queries: alloc(
                 &model_shape.rotated_queries_shape(max_suffix_len),

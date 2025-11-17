@@ -505,9 +505,6 @@ impl MambaMixerEncodable {
                 ArrayId::SsmMatrixDtxDecay(self.layer_index),
                 ArrayId::SsmMatrixBHead(self.layer_index),
                 ArrayId::SsmMatrixCHeadTransposed(self.layer_index),
-                ArrayId::SsmMatrixCScaled(self.layer_index),
-                ArrayId::SsmMatrixStateDecay(self.layer_index),
-                ArrayId::SsmMatrixStateContrib(self.layer_index),
             ]);
             let clone_buffer = |idx: usize| -> MTLBuffer {
                 let mut arr = matrix_arrays[idx].borrow_mut();
@@ -532,9 +529,6 @@ impl MambaMixerEncodable {
                 dtxdecay: clone_buffer(13),
                 b_head: clone_buffer(14),
                 c_head_transposed: clone_buffer(15),
-                c_scaled: clone_buffer(16),
-                state_decay: clone_buffer(17),
-                state_contrib: clone_buffer(18),
             })
         } else {
             None

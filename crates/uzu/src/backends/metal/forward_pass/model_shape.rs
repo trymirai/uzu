@@ -623,28 +623,6 @@ impl ModelShape {
         }
     }
 
-    pub fn ssm_matrix_state_decay_shape(
-        &self,
-        suffix_length: usize,
-    ) -> Option<[usize; 2]> {
-        if self.has_state_space_layers() {
-            Some([suffix_length, self.max_mamba_heads])
-        } else {
-            None
-        }
-    }
-
-    pub fn ssm_matrix_state_contrib_shape(
-        &self,
-        suffix_length: usize,
-    ) -> Option<[usize; 3]> {
-        if self.has_state_space_layers() {
-            Some([self.max_mamba_heads, self.max_mamba_head_dim, suffix_length])
-        } else {
-            None
-        }
-    }
-
     fn max_mamba_inproj_dim_internal(&self) -> Option<usize> {
         self.layer_types
             .iter()
