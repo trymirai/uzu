@@ -1,86 +1,29 @@
 use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{
-    DataType,
-    backends::metal::{
-        KVCache, MTLContext, MetalArray,
-        forward_pass::{
-            ArrayId, ForwardPassState, HashMapId, SharedBuffers,
-            traces::DecoderActivationTrace,
-        },
+use crate::backends::metal::{
+    KVCache, MTLContext, MetalArray,
+    forward_pass::{
+        ArrayId, ForwardPassState, HashMapId, SharedBuffers,
+        traces::DecoderActivationTrace,
     },
 };
 
-type ArrayCell = RefCell<MetalArray>;
-
-/// Simplified state for prediction head that works with 2D tensors [batch, features]
-/// Unlike ForwardPassState which is designed for 3D sequence data [batch, seq, features]
+/// Helper state for prediction head that maps ArrayIds to specific buffers.
+/// Used for the multi-step pipeline: pooled → dense → activation → norm → logits.
 pub struct PredictionHeadState {
     context: Rc<MTLContext>,
-    /// Main buffer for [batch, features] operations
-    main_buffer: ArrayCell,
+    buffers: HashMap<ArrayId, RefCell<MetalArray>>,
 }
 
 impl PredictionHeadState {
-    pub fn new(
+    pub fn with_buffers(
         context: Rc<MTLContext>,
-        batch_size: usize,
-        feature_dim: usize,
-        data_type: DataType,
+        buffers: HashMap<ArrayId, RefCell<MetalArray>>,
     ) -> Self {
-        // Allocate buffer for [batch, features]
-        let buffer_size = batch_size * feature_dim * data_type.size_in_bytes();
-        let mtl_buffer = context.device.new_buffer(
-            buffer_size as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-
-        let main_buffer = unsafe {
-            MetalArray::new(mtl_buffer, &[batch_size, feature_dim], data_type)
-        };
-
         Self {
             context,
-            main_buffer: RefCell::new(main_buffer),
+            buffers,
         }
-    }
-
-    /// Copy input data into the main buffer
-    pub fn set_input(
-        &self,
-        input: &MetalArray,
-    ) {
-        self.main_buffer.borrow_mut().copy_from_array(input);
-    }
-
-    /// Get reference to main buffer for reading output
-    pub fn get_output(&self) -> ArrayCell {
-        self.main_buffer.clone()
-    }
-
-    // Implement minimal interface needed by EncodableWithState
-    pub fn arrays(
-        &self,
-        ids: &[ArrayId],
-    ) -> Box<[ArrayCell]> {
-        ids.iter()
-            .map(|id| match id {
-                ArrayId::Main => self.main_buffer.clone(),
-                _ => panic!("PredictionHeadState only supports ArrayId::Main"),
-            })
-            .collect()
-    }
-
-    pub fn hashmaps(
-        &self,
-        _ids: &[HashMapId],
-    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
-        // Prediction head doesn't use hashmaps
-        Box::new([])
-    }
-
-    pub fn mtl_context(&self) -> &Rc<MTLContext> {
-        &self.context
     }
 }
 
@@ -88,19 +31,28 @@ impl ForwardPassState for PredictionHeadState {
     fn arrays(
         &self,
         ids: &[ArrayId],
-    ) -> Box<[ArrayCell]> {
-        self.arrays(ids)
+    ) -> Box<[RefCell<MetalArray>]> {
+        ids.iter()
+            .map(|id| {
+                self.buffers
+                    .get(id)
+                    .unwrap_or_else(|| {
+                        panic!("PredictionHeadState: ArrayId {:?} not found", id)
+                    })
+                    .clone()
+            })
+            .collect()
     }
 
     fn hashmaps(
         &self,
-        ids: &[HashMapId],
-    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
-        self.hashmaps(ids)
+        _ids: &[HashMapId],
+    ) -> Box<[HashMap<Option<usize>, RefCell<MetalArray>>]> {
+        Box::new([])
     }
 
     fn aux_buffers_suffix_length(&self) -> usize {
-        1 // Prediction head operates on single pooled vector
+        1
     }
 
     fn mtl_context(&self) -> &Rc<MTLContext> {
@@ -112,15 +64,15 @@ impl ForwardPassState for PredictionHeadState {
     }
 
     fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
-        None // Prediction head doesn't use KV cache
+        None
     }
 
-    fn sampling_output(&self) -> Option<&ArrayCell> {
-        None // Prediction head doesn't have sampling output
+    fn sampling_output(&self) -> Option<&RefCell<MetalArray>> {
+        None
     }
 
     fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
-        None // Prediction head uses ClassifierActivationTrace, not DecoderActivationTrace
+        None
     }
 
     fn as_any(&self) -> &dyn Any {

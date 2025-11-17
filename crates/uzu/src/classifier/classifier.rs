@@ -4,7 +4,7 @@ use objc2::rc::autoreleasepool;
 
 use super::{
     ClassificationForwardPassState, ClassificationOutput, ClassificationStats,
-    ClassifierContext,
+    ClassifierContext, PredictionHeadState,
 };
 use crate::{
     DataType,
@@ -413,84 +413,6 @@ impl Classifier {
 
         // Use dedicated buffers from context - NO REUSE!
         // Pipeline: pooled → dense_output → norm_output → final_logits
-        use std::cell::RefCell;
-
-        use crate::backends::metal::MetalArray;
-
-        // Helper state that maps ArrayIds to specific buffers
-        struct PredHeadState {
-            context: Rc<MTLContext>,
-            buffers: std::collections::HashMap<ArrayId, RefCell<MetalArray>>,
-        }
-
-        impl PredHeadState {
-            fn with_buffers(
-                context: Rc<MTLContext>,
-                buffers: std::collections::HashMap<
-                    ArrayId,
-                    RefCell<MetalArray>,
-                >,
-            ) -> Self {
-                Self {
-                    context,
-                    buffers,
-                }
-            }
-        }
-
-        impl ForwardPassStateTrait for PredHeadState {
-            fn arrays(
-                &self,
-                ids: &[ArrayId],
-            ) -> Box<[RefCell<MetalArray>]> {
-                ids.iter()
-                    .map(|id| {
-                        self.buffers
-                            .get(id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "PredHeadState: ArrayId {:?} not found",
-                                    id
-                                )
-                            })
-                            .clone()
-                    })
-                    .collect()
-            }
-            fn hashmaps(
-                &self,
-                _ids: &[HashMapId],
-            ) -> Box<
-                [std::collections::HashMap<
-                    Option<usize>,
-                    RefCell<MetalArray>,
-                >],
-            > {
-                Box::new([])
-            }
-            fn aux_buffers_suffix_length(&self) -> usize {
-                1
-            }
-            fn mtl_context(&self) -> &Rc<MTLContext> {
-                &self.context
-            }
-            fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
-                panic!("PredHeadState does not use shared_buffers")
-            }
-            fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
-                None
-            }
-            fn sampling_output(&self) -> Option<&RefCell<MetalArray>> {
-                None
-            }
-            fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
-                None
-            }
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-        }
-
         let encoding_params = EncodingParameters::new(false, true, false);
 
         // STEP 1: Dense layer - use ONLY dedicated buffers (no scratch buffer reuse!)
