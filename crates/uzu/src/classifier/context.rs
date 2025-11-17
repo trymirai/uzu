@@ -51,7 +51,6 @@ pub struct ClassifierContext {
 
 impl ClassifierContext {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        eprintln!("[DEBUG] ClassifierContext::new - Creating Metal device...");
         let mtl_device = metal::Device::system_default()
             .ok_or(Error::UnableToCreateMetalContext)?;
         let mtl_command_queue =
@@ -60,7 +59,6 @@ impl ClassifierContext {
         let command_buffer =
             MPSCommandBuffer::from_command_queue(&mtl_command_queue);
 
-        eprintln!("[DEBUG] ClassifierContext::new - Loading config...");
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
             return Err(Error::UnableToLoadConfig);
@@ -82,14 +80,12 @@ impl ClassifierContext {
         );
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        eprintln!("[DEBUG] ClassifierContext::new - Creating MTLContext...");
         let mtl_context = Rc::new(
             MTLContext::new(mtl_device, mtl_command_queue)
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let compilation_config = Rc::new(CompilationConfig::default());
-        eprintln!("[DEBUG] ClassifierContext::new - Loading weights...");
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
@@ -273,7 +269,6 @@ impl ClassifierContext {
                 eprintln!("Failed to create sigmoid kernel: {:?}", e);
                 Error::UnableToCreateMetalContext
             })?;
-        eprintln!("[DEBUG] ClassifierContext::new - All components created");
 
         let batch_size = 1;
 

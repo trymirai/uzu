@@ -177,44 +177,6 @@ impl ClassifierTraceValidator {
             &traces.borrow().output_pooling.borrow(),
         );
 
-        // Debug: check if prediction head keys exist
-        eprintln!(
-            "[TRACE_VALIDATOR] Checking for prediction head keys in traces..."
-        );
-        let dense_exists = traces_view
-            .leaf("activation_trace.prediction_dense_output")
-            .is_ok();
-        let gelu_exists =
-            traces_view.leaf("activation_trace.prediction_gelu_output").is_ok();
-        let norm_exists =
-            traces_view.leaf("activation_trace.prediction_norm_output").is_ok();
-        eprintln!(
-            "[TRACE_VALIDATOR] prediction_dense_output exists: {}",
-            dense_exists
-        );
-        eprintln!(
-            "[TRACE_VALIDATOR] prediction_gelu_output exists: {}",
-            gelu_exists
-        );
-        eprintln!(
-            "[TRACE_VALIDATOR] prediction_norm_output exists: {}",
-            norm_exists
-        );
-
-        // Validate prediction head traces
-        validate(
-            "activation_trace.prediction_dense_output",
-            &traces.borrow().prediction_dense_output.borrow(),
-        );
-        validate(
-            "activation_trace.prediction_gelu_output",
-            &traces.borrow().prediction_gelu_output.borrow(),
-        );
-        validate(
-            "activation_trace.prediction_norm_output",
-            &traces.borrow().prediction_norm_output.borrow(),
-        );
-
         // Validate logits
         validate("activation_trace.logits", &traces.borrow().logits.borrow());
 

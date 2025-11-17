@@ -270,7 +270,6 @@ impl ClassificationForwardPassState {
                     );
                 } else {
                     // All zeros = no masking (full bidirectional attention)
-                    eprintln!("[DEBUG] Using full bidirectional (no window)");
                     context.fill_attention_bias(
                         bias_array,
                         suffix_length,
@@ -280,7 +279,6 @@ impl ClassificationForwardPassState {
                 }
             } else {
                 // Causal masking
-                eprintln!("[DEBUG] Using causal masking");
                 context.fill_attention_bias(
                     bias_array,
                     suffix_length,
