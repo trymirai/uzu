@@ -11,7 +11,7 @@ use crate::backends::metal::{
     MTLContext,
     error::MTLError,
     forward_pass::{
-        ForwardPassStateTrait,
+        ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
     image::Image,
@@ -88,7 +88,7 @@ impl ScalePadNormalizeImage {
 impl EncodableWithState for ScalePadNormalizeImage {
     fn encode(
         &self,
-        _state: &mut dyn ForwardPassStateTrait,
+        _state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         _parameters: &EncodingParameters,
     ) {

@@ -22,7 +22,7 @@ type ArrayCell = RefCell<MetalArray>;
 ///
 /// LLM-specific features (KV cache, sampling, traces) are optional and return
 /// None for classifier implementations.
-pub trait ForwardPassStateTrait {
+pub trait ForwardPassState {
     /// Access arrays by their IDs.
     /// Returns borrowed array cells that can be accessed for encoding operations.
     fn arrays(

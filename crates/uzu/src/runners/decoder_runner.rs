@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DecoderConfig,
     backends::metal::{
-        DecoderExecutables, ForwardPassState, KVCache, MTLContext, ModelShape,
+        DecoderExecutables, LLMForwardPassState, KVCache, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ForwardPassBuffers, SharedBuffers,
@@ -33,7 +33,7 @@ pub struct DecoderTestResult {
 struct DecoderTestContext {
     mtl_context: Rc<MTLContext>,
     mtl_command_queue: metal::CommandQueue,
-    state: ForwardPassState,
+    state: LLMForwardPassState,
     executables: DecoderExecutables,
     suffix_length: usize,
     _scratch: ForwardPassBuffers,
@@ -124,7 +124,7 @@ impl DecoderTestContext {
             max_suffix_length,
         );
 
-        let state = ForwardPassState::new(
+        let state = LLMForwardPassState::new(
             mtl_context.clone(),
             &decoder_config,
             &model_shape,

@@ -1,4 +1,5 @@
 pub mod backends;
+#[path = "backends/metal/classifier/mod.rs"]
 pub mod classifier;
 pub mod config;
 pub mod generator;

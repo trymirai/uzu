@@ -12,7 +12,7 @@ use crate::{
     backends::metal::{
         KernelDataType, MTLContext, MTLError,
         forward_pass::{
-            ForwardPassStateTrait,
+            ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -799,7 +799,7 @@ impl SamplingKernelEncodable {
 impl EncodableWithState for SamplingKernelEncodable {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

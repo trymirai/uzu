@@ -10,7 +10,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassStateTrait,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::QuantizedLinearKernelBlock,
@@ -155,7 +155,7 @@ impl MlpBlockEncodable {
 impl EncodableWithState for MlpBlockEncodable {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         _params: &EncodingParameters,
     ) {

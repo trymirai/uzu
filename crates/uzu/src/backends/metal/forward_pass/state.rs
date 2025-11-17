@@ -710,7 +710,7 @@ impl AuxBuffers {
     }
 }
 
-pub struct ForwardPassState {
+pub struct LLMForwardPassState {
     context: Rc<MTLContext>,
     /// [suffix_length] - u64
     token_ids: ArrayCell,
@@ -730,7 +730,7 @@ pub struct ForwardPassState {
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
 }
 
-impl ForwardPassState {
+impl LLMForwardPassState {
     pub fn new(
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
@@ -1048,7 +1048,7 @@ impl ForwardPassState {
     }
 }
 
-impl super::state_trait::ForwardPassStateTrait for ForwardPassState {
+impl super::state_trait::ForwardPassState for LLMForwardPassState {
     fn arrays(
         &self,
         ids: &[ArrayId],
@@ -1104,7 +1104,7 @@ impl super::state_trait::ForwardPassStateTrait for ForwardPassState {
     }
 }
 
-impl Drop for ForwardPassState {
+impl Drop for LLMForwardPassState {
     fn drop(&mut self) {
         // Nothing extra to clean up now that heap is removed.
     }

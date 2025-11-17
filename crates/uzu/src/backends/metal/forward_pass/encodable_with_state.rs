@@ -1,6 +1,6 @@
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::ForwardPassStateTrait;
+use super::ForwardPassState;
 
 pub struct EncodingParameters {
     pub warmup: bool,
@@ -35,7 +35,7 @@ impl EncodingParameters {
 pub trait EncodableWithState {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     );

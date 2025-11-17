@@ -9,7 +9,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassStateTrait, RopeType,
+            ArrayId, ForwardPassState, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::{embed_block, readout_block},
         },
@@ -147,7 +147,7 @@ impl DecoderExecutables {
 impl EncodableWithState for DecoderExecutables {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

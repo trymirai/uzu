@@ -9,7 +9,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassStateTrait,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -248,7 +248,7 @@ impl LayerExecutables {
 impl EncodableWithState for LayerExecutables {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

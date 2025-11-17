@@ -15,7 +15,7 @@ pub use kv_cache::{KVCache, KVCacheLayer, KVCacheLayerState};
 pub use model_shape::ModelShape;
 pub use mpsgraph_block::MPSGraphBlock;
 pub use state::{
-    ArrayId, EmbeddingsBuffers, ForwardPassState, HashMapId, RopeType,
+    ArrayId, EmbeddingsBuffers, HashMapId, LLMForwardPassState, RopeType,
     SharedBuffers,
 };
-pub use state_trait::ForwardPassStateTrait;
+pub use state_trait::ForwardPassState;

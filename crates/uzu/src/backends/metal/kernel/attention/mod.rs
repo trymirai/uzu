@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::backends::metal::{
     KernelDataType, MTLContext, MTLError,
     forward_pass::{
-        ArrayId, ForwardPassStateTrait, HashMapId,
+        ArrayId, ForwardPassState, HashMapId,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
@@ -597,7 +597,7 @@ impl AttentionKernelEncodable {
 impl EncodableWithState for AttentionKernelEncodable {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

@@ -11,7 +11,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassStateTrait,
+            ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -238,7 +238,7 @@ impl LayerNormKernelEncodable {
 impl EncodableWithState for LayerNormKernelEncodable {
     fn encode(
         &self,
-        state: &mut dyn ForwardPassStateTrait,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
