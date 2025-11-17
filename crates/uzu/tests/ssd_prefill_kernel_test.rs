@@ -300,22 +300,19 @@ fn run_prefill_kernel_mode(
         };
 
         Some(uzu::backends::metal::kernel::ssm::ssd_prefill::SSDPrefillMatrixArguments {
-            dt_a: make_zero(dt_total),
             prefix: make_zero(dt_total),
             chunk_sums: make_zero(chunk_total),
             chunk_offsets: make_zero(chunk_total),
-            decay_matrix: make_zero(square_heads),
             decay_last: make_zero(dt_total),
             c_packed: make_zero(pack_group),
             b_packed: make_zero(pack_group_t),
             cb_groups: make_zero(square_groups),
-            cb_heads: make_zero(square_heads),
+            c_head_transposed: make_zero(c_head_total),
             attn: make_zero(square_heads),
             dtx: make_zero(dtx_total),
             y_tmp: make_zero(dtx_total),
             dtxdecay: make_zero(dtx_decay_total),
             b_head: make_zero(b_head_total),
-            c_head_transposed: make_zero(c_head_total),
         })
     } else {
         None

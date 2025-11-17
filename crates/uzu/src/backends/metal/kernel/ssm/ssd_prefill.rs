@@ -31,10 +31,8 @@ pub struct SSDPrefillKernel {
     matrix_dt_prefix_chunk: MTLComputePipelineState,
     matrix_dt_chunk_scan: MTLComputePipelineState,
     matrix_dt_prefix_apply: MTLComputePipelineState,
-    matrix_decay: MTLComputePipelineState,
     matrix_decay_last: MTLComputePipelineState,
     matrix_pack_bc: MTLComputePipelineState,
-    matrix_expand_cb: MTLComputePipelineState,
     matrix_attn: MTLComputePipelineState,
     matrix_gemm: MTLComputePipelineState,
     matrix_dtx: MTLComputePipelineState,
@@ -73,16 +71,13 @@ pub struct SSDPrefillArguments<'a> {
 }
 
 pub struct SSDPrefillMatrixArguments {
-    pub dt_a: MTLBuffer,
     pub prefix: MTLBuffer,
     pub chunk_sums: MTLBuffer,
     pub chunk_offsets: MTLBuffer,
-    pub decay_matrix: MTLBuffer,
     pub decay_last: MTLBuffer,
     pub c_packed: MTLBuffer,
     pub b_packed: MTLBuffer,
     pub cb_groups: MTLBuffer,
-    pub cb_heads: MTLBuffer,
     pub c_head_transposed: MTLBuffer,
     pub attn: MTLBuffer,
     pub dtx: MTLBuffer,
@@ -158,17 +153,6 @@ impl SSDPrefillKernel {
                 );
                 SSMKernelError::MetalError(err)
             })?;
-        let matrix_decay_name =
-            format!("ssd_m2_decay_matrix_{}", fn_suffix(data_type));
-        let matrix_decay = context
-            .compute_pipeline_state(&matrix_decay_name, None)
-            .map_err(|err| {
-                eprintln!(
-                    "Failed to create Metal kernel {}",
-                    matrix_decay_name
-                );
-                SSMKernelError::MetalError(err)
-            })?;
         let matrix_decay_last_name =
             format!("ssd_m2_decay_last_{}", fn_suffix(data_type));
         let matrix_decay_last = context
@@ -188,17 +172,6 @@ impl SSDPrefillKernel {
                 eprintln!(
                     "Failed to create Metal kernel {}",
                     matrix_pack_bc_name
-                );
-                SSMKernelError::MetalError(err)
-            })?;
-        let matrix_expand_cb_name =
-            format!("ssd_m2_expand_cb_{}", fn_suffix(data_type));
-        let matrix_expand_cb = context
-            .compute_pipeline_state(&matrix_expand_cb_name, None)
-            .map_err(|err| {
-                eprintln!(
-                    "Failed to create Metal kernel {}",
-                    matrix_expand_cb_name
                 );
                 SSMKernelError::MetalError(err)
             })?;
@@ -310,10 +283,8 @@ impl SSDPrefillKernel {
             matrix_dt_prefix_chunk,
             matrix_dt_chunk_scan,
             matrix_dt_prefix_apply,
-            matrix_decay,
             matrix_decay_last,
             matrix_pack_bc,
-            matrix_expand_cb,
             matrix_attn,
             matrix_gemm,
             matrix_dtx,
@@ -453,10 +424,9 @@ impl SSDPrefillKernel {
         let state_u32 = state_size as u32;
         let groups_u32 = num_groups as u32;
 
-        // dt preprocess
         compute_encoder.set_compute_pipeline_state(&self.matrix_dt_preprocess);
         compute_encoder.set_buffer(0, Some(args.decay), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.dt_a), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.prefix), 0);
         compute_encoder.set_bytes(
             2,
             size_of::<u32>() as u64,
@@ -486,7 +456,7 @@ impl SSDPrefillKernel {
         // chunk prefix
         compute_encoder
             .set_compute_pipeline_state(&self.matrix_dt_prefix_chunk);
-        compute_encoder.set_buffer(0, Some(&matrix.dt_a), 0);
+        compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
         compute_encoder.set_buffer(1, Some(&matrix.prefix), 0);
         compute_encoder.set_buffer(2, Some(&matrix.chunk_sums), 0);
         compute_encoder.set_bytes(
@@ -564,32 +534,6 @@ impl SSDPrefillKernel {
         );
         compute_encoder.dispatch_thread_groups(tg_grid, chunk_threads);
 
-        // decay matrix
-        compute_encoder.set_compute_pipeline_state(&self.matrix_decay);
-        compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.decay_matrix), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &suffix_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &channels_u32 as *const u32 as *const _,
-        );
-        let threads = MTLSize {
-            width: suffix_len as u64,
-            height: suffix_len as u64,
-            depth: channels as u64,
-        };
-        let threads_per_tg = MTLSize {
-            width: 8,
-            height: 8,
-            depth: 1,
-        };
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
-
         // decay last row
         compute_encoder.set_compute_pipeline_state(&self.matrix_decay_last);
         compute_encoder.set_buffer(0, Some(&matrix.prefix), 0);
@@ -612,6 +556,90 @@ impl SSDPrefillKernel {
         let threads_per_tg = MTLSize {
             width: 32,
             height: 2,
+            depth: 1,
+        };
+        compute_encoder.dispatch_threads(threads, threads_per_tg);
+
+        // pack B/C per group
+        compute_encoder.set_compute_pipeline_state(&self.matrix_pack_bc);
+        compute_encoder.set_buffer(0, Some(args.b), 0);
+        compute_encoder.set_buffer(1, Some(args.c), 0);
+        compute_encoder.set_buffer(2, Some(&matrix.c_packed), 0);
+        compute_encoder.set_buffer(3, Some(&matrix.b_packed), 0);
+        compute_encoder.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &suffix_u32 as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &groups_u32 as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            6,
+            size_of::<u32>() as u64,
+            &state_u32 as *const u32 as *const _,
+        );
+        let threads = MTLSize {
+            width: state_size as u64,
+            height: suffix_len as u64,
+            depth: num_groups as u64,
+        };
+        let threads_per_tg = MTLSize {
+            width: 8,
+            height: 8,
+            depth: 1,
+        };
+        compute_encoder.dispatch_threads(threads, threads_per_tg);
+
+        // GEMM for CB groups
+        compute_encoder.set_compute_pipeline_state(&self.matrix_gemm);
+        compute_encoder.set_buffer(0, Some(&matrix.c_packed), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.b_packed), 0);
+        compute_encoder.set_buffer(2, Some(&matrix.cb_groups), 0);
+        self.dispatch_gemm(
+            compute_encoder,
+            suffix_u32,
+            suffix_u32,
+            state_u32,
+            state_u32,
+            suffix_u32,
+            suffix_u32,
+            groups_u32,
+            (suffix_len * state_size) as u32,
+            (state_size * suffix_len) as u32,
+            (suffix_len * suffix_len) as u32,
+        );
+
+        // combine CB with decay (compute decay on the fly)
+        compute_encoder.set_compute_pipeline_state(&self.matrix_attn);
+        compute_encoder.set_buffer(0, Some(&matrix.cb_groups), 0);
+        compute_encoder.set_buffer(1, Some(&matrix.prefix), 0);
+        compute_encoder.set_buffer(2, Some(&matrix.attn), 0);
+        compute_encoder.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &suffix_u32 as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            4,
+            size_of::<u32>() as u64,
+            &channels_u32 as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            5,
+            size_of::<u32>() as u64,
+            &groups_u32 as *const u32 as *const _,
+        );
+        let threads = MTLSize {
+            width: suffix_len as u64,
+            height: suffix_len as u64,
+            depth: channels as u64,
+        };
+        let threads_per_tg = MTLSize {
+            width: 8,
+            height: 8,
             depth: 1,
         };
         compute_encoder.dispatch_threads(threads, threads_per_tg);
@@ -723,106 +751,6 @@ impl SSDPrefillKernel {
             (state_size * suffix_len) as u32,
             (head_dim * suffix_len) as u32,
         );
-
-        // pack B/C per group
-        compute_encoder.set_compute_pipeline_state(&self.matrix_pack_bc);
-        compute_encoder.set_buffer(0, Some(args.b), 0);
-        compute_encoder.set_buffer(1, Some(args.c), 0);
-        compute_encoder.set_buffer(2, Some(&matrix.c_packed), 0);
-        compute_encoder.set_buffer(3, Some(&matrix.b_packed), 0);
-        compute_encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &suffix_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &groups_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &state_u32 as *const u32 as *const _,
-        );
-        let threads = MTLSize {
-            width: state_size as u64,
-            height: suffix_len as u64,
-            depth: num_groups as u64,
-        };
-        let threads_per_tg = MTLSize {
-            width: 8,
-            height: 8,
-            depth: 1,
-        };
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
-
-        // GEMM for CB groups
-        compute_encoder.set_compute_pipeline_state(&self.matrix_gemm);
-        compute_encoder.set_buffer(0, Some(&matrix.c_packed), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.b_packed), 0);
-        compute_encoder.set_buffer(2, Some(&matrix.cb_groups), 0);
-        self.dispatch_gemm(
-            compute_encoder,
-            suffix_u32,
-            suffix_u32,
-            state_u32,
-            state_u32,
-            suffix_u32,
-            suffix_u32,
-            groups_u32,
-            (suffix_len * state_size) as u32,
-            (state_size * suffix_len) as u32,
-            (suffix_len * suffix_len) as u32,
-        );
-
-        // expand CB to heads
-        compute_encoder.set_compute_pipeline_state(&self.matrix_expand_cb);
-        compute_encoder.set_buffer(0, Some(&matrix.cb_groups), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.cb_heads), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &suffix_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &channels_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &groups_u32 as *const u32 as *const _,
-        );
-        let threads = MTLSize {
-            width: suffix_len as u64,
-            height: suffix_len as u64,
-            depth: channels as u64,
-        };
-        let threads_per_tg = MTLSize {
-            width: 8,
-            height: 8,
-            depth: 1,
-        };
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
-
-        // combine CB with decay
-        compute_encoder.set_compute_pipeline_state(&self.matrix_attn);
-        compute_encoder.set_buffer(0, Some(&matrix.cb_heads), 0);
-        compute_encoder.set_buffer(1, Some(&matrix.decay_matrix), 0);
-        compute_encoder.set_buffer(2, Some(&matrix.attn), 0);
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &suffix_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &channels_u32 as *const u32 as *const _,
-        );
-        compute_encoder.dispatch_threads(threads, threads_per_tg);
 
         // pack B per head
         compute_encoder.set_compute_pipeline_state(&self.matrix_pack_b_head);

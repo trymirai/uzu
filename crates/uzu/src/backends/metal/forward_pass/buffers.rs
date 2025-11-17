@@ -15,16 +15,13 @@ use crate::{
 /// Per-iteration code merely *wraps* the buffer into a `MetalArray` with the runtime shape.
 #[derive(Debug)]
 pub struct SsmMatrixBuffers {
-    pub dt_a: MTLBuffer,
     pub prefix: MTLBuffer,
     pub chunk_sums: MTLBuffer,
     pub chunk_offsets: MTLBuffer,
-    pub decay: MTLBuffer,
     pub decay_last: MTLBuffer,
     pub c_packed: MTLBuffer,
     pub b_packed: MTLBuffer,
     pub cb_groups: MTLBuffer,
-    pub cb_heads: MTLBuffer,
     pub c_head_transposed: MTLBuffer,
     pub attn: MTLBuffer,
     pub dtx: MTLBuffer,
@@ -153,16 +150,13 @@ impl ForwardPassBuffers {
                 .ssm_matrix_c_transposed_shape(max_suffix_len)
                 .expect("matrix c_head shape missing");
             Some(SsmMatrixBuffers {
-                dt_a: alloc(&dt_shape, DataType::F32),
                 prefix: alloc(&dt_shape, DataType::F32),
                 chunk_sums: alloc(&chunk_shape, DataType::F32),
                 chunk_offsets: alloc(&chunk_shape, DataType::F32),
-                decay: alloc(&head_square_shape, act_ty),
                 decay_last: alloc(&decay_last_shape, act_ty),
                 c_packed: alloc(&group_pack_shape, act_ty),
                 b_packed: alloc(&group_pack_t_shape, act_ty),
                 cb_groups: alloc(&group_square_shape, act_ty),
-                cb_heads: alloc(&head_square_shape, act_ty),
                 c_head_transposed: alloc(&c_transposed_shape, act_ty),
                 attn: alloc(&head_square_shape, act_ty),
                 dtx: alloc(&dtx_shape, act_ty),

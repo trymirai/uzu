@@ -393,16 +393,13 @@ impl SharedBuffers {
 }
 
 struct SsmMatrixArrays {
-    ssm_matrix_dt_a: ArrayCell,
     ssm_matrix_prefix: ArrayCell,
     ssm_matrix_chunk_sums: ArrayCell,
     ssm_matrix_chunk_offsets: ArrayCell,
-    ssm_matrix_decay: ArrayCell,
     ssm_matrix_decay_last: ArrayCell,
     ssm_matrix_c_packed: ArrayCell,
     ssm_matrix_b_packed: ArrayCell,
     ssm_matrix_cb_groups: ArrayCell,
-    ssm_matrix_cb_heads: ArrayCell,
     ssm_matrix_c_head: ArrayCell,
     ssm_matrix_attn: ArrayCell,
     ssm_matrix_dtx: ArrayCell,
@@ -666,11 +663,6 @@ impl AuxBuffers {
                         .ssm_matrix_c_transposed_shape(suffix_length)
                         .expect("matrix c transposed shape missing");
                     SsmMatrixArrays {
-                        ssm_matrix_dt_a: RefCell::new(MetalArray::new(
-                            matrix_bufs.dt_a.clone(),
-                            &dt_shape,
-                            DataType::F32,
-                        )),
                         ssm_matrix_prefix: RefCell::new(MetalArray::new(
                             matrix_bufs.prefix.clone(),
                             &dt_shape,
@@ -688,11 +680,6 @@ impl AuxBuffers {
                                 DataType::F32,
                             ),
                         ),
-                        ssm_matrix_decay: RefCell::new(MetalArray::new(
-                            matrix_bufs.decay.clone(),
-                            &head_square_shape,
-                            act_dtype,
-                        )),
                         ssm_matrix_decay_last: RefCell::new(MetalArray::new(
                             matrix_bufs.decay_last.clone(),
                             &decay_last_shape,
@@ -711,11 +698,6 @@ impl AuxBuffers {
                         ssm_matrix_cb_groups: RefCell::new(MetalArray::new(
                             matrix_bufs.cb_groups.clone(),
                             &group_square_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_cb_heads: RefCell::new(MetalArray::new(
-                            matrix_bufs.cb_heads.clone(),
-                            &head_square_shape,
                             act_dtype,
                         )),
                         ssm_matrix_c_head: RefCell::new(MetalArray::new(
@@ -1386,15 +1368,6 @@ impl ForwardPassState {
                     .expect("SSM chunk prefix buffer not initialized")
                     .clone()
             },
-            ArrayId::SsmMatrixDtA(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_dt_a
-                    .clone()
-            },
             ArrayId::SsmMatrixPrefix(layer_index) => {
                 let _ = layer_index;
                 self.aux_buffers
@@ -1420,15 +1393,6 @@ impl ForwardPassState {
                     .as_ref()
                     .expect("SSM matrix buffers not initialized")
                     .ssm_matrix_chunk_offsets
-                    .clone()
-            },
-            ArrayId::SsmMatrixDecay(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_decay
                     .clone()
             },
             ArrayId::SsmMatrixDecayLast(layer_index) => {
@@ -1465,15 +1429,6 @@ impl ForwardPassState {
                     .as_ref()
                     .expect("SSM matrix buffers not initialized")
                     .ssm_matrix_cb_groups
-                    .clone()
-            },
-            ArrayId::SsmMatrixCBHeads(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_cb_heads
                     .clone()
             },
             ArrayId::SsmMatrixAttn(layer_index) => {
@@ -1771,16 +1726,13 @@ pub enum ArrayId {
     SsmChunkA(usize),
     SsmChunkB(usize),
     SsmChunkPrefix(usize),
-    SsmMatrixDtA(usize),
     SsmMatrixPrefix(usize),
     SsmMatrixChunkSums(usize),
     SsmMatrixChunkOffsets(usize),
-    SsmMatrixDecay(usize),
     SsmMatrixDecayLast(usize),
     SsmMatrixCPacked(usize),
     SsmMatrixBPacked(usize),
     SsmMatrixCBGroups(usize),
-    SsmMatrixCBHeads(usize),
     SsmMatrixAttn(usize),
     SsmMatrixDtx(usize),
     SsmMatrixYTmp(usize),

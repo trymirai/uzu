@@ -489,22 +489,19 @@ impl MambaMixerEncodable {
         let matrix_args = if matches!(self.prefill_mode, SSDPrefillMode::Matrix)
         {
             let matrix_arrays = state.arrays(&[
-                ArrayId::SsmMatrixDtA(self.layer_index),
                 ArrayId::SsmMatrixPrefix(self.layer_index),
                 ArrayId::SsmMatrixChunkSums(self.layer_index),
                 ArrayId::SsmMatrixChunkOffsets(self.layer_index),
-                ArrayId::SsmMatrixDecay(self.layer_index),
                 ArrayId::SsmMatrixDecayLast(self.layer_index),
                 ArrayId::SsmMatrixCPacked(self.layer_index),
                 ArrayId::SsmMatrixBPacked(self.layer_index),
                 ArrayId::SsmMatrixCBGroups(self.layer_index),
-                ArrayId::SsmMatrixCBHeads(self.layer_index),
+                ArrayId::SsmMatrixCHeadTransposed(self.layer_index),
                 ArrayId::SsmMatrixAttn(self.layer_index),
                 ArrayId::SsmMatrixDtx(self.layer_index),
                 ArrayId::SsmMatrixYTmp(self.layer_index),
                 ArrayId::SsmMatrixDtxDecay(self.layer_index),
                 ArrayId::SsmMatrixBHead(self.layer_index),
-                ArrayId::SsmMatrixCHeadTransposed(self.layer_index),
             ]);
             let clone_buffer = |idx: usize| -> MTLBuffer {
                 let mut arr = matrix_arrays[idx].borrow_mut();
@@ -513,22 +510,19 @@ impl MambaMixerEncodable {
                 buf
             };
             Some(SSDPrefillMatrixArguments {
-                dt_a: clone_buffer(0),
-                prefix: clone_buffer(1),
-                chunk_sums: clone_buffer(2),
-                chunk_offsets: clone_buffer(3),
-                decay_matrix: clone_buffer(4),
-                decay_last: clone_buffer(5),
-                c_packed: clone_buffer(6),
-                b_packed: clone_buffer(7),
-                cb_groups: clone_buffer(8),
-                cb_heads: clone_buffer(9),
-                attn: clone_buffer(10),
-                dtx: clone_buffer(11),
-                y_tmp: clone_buffer(12),
-                dtxdecay: clone_buffer(13),
-                b_head: clone_buffer(14),
-                c_head_transposed: clone_buffer(15),
+                prefix: clone_buffer(0),
+                chunk_sums: clone_buffer(1),
+                chunk_offsets: clone_buffer(2),
+                decay_last: clone_buffer(3),
+                c_packed: clone_buffer(4),
+                b_packed: clone_buffer(5),
+                cb_groups: clone_buffer(6),
+                c_head_transposed: clone_buffer(7),
+                attn: clone_buffer(8),
+                dtx: clone_buffer(9),
+                y_tmp: clone_buffer(10),
+                dtxdecay: clone_buffer(11),
+                b_head: clone_buffer(12),
             })
         } else {
             None

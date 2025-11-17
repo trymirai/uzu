@@ -142,35 +142,6 @@ kernel void ssd_m2_dtA_prefix_apply_kernel(
     prefix[t * H + h] += offset;
 }
 
-//------------------------------------------------------------------------------
-// Decay matrices from dtA prefix
-//------------------------------------------------------------------------------
-
-template <typename T>
-kernel void ssd_m2_decay_matrix_kernel(
-    device const float* prefix [[ buffer(0) ]],
-    device       T*     decay  [[ buffer(1) ]],
-    constant const uint& T_len [[ buffer(2) ]],
-    constant const uint& H     [[ buffer(3) ]],
-    uint3 gid [[ thread_position_in_grid ]]
-) {
-    const uint j = gid.x;
-    const uint i = gid.y;
-    const uint h = gid.z;
-    if (i >= T_len || j >= T_len || h >= H) {
-        return;
-    }
-
-    const size_t row_base = size_t(i) * H + h;
-    const size_t col_base = size_t(j) * H + h;
-    const float pref_i = prefix[row_base];
-    const float pref_j = prefix[col_base];
-    const float val = fast::exp(pref_i - pref_j);
-    const size_t out_idx = (size_t(h) * T_len + i) * T_len + j;
-    decay[out_idx] = static_cast<T>(val);
-}
-
-
 template <typename T>
 kernel void ssd_m2_decay_last_kernel(
     device const float* prefix [[ buffer(0) ]],
@@ -219,41 +190,17 @@ kernel void ssd_m2_pack_BC_kernel(
 }
 
 //------------------------------------------------------------------------------
-// Expand CB per head and elementwise decay
+// Build attention from CB groups + decay computed from prefix
 //------------------------------------------------------------------------------
 
 template <typename T>
-kernel void ssd_m2_expand_CB_groups_kernel(
-    device const T* CB_groups [[ buffer(0) ]],
-    device       T* CB_heads  [[ buffer(1) ]],
-    constant const uint& T_len [[ buffer(2) ]],
-    constant const uint& H     [[ buffer(3) ]],
-    constant const uint& G     [[ buffer(4) ]],
-    uint3 gid [[ thread_position_in_grid ]]
-) {
-    const uint j = gid.x;
-    const uint i = gid.y;
-    const uint h = gid.z;
-    if (i >= T_len || j >= T_len || h >= H) {
-        return;
-    }
-
-    const uint group_size = max(1u, H / max(1u, G));
-    const uint g = min(h / group_size, G - 1);
-
-    const size_t group_idx = (size_t(g) * T_len + i) * T_len + j;
-    const size_t head_idx = (size_t(h) * T_len + i) * T_len + j;
-    CB_heads[head_idx] = CB_groups[group_idx];
-}
-
-
-template <typename T>
 kernel void ssd_m2_attn_elementwise_kernel(
-    device const T* CB  [[ buffer(0) ]],
-    device const T* decay [[ buffer(1) ]],
+    device const T* CB_groups [[ buffer(0) ]],
+    device const float* prefix [[ buffer(1) ]],
     device       T* attn [[ buffer(2) ]],
     constant const uint& T_len [[ buffer(3) ]],
     constant const uint& H     [[ buffer(4) ]],
+    constant const uint& G     [[ buffer(5) ]],
     uint3 gid [[ thread_position_in_grid ]]
 ) {
     const uint j = gid.x;
@@ -263,13 +210,22 @@ kernel void ssd_m2_attn_elementwise_kernel(
         return;
     }
 
-    const size_t idx = (size_t(h) * T_len + i) * T_len + j;
+    const uint safe_groups = max(1u, G);
+    const uint group_size = max(1u, H / safe_groups);
+    const uint g = min(h / group_size, safe_groups - 1u);
+
+    const size_t attn_idx = (size_t(h) * T_len + i) * T_len + j;
+    const size_t group_idx = (size_t(g) * T_len + i) * T_len + j;
     if (j > i) {
-        attn[idx] = static_cast<T>(0);
-    } else {
-        const float v = float(CB[idx]) * float(decay[idx]);
-        attn[idx] = static_cast<T>(v);
+        attn[attn_idx] = static_cast<T>(0);
+        return;
     }
+
+    const float pref_i = prefix[size_t(i) * H + h];
+    const float pref_j = prefix[size_t(j) * H + h];
+    const float decay = fast::exp(pref_i - pref_j);
+    const float cb = float(CB_groups[group_idx]);
+    attn[attn_idx] = static_cast<T>(cb * decay);
 }
 
 //------------------------------------------------------------------------------
@@ -612,17 +568,6 @@ INSTANTIATE_SSD_M2_DT_PREPROCESS(bfloat, bfloat)
 INSTANTIATE_SSD_M2_DT_PREPROCESS(half, half)
 #undef INSTANTIATE_SSD_M2_DT_PREPROCESS
 
-#define INSTANTIATE_SSD_M2_DECAY_MATRIX(type_name, type) \
-  template [[host_name("ssd_m2_decay_matrix_" #type_name)]] \
-  kernel void ssd_m2_decay_matrix_kernel<type>( \
-    device const float*, device type*, \
-    constant const uint&, constant const uint&, uint3);
-
-INSTANTIATE_SSD_M2_DECAY_MATRIX(float, float)
-INSTANTIATE_SSD_M2_DECAY_MATRIX(bfloat, bfloat)
-INSTANTIATE_SSD_M2_DECAY_MATRIX(half, half)
-#undef INSTANTIATE_SSD_M2_DECAY_MATRIX
-
 #define INSTANTIATE_SSD_M2_DECAY_LAST(type_name, type) \
   template [[host_name("ssd_m2_decay_last_" #type_name)]] \
   kernel void ssd_m2_decay_last_kernel<type>( \
@@ -645,22 +590,11 @@ INSTANTIATE_SSD_M2_PACK_BC(bfloat, bfloat)
 INSTANTIATE_SSD_M2_PACK_BC(half, half)
 #undef INSTANTIATE_SSD_M2_PACK_BC
 
-#define INSTANTIATE_SSD_M2_EXPAND_CB(type_name, type) \
-  template [[host_name("ssd_m2_expand_cb_" #type_name)]] \
-  kernel void ssd_m2_expand_CB_groups_kernel<type>( \
-    device const type*, device type*, \
-    constant const uint&, constant const uint&, constant const uint&, uint3);
-
-INSTANTIATE_SSD_M2_EXPAND_CB(float, float)
-INSTANTIATE_SSD_M2_EXPAND_CB(bfloat, bfloat)
-INSTANTIATE_SSD_M2_EXPAND_CB(half, half)
-#undef INSTANTIATE_SSD_M2_EXPAND_CB
-
 #define INSTANTIATE_SSD_M2_ATTN(type_name, type) \
   template [[host_name("ssd_m2_attn_" #type_name)]] \
   kernel void ssd_m2_attn_elementwise_kernel<type>( \
-    device const type*, device const type*, device type*, \
-    constant const uint&, constant const uint&, uint3);
+    device const type*, device const float*, device type*, \
+    constant const uint&, constant const uint&, constant const uint&, uint3);
 
 INSTANTIATE_SSD_M2_ATTN(float, float)
 INSTANTIATE_SSD_M2_ATTN(bfloat, bfloat)
