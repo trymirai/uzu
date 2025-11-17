@@ -18,34 +18,12 @@ struct SILU {
 };
 
 //------------------------------------------------------------------------------
-// DT preprocess + dtA build (dtA = -dt for current models)
+// Chunk prefix scan over decay (stored as log prefix)
 //------------------------------------------------------------------------------
 
 template <typename T>
-kernel void ssd_m2_dt_preprocess_kernel(
-    device const T* decay_in   [[ buffer(0) ]],
-    device       float* dtA    [[ buffer(1) ]],
-    constant const uint& T_len [[ buffer(2) ]],
-    constant const uint& H     [[ buffer(3) ]],
-    uint2 tid [[ thread_position_in_grid ]]
-) {
-    const uint t = tid.x;
-    const uint h = tid.y;
-    if (t >= T_len || h >= H) {
-        return;
-    }
-
-    const size_t idx = size_t(t) * H + h;
-    const float decay_val = clamp(float(decay_in[idx]), 1e-6f, 1.0f);
-    dtA[idx] = log(decay_val);
-}
-
-//------------------------------------------------------------------------------
-// Chunk prefix scan over dtA
-//------------------------------------------------------------------------------
-
 kernel void ssd_m2_dtA_prefix_chunk_kernel(
-    device const float* dtA         [[ buffer(0) ]],
+    device const T* decay_in        [[ buffer(0) ]],
     device       float* prefix      [[ buffer(1) ]],
     device       float* chunk_sums  [[ buffer(2) ]],
     constant const uint& T_len      [[ buffer(3) ]],
@@ -76,7 +54,8 @@ kernel void ssd_m2_dtA_prefix_chunk_kernel(
     if (lane_active) {
         const size_t t = chunk_start + size_t(lid);
         const size_t idx = t * H + h;
-        value = dtA[idx];
+        const float decay_val = clamp(float(decay_in[idx]), 1e-6f, 1.0f);
+        value = log(decay_val);
     }
 
     float prefix_excl = threadgroup_raking_prefix_exclusive_sum<SSD_M2_CHUNK, float>(
@@ -213,33 +192,6 @@ kernel void ssd_m2_decay_last_kernel(
 }
 
 //------------------------------------------------------------------------------
-// Pack B/C into batched GEMM layout
-//------------------------------------------------------------------------------
-
-template <typename T>
-kernel void ssd_m2_pack_BC_kernel(
-    device const T* B_in     [[ buffer(0) ]],
-    device const T* C_in     [[ buffer(1) ]],
-    device       T* C_packed [[ buffer(2) ]],
-    device       T* B_packed [[ buffer(3) ]],
-    constant const uint& T_len [[ buffer(4) ]],
-    constant const uint& G     [[ buffer(5) ]],
-    constant const uint& N     [[ buffer(6) ]],
-    uint3 gid [[ thread_position_in_grid ]]
-) {
-    const uint n = gid.x;
-    const uint t = gid.y;
-    const uint g = gid.z;
-    if (n >= N || t >= T_len || g >= G) {
-        return;
-    }
-
-    const size_t base = (size_t(t) * G + g) * N + n;
-    C_packed[(size_t(g) * T_len + t) * N + n] = C_in[base];
-    B_packed[(size_t(g) * N + n) * T_len + t] = B_in[base];
-}
-
-//------------------------------------------------------------------------------
 // Build attention from CB groups + decay computed from prefix
 //------------------------------------------------------------------------------
 
@@ -251,31 +203,58 @@ kernel void ssd_m2_attn_elementwise_kernel(
     constant const uint& T_len [[ buffer(3) ]],
     constant const uint& H     [[ buffer(4) ]],
     constant const uint& G     [[ buffer(5) ]],
-    uint3 gid [[ thread_position_in_grid ]]
+    uint2 tg_pos [[ threadgroup_position_in_grid ]],
+    ushort lid [[ thread_index_in_threadgroup ]]
 ) {
-    const uint j = gid.x;
-    const uint i = gid.y;
-    const uint h = gid.z;
-    if (i >= T_len || j >= T_len || h >= H) {
+    const uint h = tg_pos.x;
+    const uint i = tg_pos.y;
+    if (h >= H || i >= T_len) {
         return;
     }
 
     const uint safe_groups = max(1u, G);
     const uint group_size = max(1u, H / safe_groups);
     const uint g = min(h / group_size, safe_groups - 1u);
+    const float pref_i = prefix[size_t(i) * H + h];
+    const size_t attn_row_base = (size_t(h) * T_len + i) * T_len;
+    const size_t cb_row_base = (size_t(g) * T_len + i) * T_len;
 
-    const size_t attn_idx = (size_t(h) * T_len + i) * T_len + j;
-    const size_t group_idx = (size_t(g) * T_len + i) * T_len + j;
-    if (j > i) {
-        attn[attn_idx] = static_cast<T>(0);
-        return;
+    threadgroup float pref_j_tile[SSD_M2_CHUNK];
+    threadgroup float cb_tile[SSD_M2_CHUNK];
+
+    uint j_start = 0;
+    while (j_start <= i) {
+        const uint remaining = i - j_start + 1;
+        const ushort tile_len = ushort(min(
+            size_t(SSD_M2_CHUNK),
+            size_t(remaining)));
+        const bool lane_active = lid < tile_len;
+
+        if (lane_active) {
+            const uint j = j_start + lid;
+            const size_t pref_idx = size_t(j) * H + h;
+            pref_j_tile[lid] = prefix[pref_idx];
+            const size_t cb_idx = cb_row_base + size_t(j);
+            cb_tile[lid] = float(CB_groups[cb_idx]);
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (lane_active) {
+            const uint j = j_start + lid;
+            const float decay = fast::exp(pref_i - pref_j_tile[lid]);
+            const float cb_val = cb_tile[lid];
+            attn[attn_row_base + size_t(j)] = static_cast<T>(cb_val * decay);
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        j_start += tile_len;
     }
 
-    const float pref_i = prefix[size_t(i) * H + h];
-    const float pref_j = prefix[size_t(j) * H + h];
-    const float decay = fast::exp(pref_i - pref_j);
-    const float cb = float(CB_groups[group_idx]);
-    attn[attn_idx] = static_cast<T>(cb * decay);
+    const uint tg_width = SSD_M2_CHUNK;
+    for (uint j = i + 1 + lid; j < T_len; j += tg_width) {
+        attn[attn_row_base + size_t(j)] = static_cast<T>(0);
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -464,6 +443,33 @@ kernel void ssd_m2_dtxdecay_kernel(
 }
 
 
+//------------------------------------------------------------------------------
+// Pack B/C into batched GEMM layout
+//------------------------------------------------------------------------------
+
+template <typename T>
+kernel void ssd_m2_pack_BC_kernel(
+    device const T* B_in     [[ buffer(0) ]],
+    device const T* C_in     [[ buffer(1) ]],
+    device       T* C_packed [[ buffer(2) ]],
+    device       T* B_packed [[ buffer(3) ]],
+    constant const uint& T_len [[ buffer(4) ]],
+    constant const uint& G     [[ buffer(5) ]],
+    constant const uint& N     [[ buffer(6) ]],
+    uint3 gid [[ thread_position_in_grid ]]
+) {
+    const uint n = gid.x;
+    const uint t = gid.y;
+    const uint g = gid.z;
+    if (n >= N || t >= T_len || g >= G) {
+        return;
+    }
+
+    const size_t base = (size_t(t) * G + g) * N + n;
+    C_packed[(size_t(g) * T_len + t) * N + n] = C_in[base];
+    B_packed[(size_t(g) * N + n) * T_len + t] = B_in[base];
+}
+
 template <typename T>
 kernel void ssd_m2_pack_b_heads_kernel(
     device const T* B_in   [[ buffer(0) ]],
@@ -489,12 +495,13 @@ kernel void ssd_m2_pack_b_heads_kernel(
 
 template <typename T>
 kernel void ssd_m2_pack_c_head_kernel(
-    device const T* C_in   [[ buffer(0) ]],
-    device       T* C_head [[ buffer(1) ]],
-    constant const uint& T_len [[ buffer(2) ]],
-    constant const uint& H     [[ buffer(3) ]],
-    constant const uint& G     [[ buffer(4) ]],
-    constant const uint& N     [[ buffer(5) ]],
+    device const T* C_group [[ buffer(0) ]],
+    device const float* prefix [[ buffer(1) ]],
+    device       T* C_head [[ buffer(2) ]],
+    constant const uint& T_len [[ buffer(3) ]],
+    constant const uint& H     [[ buffer(4) ]],
+    constant const uint& G     [[ buffer(5) ]],
+    constant const uint& N     [[ buffer(6) ]],
     uint3 gid [[ thread_position_in_grid ]]
 ) {
     const uint t = gid.x;
@@ -505,9 +512,11 @@ kernel void ssd_m2_pack_c_head_kernel(
     }
     const uint group_size = max(1u, H / max(1u, G));
     const uint g = min(h / group_size, G - 1u);
-    const size_t src_idx = ((size_t)t * G + g) * N + n;
-    const size_t dst_idx = ((size_t)h * N + n) * T_len + t;
-    C_head[dst_idx] = C_in[src_idx];
+    const size_t src_idx = (size_t(g) * T_len + t) * N + n;
+    const float scale = fast::exp(prefix[size_t(t) * H + h]);
+    const T scaled = static_cast<T>(float(C_group[src_idx]) * scale);
+    const size_t head_idx = ((size_t)h * N + n) * T_len + t;
+    C_head[head_idx] = scaled;
 }
 
 //------------------------------------------------------------------------------
@@ -543,43 +552,6 @@ kernel void ssd_m2_residual_y_kernel(
     y_out[out_idx] = static_cast<T>(acc * gate);
 }
 
-kernel void ssd_m2_state_decay_kernel(
-    device const float* prefix [[ buffer(0) ]],
-    device       float* decay  [[ buffer(1) ]],
-    constant const uint& T_len [[ buffer(2) ]],
-    constant const uint& H     [[ buffer(3) ]],
-    uint2 gid [[ thread_position_in_grid ]]
-) {
-    const uint t = gid.x;
-    const uint h = gid.y;
-    if (t >= T_len || h >= H) {
-        return;
-    }
-    const size_t idx = size_t(t) * H + h;
-    decay[idx] = fast::exp(prefix[idx]);
-}
-
-template <typename T>
-kernel void ssd_m2_scale_c_head_kernel(
-    device const T* c_in   [[ buffer(0) ]],
-    device const float* decay [[ buffer(1) ]],
-    device       T* c_out  [[ buffer(2) ]],
-    constant const uint& T_len [[ buffer(3) ]],
-    constant const uint& H     [[ buffer(4) ]],
-    constant const uint& N     [[ buffer(5) ]],
-    uint3 gid [[ thread_position_in_grid ]]
-) {
-    const uint n = gid.x;
-    const uint t = gid.y;
-    const uint h = gid.z;
-    if (n >= N || t >= T_len || h >= H) {
-        return;
-    }
-    const size_t idx = ((size_t)h * N + n) * T_len + t;
-    const float scale = decay[size_t(t) * H + h];
-    c_out[idx] = static_cast<T>(float(c_in[idx]) * scale);
-}
-
 template <typename T>
 kernel void ssd_m2_accumulate_state_kernel(
     device const T* state_contrib [[ buffer(0) ]],
@@ -607,16 +579,17 @@ kernel void ssd_m2_accumulate_state_kernel(
 // Instantiations
 //------------------------------------------------------------------------------
 
-#define INSTANTIATE_SSD_M2_DT_PREPROCESS(type_name, type) \
-  template [[host_name("ssd_m2_dt_preprocess_" #type_name)]] \
-  kernel void ssd_m2_dt_preprocess_kernel<type>( \
-    device const type*, device float*, \
-    constant const uint&, constant const uint&, uint2);
+#define INSTANTIATE_SSD_M2_DT_PREFIX_CHUNK(type_name, type) \
+  template [[host_name("ssd_m2_dtA_prefix_chunk_kernel_" #type_name)]] \
+  kernel void ssd_m2_dtA_prefix_chunk_kernel<type>( \
+    device const type*, device float*, device float*, \
+    constant const uint&, constant const uint&, constant const uint&, \
+    uint2, ushort);
 
-INSTANTIATE_SSD_M2_DT_PREPROCESS(float, float)
-INSTANTIATE_SSD_M2_DT_PREPROCESS(bfloat, bfloat)
-INSTANTIATE_SSD_M2_DT_PREPROCESS(half, half)
-#undef INSTANTIATE_SSD_M2_DT_PREPROCESS
+INSTANTIATE_SSD_M2_DT_PREFIX_CHUNK(float, float)
+INSTANTIATE_SSD_M2_DT_PREFIX_CHUNK(bfloat, bfloat)
+INSTANTIATE_SSD_M2_DT_PREFIX_CHUNK(half, half)
+#undef INSTANTIATE_SSD_M2_DT_PREFIX_CHUNK
 
 #define INSTANTIATE_SSD_M2_DECAY_LAST(type_name, type) \
   template [[host_name("ssd_m2_decay_last_" #type_name)]] \
@@ -629,22 +602,12 @@ INSTANTIATE_SSD_M2_DECAY_LAST(bfloat, bfloat)
 INSTANTIATE_SSD_M2_DECAY_LAST(half, half)
 #undef INSTANTIATE_SSD_M2_DECAY_LAST
 
-#define INSTANTIATE_SSD_M2_PACK_BC(type_name, type) \
-  template [[host_name("ssd_m2_pack_bc_" #type_name)]] \
-  kernel void ssd_m2_pack_BC_kernel<type>( \
-    device const type*, device const type*, device type*, device type*, \
-    constant const uint&, constant const uint&, constant const uint&, uint3);
-
-INSTANTIATE_SSD_M2_PACK_BC(float, float)
-INSTANTIATE_SSD_M2_PACK_BC(bfloat, bfloat)
-INSTANTIATE_SSD_M2_PACK_BC(half, half)
-#undef INSTANTIATE_SSD_M2_PACK_BC
-
 #define INSTANTIATE_SSD_M2_ATTN(type_name, type) \
   template [[host_name("ssd_m2_attn_" #type_name)]] \
   kernel void ssd_m2_attn_elementwise_kernel<type>( \
     device const type*, device const float*, device type*, \
-    constant const uint&, constant const uint&, constant const uint&, uint3);
+    constant const uint&, constant const uint&, constant const uint&, \
+    uint2, ushort);
 
 INSTANTIATE_SSD_M2_ATTN(float, float)
 INSTANTIATE_SSD_M2_ATTN(bfloat, bfloat)
@@ -699,27 +662,28 @@ INSTANTIATE_SSD_M2_PACK_B_HEADS(bfloat, bfloat)
 INSTANTIATE_SSD_M2_PACK_B_HEADS(half, half)
 #undef INSTANTIATE_SSD_M2_PACK_B_HEADS
 
+#define INSTANTIATE_SSD_M2_PACK_BC(type_name, type) \
+  template [[host_name("ssd_m2_pack_bc_" #type_name)]] \
+  kernel void ssd_m2_pack_BC_kernel<type>( \
+    device const type*, device const type*, device type*, device type*, \
+    constant const uint&, constant const uint&, constant const uint&, uint3);
+
+INSTANTIATE_SSD_M2_PACK_BC(float, float)
+INSTANTIATE_SSD_M2_PACK_BC(bfloat, bfloat)
+INSTANTIATE_SSD_M2_PACK_BC(half, half)
+#undef INSTANTIATE_SSD_M2_PACK_BC
+
 #define INSTANTIATE_SSD_M2_PACK_C_HEAD(type_name, type) \
   template [[host_name("ssd_m2_pack_c_head_kernel_" #type_name)]] \
   kernel void ssd_m2_pack_c_head_kernel<type>( \
-    device const type*, device type*, \
-    constant const uint&, constant const uint&, constant const uint&, constant const uint&, uint3);
+    device const type*, device const float*, device type*, \
+    constant const uint&, constant const uint&, constant const uint&, \
+    constant const uint&, uint3);
 
 INSTANTIATE_SSD_M2_PACK_C_HEAD(float, float)
 INSTANTIATE_SSD_M2_PACK_C_HEAD(bfloat, bfloat)
 INSTANTIATE_SSD_M2_PACK_C_HEAD(half, half)
 #undef INSTANTIATE_SSD_M2_PACK_C_HEAD
-
-#define INSTANTIATE_SSD_M2_SCALE_C(type_name, type) \
-  template [[host_name("ssd_m2_scale_c_head_" #type_name)]] \
-  kernel void ssd_m2_scale_c_head_kernel<type>( \
-    device const type*, device const float*, device type*, \
-    constant const uint&, constant const uint&, constant const uint&, uint3);
-
-INSTANTIATE_SSD_M2_SCALE_C(float, float)
-INSTANTIATE_SSD_M2_SCALE_C(bfloat, bfloat)
-INSTANTIATE_SSD_M2_SCALE_C(half, half)
-#undef INSTANTIATE_SSD_M2_SCALE_C
 
 #define INSTANTIATE_SSD_M2_ACCUM_STATE(type_name, type) \
   template [[host_name("ssd_m2_accumulate_state_" #type_name)]] \
