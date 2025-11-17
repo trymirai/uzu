@@ -30,7 +30,7 @@ pub struct ClassificationForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// Shared buffers (embeddings, RoPE)
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    /// Auxiliary buffers for transformer operations
+    /// Auxiliary buffers for transformer operations and prediction head
     aux_buffers: AuxBuffers,
     /// Optional traces for validation
     pub traces: Option<Rc<RefCell<ClassifierActivationTrace>>>,
@@ -62,6 +62,15 @@ struct AuxBuffers {
     attention_sums: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
     attention_maxs: ArrayCell,
+    // Prediction head buffers
+    /// [batch, model_dim] - pooled output (after mean/CLS pooling)
+    pooled: ArrayCell,
+    /// [batch, model_dim] - dense layer output
+    dense: ArrayCell,
+    /// [batch, model_dim] - normalization output
+    norm: ArrayCell,
+    /// [batch, num_labels] - final logits
+    logits: ArrayCell,
 }
 
 impl AuxBuffers {
@@ -70,6 +79,8 @@ impl AuxBuffers {
         _decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
+        context: &MTLContext,
+        num_labels: usize,
     ) -> Self {
         Self {
             suffix_length,
@@ -157,6 +168,67 @@ impl AuxBuffers {
                     DataType::F32,
                 )
             }),
+            // Initialize prediction head buffers
+            pooled: {
+                let batch_size = 1;
+                let model_dim = model_shape.main_shape(1)[1];
+                let data_type = model_shape.activation_data_type();
+                let buffer_size =
+                    (batch_size * model_dim * data_type.size_in_bytes()) as u64;
+                let buffer = context.device.new_buffer(
+                    buffer_size,
+                    metal::MTLResourceOptions::StorageModeShared,
+                );
+                RefCell::new(unsafe {
+                    MetalArray::new(buffer, &[batch_size, model_dim], data_type)
+                })
+            },
+            dense: {
+                let batch_size = 1;
+                let model_dim = model_shape.main_shape(1)[1];
+                let data_type = model_shape.activation_data_type();
+                let buffer_size =
+                    (batch_size * model_dim * data_type.size_in_bytes()) as u64;
+                let buffer = context.device.new_buffer(
+                    buffer_size,
+                    metal::MTLResourceOptions::StorageModeShared,
+                );
+                RefCell::new(unsafe {
+                    MetalArray::new(buffer, &[batch_size, model_dim], data_type)
+                })
+            },
+            norm: {
+                let batch_size = 1;
+                let model_dim = model_shape.main_shape(1)[1];
+                let data_type = model_shape.activation_data_type();
+                let buffer_size =
+                    (batch_size * model_dim * data_type.size_in_bytes()) as u64;
+                let buffer = context.device.new_buffer(
+                    buffer_size,
+                    metal::MTLResourceOptions::StorageModeShared,
+                );
+                RefCell::new(unsafe {
+                    MetalArray::new(buffer, &[batch_size, model_dim], data_type)
+                })
+            },
+            logits: {
+                let batch_size = 1;
+                let data_type = model_shape.activation_data_type();
+                let buffer_size =
+                    (batch_size * num_labels * data_type.size_in_bytes())
+                        as u64;
+                let buffer = context.device.new_buffer(
+                    buffer_size,
+                    metal::MTLResourceOptions::StorageModeShared,
+                );
+                RefCell::new(unsafe {
+                    MetalArray::new(
+                        buffer,
+                        &[batch_size, num_labels],
+                        data_type,
+                    )
+                })
+            },
         }
     }
 
@@ -191,6 +263,8 @@ impl ClassificationForwardPassState {
             _decoder_config,
             model_shape,
             suffix_length,
+            &context,
+            num_labels,
         );
 
         // Token IDs
@@ -410,9 +484,23 @@ impl ClassificationForwardPassState {
                     .clone(),
             },
 
+            // Prediction head buffers
+            ArrayId::ClassifierPredictionHeadPooled => {
+                self.aux_buffers.pooled.clone()
+            },
+            ArrayId::ClassifierPredictionHeadDense => {
+                self.aux_buffers.dense.clone()
+            },
+            ArrayId::ClassifierPredictionHeadNorm => {
+                self.aux_buffers.norm.clone()
+            },
+            ArrayId::ClassifierPredictionHeadLogits => {
+                self.aux_buffers.logits.clone()
+            },
+
             ArrayId::Logits => {
                 panic!(
-                    "ClassificationForwardPassState doesn't support Logits array - use Main for classifier output"
+                    "ClassificationForwardPassState doesn't support Logits array - use ClassifierPredictionHeadLogits instead"
                 )
             },
             _ => panic!("Unsupported ArrayId for classifier: {:?}", id),

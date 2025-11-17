@@ -4,7 +4,7 @@ use objc2::rc::autoreleasepool;
 
 use super::{
     ClassificationForwardPassState, ClassificationOutput, ClassificationStats,
-    ClassifierContext, PredictionHeadState,
+    ClassifierContext,
 };
 use crate::{
     DataType,
@@ -404,58 +404,24 @@ impl Classifier {
             batch_size, num_labels, model_dim
         );
 
-        // Use dedicated buffers from context - NO REUSE!
-        // Pipeline: pooled → dense_output → norm_output → final_logits
+        // Copy pooled input into ClassifierPredictionHeadPooled buffer
+        {
+            let pooled_arrays =
+                state.arrays(&[ArrayId::ClassifierPredictionHeadPooled]);
+            pooled_arrays[0].borrow_mut().copy_from_array(pooled_input);
+        }
+
         let encoding_params = EncodingParameters::new(false, true, false);
 
-        // STEP 1: Dense layer - use ONLY dedicated buffers (no scratch buffer reuse!)
+        // RUN ALL 4 PREDICTION HEAD OPERATIONS using the single state
+        // Pipeline: ClassifierPredictionHeadPooled → Dense → Norm → Logits
+
+        // Step 1: Dense (Pooled → Dense)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Step 1: Dense (pooled → dense_output)"
+            "[DEBUG] apply_prediction_head - Step 1: Dense (Pooled → Dense)"
         );
-
-        // Map ArrayIds to dedicated buffers
-        // Pipeline: Main (pooled) → Shortcut (dense) → Shortcut (gelu) → MlpFusedUp (norm) → Main (final logits)
-        let mut buffers_map = std::collections::HashMap::new();
-
-        // Main: pooled_input (this is already the pooled_buffer from context)
-        let main_array = unsafe {
-            let pooled_buf = pooled_input.mtl_buffer().to_owned();
-            MetalArray::new(pooled_buf, &[batch_size, model_dim], data_type)
-        };
-        buffers_map.insert(ArrayId::Main, RefCell::new(main_array));
-
-        // Shortcut: dense_output_buffer (for dense output and GELU in-place)
-        let shortcut_array = unsafe {
-            MetalArray::new(
-                self.context.dense_output_buffer.clone(),
-                &[batch_size, model_dim],
-                data_type,
-            )
-        };
-        buffers_map.insert(ArrayId::Shortcut, RefCell::new(shortcut_array));
-
-        // MlpFusedUp: norm_output_buffer (for norm output)
-        let mlp_fused_up_array = unsafe {
-            MetalArray::new(
-                self.context.norm_output_buffer.clone(),
-                &[batch_size, model_dim],
-                data_type,
-            )
-        };
-        buffers_map
-            .insert(ArrayId::MlpFusedUp, RefCell::new(mlp_fused_up_array));
-
-        let mut pred_state = PredictionHeadState::with_buffers(
-            self.context.mtl_context.clone(),
-            buffers_map,
-        );
-
-        // RUN ALL 4 PREDICTION HEAD OPERATIONS
-        // Pipeline: Main → Shortcut → Shortcut → MlpFusedUp → Main
-
-        // Step 1: Dense (Main → Shortcut)
         self.context.prediction_head.dense.encode(
-            &mut pred_state,
+            state,
             &self.context.command_buffer,
             &encoding_params,
         );
@@ -463,12 +429,12 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Step 2: GELU (Shortcut → Shortcut, in-place)
+        // Step 2: GELU (Dense → Dense, in-place)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Step 2: GELU (Shortcut → Shortcut)"
+            "[DEBUG] apply_prediction_head - Step 2: GELU (Dense → Dense)"
         );
         self.context.prediction_head.activation.encode(
-            &mut pred_state,
+            state,
             &self.context.command_buffer,
             &encoding_params,
         );
@@ -476,12 +442,12 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Step 3: Norm (Shortcut → MlpFusedUp)
+        // Step 3: Norm (Dense → Norm)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Step 3: Norm (Shortcut → MlpFusedUp)"
+            "[DEBUG] apply_prediction_head - Step 3: Norm (Dense → Norm)"
         );
         self.context.prediction_head.norm.encode(
-            &mut pred_state,
+            state,
             &self.context.command_buffer,
             &encoding_params,
         );
@@ -489,12 +455,12 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Step 4: Final linear (MlpFusedUp → Main)
+        // Step 4: Final linear (Norm → Logits)
         eprintln!(
-            "[DEBUG] apply_prediction_head - Step 4: Final linear (MlpFusedUp → Main)"
+            "[DEBUG] apply_prediction_head - Step 4: Final linear (Norm → Logits)"
         );
         self.context.prediction_head.final_linear.encode(
-            &mut pred_state,
+            state,
             &self.context.command_buffer,
             &encoding_params,
         );
@@ -502,20 +468,23 @@ impl Classifier {
         self.context.command_buffer.commit_and_continue();
         root.wait_until_completed();
 
-        // Get result from Main buffer (output of final_linear)
-        let main_arrays = pred_state.arrays(&[ArrayId::Main]);
-        let mut main_after = main_arrays[0].borrow_mut();
+        // Get result from ClassifierPredictionHeadLogits buffer
+        let logits_arrays =
+            state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
+        let mut logits_array_ref = logits_arrays[0].borrow_mut();
+
         eprintln!(
-            "[DEBUG] apply_prediction_head - Main array shape after final_linear: {:?}",
+            "[DEBUG] apply_prediction_head - Logits array shape after final_linear: {:?}",
             {
                 use crate::Array;
-                Array::shape(&*main_after)
+                Array::shape(&*logits_array_ref)
             }
         );
+
         // Log linear outputs before sigmoid as f32
         let linear_cpu_buffer = {
             use crate::Array;
-            Array::buffer(&*main_after)
+            Array::buffer(&*logits_array_ref)
         };
         {
             let floats: &[f32] = bytemuck::cast_slice(linear_cpu_buffer);
@@ -526,35 +495,10 @@ impl Classifier {
                 &floats[..to_show]
             );
         }
+
         let linear_output_buffer =
-            unsafe { main_after.mtl_buffer().to_owned() };
-
-        // Copy linear outputs (first num_labels values) into a dedicated logits buffer
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Copying linear outputs to final logits buffer..."
-        );
-        let output_size = batch_size * num_labels;
-        let copy_size_bytes = (output_size * data_type.size_in_bytes()) as u64;
-        let dst_buf = self.context.final_logits_buffer.clone();
-
-        // Reset command buffer for blit copy
-        self.context.reset_command_buffer();
-        let root = self.context.command_buffer.root_command_buffer();
-        let blit = root.new_blit_command_encoder();
-        blit.copy_from_buffer(
-            &linear_output_buffer,
-            0,
-            &dst_buf,
-            0,
-            copy_size_bytes,
-        );
-        blit.end_encoding();
-        drop(main_after);
-
-        // Commit and wait for blit to complete
-        let root_owned = root.to_owned();
-        self.context.command_buffer.commit_and_continue();
-        root_owned.wait_until_completed();
+            unsafe { logits_array_ref.mtl_buffer().to_owned() };
+        drop(logits_array_ref);
 
         // Trace: logits (copy linear outputs to trace buffer)
         if let Some(traces_rc) = state.classifier_traces().cloned() {
@@ -566,12 +510,16 @@ impl Classifier {
             let dst_trace_buf = unsafe { trace_logits.mtl_buffer().to_owned() };
             drop(trace_logits);
             drop(traces_ref);
+
+            let copy_size_bytes =
+                (batch_size * num_labels * data_type.size_in_bytes()) as u64;
+
             // start a fresh command buffer for blit
             self.context.reset_command_buffer();
             let root2 = self.context.command_buffer.root_command_buffer();
             let blit2 = root2.new_blit_command_encoder();
             blit2.copy_from_buffer(
-                &dst_buf,
+                &linear_output_buffer,
                 0,
                 &dst_trace_buf,
                 0,
@@ -589,7 +537,7 @@ impl Classifier {
         // Return linear logits array [batch_size, num_labels]
         let output_array = unsafe {
             MetalArray::new(
-                dst_buf.clone(),
+                linear_output_buffer,
                 &[batch_size, num_labels],
                 data_type,
             )

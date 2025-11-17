@@ -1001,6 +1001,14 @@ impl LLMForwardPassState {
                 self.shared_buffers.borrow().attention_sinks.as_ref()
                     .expect("Attention sinks not initialized")[layer_index].clone()
             },
+
+            // Classifier prediction head buffers (not supported in LLM state)
+            ArrayId::ClassifierPredictionHeadPooled
+            | ArrayId::ClassifierPredictionHeadDense
+            | ArrayId::ClassifierPredictionHeadNorm
+            | ArrayId::ClassifierPredictionHeadLogits => {
+                panic!("Classifier prediction head ArrayIds are not supported in LLMForwardPassState")
+            },
         }
     }
 
@@ -1189,6 +1197,12 @@ pub enum ArrayId {
     MoeScatterPartials,
     MoeScatterBlockBases,
     MoeBlockAlloc,
+
+    // Classifier prediction head buffers
+    ClassifierPredictionHeadPooled,
+    ClassifierPredictionHeadDense,
+    ClassifierPredictionHeadNorm,
+    ClassifierPredictionHeadLogits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -39,8 +39,8 @@ impl PredictionHeadExecutables {
         let data_type: DataType =
             config.dense_config.activation_precision().into();
 
-        // Use DIFFERENT ArrayIds for input/output to avoid in-place operations
-        // Pipeline: Main → Shortcut → MlpFusedUp → MlpHidden → Main
+        // Use dedicated classifier prediction head ArrayIds
+        // Pipeline: Pooled → Dense → Dense (GELU) → Norm → Logits
         let dense = linear_block::<1>(
             &config.dense_config,
             config.use_dense_bias,
@@ -48,8 +48,8 @@ impl PredictionHeadExecutables {
             [model_dim],
             &mtl_context,
             &parameter_tree.subtree("dense").unwrap(),
-            ArrayId::Main,     // Input: pooled vector
-            ArrayId::Shortcut, // Output: dense result
+            ArrayId::ClassifierPredictionHeadPooled, // Input: pooled vector
+            ArrayId::ClassifierPredictionHeadDense,  // Output: dense result
             &compilation_config.descriptor_general,
         );
 
@@ -58,7 +58,7 @@ impl PredictionHeadExecutables {
             &config.activation,
             data_type,
             model_dim,
-            ArrayId::Shortcut, // Input and output: GELU in-place
+            ArrayId::ClassifierPredictionHeadDense, // Input and output: GELU in-place
             &compilation_config,
         );
 
@@ -66,8 +66,8 @@ impl PredictionHeadExecutables {
             &mtl_context,
             data_type,
             config.normalization_config.clone(),
-            ArrayId::Shortcut,   // Input: GELU output
-            ArrayId::MlpFusedUp, // Output: norm result
+            ArrayId::ClassifierPredictionHeadDense, // Input: GELU output
+            ArrayId::ClassifierPredictionHeadNorm,  // Output: norm result
             &parameter_tree.subtree("norm").unwrap(),
         )
         .expect("Failed to create prediction head norm kernel");
@@ -79,8 +79,8 @@ impl PredictionHeadExecutables {
             [num_labels],
             &mtl_context,
             &parameter_tree.subtree("final_linear").unwrap(),
-            ArrayId::MlpFusedUp, // Input: norm output
-            ArrayId::Main,       // Output: final logits
+            ArrayId::ClassifierPredictionHeadNorm, // Input: norm output
+            ArrayId::ClassifierPredictionHeadLogits, // Output: final logits
             &compilation_config.descriptor_general,
         );
 
