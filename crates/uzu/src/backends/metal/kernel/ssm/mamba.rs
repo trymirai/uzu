@@ -608,6 +608,7 @@ impl MambaMixerEncodable {
 fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
     match env::var("UZU_SSM_PREFILL_MODE") {
         Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "seq" | "sequential" | "baseline" => SSDPrefillMode::Sequential,
             "single" | "singlepass" | "single_pass" | "1pass" | "one" => {
                 SSDPrefillMode::SinglePass
             },

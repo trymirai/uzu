@@ -5,9 +5,6 @@ using namespace metal;
 
 constant ushort SSM_PREFILL_CHUNK = 64;
 constant ushort SSM_PREFILL_MAX_STATE = 64;
-constant ushort SSM_PREFILL_TOKENS_PER_LANE = 4;
-constant ushort SSM_PREFILL_STRIP_TOKENS =
-    SSM_PREFILL_CHUNK * SSM_PREFILL_TOKENS_PER_LANE;
 
 struct SILU {
   template <typename T>
@@ -78,9 +75,11 @@ kernel void ssd_prefill_kernel(
     const float d_scalar = float(D[h_idx]);
 
     threadgroup float shared_state[SSM_PREFILL_MAX_STATE];
-    threadgroup float strip_a_shared[SSM_PREFILL_CHUNK];
-    threadgroup float strip_b_shared[
-        SSM_PREFILL_CHUNK * SSM_PREFILL_MAX_STATE];
+    threadgroup float reduction_shared[SSM_PREFILL_CHUNK];
+    threadgroup float scalar_decay;
+    threadgroup float scalar_dt_scaled_input;
+    threadgroup float scalar_gate;
+    threadgroup float scalar_skip;
 
     if (lane < state_dim) {
         const size_t idx = state_base + size_t(lane) * state_inner_stride;
@@ -88,177 +87,39 @@ kernel void ssd_prefill_kernel(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    const size_t strip_tokens = size_t(SSM_PREFILL_STRIP_TOKENS);
-    for (size_t strip_base = 0; strip_base < suffix_len; strip_base += strip_tokens) {
-        const size_t remaining = suffix_len - strip_base;
-        const size_t needed_lanes = (remaining + size_t(SSM_PREFILL_TOKENS_PER_LANE) - 1)
-            / size_t(SSM_PREFILL_TOKENS_PER_LANE);
-        const ushort active_lanes = ushort(
-            min(needed_lanes, size_t(SSM_PREFILL_CHUNK)));
-        const bool lane_active = lane < active_lanes;
-        const size_t lane_offset_tokens =
-            size_t(lane) * size_t(SSM_PREFILL_TOKENS_PER_LANE);
-        const size_t lane_token_base = strip_base + lane_offset_tokens;
-
-        ushort lane_token_count = 0;
-        float decay_cache[SSM_PREFILL_TOKENS_PER_LANE];
-        float dt_cache[SSM_PREFILL_TOKENS_PER_LANE];
-        float gate_cache[SSM_PREFILL_TOKENS_PER_LANE];
-        float skip_cache[SSM_PREFILL_TOKENS_PER_LANE];
-
-        float lane_a = 1.0f;
-        threadgroup float* lane_slot =
-            strip_b_shared + size_t(lane) * SSM_PREFILL_MAX_STATE;
-
-        if (lane_active) {
-            const size_t lane_remaining =
-                min(remaining - lane_offset_tokens,
-                    size_t(SSM_PREFILL_TOKENS_PER_LANE));
-            lane_token_count = ushort(lane_remaining);
-
-            thread float zero_state[SSM_PREFILL_MAX_STATE];
-            for (int s = 0; s < state_dim; ++s) {
-                zero_state[s] = 0.0f;
-            }
-
-            for (ushort t = 0; t < lane_token_count; ++t) {
-                const size_t token = lane_token_base + size_t(t);
-                const size_t x_idx = token * x_token_stride + x_base;
-                const size_t dt_idx = token * dt_token_stride + dt_base;
-                const size_t cb_idx = token * cb_token_stride + cb_group_base;
-
-                const float x_val = float(x[x_idx]);
-                const float dt_val = float(dt[dt_idx]);
-                const float decay_val = float(decay[dt_idx]);
-                const float dt_safe = fmax(dt_val, 1e-6f);
-                const float normalized_x = x_val / dt_safe;
-                const float dt_scaled_input = normalized_x * dt_val;
-
-                decay_cache[t] = decay_val;
-                dt_cache[t] = dt_scaled_input;
-                gate_cache[t] = SILU{}(float(z[x_idx]));
-                skip_cache[t] = d_scalar * x_val;
-
-                for (int s = 0; s < state_dim; ++s) {
-                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
-                    const float b_coeff = float(B[offset]);
-                    zero_state[s] =
-                        decay_val * zero_state[s] + dt_scaled_input * b_coeff;
-                }
-
-                lane_a *= decay_val;
-            }
-
-            for (int s = 0; s < state_dim; ++s) {
-                lane_slot[s] = zero_state[s];
-            }
-        } else {
-            for (int s = 0; s < state_dim; ++s) {
-                lane_slot[s] = 0.0f;
-            }
-        }
-        strip_a_shared[lane] = lane_active ? lane_a : 1.0f;
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        // Up-sweep: build block transforms in-place using Blelloch scan style.
-        for (ushort offset = 1; offset < active_lanes; offset <<= 1) {
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-            const ushort index = ((lane + 1) * offset * 2) - 1;
-            if (lane < active_lanes && index < active_lanes) {
-                const ushort left = index - offset;
-                const float right_a = strip_a_shared[index];
-                const float left_a = strip_a_shared[left];
-                threadgroup float* right_b =
-                    strip_b_shared + size_t(index) * SSM_PREFILL_MAX_STATE;
-                threadgroup const float* left_b =
-                    strip_b_shared + size_t(left) * SSM_PREFILL_MAX_STATE;
-                for (int s = 0; s < state_dim; ++s) {
-                    right_b[s] = right_b[s] + right_a * left_b[s];
-                }
-                strip_a_shared[index] = right_a * left_a;
-            }
+    for (size_t token = 0; token < suffix_len; ++token) {
+        if (lane == 0) {
+            const size_t x_idx = token * x_token_stride + x_base;
+            const size_t dt_idx = token * dt_token_stride + dt_base;
+            scalar_decay = float(decay[dt_idx]);
+            const float x_val = float(x[x_idx]);
+            const float dt_val = float(dt[dt_idx]);
+            const float dt_safe = fmax(dt_val, 1e-6f);
+            const float normalized_x = x_val / dt_safe;
+            scalar_dt_scaled_input = normalized_x * dt_val;
+            scalar_gate = SILU{}(float(z[x_idx]));
+            scalar_skip = d_scalar * x_val;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        if (lane == 0 && active_lanes > 0) {
-            const ushort last = active_lanes - 1;
-            strip_a_shared[last] = 1.0f;
-            threadgroup float* root_b =
-                strip_b_shared + size_t(last) * SSM_PREFILL_MAX_STATE;
-            for (int s = 0; s < state_dim; ++s) {
-                root_b[s] = 0.0f;
-            }
+        float contrib = 0.0f;
+        if (lane < state_dim) {
+            const size_t cb_idx = token * cb_token_stride + cb_group_base
+                + size_t(lane) * cb_state_stride;
+            const float b_coeff = float(B[cb_idx]);
+            const float c_coeff = float(C[cb_idx]);
+            float new_state =
+                scalar_decay * shared_state[lane]
+                + scalar_dt_scaled_input * b_coeff;
+            shared_state[lane] = new_state;
+            contrib = new_state * c_coeff;
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Down-sweep: convert block totals into exclusive prefixes.
-        for (ushort offset = active_lanes >> 1; offset > 0; offset >>= 1) {
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-            const ushort index = ((lane + 1) * offset * 2) - 1;
-            if (lane < active_lanes && index < active_lanes) {
-                const ushort left = index - offset;
-                const float parent_a = strip_a_shared[index];
-                const float child_a = strip_a_shared[left];
-                threadgroup float* parent_b =
-                    strip_b_shared + size_t(index) * SSM_PREFILL_MAX_STATE;
-                threadgroup float* child_b =
-                    strip_b_shared + size_t(left) * SSM_PREFILL_MAX_STATE;
-
-                strip_a_shared[left] = parent_a;
-                const float composed_a = child_a * parent_a;
-                for (int s = 0; s < state_dim; ++s) {
-                    const float parent_val = parent_b[s];
-                    const float child_val = child_b[s];
-                    child_b[s] = parent_val;
-                    parent_b[s] = child_val + child_a * parent_val;
-                }
-                strip_a_shared[index] = composed_a;
-            }
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        if (lane_active) {
-            thread float lane_state[SSM_PREFILL_MAX_STATE];
-            for (int s = 0; s < state_dim; ++s) {
-                lane_state[s] = shared_state[s];
-            }
-            const float prefix_a = strip_a_shared[lane];
-            threadgroup const float* prefix_b =
-                strip_b_shared + size_t(lane) * SSM_PREFILL_MAX_STATE;
-            for (int s = 0; s < state_dim; ++s) {
-                lane_state[s] = prefix_a * lane_state[s] + prefix_b[s];
-            }
-
-            for (ushort t = 0; t < lane_token_count; ++t) {
-                const size_t token = lane_token_base + size_t(t);
-                const float decay_val = decay_cache[t];
-                const float dt_scaled_input = dt_cache[t];
-                const size_t cb_idx =
-                    token * cb_token_stride + cb_group_base;
-
-                for (int s = 0; s < state_dim; ++s) {
-                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
-                    const float b_coeff = float(B[offset]);
-                    lane_state[s] =
-                        decay_val * lane_state[s] + dt_scaled_input * b_coeff;
-                }
-
-                float acc = skip_cache[t];
-                for (int s = 0; s < state_dim; ++s) {
-                    const size_t offset = cb_idx + size_t(s) * cb_state_stride;
-                    const float c_coeff = float(C[offset]);
-                    acc += lane_state[s] * c_coeff;
-                }
-
-                const size_t x_idx = token * x_token_stride + x_base;
-                y[x_idx] = static_cast<T>(acc * gate_cache[t]);
-            }
-
-            if (lane == active_lanes - 1) {
-                for (int s = 0; s < state_dim; ++s) {
-                    shared_state[s] = lane_state[s];
-                }
-            }
+        float dot = threadgroup_cooperative_reduce_sum<SSM_PREFILL_CHUNK>(
+            contrib, reduction_shared, lane);
+        if (lane == 0) {
+            const size_t x_idx = token * x_token_stride + x_base;
+            y[x_idx] = static_cast<T>((scalar_skip + dot) * scalar_gate);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -850,3 +711,113 @@ kernel void ssd_prefill_chunk_apply_kernel<half>(
     constant const uint& head_dim [[ buffer(19) ]],
     uint2 tg_pos [[ threadgroup_position_in_grid ]],
     ushort lane [[ thread_index_in_threadgroup ]]);
+
+
+
+template <typename T>
+kernel void ssd_prefill_kernel_sequential(
+    device const T* x [[ buffer(0) ]],      // (suffix, h, dh)
+    device const T* dt [[ buffer(1) ]],     // (suffix, h)
+    device const T* decay [[ buffer(2) ]],  // (suffix, h)
+    device const T* B [[ buffer(3) ]],      // (suffix, g, n)
+    device const T* C [[ buffer(4) ]],      // (suffix, g, n)
+    device const T* D [[ buffer(5) ]],      // (h)
+    device const T* z [[ buffer(6) ]],      // (suffix, h, dh)
+    device T* state [[ buffer(7) ]],        // (h, dh, n)
+    device T* y [[ buffer(8) ]],            // (suffix, h, dh)
+    constant const size_t& suffix_len [[ buffer(9) ]],
+    constant const int& group_size [[ buffer(10) ]],
+    constant const int& state_size [[ buffer(11) ]],
+    constant const size_t* x_strides [[ buffer(12) ]],
+    constant const size_t* dt_strides [[ buffer(13) ]],
+    constant const size_t* cb_strides [[ buffer(14) ]],
+    constant const size_t* state_strides [[ buffer(15) ]],
+    uint3 tid [[ thread_position_in_grid ]],
+    uint3 grid_dim [[ threads_per_grid ]]
+) {
+    const uint h_idx = tid.x;
+    const uint dh_idx = tid.y;
+    if (h_idx >= grid_dim.x || dh_idx >= grid_dim.y) {
+        return;
+    }
+
+    const uint safe_group = uint(max(group_size, 1));
+    const uint group_idx = h_idx / safe_group;
+    device T* state_row =
+        state + size_t(h_idx) * state_strides[0] + size_t(dh_idx) * state_strides[1];
+
+    for (size_t token = 0; token < suffix_len; ++token) {
+        const size_t x_idx = token * x_strides[0]
+            + size_t(h_idx) * x_strides[1]
+            + size_t(dh_idx) * x_strides[2];
+        const size_t dt_idx =
+            token * dt_strides[0] + size_t(h_idx) * dt_strides[1];
+        const size_t cb_base =
+            token * cb_strides[0] + group_idx * cb_strides[1];
+
+        const T this_x = x[x_idx];
+        const T this_dt = dt[dt_idx];
+        const T this_decay = decay[dt_idx];
+        const T this_D = D[h_idx];
+        const T this_z = SILU{}(z[x_idx]);
+        const float dt_f = fmax(float(this_dt), 1e-6f);
+        const float normalized_x = float(this_x) / dt_f;
+        const T dt_scaled_input = static_cast<T>(normalized_x) * this_dt;
+
+        T acc = T(0);
+        int s = 0;
+        const int vec_bound = (state_size / 4) * 4;
+        for (; s < vec_bound; s += 4) {
+            const size_t state_idx = s * state_strides[2];
+            const size_t cb_idx = cb_base + s * cb_strides[2];
+            auto prev_state = *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
+            auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(B + cb_idx);
+            auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(C + cb_idx);
+            vec<T, 4> new_state = prev_state * this_decay + b_vec * dt_scaled_input;
+            *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx) = new_state;
+            vec<T, 4> prod = new_state * c_vec;
+            acc += prod.x + prod.y + prod.z + prod.w;
+        }
+        for (; s < state_size; ++s) {
+            const size_t state_idx = s * state_strides[2];
+            const T prev_state = state_row[state_idx];
+            const size_t cb_idx = cb_base + s * cb_strides[2];
+            const T new_state = prev_state * this_decay + B[cb_idx] * dt_scaled_input;
+            state_row[state_idx] = new_state;
+            acc += new_state * C[cb_idx];
+        }
+
+        acc += this_D * this_x;
+        acc *= this_z;
+        y[x_idx] = acc;
+    }
+}
+
+#define instantiate_ssd_prefill_kernel_sequential(type_name, type)    \
+  template [[host_name("ssd_prefill_kernel_sequential_" #type_name)]] \
+  kernel void ssd_prefill_kernel_sequential<type>(                    \
+    device const type* x [[ buffer(0) ]],                    \
+    device const type* dt [[ buffer(1) ]],                   \
+    device const type* decay [[ buffer(2) ]],                \
+    device const type* B [[ buffer(3) ]],                    \
+    device const type* C [[ buffer(4) ]],                    \
+    device const type* D [[ buffer(5) ]],                    \
+    device const type* z [[ buffer(6) ]],                    \
+    device type* state [[ buffer(7) ]],                      \
+    device type* y [[ buffer(8) ]],                          \
+    constant const size_t& suffix_len [[ buffer(9) ]],       \
+    constant const int& group_size [[ buffer(10) ]],         \
+    constant const int& state_size [[ buffer(11) ]],         \
+    constant const size_t* x_strides [[ buffer(12) ]],       \
+    constant const size_t* dt_strides [[ buffer(13) ]],      \
+    constant const size_t* cb_strides [[ buffer(14) ]],      \
+    constant const size_t* state_strides [[ buffer(15) ]],   \
+    uint3 tid [[ thread_position_in_grid ]],                 \
+    uint3 grid_dim [[ threads_per_grid ]]                    \
+  );
+
+instantiate_ssd_prefill_kernel_sequential(float, float);
+instantiate_ssd_prefill_kernel_sequential(bfloat, bfloat);
+instantiate_ssd_prefill_kernel_sequential(half, half);
+
+#undef instantiate_ssd_prefill_kernel_sequential

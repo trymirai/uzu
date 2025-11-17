@@ -1,5 +1,7 @@
 #![cfg(target_os = "macos")]
 
+use std::mem::size_of;
+
 use metal::MTLResourceOptions;
 use uzu::backends::metal::kernel::ssm::conv1d_scan::{
     Conv1dScanArguments, Conv1dScanKernel,
@@ -211,169 +213,12 @@ impl SSDPrefillFixture {
     }
 }
 
-#[test]
-fn ssd_prefill_single_pass_is_deterministic() {
-    let Some(ctx) = create_context() else {
-        eprintln!("Skipping SSD prefill determinism test: no Metal device");
-        return;
-    };
-    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
-
-    let fixture = SSDPrefillFixture::new();
-    let suffix_len = fixture.suffix_len;
-    let num_heads = fixture.num_heads;
-    let head_dim = fixture.head_dim;
-    let state_dim = fixture.state_dim;
-    let group_size = fixture.group_size;
-    let state_size = state_dim as i32;
-    let chunk_count = fixture.chunk_count;
-    let total_pairs = fixture.total_pairs;
-    let total_x = fixture.total_x;
-    let total_dt = fixture.total_dt;
-    let total_cb = fixture.total_cb;
-    let total_state = fixture.total_state;
-
-    let device = &ctx.device;
-    let x_buf = device.new_buffer_with_data(
-        fixture.x_data.as_ptr() as *const _,
-        (total_x * 4) as u64,
-        STORAGE_MODE,
-    );
-    let dt_buf = device.new_buffer_with_data(
-        fixture.dt_data.as_ptr() as *const _,
-        (total_dt * 4) as u64,
-        STORAGE_MODE,
-    );
-    let decay_buf = device.new_buffer_with_data(
-        fixture.decay_data.as_ptr() as *const _,
-        (total_dt * 4) as u64,
-        STORAGE_MODE,
-    );
-    let b_buf = device.new_buffer_with_data(
-        fixture.b_data.as_ptr() as *const _,
-        (total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let c_buf = device.new_buffer_with_data(
-        fixture.c_data.as_ptr() as *const _,
-        (total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let d_buf = device.new_buffer_with_data(
-        fixture.d_data.as_ptr() as *const _,
-        (num_heads * 4) as u64,
-        STORAGE_MODE,
-    );
-    let z_buf = device.new_buffer_with_data(
-        fixture.z_data.as_ptr() as *const _,
-        (total_x * 4) as u64,
-        STORAGE_MODE,
-    );
-
-    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
-    let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
-
-    // Dummy chunk buffers (unused in single-pass mode but required by API).
-    let chunk_a_len = chunk_count * total_pairs;
-    let chunk_b_len = chunk_a_len * state_dim;
-    let chunk_prefix_len = chunk_count * total_pairs * state_dim;
-    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
-    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
-    let chunk_prefix_buf =
-        device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
-
-    let x_strides = fixture.x_strides;
-    let dt_strides = fixture.dt_strides;
-    let cb_strides = fixture.cb_strides;
-    let state_strides = fixture.state_strides;
-
-    let mut results = Vec::new();
-
-    for _run in 0..2 {
-        write_buffer(&state_buf, &fixture.state_init);
-        zero_buffer(&y_buf);
-        zero_buffer(&chunk_a_buf);
-        zero_buffer(&chunk_b_buf);
-        zero_buffer(&chunk_prefix_buf);
-
-        let args = SSDPrefillArguments {
-            x: &x_buf,
-            dt: &dt_buf,
-            decay: &decay_buf,
-            b: &b_buf,
-            c: &c_buf,
-            d: &d_buf,
-            z: &z_buf,
-            state: &state_buf,
-            y: &y_buf,
-            chunk_a: &chunk_a_buf,
-            chunk_b: &chunk_b_buf,
-            chunk_prefix: &chunk_prefix_buf,
-            suffix_len,
-            group_size,
-            state_size,
-            x_strides,
-            dt_strides,
-            cb_strides,
-            state_strides,
-            channels: num_heads,
-            head_dim,
-        };
-
-        let command_buffer = ctx.command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        kernel.encode(encoder, args, SSDPrefillMode::SinglePass).unwrap();
-        encoder.end_encoding();
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
-
-        let y_vec = read_buffer(&y_buf, total_x);
-        let state_vec = read_buffer(&state_buf, total_state);
-        results.push((y_vec, state_vec));
-    }
-
-    let mut max_diff = 0.0f32;
-    for (idx, (lhs, rhs)) in results[0].0.iter().zip(&results[1].0).enumerate()
-    {
-        if lhs != rhs {
-            let diff = (lhs - rhs).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-            println!("y mismatch at {}: {} vs {}", idx, lhs, rhs);
-            break;
-        }
-    }
-    for (idx, (lhs, rhs)) in results[0].1.iter().zip(&results[1].1).enumerate()
-    {
-        if lhs != rhs {
-            let diff = (lhs - rhs).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-            println!("state mismatch at {}: {} vs {}", idx, lhs, rhs);
-            break;
-        }
-    }
-    assert_eq!(
-        results[0].0, results[1].0,
-        "Prefill outputs differ (max diff {max_diff})"
-    );
-    assert_eq!(
-        results[0].1, results[1].1,
-        "Prefill states differ (max diff {max_diff})"
-    );
-}
-
-#[test]
-fn ssd_prefill_single_pass_matches_cpu_reference() {
-    let Some(ctx) = create_context() else {
-        eprintln!("Skipping SSD prefill reference test: no Metal device");
-        return;
-    };
-    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
-    let fixture = SSDPrefillFixture::new();
-
+fn run_prefill_kernel_mode(
+    ctx: &MTLContext,
+    kernel: &SSDPrefillKernel,
+    fixture: &SSDPrefillFixture,
+    mode: SSDPrefillMode,
+) -> (Vec<f32>, Vec<f32>) {
     let device = &ctx.device;
     let x_buf = device.new_buffer_with_data(
         fixture.x_data.as_ptr() as *const _,
@@ -412,14 +257,17 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
     );
     let state_buf =
         device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
-    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+    let y_buf =
+        device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
 
     let chunk_a_len = fixture.chunk_count * fixture.total_pairs;
     let chunk_b_len = chunk_a_len * fixture.state_dim;
     let chunk_prefix_len =
         fixture.chunk_count * fixture.total_pairs * fixture.state_dim;
-    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
-    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
+    let chunk_a_buf =
+        device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
+    let chunk_b_buf =
+        device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
     let chunk_prefix_buf =
         device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
 
@@ -455,13 +303,134 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 
     let command_buffer = ctx.command_queue.new_command_buffer();
     let encoder = command_buffer.new_compute_command_encoder();
-    kernel.encode(encoder, args, SSDPrefillMode::SinglePass).unwrap();
+    kernel.encode(encoder, args, mode).unwrap();
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    let y_gpu = read_buffer(&y_buf, fixture.total_x);
-    let state_gpu = read_buffer(&state_buf, fixture.total_state);
+    let y_vec = read_buffer(&y_buf, fixture.total_x);
+    let state_vec = read_buffer(&state_buf, fixture.total_state);
+    (y_vec, state_vec)
+}
+
+fn run_conv_scan_once(
+    ctx: &MTLContext,
+    kernel: &Conv1dScanKernel,
+    suffix_len: usize,
+    channels: usize,
+    kernel_size: i32,
+    tap_count: usize,
+    x_data: &[f32],
+    w_data: &[f32],
+    b_data: &[f32],
+    state_init: &[f32],
+    use_scratch: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let device = &ctx.device;
+    let total_x = suffix_len * channels;
+    let total_w = channels * kernel_size as usize;
+    let total_state = channels * tap_count;
+
+    let x_buf = device.new_buffer_with_data(
+        x_data.as_ptr() as *const _,
+        (total_x * size_of::<f32>()) as u64,
+        STORAGE_MODE,
+    );
+    let w_buf = device.new_buffer_with_data(
+        w_data.as_ptr() as *const _,
+        (total_w * size_of::<f32>()) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        b_data.as_ptr() as *const _,
+        (channels * size_of::<f32>()) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf =
+        device.new_buffer((total_state * size_of::<f32>()) as u64, STORAGE_MODE);
+    let y_buf =
+        device.new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
+    let scratch_buf = if use_scratch && tap_count > 0 {
+        Some(device.new_buffer(
+            (total_state * size_of::<f32>()) as u64,
+            STORAGE_MODE,
+        ))
+    } else {
+        None
+    };
+
+    write_buffer(&state_buf, state_init);
+    zero_buffer(&y_buf);
+    if let Some(ref scratch) = scratch_buf {
+        zero_buffer(scratch);
+    }
+
+    let args = Conv1dScanArguments {
+        x: &x_buf,
+        w: &w_buf,
+        b: Some(&b_buf),
+        state_in: &state_buf,
+        y: &y_buf,
+        state_out: scratch_buf.as_ref().unwrap_or(&state_buf),
+        suffix_len,
+        kernel_size,
+        row_stride: channels,
+        state_stride: tap_count,
+        channels,
+    };
+
+    let command_buffer = ctx.command_queue.new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    kernel.encode(encoder, args).unwrap();
+    encoder.end_encoding();
+
+    if let Some(ref scratch) = scratch_buf {
+        let bytes = (channels * tap_count * size_of::<f32>()) as u64;
+        if bytes > 0 {
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(scratch, 0, &state_buf, 0, bytes);
+            blit.end_encoding();
+        }
+    }
+
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    let y_vec = read_buffer(&y_buf, total_x);
+    let state_vec = read_buffer(&state_buf, total_state);
+    (y_vec, state_vec)
+}
+
+fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping SSD prefill determinism test: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let fixture = SSDPrefillFixture::new();
+
+    let run_a = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+    let run_b = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+
+    assert_eq!(
+        run_a.0, run_b.0,
+        "Prefill outputs differ in {:?} mode",
+        mode
+    );
+    assert_eq!(
+        run_a.1, run_b.1,
+        "Prefill states differ in {:?} mode",
+        mode
+    );
+}
+
+fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping SSD prefill reference test: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
         fixture.suffix_len,
@@ -483,6 +452,9 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
         fixture.state_strides,
     );
 
+    let (y_gpu, state_gpu) =
+        run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+
     let tolerance = 5e-5f32;
     let mut max_y_diff = 0.0f32;
     let mut max_y_idx = 0usize;
@@ -495,7 +467,8 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
     }
     assert!(
         max_y_diff <= tolerance,
-        "Prefill outputs diverge at idx {max_y_idx}: metal={} cpu={} (diff {max_y_diff})",
+        "Prefill outputs diverge in {:?} mode at idx {max_y_idx}: metal={} cpu={} (diff {max_y_diff})",
+        mode,
         y_gpu[max_y_idx],
         y_ref[max_y_idx]
     );
@@ -511,10 +484,43 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
     }
     assert!(
         max_state_diff <= tolerance,
-        "Prefill states diverge at idx {max_state_idx}: metal={} cpu={} (diff {max_state_diff})",
+        "Prefill states diverge in {:?} mode at idx {max_state_idx}: metal={} cpu={} (diff {max_state_diff})",
+        mode,
         state_gpu[max_state_idx],
         state_ref[max_state_idx]
     );
+}
+
+#[test]
+fn ssd_prefill_sequential_is_deterministic() {
+    assert_deterministic_for_mode(SSDPrefillMode::Sequential);
+}
+
+#[test]
+fn ssd_prefill_single_pass_is_deterministic() {
+    assert_deterministic_for_mode(SSDPrefillMode::SinglePass);
+}
+
+#[test]
+#[ignore = "Multi-pass kernels still under investigation for determinism"]
+fn ssd_prefill_multi_pass_is_deterministic() {
+    assert_deterministic_for_mode(SSDPrefillMode::MultiPass);
+}
+
+#[test]
+fn ssd_prefill_sequential_matches_cpu_reference() {
+    assert_matches_cpu_reference(SSDPrefillMode::Sequential);
+}
+
+#[test]
+fn ssd_prefill_single_pass_matches_cpu_reference() {
+    assert_matches_cpu_reference(SSDPrefillMode::SinglePass);
+}
+
+#[test]
+#[ignore = "Multi-pass kernels still under investigation for determinism"]
+fn ssd_prefill_multi_pass_matches_cpu_reference() {
+    assert_matches_cpu_reference(SSDPrefillMode::MultiPass);
 }
 
 #[test]
@@ -546,63 +552,34 @@ fn conv1d_scan_is_deterministic() {
     let state_init: Vec<f32> =
         (0..total_state).map(|i| ((i % 23) as f32) * 0.02 - 0.1).collect();
 
-    let device = &ctx.device;
-    let x_buf = device.new_buffer_with_data(
-        x_data.as_ptr() as *const _,
-        (total_x * 4) as u64,
-        STORAGE_MODE,
+    let use_scratch = tap_count > 0 && suffix_len > 1;
+    let first = run_conv_scan_once(
+        &ctx,
+        &kernel,
+        suffix_len,
+        channels,
+        kernel_size,
+        tap_count,
+        &x_data,
+        &w_data,
+        &b_data,
+        &state_init,
+        use_scratch,
     );
-    let w_buf = device.new_buffer_with_data(
-        w_data.as_ptr() as *const _,
-        (channels * kernel_size as usize * 4) as u64,
-        STORAGE_MODE,
+    let second = run_conv_scan_once(
+        &ctx,
+        &kernel,
+        suffix_len,
+        channels,
+        kernel_size,
+        tap_count,
+        &x_data,
+        &w_data,
+        &b_data,
+        &state_init,
+        use_scratch,
     );
-    let b_buf = device.new_buffer_with_data(
-        b_data.as_ptr() as *const _,
-        (channels * 4) as u64,
-        STORAGE_MODE,
-    );
-    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
-    let conv_state_out_buf =
-        device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
-    let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
 
-    let row_stride = channels;
-    let state_stride = tap_count;
-
-    let mut results = Vec::new();
-
-    for _run in 0..2 {
-        write_buffer(&state_buf, &state_init);
-        zero_buffer(&conv_state_out_buf);
-        zero_buffer(&y_buf);
-
-        let args = Conv1dScanArguments {
-            x: &x_buf,
-            w: &w_buf,
-            b: Some(&b_buf),
-            state_in: &state_buf,
-            y: &y_buf,
-            state_out: &conv_state_out_buf,
-            suffix_len,
-            kernel_size,
-            row_stride,
-            state_stride,
-            channels,
-        };
-
-        let command_buffer = ctx.command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        kernel.encode(encoder, args).unwrap();
-        encoder.end_encoding();
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
-
-        let y_vec = read_buffer(&y_buf, total_x);
-        let state_vec = read_buffer(&conv_state_out_buf, total_state);
-        results.push((y_vec, state_vec));
-    }
-
-    assert_eq!(results[0].0, results[1].0, "Conv outputs differ");
-    assert_eq!(results[0].1, results[1].1, "Conv states differ");
+    assert_eq!(first.0, second.0, "Conv outputs differ");
+    assert_eq!(first.1, second.1, "Conv states differ");
 }

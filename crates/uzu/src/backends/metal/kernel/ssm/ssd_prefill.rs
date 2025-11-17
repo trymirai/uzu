@@ -14,11 +14,13 @@ const SSD_PREFILL_STATE_THREADS: u64 = 64;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {
+    Sequential,
     SinglePass,
     MultiPass,
 }
 
 pub struct SSDPrefillKernel {
+    sequential: MTLComputePipelineState,
     single_pass: MTLComputePipelineState,
     chunk_transform: MTLComputePipelineState,
     chunk_scan: MTLComputePipelineState,
@@ -54,6 +56,8 @@ impl SSDPrefillKernel {
         context: &MTLContext,
         data_type: KernelDataType,
     ) -> Result<Self, SSMKernelError> {
+        let sequential_name =
+            format!("ssd_prefill_kernel_sequential_{}", fn_suffix(data_type));
         let single_name =
             format!("ssd_prefill_kernel_{}", fn_suffix(data_type));
         let transform_name = format!(
@@ -64,6 +68,9 @@ impl SSDPrefillKernel {
             format!("ssd_prefill_chunk_scan_kernel_{}", fn_suffix(data_type));
         let apply_name =
             format!("ssd_prefill_chunk_apply_kernel_{}", fn_suffix(data_type));
+        let sequential = context
+            .compute_pipeline_state(&sequential_name, None)
+            .map_err(SSMKernelError::MetalError)?;
         let single_pass = context
             .compute_pipeline_state(&single_name, None)
             .map_err(SSMKernelError::MetalError)?;
@@ -77,6 +84,7 @@ impl SSDPrefillKernel {
             .compute_pipeline_state(&apply_name, None)
             .map_err(SSMKernelError::MetalError)?;
         Ok(Self {
+            sequential,
             single_pass,
             chunk_transform,
             chunk_scan,
@@ -91,6 +99,9 @@ impl SSDPrefillKernel {
         mode: SSDPrefillMode,
     ) -> Result<(), SSMKernelError> {
         match mode {
+            SSDPrefillMode::Sequential => {
+                self.encode_sequential(compute_encoder, &args)
+            },
             SSDPrefillMode::SinglePass => {
                 self.encode_single(compute_encoder, &args)
             },
@@ -98,6 +109,31 @@ impl SSDPrefillKernel {
                 self.encode_multi(compute_encoder, &args)
             },
         }
+    }
+
+    fn encode_sequential(
+        &self,
+        compute_encoder: &ComputeCommandEncoderRef,
+        args: &SSDPrefillArguments,
+    ) -> Result<(), SSMKernelError> {
+        if args.channels == 0 || args.head_dim == 0 || args.suffix_len == 0 {
+            return Ok(());
+        }
+        compute_encoder.set_compute_pipeline_state(&self.sequential);
+        self.bind_common_buffers(compute_encoder, args);
+        let threads_per_threadgroup = MTLSize {
+            width: 32,
+            height: 32,
+            depth: 1,
+        };
+        let total_threads = MTLSize {
+            width: args.channels as u64,
+            height: args.head_dim as u64,
+            depth: 1,
+        };
+        compute_encoder
+            .dispatch_threads(total_threads, threads_per_threadgroup);
+        Ok(())
     }
 
     fn encode_single(
@@ -109,6 +145,40 @@ impl SSDPrefillKernel {
             return Ok(());
         }
         compute_encoder.set_compute_pipeline_state(&self.single_pass);
+        self.bind_common_buffers(compute_encoder, args);
+        let channels = args.channels as u32;
+        let head_dim = args.head_dim as u32;
+        compute_encoder.set_bytes(
+            16,
+            size_of::<u32>() as u64,
+            &channels as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            17,
+            size_of::<u32>() as u64,
+            &head_dim as *const u32 as *const _,
+        );
+        let threads_per_threadgroup = MTLSize {
+            width: SSD_PREFILL_THREADGROUP_WIDTH,
+            height: 1,
+            depth: 1,
+        };
+        let pair_count = args.channels as u64 * args.head_dim as u64;
+        let total_threads = MTLSize {
+            width: pair_count * SSD_PREFILL_THREADGROUP_WIDTH,
+            height: 1,
+            depth: 1,
+        };
+        compute_encoder
+            .dispatch_threads(total_threads, threads_per_threadgroup);
+        Ok(())
+    }
+
+    fn bind_common_buffers(
+        &self,
+        compute_encoder: &ComputeCommandEncoderRef,
+        args: &SSDPrefillArguments,
+    ) {
         compute_encoder.set_buffer(0, Some(args.x), 0);
         compute_encoder.set_buffer(1, Some(args.dt), 0);
         compute_encoder.set_buffer(2, Some(args.decay), 0);
@@ -153,32 +223,6 @@ impl SSDPrefillKernel {
             (3 * size_of::<usize>()) as u64,
             args.state_strides.as_ptr() as *const _,
         );
-        let channels = args.channels as u32;
-        let head_dim = args.head_dim as u32;
-        compute_encoder.set_bytes(
-            16,
-            size_of::<u32>() as u64,
-            &channels as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            17,
-            size_of::<u32>() as u64,
-            &head_dim as *const u32 as *const _,
-        );
-        let threads_per_threadgroup = MTLSize {
-            width: SSD_PREFILL_THREADGROUP_WIDTH,
-            height: 1,
-            depth: 1,
-        };
-        let pair_count = args.channels as u64 * args.head_dim as u64;
-        let total_threads = MTLSize {
-            width: pair_count * SSD_PREFILL_THREADGROUP_WIDTH,
-            height: 1,
-            depth: 1,
-        };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
-        Ok(())
     }
 
     fn encode_multi(
