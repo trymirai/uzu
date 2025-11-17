@@ -325,17 +325,25 @@ fn run_conv_scan_once(
     b_data: &[f32],
     state_init: &[f32],
     use_scratch: bool,
+    alias_io: bool,
 ) -> (Vec<f32>, Vec<f32>) {
     let device = &ctx.device;
     let total_x = suffix_len * channels;
     let total_w = channels * kernel_size as usize;
     let total_state = channels * tap_count;
 
-    let x_buf = device.new_buffer_with_data(
-        x_data.as_ptr() as *const _,
-        (total_x * size_of::<f32>()) as u64,
-        STORAGE_MODE,
-    );
+    let y_buf = if alias_io {
+        device.new_buffer_with_data(
+            x_data.as_ptr() as *const _,
+            (total_x * size_of::<f32>()) as u64,
+            STORAGE_MODE,
+        )
+    } else {
+        let buf =
+            device.new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
+        zero_buffer(&buf);
+        buf
+    };
     let w_buf = device.new_buffer_with_data(
         w_data.as_ptr() as *const _,
         (total_w * size_of::<f32>()) as u64,
@@ -348,8 +356,6 @@ fn run_conv_scan_once(
     );
     let state_buf =
         device.new_buffer((total_state * size_of::<f32>()) as u64, STORAGE_MODE);
-    let y_buf =
-        device.new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
     let scratch_buf = if use_scratch && tap_count > 0 {
         Some(device.new_buffer(
             (total_state * size_of::<f32>()) as u64,
@@ -360,16 +366,36 @@ fn run_conv_scan_once(
     };
 
     write_buffer(&state_buf, state_init);
-    zero_buffer(&y_buf);
     if let Some(ref scratch) = scratch_buf {
         zero_buffer(scratch);
     }
 
+    let padded_len = tap_count + suffix_len;
+    let padded_buf = device.new_buffer(
+        (padded_len * channels * size_of::<f32>()) as u64,
+        STORAGE_MODE,
+    );
+    {
+        let mut host = vec![0.0f32; padded_len * channels];
+        for tap in 0..tap_count {
+            for ch in 0..channels {
+                host[tap * channels + ch] =
+                    state_init[ch * tap_count + tap];
+            }
+        }
+        for token in 0..suffix_len {
+            for ch in 0..channels {
+                host[(tap_count + token) * channels + ch] =
+                    x_data[token * channels + ch];
+            }
+        }
+        write_buffer(&padded_buf, &host);
+    }
+
     let args = Conv1dScanArguments {
-        x: &x_buf,
+        padded: &padded_buf,
         w: &w_buf,
         b: Some(&b_buf),
-        state_in: &state_buf,
         y: &y_buf,
         state_out: scratch_buf.as_ref().unwrap_or(&state_buf),
         suffix_len,
@@ -553,33 +579,44 @@ fn conv1d_scan_is_deterministic() {
         (0..total_state).map(|i| ((i % 23) as f32) * 0.02 - 0.1).collect();
 
     let use_scratch = tap_count > 0 && suffix_len > 1;
-    let first = run_conv_scan_once(
-        &ctx,
-        &kernel,
-        suffix_len,
-        channels,
-        kernel_size,
-        tap_count,
-        &x_data,
-        &w_data,
-        &b_data,
-        &state_init,
-        use_scratch,
-    );
-    let second = run_conv_scan_once(
-        &ctx,
-        &kernel,
-        suffix_len,
-        channels,
-        kernel_size,
-        tap_count,
-        &x_data,
-        &w_data,
-        &b_data,
-        &state_init,
-        use_scratch,
-    );
 
-    assert_eq!(first.0, second.0, "Conv outputs differ");
-    assert_eq!(first.1, second.1, "Conv states differ");
+    for &alias_io in &[false, true] {
+        let first = run_conv_scan_once(
+            &ctx,
+            &kernel,
+            suffix_len,
+            channels,
+            kernel_size,
+            tap_count,
+            &x_data,
+            &w_data,
+            &b_data,
+            &state_init,
+            use_scratch,
+            alias_io,
+        );
+        let second = run_conv_scan_once(
+            &ctx,
+            &kernel,
+            suffix_len,
+            channels,
+            kernel_size,
+            tap_count,
+            &x_data,
+            &w_data,
+            &b_data,
+            &state_init,
+            use_scratch,
+            alias_io,
+        );
+
+        assert_eq!(
+            first.0, second.0,
+            "Conv outputs differ (alias_io={alias_io})"
+        );
+        assert_eq!(
+            first.1, second.1,
+            "Conv states differ (alias_io={alias_io})"
+        );
+    }
 }

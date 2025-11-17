@@ -3,7 +3,8 @@ use std::{env, rc::Rc};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
-    Conv1dScanArguments, Conv1dScanKernel, DtDecayArguments, DtDecayKernel,
+    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
+    DtDecayArguments, DtDecayKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
     SSDUpdateKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
     SplitInProjArguments, SplitInProjKernel,
@@ -21,7 +22,6 @@ use crate::{
         kernel::TensorAddBias,
     },
     config::{DecoderLayerType, mamba::Mamba2Config},
-    device::array::Array,
     parameters::ParameterTree,
 };
 
@@ -297,8 +297,6 @@ impl MambaMixerEncodable {
         ]);
         let mut conv_inputs = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
-        let state_dtype_size = conv_state.data_type().size_in_bytes();
-        let state_shape = conv_state.shape().to_vec();
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let mut weight_storage = self.conv_weight.clone();
@@ -310,30 +308,53 @@ impl MambaMixerEncodable {
 
         let conv_dim = self.config.conv_dim();
         let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
         let state_stride = self.config.kernel_size.saturating_sub(1);
-        let use_scratch = state_stride > 0 && suffix_length > 1;
-        let scratch = if use_scratch {
-            state.conv_state_scratch(self.layer_index)
+        drop(conv_state);
+
+        let padded_buf = if state_stride > 0 {
+            let array = state
+                .conv_padded_buffer()
+                .expect("Missing conv padded buffer");
+            let mut borrow = array.borrow_mut();
+            let buf = unsafe { borrow.mtl_buffer().to_owned() };
+            drop(borrow);
+
+            {
+                let pack_encoder = cmd.new_compute_command_encoder();
+                self.conv_scan
+                    .encode_pack(
+                        &pack_encoder,
+                        Conv1dPackArguments {
+                            state_in: &state_buf,
+                            x: &input_buf,
+                            padded: &buf,
+                            state_stride,
+                            row_stride: conv_dim,
+                            suffix_len: suffix_length,
+                            channels: conv_dim,
+                        },
+                    )
+                    .expect("Failed to encode conv pack kernel");
+                pack_encoder.end_encoding();
+            }
+
+            Some(buf)
         } else {
             None
         };
-        let tmp_state_buf = scratch.as_ref().map(|cell| {
-            let mut tmp = cell.borrow_mut();
-            unsafe { tmp.mtl_buffer().to_owned() }
-        });
-        drop(conv_state);
 
+        let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
+
+        let compute = cmd.new_compute_command_encoder();
         self.conv_scan
             .encode(
                 &compute,
                 Conv1dScanArguments {
-                    x: &input_buf,
+                    padded: conv_source,
                     w: &weight_buf,
                     b: bias_buf.as_ref(),
-                    state_in: &state_buf,
                     y: &input_buf,
-                    state_out: tmp_state_buf.as_ref().unwrap_or(&state_buf),
+                    state_out: &state_buf,
                     suffix_len: suffix_length,
                     kernel_size: self.config.kernel_size as i32,
                     row_stride: conv_dim,
@@ -343,13 +364,6 @@ impl MambaMixerEncodable {
             )
             .expect("Failed to encode conv scan kernel");
         compute.end_encoding();
-
-        if let Some(out_buf) = tmp_state_buf {
-            let bytes = (state_shape[0] * state_stride) * state_dtype_size;
-            let blit = cmd.new_blit_command_encoder();
-            blit.copy_from_buffer(&out_buf, 0, &state_buf, 0, bytes as u64);
-            blit.end_encoding();
-        }
     }
 
     fn split_conv_outputs(

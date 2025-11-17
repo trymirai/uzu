@@ -26,6 +26,7 @@ pub struct ModelShape {
     max_mamba_head_dim: usize,
     max_mamba_conv_dim: usize,
     max_mamba_state_dim: usize,
+    max_mamba_kernel_size: usize,
 }
 
 impl ModelShape {
@@ -59,9 +60,11 @@ impl ModelShape {
         let mut max_mamba_head_dim = 0;
         let mut max_mamba_conv_dim = 0;
         let mut max_mamba_state_dim = 0;
+        let mut max_mamba_kernel_size = 0;
         for layer in layer_types.iter() {
             if let DecoderLayerType::StateSpace {
                 conv_dim,
+                kernel_size,
                 state_dim,
                 num_heads,
                 num_groups,
@@ -74,6 +77,8 @@ impl ModelShape {
                 max_mamba_head_dim = max_mamba_head_dim.max(*head_dim);
                 max_mamba_conv_dim = max_mamba_conv_dim.max(*conv_dim);
                 max_mamba_state_dim = max_mamba_state_dim.max(*state_dim);
+                max_mamba_kernel_size =
+                    max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
         Self {
@@ -97,6 +102,7 @@ impl ModelShape {
             max_mamba_head_dim,
             max_mamba_conv_dim,
             max_mamba_state_dim,
+            max_mamba_kernel_size,
         }
     }
 
@@ -383,11 +389,31 @@ impl ModelShape {
         }
     }
 
+    pub fn max_mamba_kernel_size(&self) -> Option<usize> {
+        if self.max_mamba_kernel_size == 0 {
+            None
+        } else {
+            Some(self.max_mamba_kernel_size)
+        }
+    }
+
     pub fn ssm_packed_shape(
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
         self.max_mamba_conv_dim().map(|dim| [suffix_length, dim])
+    }
+
+    pub fn ssm_conv_padded_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        match (self.max_mamba_conv_dim(), self.max_mamba_kernel_size()) {
+            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => {
+                Some([suffix_length + kernel_size - 1, conv_dim])
+            },
+            _ => None,
+        }
     }
 
     pub fn ssm_x_shape(

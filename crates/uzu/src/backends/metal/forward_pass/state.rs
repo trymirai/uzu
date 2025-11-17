@@ -13,7 +13,7 @@ use super::{
 use crate::{
     DataType, DeviceContext,
     backends::metal::forward_pass::traces::DecoderActivationTrace,
-    config::{DecoderConfig, DecoderLayerType, EmbeddingConfig, MLPConfig},
+    config::{DecoderConfig, EmbeddingConfig, MLPConfig},
     device::array::Array,
     parameters::ParameterTree,
     session::parameter::SamplingMethod,
@@ -410,6 +410,8 @@ struct AuxBuffers {
     ssm_inproj: Option<ArrayCell>,
     /// [suffix_length, max_conv_dim]
     ssm_packed: Option<ArrayCell>,
+    /// [suffix_length + kernel_size - 1, max_conv_dim]
+    ssm_conv_padded: Option<ArrayCell>,
     /// [suffix_length, num_heads, head_dim]
     ssm_x: Option<ArrayCell>,
     /// [suffix_length, num_groups, state_dim]
@@ -458,43 +460,16 @@ struct AuxBuffers {
     moe_scatter_partials: Option<ArrayCell>,
     moe_scatter_block_bases: Option<ArrayCell>,
     moe_block_alloc: Option<ArrayCell>,
-    ssm_conv_state_tmp: Option<Vec<Option<ArrayCell>>>,
 }
 
 impl AuxBuffers {
     fn new(
-        context: &MTLContext,
         scratch: &ForwardPassBuffers,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
         let act_dtype = model_shape.activation_data_type();
-        let ssm_conv_state_tmp = if model_shape.has_state_space_layers() {
-            let mut tmp = Vec::with_capacity(model_shape.layer_types().len());
-            for layer in model_shape.layer_types() {
-                if let DecoderLayerType::StateSpace {
-                    conv_dim,
-                    kernel_size,
-                    ..
-                } = layer
-                {
-                    if *kernel_size > 1 && *conv_dim > 0 {
-                        let shape = [*conv_dim, kernel_size.saturating_sub(1)];
-                        tmp.push(Some(RefCell::new(
-                            context.array(&shape, act_dtype),
-                        )));
-                    } else {
-                        tmp.push(None);
-                    }
-                } else {
-                    tmp.push(None);
-                }
-            }
-            Some(tmp)
-        } else {
-            None
-        };
         unsafe {
             Self {
                 suffix_length,
@@ -540,6 +515,15 @@ impl AuxBuffers {
                 ssm_packed: match (
                     scratch.ssm_packed.as_ref(),
                     model_shape.ssm_packed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_conv_padded: match (
+                    scratch.ssm_conv_padded.as_ref(),
+                    model_shape.ssm_conv_padded_shape(suffix_length),
                 ) {
                     (Some(buf), Some(shape)) => Some(RefCell::new(
                         MetalArray::new(buf.clone(), &shape, act_dtype),
@@ -939,19 +923,8 @@ impl AuxBuffers {
                         _ => unreachable!(),
                     }
                 }),
-                ssm_conv_state_tmp,
             }
         }
-    }
-
-    fn conv_state_tmp(
-        &self,
-        layer_index: usize,
-    ) -> Option<ArrayCell> {
-        self.ssm_conv_state_tmp
-            .as_ref()
-            .and_then(|vec| vec.get(layer_index))
-            .and_then(|cell| cell.clone())
     }
 }
 
@@ -1009,7 +982,6 @@ impl ForwardPassState {
             "Active suffix length ({active_suffix_length}) must be <= suffix length ({suffix_length})"
         );
         let aux_buffers = AuxBuffers::new(
-            &context,
             scratch,
             decoder_config,
             model_shape,
@@ -1449,11 +1421,8 @@ impl ForwardPassState {
         &self.context
     }
 
-    pub fn conv_state_scratch(
-        &self,
-        layer_index: usize,
-    ) -> Option<ArrayCell> {
-        self.aux_buffers.conv_state_tmp(layer_index)
+    pub fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+        self.aux_buffers.ssm_conv_padded.as_ref().map(|buf| buf.clone())
     }
 }
 
