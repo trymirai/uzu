@@ -74,59 +74,63 @@ kernel void ssd_prefill_kernel(
         h_idx * state_head_stride + dh_idx * state_dim_stride;
     const float d_scalar = float(D[h_idx]);
 
-    threadgroup float shared_state[SSM_PREFILL_MAX_STATE];
-    threadgroup float reduction_shared[SSM_PREFILL_CHUNK];
     threadgroup float scalar_decay;
     threadgroup float scalar_dt_scaled_input;
     threadgroup float scalar_gate;
     threadgroup float scalar_skip;
+    threadgroup float reduction_shared[SSM_PREFILL_CHUNK];
 
-    if (lane < state_dim) {
-        const size_t idx = state_base + size_t(lane) * state_inner_stride;
-        shared_state[lane] = float(state[idx]);
+    const bool lane_active = lane < state_dim;
+    size_t state_idx = 0;
+    size_t cb_idx = 0;
+    float state_val = 0.0f;
+
+    if (lane_active) {
+        state_idx = state_base + size_t(lane) * state_inner_stride;
+        state_val = float(state[state_idx]);
+        cb_idx = cb_group_base + size_t(lane) * cb_state_stride;
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    size_t x_idx = x_base;
+    size_t dt_idx = dt_base;
 
     for (size_t token = 0; token < suffix_len; ++token) {
         if (lane == 0) {
-            const size_t x_idx = token * x_token_stride + x_base;
-            const size_t dt_idx = token * dt_token_stride + dt_base;
-            scalar_decay = float(decay[dt_idx]);
             const float x_val = float(x[x_idx]);
             const float dt_val = float(dt[dt_idx]);
             const float dt_safe = fmax(dt_val, 1e-6f);
             const float normalized_x = x_val / dt_safe;
             scalar_dt_scaled_input = normalized_x * dt_val;
+            scalar_decay = float(decay[dt_idx]);
             scalar_gate = SILU{}(float(z[x_idx]));
             scalar_skip = d_scalar * x_val;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         float contrib = 0.0f;
-        if (lane < state_dim) {
-            const size_t cb_idx = token * cb_token_stride + cb_group_base
-                + size_t(lane) * cb_state_stride;
+        if (lane_active) {
             const float b_coeff = float(B[cb_idx]);
             const float c_coeff = float(C[cb_idx]);
-            float new_state =
-                scalar_decay * shared_state[lane]
-                + scalar_dt_scaled_input * b_coeff;
-            shared_state[lane] = new_state;
+            const float new_state =
+                scalar_decay * state_val + scalar_dt_scaled_input * b_coeff;
+            state_val = new_state;
             contrib = new_state * c_coeff;
+            cb_idx += cb_token_stride;
         }
 
-        float dot = threadgroup_cooperative_reduce_sum<SSM_PREFILL_CHUNK>(
+        float dot = threadgroup_raking_reduce_sum<SSM_PREFILL_CHUNK>(
             contrib, reduction_shared, lane);
         if (lane == 0) {
-            const size_t x_idx = token * x_token_stride + x_base;
             y[x_idx] = static_cast<T>((scalar_skip + dot) * scalar_gate);
+            x_idx += x_token_stride;
+            dt_idx += dt_token_stride;
         }
+
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    if (lane < state_dim) {
-        const size_t idx = state_base + size_t(lane) * state_inner_stride;
-        state[idx] = static_cast<T>(shared_state[lane]);
+    if (lane_active) {
+        state[state_idx] = static_cast<T>(state_val);
     }
 }
 
