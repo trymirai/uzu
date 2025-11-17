@@ -26,7 +26,10 @@ impl log::Log for SilentLogger {
 }
 // -------------------------------------------------------------------------------
 
-pub async fn run_server(model_path: String) {
+pub async fn run_server(
+    model_path: String,
+    prefill_step_size: Option<usize>,
+) {
     // Install the silent logger **before** Rocket initializes its own logger.
     let _ = log::set_logger(&SILENT_LOGGER)
         .map(|_| log::set_max_level(LevelFilter::Off));
@@ -54,7 +57,7 @@ pub async fn run_server(model_path: String) {
         "📝 Endpoints:\n   POST /chat/completions - Chat completions API\n"
     );
 
-    let session = load_session(model_path);
+    let session = load_session(model_path, prefill_step_size);
     let state = SessionState {
         model_name,
         session_wrapper: SessionWrapper::new(session),

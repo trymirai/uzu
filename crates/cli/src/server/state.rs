@@ -7,7 +7,12 @@ use std::{
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::session::{Session, config::DecodingConfig, helpers::Context};
+use uzu::session::{
+    Session,
+    config::{DecodingConfig, SpeculatorConfig},
+    helpers::Context,
+    parameter::{ContextLength, PrefillStepSize, SamplingSeed},
+};
 
 pub struct ContextCache {
     pub map: HashMap<String, Rc<Context>>,
@@ -75,7 +80,10 @@ pub struct SessionState {
 unsafe impl Send for SessionState {}
 unsafe impl Sync for SessionState {}
 
-pub fn load_session(model_path: String) -> Session {
+pub fn load_session(
+    model_path: String,
+    prefill_step_size: Option<usize>,
+) -> Session {
     let style_bold = Style::new().bold();
 
     let model_path_buf = PathBuf::from(model_path);
@@ -94,7 +102,21 @@ pub fn load_session(model_path: String) -> Session {
     );
     progress_bar.set_message(model_name.clone());
 
-    let session = Session::new(model_path_buf, DecodingConfig::default())
+    let prefill_step_size_config: PrefillStepSize;
+    if let Some(value) = prefill_step_size {
+        prefill_step_size_config = PrefillStepSize::Custom(value);
+    } else {
+        prefill_step_size_config = PrefillStepSize::Default;
+    }
+
+    let decoding_config = DecodingConfig::new(
+        prefill_step_size_config,
+        ContextLength::default(),
+        SpeculatorConfig::default(),
+        SamplingSeed::default(),
+        true,
+    );
+    let session = Session::new(model_path_buf, decoding_config)
         .expect("Failed to create session");
 
     progress_bar.set_style(
