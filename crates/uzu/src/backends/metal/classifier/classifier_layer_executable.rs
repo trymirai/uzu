@@ -14,8 +14,8 @@ use crate::{
             transformer_layer,
         },
         kernel::{
-            AttentionKernelEncodable, KernelDataType, TensorAddSwap,
-            TensorCopy, create_normalization_encodable,
+            AttentionKernelEncodable, KernelDataType, NormalizationEncodable,
+            TensorAddSwap, TensorCopy,
         },
     },
     classifier::ClassificationForwardPassState,
@@ -75,8 +75,8 @@ impl ClassifierLayerExecutable {
                     &layer_config.pre_attention_norm_config
                 {
                     if layer_loader.subtree("pre_attention_norm").is_ok() {
-                        Some(
-                            create_normalization_encodable(
+                        Some(Box::new(
+                            NormalizationEncodable::new(
                                 mtl_context,
                                 intermediate_data_type,
                                 norm_config.clone(),
@@ -89,7 +89,7 @@ impl ClassifierLayerExecutable {
                             .expect(
                                 "Failed to create pre-attention norm kernel",
                             ),
-                        )
+                        ))
                     } else {
                         None
                     }
@@ -134,8 +134,8 @@ impl ClassifierLayerExecutable {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableWithState> =
-                create_normalization_encodable(
+            let pre_mlp_norm: Box<dyn EncodableWithState> = Box::new(
+                NormalizationEncodable::new(
                     mtl_context,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
@@ -143,7 +143,8 @@ impl ClassifierLayerExecutable {
                     ArrayId::Main,
                     &layer_loader.subtree("pre_mlp_norm").unwrap(),
                 )
-                .expect("Failed to create pre-MLP norm kernel");
+                .expect("Failed to create pre-MLP norm kernel"),
+            );
 
             let mlp = transformer_layer::mlp_block(
                 &layer_config.mlp_config,

@@ -6,7 +6,7 @@ pub mod linear;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
-mod normalization_factory;
+pub mod normalization;
 pub mod pooling;
 pub mod quant_matmul;
 pub mod rms_norm;
@@ -21,7 +21,8 @@ pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use layer_norm::{
-    LayerNormArguments, LayerNormKernel, LayerNormKernelEncodable,
+    LayerNormArguments, LayerNormError, LayerNormKernel,
+    LayerNormKernelEncodable,
 };
 pub use moe::{
     MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
@@ -32,11 +33,11 @@ pub use moe::{
     MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
-pub use normalization_factory::create_normalization_encodable;
+pub use normalization::{NormalizationEncodable, NormalizationError};
 pub use pooling::PoolingKernel;
 pub use rms_norm::{
-    QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormKernel,
-    RMSNormKernelEncodable, RMSNormKernelType,
+    QKNormArguments, QKNormKernelEncodable, RMSNormArguments, RMSNormError,
+    RMSNormKernel, RMSNormKernelEncodable, RMSNormKernelType,
 };
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};

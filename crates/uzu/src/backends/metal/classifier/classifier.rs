@@ -131,29 +131,6 @@ impl Classifier {
                 &encoding_params,
             );
 
-            // Commit embeddings to see intermediate result
-            let embed_root =
-                self.context.command_buffer.root_command_buffer().to_owned();
-            self.context.command_buffer.commit_and_continue();
-            embed_root.wait_until_completed();
-
-            // Debug: Check embeddings output
-            {
-                use crate::Array;
-                let main_arrays = state.arrays(&[ArrayId::Main]);
-                let main_array = main_arrays[0].borrow();
-                let buffer = Array::buffer(&*main_array);
-                eprintln!(
-                    "[DEBUG] forward_pass - embeddings Main array shape: {:?}, buffer len: {}",
-                    Array::shape(&*main_array),
-                    buffer.len()
-                );
-                eprintln!(
-                    "[DEBUG] forward_pass - first 20 bytes after embeddings: {:?}",
-                    &buffer[..buffer.len().min(20)]
-                );
-            }
-
             eprintln!(
                 "[DEBUG] forward_pass - Encoding embedding normalization..."
             );
@@ -221,34 +198,6 @@ impl Classifier {
                 }
             }
 
-            // Commit and wait for GPU to complete embedding + transformer + output norm
-            let root =
-                self.context.command_buffer.root_command_buffer().to_owned();
-            self.context.command_buffer.commit_and_continue();
-            eprintln!(
-                "[DEBUG] forward_pass - Waiting for GPU to complete transformer..."
-            );
-            root.wait_until_completed();
-
-            // At this point, the transformer output is in the Main array [batch, seq_len, model_dim]
-
-            // Debug: Check transformer output before pooling
-            {
-                use crate::Array;
-                let main_arrays = state.arrays(&[ArrayId::Main]);
-                let main_array = main_arrays[0].borrow();
-                let buffer = Array::buffer(&*main_array);
-                eprintln!(
-                    "[DEBUG] forward_pass - transformer Main array shape: {:?}, buffer len: {}",
-                    Array::shape(&*main_array),
-                    buffer.len()
-                );
-                eprintln!(
-                    "[DEBUG] forward_pass - first 20 bytes of transformer output: {:?}",
-                    &buffer[..buffer.len().min(20)]
-                );
-            }
-
             // Apply pooling: [batch, seq_len, model_dim] → [batch, model_dim]
             let mut pooled_output = self.apply_pooling(&mut state)?;
 
@@ -256,7 +205,7 @@ impl Classifier {
             let logits_linear_array =
                 self.apply_prediction_head(&mut state, &mut pooled_output)?;
 
-            // Copy result from GPU to CPU
+            // Copy result from GPU to CPU (Array::buffer() will implicitly sync)
             let logits = self.copy_logits_to_cpu(&logits_linear_array)?;
 
             let traces = if enable_traces {
@@ -337,9 +286,7 @@ impl Classifier {
         encoder.end_encoding();
         drop(main_array);
 
-        let root_owned = root.to_owned();
         self.context.command_buffer.commit_and_continue();
-        root_owned.wait_until_completed();
 
         // Trace: output_pooling
         if let Some(traces_rc) = state.classifier_traces().cloned() {
@@ -420,53 +367,43 @@ impl Classifier {
         eprintln!(
             "[DEBUG] apply_prediction_head - Step 1: Dense (Pooled → Dense)"
         );
-        self.context.prediction_head.dense.encode(
+        self.context.prediction_head_dense.encode(
             state,
             &self.context.command_buffer,
             &encoding_params,
         );
-        let root = self.context.command_buffer.root_command_buffer().to_owned();
-        self.context.command_buffer.commit_and_continue();
-        root.wait_until_completed();
 
         // Step 2: GELU (Dense → Dense, in-place)
         eprintln!(
             "[DEBUG] apply_prediction_head - Step 2: GELU (Dense → Dense)"
         );
-        self.context.prediction_head.activation.encode(
+        self.context.prediction_head_activation.encode(
             state,
             &self.context.command_buffer,
             &encoding_params,
         );
-        let root = self.context.command_buffer.root_command_buffer().to_owned();
-        self.context.command_buffer.commit_and_continue();
-        root.wait_until_completed();
 
         // Step 3: Norm (Dense → Norm)
         eprintln!(
             "[DEBUG] apply_prediction_head - Step 3: Norm (Dense → Norm)"
         );
-        self.context.prediction_head.norm.encode(
+        self.context.prediction_head_norm.encode(
             state,
             &self.context.command_buffer,
             &encoding_params,
         );
-        let root = self.context.command_buffer.root_command_buffer().to_owned();
-        self.context.command_buffer.commit_and_continue();
-        root.wait_until_completed();
 
         // Step 4: Final linear (Norm → Logits)
         eprintln!(
             "[DEBUG] apply_prediction_head - Step 4: Final linear (Norm → Logits)"
         );
-        self.context.prediction_head.final_linear.encode(
+        self.context.prediction_head_final_linear.encode(
             state,
             &self.context.command_buffer,
             &encoding_params,
         );
-        let root = self.context.command_buffer.root_command_buffer().to_owned();
+
         self.context.command_buffer.commit_and_continue();
-        root.wait_until_completed();
 
         // Get result from ClassifierPredictionHeadLogits buffer
         let logits_arrays =

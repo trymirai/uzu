@@ -13,9 +13,12 @@ use crate::{
             encodable_with_state::EncodableWithState,
             transformer_layer::embed_block,
         },
-        kernel::{PoolingKernel, RopeKernelEncodable, SigmoidKernel},
+        kernel::{
+            NormalizationEncodable, PoolingKernel, RopeKernelEncodable,
+            SigmoidKernel,
+        },
     },
-    classifier::{ClassifierLayerExecutable, PredictionHeadExecutables},
+    classifier::ClassifierLayerExecutable,
     config::{ClassifierModelConfig, ModelMetadata},
     parameters::ParameterLoader,
     session::types::Error,
@@ -33,13 +36,17 @@ pub struct ClassifierContext {
     pub model_shape: ModelShape,
 
     pub embed: Box<dyn EncodableWithState>,
-    pub embedding_norm: Box<dyn EncodableWithState>,
+    pub embedding_norm: NormalizationEncodable,
     pub layers: Box<[ClassifierLayerExecutable]>,
-    pub output_norm: Box<dyn EncodableWithState>,
+    pub output_norm: NormalizationEncodable,
     pub global_rope: Rc<Box<dyn EncodableWithState>>,
     pub local_rope: Option<Rc<Box<dyn EncodableWithState>>>,
 
-    pub prediction_head: PredictionHeadExecutables,
+    pub prediction_head_dense: Box<dyn EncodableWithState>,
+    pub prediction_head_activation: Box<dyn EncodableWithState>,
+    pub prediction_head_norm: NormalizationEncodable,
+    pub prediction_head_final_linear: Box<dyn EncodableWithState>,
+
     pub pooling_kernel: PoolingKernel,
     pub sigmoid_kernel: SigmoidKernel,
 
@@ -192,7 +199,7 @@ impl ClassifierContext {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let output_norm = create_normalization_encodable(
+        let output_norm = NormalizationEncodable::new(
             &mtl_context,
             data_type,
             classifier_model_config
@@ -227,9 +234,9 @@ impl ClassifierContext {
             "[DEBUG] ClassifierContext::new - Creating embedding normalization..."
         );
         use crate::backends::metal::{
-            forward_pass::ArrayId, kernel::create_normalization_encodable,
+            forward_pass::ArrayId, kernel::NormalizationEncodable,
         };
-        let embedding_norm = create_normalization_encodable(
+        let embedding_norm = NormalizationEncodable::new(
             &mtl_context,
             data_type,
             classifier_model_config
@@ -247,13 +254,100 @@ impl ClassifierContext {
         );
         let model_dim = classifier_model_config.classifier_config.model_dim;
         let num_labels = classifier_model_config.classifier_config.num_labels;
-        let prediction_head = PredictionHeadExecutables::new(
-            mtl_context.clone(),
-            &classifier_model_config.classifier_config.prediction_head_config,
+        let prediction_head_config =
+            &classifier_model_config.classifier_config.prediction_head_config;
+        let prediction_head_tree =
+            root_loader_view.subtree("prediction_head").unwrap();
+
+        use std::collections::HashMap;
+
+        use mpsgraph::{Device as MPSDevice, Graph};
+        use objc2::rc::autoreleasepool;
+
+        use crate::backends::metal::{
+            forward_pass::{
+                IOArrays, MPSGraphBlock, transformer_layer::linear_block,
+            },
+            graph::{common::activation, placeholder, shaped_type},
+        };
+
+        let prediction_head_data_type: DataType =
+            prediction_head_config.dense_config.activation_precision().into();
+
+        let prediction_head_dense = linear_block::<1>(
+            &prediction_head_config.dense_config,
+            prediction_head_config.use_dense_bias,
             model_dim,
-            num_labels,
-            &root_loader_view.subtree("prediction_head").unwrap(),
-            compilation_config.clone(),
+            [model_dim],
+            &mtl_context,
+            &prediction_head_tree.subtree("dense").unwrap(),
+            ArrayId::ClassifierPredictionHeadPooled,
+            ArrayId::ClassifierPredictionHeadDense,
+            &compilation_config.descriptor_general,
+        );
+
+        let prediction_head_activation = autoreleasepool(|_| {
+            let graph = Graph::new();
+            let input_shape = [-1, model_dim as isize];
+            let input_placeholder =
+                placeholder(&graph, &input_shape, prediction_head_data_type);
+
+            let output = activation(
+                &graph,
+                &prediction_head_config.activation,
+                &input_placeholder,
+                prediction_head_data_type,
+            );
+
+            let shaped_type_obj =
+                shaped_type(&input_shape, prediction_head_data_type);
+            let feeds =
+                HashMap::from([(&*input_placeholder, &*shaped_type_obj)]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&mtl_context.device),
+                &feeds,
+                &[&output],
+                None,
+                Some(&compilation_config.descriptor_general),
+            );
+
+            let arguments = IOArrays::new(
+                vec![ArrayId::ClassifierPredictionHeadDense].into_boxed_slice(),
+                vec![ArrayId::ClassifierPredictionHeadDense].into_boxed_slice(),
+            );
+
+            let execution_descriptor =
+                mpsgraph::ExecutableExecutionDescriptor::new();
+            execution_descriptor.set_enable_commit_and_continue(true);
+
+            Box::new(MPSGraphBlock::new(
+                executable,
+                execution_descriptor,
+                arguments,
+            )) as Box<dyn EncodableWithState>
+        });
+
+        let prediction_head_norm = NormalizationEncodable::new(
+            &mtl_context,
+            prediction_head_data_type,
+            prediction_head_config.normalization_config.clone(),
+            ArrayId::ClassifierPredictionHeadDense,
+            ArrayId::ClassifierPredictionHeadNorm,
+            &prediction_head_tree.subtree("norm").unwrap(),
+        )
+        .expect("Failed to create prediction head norm kernel");
+
+        let prediction_head_final_linear = linear_block::<1>(
+            &prediction_head_config.final_linear_config,
+            true,
+            model_dim,
+            [num_labels],
+            &mtl_context,
+            &prediction_head_tree.subtree("final_linear").unwrap(),
+            ArrayId::ClassifierPredictionHeadNorm,
+            ArrayId::ClassifierPredictionHeadLogits,
+            &compilation_config.descriptor_general,
         );
 
         eprintln!(
@@ -303,7 +397,10 @@ impl ClassifierContext {
             output_norm,
             global_rope,
             local_rope,
-            prediction_head,
+            prediction_head_dense,
+            prediction_head_activation,
+            prediction_head_norm,
+            prediction_head_final_linear,
             pooling_kernel,
             sigmoid_kernel,
             pooled_buffer,
