@@ -49,11 +49,6 @@ pub struct ClassifierContext {
 
     pub pooling_kernel: PoolingKernel,
     pub sigmoid_kernel: SigmoidKernel,
-
-    pub pooled_buffer: metal::Buffer,
-    pub dense_output_buffer: metal::Buffer,
-    pub norm_output_buffer: metal::Buffer,
-    pub final_logits_buffer: metal::Buffer,
 }
 
 impl ClassifierContext {
@@ -364,25 +359,6 @@ impl ClassifierContext {
                 Error::UnableToCreateMetalContext
             })?;
 
-        let batch_size = 1;
-
-        let pooled_buffer = mtl_context.device.new_buffer(
-            (batch_size * model_dim * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-        let dense_output_buffer = mtl_context.device.new_buffer(
-            (batch_size * model_dim * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-        let norm_output_buffer = mtl_context.device.new_buffer(
-            (batch_size * model_dim * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-        let final_logits_buffer = mtl_context.device.new_buffer(
-            (batch_size * num_labels * data_type.size_in_bytes()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-
         Ok(Self {
             mtl_context,
             command_buffer,
@@ -403,10 +379,6 @@ impl ClassifierContext {
             prediction_head_final_linear,
             pooling_kernel,
             sigmoid_kernel,
-            pooled_buffer,
-            dense_output_buffer,
-            norm_output_buffer,
-            final_logits_buffer,
         })
     }
 

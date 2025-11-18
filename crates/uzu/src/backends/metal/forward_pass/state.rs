@@ -1003,7 +1003,8 @@ impl LLMForwardPassState {
             },
 
             // Classifier prediction head buffers (not supported in LLM state)
-            ArrayId::ClassifierPredictionHeadPooled
+            ArrayId::ClassifierPooling
+            | ArrayId::ClassifierPredictionHeadPooled
             | ArrayId::ClassifierPredictionHeadDense
             | ArrayId::ClassifierPredictionHeadNorm
             | ArrayId::ClassifierPredictionHeadLogits => {
@@ -1199,6 +1200,7 @@ pub enum ArrayId {
     MoeBlockAlloc,
 
     // Classifier prediction head buffers
+    ClassifierPooling,
     ClassifierPredictionHeadPooled,
     ClassifierPredictionHeadDense,
     ClassifierPredictionHeadNorm,

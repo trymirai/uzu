@@ -62,6 +62,9 @@ struct AuxBuffers {
     attention_sums: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
     attention_maxs: ArrayCell,
+    // Pooling buffer
+    /// [batch, model_dim] - pooling output (after mean/CLS pooling from [batch, seq_len, model_dim])
+    pooling: ArrayCell,
     // Prediction head buffers
     /// [batch, model_dim] - pooled output (after mean/CLS pooling)
     pooled: ArrayCell,
@@ -168,6 +171,20 @@ impl AuxBuffers {
                     DataType::F32,
                 )
             }),
+            pooling: {
+                let batch_size = 1;
+                let model_dim = model_shape.main_shape(1)[1];
+                let data_type = model_shape.activation_data_type();
+                let buffer_size =
+                    (batch_size * model_dim * data_type.size_in_bytes()) as u64;
+                let buffer = context.device.new_buffer(
+                    buffer_size,
+                    metal::MTLResourceOptions::StorageModeShared,
+                );
+                RefCell::new(unsafe {
+                    MetalArray::new(buffer, &[batch_size, model_dim], data_type)
+                })
+            },
             // Initialize prediction head buffers
             pooled: {
                 let batch_size = 1;
@@ -484,6 +501,8 @@ impl ClassificationForwardPassState {
                     .clone(),
             },
 
+            // Pooling buffer
+            ArrayId::ClassifierPooling => self.aux_buffers.pooling.clone(),
             // Prediction head buffers
             ArrayId::ClassifierPredictionHeadPooled => {
                 self.aux_buffers.pooled.clone()

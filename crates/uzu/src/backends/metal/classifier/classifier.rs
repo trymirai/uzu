@@ -45,24 +45,11 @@ impl Classifier {
                 self.forward_pass(&token_ids, &token_positions, false)?;
 
             let forward_duration = forward_start.elapsed().as_secs_f64();
-            eprintln!(
-                "[DEBUG] classify_tokens - Forward pass completed in {:.2}s",
-                forward_duration
-            );
-
-            eprintln!(
-                "[DEBUG] classify_tokens - Converting to probabilities..."
-            );
             let probabilities = self.logits_to_probabilities(&logits)?;
 
             let stats = ClassificationStats::new(
                 forward_duration,
                 run_start.elapsed().as_secs_f64(),
-            );
-
-            eprintln!(
-                "[DEBUG] classify_tokens - Done in {:.2}s",
-                run_start.elapsed().as_secs_f64()
             );
 
             Ok(ClassificationOutput {
@@ -116,23 +103,10 @@ impl Classifier {
             // Reset command buffer for this forward pass
             self.context.reset_command_buffer();
 
-            eprintln!(
-                "[DEBUG] forward_pass - Token IDs (first 10): {:?}",
-                &token_ids[..token_ids.len().min(10)]
-            );
-            eprintln!(
-                "[DEBUG] forward_pass - Token positions (first 10): {:?}",
-                &token_positions[..token_positions.len().min(10)]
-            );
-
             self.context.embed.encode(
                 &mut state,
                 &self.context.command_buffer,
                 &encoding_params,
-            );
-
-            eprintln!(
-                "[DEBUG] forward_pass - Encoding embedding normalization..."
             );
             self.context.embedding_norm.encode(
                 &mut state,
@@ -150,16 +124,7 @@ impl Classifier {
                 }
             }
 
-            eprintln!(
-                "[DEBUG] forward_pass - Encoding {} layers...",
-                self.context.layers.len()
-            );
-            for (i, layer) in self.context.layers.iter().enumerate() {
-                eprintln!(
-                    "[DEBUG] forward_pass - Encoding layer {}/{}...",
-                    i + 1,
-                    self.context.layers.len()
-                );
+            for layer in self.context.layers.iter() {
                 layer.encode(
                     &mut state,
                     &self.context.command_buffer,
@@ -178,10 +143,6 @@ impl Classifier {
                     root.wait_until_completed();
                 }
             }
-
-            eprintln!(
-                "[DEBUG] forward_pass - Encoding output normalization..."
-            );
             self.context.output_norm.encode(
                 &mut state,
                 &self.context.command_buffer,
@@ -202,11 +163,12 @@ impl Classifier {
             let mut pooled_output = self.apply_pooling(&mut state)?;
 
             // Apply prediction head: [batch, model_dim] → [batch, num_labels]
-            let logits_linear_array =
-                self.apply_prediction_head(&mut state, &mut pooled_output)?;
+            self.apply_prediction_head(&mut state, &mut pooled_output)?;
+
+            // Non-trace path synchronization is handled inside apply_prediction_head
 
             // Copy result from GPU to CPU (Array::buffer() will implicitly sync)
-            let logits = self.copy_logits_to_cpu(&logits_linear_array)?;
+            let logits = self.copy_logits_from_state(&state)?;
 
             let traces = if enable_traces {
                 state
@@ -234,12 +196,8 @@ impl Classifier {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();
         let model_dim = self.context.model_config.classifier_config.model_dim;
-        eprintln!(
-            "[DEBUG] apply_pooling - batch_size={}, seq_len={}, model_dim={}",
-            batch_size, seq_len, model_dim
-        );
 
-        let arrays = state.arrays(&[ArrayId::Main]);
+        let arrays = state.arrays(&[ArrayId::Main, ArrayId::ClassifierPooling]);
         let data_type = {
             use crate::Array;
             Array::data_type(&*arrays[0].borrow())
@@ -247,10 +205,10 @@ impl Classifier {
         let mut main_array = arrays[0].borrow_mut();
         let input_buffer = unsafe { main_array.mtl_buffer() };
 
-        // Use pre-allocated pooling buffer from context (clone to avoid borrow issues)
-        let output_buffer = self.context.pooled_buffer.clone();
+        // Use pre-allocated pooling buffer from state
+        let mut pooling_array = arrays[1].borrow_mut();
+        let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
 
-        self.context.reset_command_buffer();
         let root = self.context.command_buffer.root_command_buffer();
         let encoder = root.new_compute_command_encoder();
 
@@ -290,19 +248,14 @@ impl Classifier {
 
         // Trace: output_pooling
         if let Some(traces_rc) = state.classifier_traces().cloned() {
-            eprintln!(
-                "[DEBUG] apply_pooling - Copying pooled output to trace buffer..."
-            );
             let traces_ref = traces_rc.borrow();
             let mut trace_arr = traces_ref.output_pooling.borrow_mut();
-            // blit copy pooled_output -> trace_arr
             let dst_buf = unsafe { trace_arr.mtl_buffer().to_owned() };
             drop(trace_arr);
             drop(traces_ref);
-            // start a fresh command buffer for blit
-            self.context.reset_command_buffer();
-            let root2 = self.context.command_buffer.root_command_buffer();
-            let blit = root2.new_blit_command_encoder();
+
+            let root = self.context.command_buffer.root_command_buffer();
+            let blit = root.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &output_buffer,
                 0,
@@ -311,51 +264,54 @@ impl Classifier {
                 (batch_size * model_dim * data_type.size_in_bytes()) as u64,
             );
             blit.end_encoding();
-            // commit and wait for the blit to complete
-            let root_owned2 = root2.to_owned();
+
+            let root_owned = root.to_owned();
             self.context.command_buffer.commit_and_continue();
-            root_owned2.wait_until_completed();
-            eprintln!(
-                "[DEBUG] apply_pooling - Pooled output trace copy completed"
-            );
+            root_owned.wait_until_completed();
         }
 
-        let pooled_array = unsafe {
-            MetalArray::new(
-                output_buffer.clone(),
-                &[batch_size, model_dim],
-                data_type,
-            )
-        };
-
-        Ok(pooled_array)
+        // Return the pooling array directly (already has correct buffer/shape/dtype)
+        Ok(pooling_array.clone())
     }
 
     fn apply_prediction_head(
         &mut self,
         state: &mut ClassificationForwardPassState,
         pooled_input: &mut MetalArray,
-    ) -> Result<MetalArray, Error> {
+    ) -> Result<(), Error> {
         let batch_size = {
             use crate::Array;
             Array::shape(pooled_input)[0]
         };
         let num_labels = self.context.model_config.classifier_config.num_labels;
-        let model_dim = self.context.model_config.classifier_config.model_dim;
         let data_type = {
             use crate::Array;
             Array::data_type(pooled_input)
         };
-        eprintln!(
-            "[DEBUG] apply_prediction_head - batch_size={}, num_labels={}, model_dim={}",
-            batch_size, num_labels, model_dim
-        );
 
-        // Copy pooled input into ClassifierPredictionHeadPooled buffer
+        // Copy pooled input into ClassifierPredictionHeadPooled buffer (GPU blit, in-order)
         {
-            let pooled_arrays =
-                state.arrays(&[ArrayId::ClassifierPredictionHeadPooled]);
-            pooled_arrays[0].borrow_mut().copy_from_array(pooled_input);
+            let arrays = state.arrays(&[
+                ArrayId::ClassifierPredictionHeadPooled,
+                ArrayId::ClassifierPooling,
+            ]);
+            let mut dst = arrays[0].borrow_mut();
+            let dst_buf = unsafe { dst.mtl_buffer().to_owned() };
+            drop(dst);
+            let mut src = arrays[1].borrow_mut();
+            let src_buf = unsafe { src.mtl_buffer().to_owned() };
+            drop(src);
+
+            let copy_size_bytes = (batch_size
+                * self.context.model_config.classifier_config.model_dim
+                * data_type.size_in_bytes())
+                as u64;
+
+            let root = self.context.command_buffer.root_command_buffer();
+            let blit = root.new_blit_command_encoder();
+            blit.copy_from_buffer(&src_buf, 0, &dst_buf, 0, copy_size_bytes);
+            blit.end_encoding();
+            self.context.command_buffer.commit_and_continue();
         }
 
         let encoding_params = EncodingParameters::new(false, true, false);
@@ -364,9 +320,6 @@ impl Classifier {
         // Pipeline: ClassifierPredictionHeadPooled → Dense → Norm → Logits
 
         // Step 1: Dense (Pooled → Dense)
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Step 1: Dense (Pooled → Dense)"
-        );
         self.context.prediction_head_dense.encode(
             state,
             &self.context.command_buffer,
@@ -374,9 +327,6 @@ impl Classifier {
         );
 
         // Step 2: GELU (Dense → Dense, in-place)
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Step 2: GELU (Dense → Dense)"
-        );
         self.context.prediction_head_activation.encode(
             state,
             &self.context.command_buffer,
@@ -384,9 +334,6 @@ impl Classifier {
         );
 
         // Step 3: Norm (Dense → Norm)
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Step 3: Norm (Dense → Norm)"
-        );
         self.context.prediction_head_norm.encode(
             state,
             &self.context.command_buffer,
@@ -394,54 +341,29 @@ impl Classifier {
         );
 
         // Step 4: Final linear (Norm → Logits)
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Step 4: Final linear (Norm → Logits)"
-        );
         self.context.prediction_head_final_linear.encode(
             state,
             &self.context.command_buffer,
             &encoding_params,
         );
 
+        // Commit and optionally wait here for non-trace path.
+        let root_after_head =
+            self.context.command_buffer.root_command_buffer().to_owned();
         self.context.command_buffer.commit_and_continue();
-
-        // Get result from ClassifierPredictionHeadLogits buffer
-        let logits_arrays =
-            state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
-        let mut logits_array_ref = logits_arrays[0].borrow_mut();
-
-        eprintln!(
-            "[DEBUG] apply_prediction_head - Logits array shape after final_linear: {:?}",
-            {
-                use crate::Array;
-                Array::shape(&*logits_array_ref)
-            }
-        );
-
-        // Log linear outputs before sigmoid as f32
-        let linear_cpu_buffer = {
-            use crate::Array;
-            Array::buffer(&*logits_array_ref)
-        };
-        {
-            let floats: &[f32] = bytemuck::cast_slice(linear_cpu_buffer);
-            let to_show = floats.len().min(8);
-            eprintln!(
-                "[DEBUG] apply_prediction_head - linear first {} values: {:?}",
-                to_show,
-                &floats[..to_show]
-            );
+        if state.classifier_traces().is_none() {
+            root_after_head.wait_until_completed();
         }
-
-        let linear_output_buffer =
-            unsafe { logits_array_ref.mtl_buffer().to_owned() };
-        drop(logits_array_ref);
 
         // Trace: logits (copy linear outputs to trace buffer)
         if let Some(traces_rc) = state.classifier_traces().cloned() {
-            eprintln!(
-                "[DEBUG] apply_prediction_head - Copying logits to trace buffer..."
-            );
+            let logits_arrays =
+                state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
+            let mut logits_array_ref = logits_arrays[0].borrow_mut();
+            let linear_output_buffer =
+                unsafe { logits_array_ref.mtl_buffer().to_owned() };
+            drop(logits_array_ref);
+
             let traces_ref = traces_rc.borrow();
             let mut trace_logits = traces_ref.logits.borrow_mut();
             let dst_trace_buf = unsafe { trace_logits.mtl_buffer().to_owned() };
@@ -451,47 +373,38 @@ impl Classifier {
             let copy_size_bytes =
                 (batch_size * num_labels * data_type.size_in_bytes()) as u64;
 
-            // start a fresh command buffer for blit
-            self.context.reset_command_buffer();
-            let root2 = self.context.command_buffer.root_command_buffer();
-            let blit2 = root2.new_blit_command_encoder();
-            blit2.copy_from_buffer(
+            let root = self.context.command_buffer.root_command_buffer();
+            let blit = root.new_blit_command_encoder();
+            blit.copy_from_buffer(
                 &linear_output_buffer,
                 0,
                 &dst_trace_buf,
                 0,
                 copy_size_bytes,
             );
-            blit2.end_encoding();
-            let root_owned2 = root2.to_owned();
+            blit.end_encoding();
+
+            let root_owned = root.to_owned();
             self.context.command_buffer.commit_and_continue();
-            root_owned2.wait_until_completed();
-            eprintln!(
-                "[DEBUG] apply_prediction_head - Logits trace copy completed"
-            );
+            root_owned.wait_until_completed();
         }
 
-        // Return linear logits array [batch_size, num_labels]
-        let output_array = unsafe {
-            MetalArray::new(
-                linear_output_buffer,
-                &[batch_size, num_labels],
-                data_type,
-            )
-        };
-
-        Ok(output_array)
+        Ok(())
     }
 
-    fn copy_logits_to_cpu(
+    fn copy_logits_from_state(
         &self,
-        logits_array: &MetalArray,
+        state: &ClassificationForwardPassState,
     ) -> Result<Vec<f32>, Error> {
+        let logits_arrays =
+            state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
+        let logits_array = logits_arrays[0].borrow();
+
         use crate::Array;
         let num_labels = self.context.model_config.classifier_config.num_labels;
-        let buffer = Array::buffer(logits_array);
+        let buffer = Array::buffer(&*logits_array);
 
-        match Array::data_type(logits_array) {
+        match Array::data_type(&*logits_array) {
             DataType::F32 => {
                 let slice: &[f32] = bytemuck::cast_slice(buffer);
                 Ok(slice[..num_labels].to_vec())
