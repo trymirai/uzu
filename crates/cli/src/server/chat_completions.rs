@@ -1,7 +1,4 @@
-use std::{
-    rc::Rc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rocket::{State, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
@@ -27,7 +24,6 @@ pub struct ChatMessage {
 pub struct ChatCompletionRequest {
     pub messages: Vec<ChatMessage>,
     pub max_completion_tokens: Option<u64>,
-    pub system_prompt_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -61,7 +57,6 @@ pub fn handle_chat_completions(
         "   Max tokens: {}",
         request.max_completion_tokens.unwrap_or(2048)
     );
-    println!("   System prompt key: {:?}", request.system_prompt_key);
 
     for (i, msg) in request.messages.iter().enumerate() {
         let content_preview = if msg.content.len() > 10000 {
@@ -73,7 +68,6 @@ pub fn handle_chat_completions(
     }
 
     let model_name = state.model_name.clone();
-    let system_prompt_key = request.system_prompt_key;
     let tokens_limit = request.max_completion_tokens.unwrap_or(2048);
     let messages: Vec<Message> = request
         .messages
@@ -91,62 +85,8 @@ pub fn handle_chat_completions(
     let start_time = std::time::Instant::now();
     let mut session = state.session_wrapper.lock();
 
-    let output = if let Some(key) = system_prompt_key {
-        let context = state.cache.lock().unwrap().get(&key);
-        match session.extend(input, context.as_deref(), run_config) {
-            Ok((output, new_context)) => {
-                state
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.clone(), Rc::new(new_context));
-                output
-            },
-            Err(e) => {
-                eprintln!("❌ [{}] Session extend error: {}", id, e);
-                // Return error response
-                let error_response = ChatCompletionResponse {
-                    id: id.clone(),
-                    object: "chat.completion".to_string(),
-                    created: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64,
-                    model: model_name.clone(),
-                    choices: vec![ChatCompletionChoice {
-                        index: 0,
-                        message: ChatMessage {
-                            content: format!("Error: {}", e),
-                            role: Role::Assistant,
-                        },
-                        finish_reason: "error".to_string(),
-                    }],
-                    stats: Stats {
-                        prefill_stats: StepStats {
-                            duration: 0.0,
-                            suffix_length: 0,
-                            tokens_count: 0,
-                            tokens_per_second: 0.0,
-                            processed_tokens_per_second: 0.0,
-                            model_run: RunStats {
-                                count: 0,
-                                average_duration: 0.0,
-                            },
-                            run: None,
-                        },
-                        generate_stats: None,
-                        total_stats: TotalStats {
-                            duration: 0.0,
-                            tokens_count_input: 0,
-                            tokens_count_output: 0,
-                        },
-                    },
-                };
-                return Json(error_response);
-            },
-        }
-    } else {
-        match session.run_with_context(input, None, run_config) {
+    let output =
+        match session.run(input, run_config, None::<fn(Output) -> bool>) {
             Ok(output) => output,
             Err(e) => {
                 eprintln!("❌ [{}] Session run error: {}", id, e);
@@ -190,8 +130,7 @@ pub fn handle_chat_completions(
                 };
                 return Json(error_response);
             },
-        }
-    };
+        };
 
     let processing_time = start_time.elapsed();
 

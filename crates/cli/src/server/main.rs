@@ -5,7 +5,6 @@ use rocket::{Config, config::LogLevel, log::private as log, routes};
 
 use crate::server::{
     SessionState, SessionWrapper, handle_chat_completions, load_session,
-    state::ContextCache,
 };
 
 struct SilentLogger;
@@ -61,7 +60,6 @@ pub async fn run_server(
     let state = SessionState {
         model_name,
         session_wrapper: SessionWrapper::new(session),
-        cache: std::sync::Mutex::new(ContextCache::new(5)),
     };
 
     let _ = rocket::custom(config)
