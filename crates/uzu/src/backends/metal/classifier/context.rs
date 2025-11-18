@@ -1,24 +1,29 @@
-use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
+use std::{
+    cell::RefCell, collections::HashMap, fs::File, io::BufReader, path::Path,
+    rc::Rc,
+};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
-use objc2::rc::Retained;
+use mpsgraph::{CommandBuffer as MPSCommandBuffer, Device as MPSDevice, Graph};
+use objc2::rc::{Retained, autoreleasepool};
 
+use super::ClassifierLayerExecutable;
 use crate::{
     DataType,
     backends::metal::{
-        KVCache, MTLContext, ModelShape,
+        KVCache, KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ForwardPassBuffers, RopeType, SharedBuffers,
+            ArrayId, ForwardPassBuffers, IOArrays, MPSGraphBlock, RopeType,
+            SharedBuffers,
             encodable_with_state::EncodableWithState,
-            transformer_layer::embed_block,
+            transformer_layer::{embed_block, linear_block},
         },
+        graph::{common::activation, placeholder, shaped_type},
         kernel::{
             NormalizationEncodable, PoolingKernel, RopeKernelEncodable,
             SigmoidKernel,
         },
     },
-    classifier::ClassifierLayerExecutable,
     config::{ClassifierModelConfig, ModelMetadata},
     parameters::ParameterLoader,
     session::types::Error,
@@ -225,9 +230,6 @@ impl ClassifierContext {
             context_length,
         )));
 
-        use crate::backends::metal::{
-            forward_pass::ArrayId, kernel::NormalizationEncodable,
-        };
         let embedding_norm = NormalizationEncodable::new(
             &mtl_context,
             data_type,
@@ -247,18 +249,6 @@ impl ClassifierContext {
             &classifier_model_config.classifier_config.prediction_head_config;
         let prediction_head_tree =
             root_loader_view.subtree("prediction_head").unwrap();
-
-        use std::collections::HashMap;
-
-        use mpsgraph::{Device as MPSDevice, Graph};
-        use objc2::rc::autoreleasepool;
-
-        use crate::backends::metal::{
-            forward_pass::{
-                IOArrays, MPSGraphBlock, transformer_layer::linear_block,
-            },
-            graph::{common::activation, placeholder, shaped_type},
-        };
 
         let prediction_head_data_type: DataType =
             prediction_head_config.dense_config.activation_precision().into();
@@ -378,7 +368,6 @@ impl ClassifierContext {
         data_type: DataType,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableWithState>> {
-        use crate::backends::metal::KernelDataType;
         let kernel_data_type: KernelDataType = data_type.into();
 
         let rotation: Box<dyn EncodableWithState> = Box::new(

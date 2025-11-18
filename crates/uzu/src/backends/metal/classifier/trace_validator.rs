@@ -8,10 +8,10 @@ use half::{bf16, f16};
 use ndarray::IxDyn;
 use num_traits::NumCast;
 
+use super::{Classifier, ClassifierActivationTrace};
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{MTLContext, MetalArray},
-    classifier::{Classifier, ClassifierActivationTrace},
     parameters::{ParameterLoader, ParameterTree},
     tracer::tracer::{
         TracerValidationMetrics, TracerValidationResult,

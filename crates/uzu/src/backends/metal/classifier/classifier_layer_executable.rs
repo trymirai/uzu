@@ -3,6 +3,7 @@ use std::rc::Rc;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
+use super::ClassificationForwardPassState;
 use crate::{
     DataType,
     backends::metal::{
@@ -18,7 +19,6 @@ use crate::{
             TensorAddSwap, TensorCopy,
         },
     },
-    classifier::ClassificationForwardPassState,
     config::TransformerLayerConfig,
     parameters::ParameterTree,
 };

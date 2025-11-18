@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use uzu::classifier::ClassifierTraceValidator;
+use uzu::backends::metal::classifier::ClassifierTraceValidator;
 
 #[test]
 fn test_bert_trace_validation() {

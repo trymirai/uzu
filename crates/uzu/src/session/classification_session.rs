@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tokenizers::Tokenizer;
 
 use crate::{
-    classifier::{ClassificationOutput, Classifier},
+    backends::metal::classifier::{ClassificationOutput, Classifier},
     config::ModelMetadata,
     session::{
         helpers::{InputProcessor, InputProcessorDefault},
