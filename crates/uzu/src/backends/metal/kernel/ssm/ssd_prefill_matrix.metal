@@ -316,6 +316,13 @@ kernel void ssd_m2_gemm_batched_kernel(
     uint3 tg_pos [[ threadgroup_position_in_grid ]],
     ushort tid [[ thread_index_in_threadgroup ]]
 ) {
+    constexpr uint TILE_M = 16;
+    constexpr uint TILE_N = 16;
+    constexpr uint TILE_K = 8;
+    constexpr uint ROW_BLOCKS = 2; // two simdgroups per TG
+    constexpr uint COL_BLOCKS = 2;
+    constexpr uint THREADS_PER_TG = 64;
+
     const uint batch = tg_pos.z;
     if (batch >= batch_count) {
         return;
@@ -323,8 +330,8 @@ kernel void ssd_m2_gemm_batched_kernel(
 
     const uint tile_n = tg_pos.x;
     const uint tile_m = tg_pos.y;
-    const uint m0 = tile_m * 8;
-    const uint n0 = tile_n * 8;
+    const uint m0 = tile_m * TILE_M;
+    const uint n0 = tile_n * TILE_N;
     if (m0 >= M || n0 >= N) {
         return;
     }
@@ -333,28 +340,41 @@ kernel void ssd_m2_gemm_batched_kernel(
     device const T* B_base = B + batch * strideB;
     device       T* C_base = C + batch * strideC;
 
-    threadgroup float As_tile[8][8];
-    threadgroup float Bs_tile[8][8];
+    threadgroup float As_tile[TILE_M][TILE_K];
+    threadgroup float Bs_tile[TILE_K][TILE_N];
+    threadgroup float Cs_tile[TILE_M][TILE_N];
 
-    simdgroup_matrix<float, 8, 8> acc = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
-    simdgroup_matrix<float, 8, 8> a_frag;
-    simdgroup_matrix<float, 8, 8> b_frag;
-
+    const uint sg_id = tid / 32u;
     const uint lane = tid;
-    const uint elems = 64;
-    const uint per_thread = (elems + 31u) / 32u;
+    const uint as_elems = TILE_M * TILE_K;
+    const uint bs_elems = TILE_K * TILE_N;
+    const uint as_iters = (as_elems + THREADS_PER_TG - 1u) / THREADS_PER_TG;
+    const uint bs_iters = (bs_elems + THREADS_PER_TG - 1u) / THREADS_PER_TG;
 
-    for (uint k0 = 0; k0 < K; k0 += 8) {
-        for (uint e = 0; e < per_thread; ++e) {
-            uint idx = lane + e * 32u;
-            if (idx < elems) {
-                uint r = idx / 8u;
-                uint c = idx % 8u;
+    simdgroup_matrix<float, 8, 8> acc[COL_BLOCKS];
+    for (uint i = 0; i < COL_BLOCKS; ++i) {
+        acc[i] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
+
+    for (uint k0 = 0; k0 < K; k0 += TILE_K) {
+        for (uint it = 0; it < as_iters; ++it) {
+            uint idx = lane + it * THREADS_PER_TG;
+            if (idx < as_elems) {
+                uint r = idx / TILE_K;
+                uint c = idx % TILE_K;
                 uint m = m0 + r;
                 uint k = k0 + c;
                 As_tile[r][c] = (m < M && k < K)
                     ? _to_float(A_base[m * lda + k])
                     : 0.0f;
+            }
+        }
+
+        for (uint it = 0; it < bs_iters; ++it) {
+            uint idx = lane + it * THREADS_PER_TG;
+            if (idx < bs_elems) {
+                uint r = idx / TILE_N;
+                uint c = idx % TILE_N;
                 uint kk = k0 + r;
                 uint n = n0 + c;
                 Bs_tile[r][c] = (kk < K && n < N)
@@ -364,26 +384,52 @@ kernel void ssd_m2_gemm_batched_kernel(
         }
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        simdgroup_load(a_frag, &As_tile[0][0], 8);
-        simdgroup_load(b_frag, &Bs_tile[0][0], 8);
-        simdgroup_multiply_accumulate(acc, a_frag, b_frag, acc);
+
+        const uint row_off = sg_id * 8u;
+        if (row_off < TILE_M) {
+            simdgroup_matrix<float, 8, 8> a_frag;
+            simdgroup_load(a_frag, &As_tile[row_off][0], TILE_K);
+            for (uint block = 0; block < COL_BLOCKS; ++block) {
+                const uint col_off = block * 8u;
+                simdgroup_matrix<float, 8, 8> b_frag;
+                simdgroup_load(b_frag, &Bs_tile[0][col_off], TILE_N);
+                simdgroup_multiply_accumulate(acc[block], a_frag, b_frag, acc[block]);
+            }
+        }
+
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    simdgroup_store(acc, &As_tile[0][0], 8);
+    const uint active_rows = min(TILE_M, M - m0);
+    const uint active_cols = min(TILE_N, N - n0);
+
+    if (sg_id < ROW_BLOCKS) {
+        const uint row_off = sg_id * 8u;
+        if (row_off < active_rows) {
+            for (uint block = 0; block < COL_BLOCKS; ++block) {
+                const uint col_off = block * 8u;
+                if (col_off >= active_cols) {
+                    continue;
+                }
+                simdgroup_store(
+                    acc[block],
+                    &Cs_tile[row_off][col_off],
+                    TILE_N);
+            }
+        }
+    }
+
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint e = 0; e < per_thread; ++e) {
-        uint idx = lane + e * 32u;
-        if (idx < elems) {
-            uint r = idx / 8u;
-            uint c = idx % 8u;
-            uint m = m0 + r;
-            uint n = n0 + c;
-            if (m < M && n < N) {
-                float v = As_tile[r][c];
-                C_base[m * ldc + n] = _from_float_generic<T>(v);
-            }
+    const uint total_store = active_rows * active_cols;
+    const uint store_iters = (total_store + THREADS_PER_TG - 1u) / THREADS_PER_TG;
+    for (uint it = 0; it < store_iters; ++it) {
+        uint idx = lane + it * THREADS_PER_TG;
+        if (idx < total_store) {
+            uint r = idx / active_cols;
+            uint c = idx % active_cols;
+            float v = Cs_tile[r][c];
+            C_base[(m0 + r) * ldc + (n0 + c)] = _from_float_generic<T>(v);
         }
     }
 }

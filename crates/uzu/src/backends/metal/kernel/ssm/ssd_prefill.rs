@@ -920,12 +920,12 @@ impl SSDPrefillKernel {
             &stride_c as *const u32 as *const _,
         );
         let grid = MTLSize {
-            width: ((n + 7) / 8) as u64,
+            width: ((n + 15) / 16) as u64,
             height: ((m + 7) / 8) as u64,
             depth: batch as u64,
         };
         let threads = MTLSize {
-            width: 32,
+            width: 64,
             height: 1,
             depth: 1,
         };
