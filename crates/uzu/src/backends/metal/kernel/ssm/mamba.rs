@@ -5,11 +5,10 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    DtDecayArguments, DtDecayKernel, SSDPrefillArguments, SSDPrefillKernel,
-    SSDPrefillMatrixArguments, SSDPrefillMode, SSDUpdateArguments,
-    SSDUpdateKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
-    SplitInProjArguments, SplitInProjKernel,
-    conv1d_scan::Conv1dDecodeArguments,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMatrixArguments,
+    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel,
+    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
+    SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -34,7 +33,6 @@ pub(crate) struct MambaMixerEncodable {
     out_projection: Box<dyn EncodableWithState>,
     split_inproj: SplitInProjKernel,
     tensor_add_bias: TensorAddBias,
-    dt_decay: DtDecayKernel,
     conv_scan: Conv1dScanKernel,
     split_conv_outputs: SplitConvOutputsKernel,
     ssm_prefill: SSDPrefillKernel,
@@ -123,8 +121,6 @@ impl MambaMixerEncodable {
                 .expect("Failed to create split in-projection kernel");
         let tensor_add_bias = TensorAddBias::new(mtl_context, kernel_data_type)
             .expect("Failed to create tensor add bias kernel");
-        let dt_decay = DtDecayKernel::new(mtl_context, kernel_data_type)
-            .expect("Failed to create dt/decay kernel");
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
             kernel_data_type,
@@ -147,7 +143,6 @@ impl MambaMixerEncodable {
             out_projection,
             split_inproj,
             tensor_add_bias,
-            dt_decay,
             conv_scan,
             split_conv_outputs,
             ssm_prefill,
@@ -175,7 +170,6 @@ impl MambaMixerEncodable {
         self.in_projection.encode(state, command_buffer, parameters);
         self.split_inproj(state, command_buffer, active_suffix_length);
         self.add_gate_bias(state, command_buffer, active_suffix_length);
-        self.run_dt_decay(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
         self.split_conv_outputs(state, command_buffer, active_suffix_length);
 
@@ -255,36 +249,6 @@ impl MambaMixerEncodable {
         self.tensor_add_bias.encode_into_command_buffer(
             &gate_buf, &bias_buf, &gate_buf, inner_dim, total, &cmd,
         );
-    }
-
-    fn run_dt_decay(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        suffix_length: usize,
-    ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmDt(self.layer_index),
-            ArrayId::SsmDecay(self.layer_index),
-        ]);
-        let mut dt_arr = arrays[0].borrow_mut();
-        let mut decay_arr = arrays[1].borrow_mut();
-        let dt_buf = unsafe { dt_arr.mtl_buffer().to_owned() };
-        let decay_buf = unsafe { decay_arr.mtl_buffer().to_owned() };
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
-        self.dt_decay
-            .encode(
-                &compute,
-                DtDecayArguments {
-                    dt: &dt_buf,
-                    decay: &decay_buf,
-                    num_heads: self.config.num_heads,
-                    suffix_length,
-                },
-            )
-            .expect("Failed to encode dt/decay kernel");
-        compute.end_encoding();
     }
 
     fn run_conv_scan(
@@ -450,7 +414,6 @@ impl MambaMixerEncodable {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
             ArrayId::SsmDt(self.layer_index),
-            ArrayId::SsmDecay(self.layer_index),
             ArrayId::SsmZ(self.layer_index),
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
@@ -467,47 +430,16 @@ impl MambaMixerEncodable {
         let mut dt = base_arrays[3].borrow_mut();
         let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
         drop(dt);
-        let mut decay = base_arrays[4].borrow_mut();
-        let decay_buf = unsafe { decay.mtl_buffer().to_owned() };
-        drop(decay);
-        let mut z = base_arrays[5].borrow_mut();
+        let mut z = base_arrays[4].borrow_mut();
         let z_buf = unsafe { z.mtl_buffer().to_owned() };
         drop(z);
-        let mut state_buf = base_arrays[6].borrow_mut();
+        let mut state_buf = base_arrays[5].borrow_mut();
         let state_raw = unsafe { state_buf.mtl_buffer().to_owned() };
         drop(state_buf);
-        let mut out = base_arrays[7].borrow_mut();
+        let mut out = base_arrays[6].borrow_mut();
         let out_buf = unsafe { out.mtl_buffer().to_owned() };
         drop(out);
 
-        let chunk_buffers =
-            if matches!(self.prefill_mode, SSDPrefillMode::MultiPass) {
-                let chunk_arrays = state.arrays(&[
-                    ArrayId::SsmChunkA(self.layer_index),
-                    ArrayId::SsmChunkB(self.layer_index),
-                    ArrayId::SsmChunkPrefix(self.layer_index),
-                ]);
-                let mut chunk_a = chunk_arrays[0].borrow_mut();
-                let chunk_a_buf = unsafe { chunk_a.mtl_buffer().to_owned() };
-                drop(chunk_a);
-                let mut chunk_b = chunk_arrays[1].borrow_mut();
-                let chunk_b_buf = unsafe { chunk_b.mtl_buffer().to_owned() };
-                drop(chunk_b);
-                let mut chunk_prefix = chunk_arrays[2].borrow_mut();
-                let chunk_prefix_buf =
-                    unsafe { chunk_prefix.mtl_buffer().to_owned() };
-                drop(chunk_prefix);
-                Some((chunk_a_buf, chunk_b_buf, chunk_prefix_buf))
-            } else {
-                None
-            };
-        let (chunk_a_buf, chunk_b_buf, chunk_prefix_buf) =
-            if let Some(buffers) = chunk_buffers {
-                buffers
-            } else {
-                let fallback = state_raw.clone();
-                (fallback.clone(), fallback.clone(), fallback)
-            };
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
@@ -561,16 +493,12 @@ impl MambaMixerEncodable {
                 SSDPrefillArguments {
                     x: &x_buf,
                     dt: &dt_buf,
-                    decay: &decay_buf,
                     b: &b_buf,
                     c: &c_buf,
                     d: &skip,
                     z: &z_buf,
                     state: &state_raw,
                     y: &out_buf,
-                    chunk_a: &chunk_a_buf,
-                    chunk_b: &chunk_b_buf,
-                    chunk_prefix: &chunk_prefix_buf,
                     suffix_len: suffix_length,
                     group_size: (self.config.num_heads / self.config.num_groups)
                         as i32,
@@ -612,7 +540,6 @@ impl MambaMixerEncodable {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
             ArrayId::SsmDt(self.layer_index),
-            ArrayId::SsmDecay(self.layer_index),
             ArrayId::SsmZ(self.layer_index),
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
@@ -629,16 +556,13 @@ impl MambaMixerEncodable {
         let mut dt = arrays[3].borrow_mut();
         let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
         drop(dt);
-        let mut decay = arrays[4].borrow_mut();
-        let decay_buf = unsafe { decay.mtl_buffer().to_owned() };
-        drop(decay);
-        let mut z = arrays[5].borrow_mut();
+        let mut z = arrays[4].borrow_mut();
         let z_buf = unsafe { z.mtl_buffer().to_owned() };
         drop(z);
-        let mut state_arr = arrays[6].borrow_mut();
+        let mut state_arr = arrays[5].borrow_mut();
         let state_buf = unsafe { state_arr.mtl_buffer().to_owned() };
         drop(state_arr);
-        let mut y = arrays[7].borrow_mut();
+        let mut y = arrays[6].borrow_mut();
         let y_buf = unsafe { y.mtl_buffer().to_owned() };
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip_buf = unsafe { skip_weights.mtl_buffer().to_owned() };
@@ -663,7 +587,6 @@ impl MambaMixerEncodable {
                 SSDUpdateArguments {
                     x: &x_buf,
                     dt: &dt_buf,
-                    decay: &decay_buf,
                     b: &b_buf,
                     c: &c_buf,
                     d: &skip_buf,
@@ -691,11 +614,8 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
     match env::var("UZU_SSM_PREFILL_MODE") {
         Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
             "seq" | "sequential" | "baseline" => SSDPrefillMode::Sequential,
-            "single" | "singlepass" | "single_pass" | "1pass" | "one" => {
+            "single" | "singlepass" | "single_pass" => {
                 SSDPrefillMode::SinglePass
-            },
-            "multi" | "multipass" | "multi_pass" | "2pass" | "two" => {
-                SSDPrefillMode::MultiPass
             },
             "matrix" | "gemm" => SSDPrefillMode::Matrix,
             _ => SSDPrefillMode::SinglePass,

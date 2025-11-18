@@ -20,6 +20,14 @@ fn silu_scalar(x: f32) -> f32 {
     x * y
 }
 
+fn softplus_f32(x: f32) -> f32 {
+    if x > 20.0 {
+        x
+    } else {
+        (1.0 + x.exp()).ln()
+    }
+}
+
 fn create_context() -> Option<MTLContext> {
     let device = metal::Device::system_default()?;
     let command_queue = device.new_command_queue();
@@ -67,8 +75,7 @@ fn ssd_prefill_cpu_reference(
     state_dim: usize,
     group_size: i32,
     x_data: &[f32],
-    dt_data: &[f32],
-    decay_data: &[f32],
+    dt_raw_data: &[f32],
     b_data: &[f32],
     c_data: &[f32],
     d_data: &[f32],
@@ -95,8 +102,9 @@ fn ssd_prefill_cpu_reference(
                 let cb_base = token * cb_strides[0] + group_idx * cb_strides[1];
 
                 let x_val = x_data[x_idx];
-                let dt_val = dt_data[dt_idx];
-                let decay_val = decay_data[dt_idx];
+                let dt_raw = dt_raw_data[dt_idx];
+                let dt_val = softplus_f32(dt_raw);
+                let decay_val = (-dt_val).exp();
                 let dt_safe = dt_val.max(1e-6);
                 let dt_scaled_input = (x_val / dt_safe) * dt_val;
                 let gate = silu_scalar(z_data[x_idx]);
@@ -139,7 +147,6 @@ struct SSDPrefillFixture {
     state_strides: [usize; 3],
     x_data: Vec<f32>,
     dt_data: Vec<f32>,
-    decay_data: Vec<f32>,
     b_data: Vec<f32>,
     c_data: Vec<f32>,
     d_data: Vec<f32>,
@@ -167,9 +174,7 @@ impl SSDPrefillFixture {
         let x_data: Vec<f32> =
             (0..total_x).map(|i| ((i % 17) as f32) * 0.01 - 0.05).collect();
         let dt_data: Vec<f32> =
-            (0..total_dt).map(|i| 0.01 + ((i % 13) as f32) * 0.005).collect();
-        let decay_data: Vec<f32> =
-            (0..total_dt).map(|i| 0.5 + ((i % 7) as f32) * 0.01).collect();
+            (0..total_dt).map(|i| ((i % 13) as f32) * 0.2 - 1.5).collect();
         let b_data: Vec<f32> =
             (0..total_cb).map(|i| ((i % 11) as f32) * 0.02 - 0.05).collect();
         let c_data: Vec<f32> =
@@ -204,7 +209,6 @@ impl SSDPrefillFixture {
             state_strides,
             x_data,
             dt_data,
-            decay_data,
             b_data,
             c_data,
             d_data,
@@ -228,11 +232,6 @@ fn run_prefill_kernel_mode(
     );
     let dt_buf = device.new_buffer_with_data(
         fixture.dt_data.as_ptr() as *const _,
-        (fixture.total_dt * 4) as u64,
-        STORAGE_MODE,
-    );
-    let decay_buf = device.new_buffer_with_data(
-        fixture.decay_data.as_ptr() as *const _,
         (fixture.total_dt * 4) as u64,
         STORAGE_MODE,
     );
@@ -260,20 +259,8 @@ fn run_prefill_kernel_mode(
         device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
     let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
 
-    let chunk_a_len = fixture.chunk_count * fixture.total_pairs;
-    let chunk_b_len = chunk_a_len * fixture.state_dim;
-    let chunk_prefix_len =
-        fixture.chunk_count * fixture.total_pairs * fixture.state_dim;
-    let chunk_a_buf = device.new_buffer((chunk_a_len * 4) as u64, STORAGE_MODE);
-    let chunk_b_buf = device.new_buffer((chunk_b_len * 4) as u64, STORAGE_MODE);
-    let chunk_prefix_buf =
-        device.new_buffer((chunk_prefix_len * 4) as u64, STORAGE_MODE);
-
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
-    zero_buffer(&chunk_a_buf);
-    zero_buffer(&chunk_b_buf);
-    zero_buffer(&chunk_prefix_buf);
 
     let chunk_total = fixture.chunk_count * fixture.num_heads;
     let mut group_count_dbg = 0usize;
@@ -339,16 +326,12 @@ fn run_prefill_kernel_mode(
     let args = SSDPrefillArguments {
         x: &x_buf,
         dt: &dt_buf,
-        decay: &decay_buf,
         b: &b_buf,
         c: &c_buf,
         d: &d_buf,
         z: &z_buf,
         state: &state_buf,
         y: &y_buf,
-        chunk_a: &chunk_a_buf,
-        chunk_b: &chunk_b_buf,
-        chunk_prefix: &chunk_prefix_buf,
         suffix_len: fixture.suffix_len,
         group_size: fixture.group_size,
         state_size: fixture.state_dim as i32,
@@ -528,7 +511,6 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         fixture.group_size,
         &fixture.x_data,
         &fixture.dt_data,
-        &fixture.decay_data,
         &fixture.b_data,
         &fixture.c_data,
         &fixture.d_data,
@@ -575,8 +557,11 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
                 );
                 let mut cpu_sum = 0.0f32;
                 for t_idx in chunk_start..chunk_end {
-                    let decay_idx = t_idx * heads + h;
-                    cpu_sum += fixture.decay_data[decay_idx].ln();
+                    let dt_idx = t_idx * heads + h;
+                    let dt_raw = fixture.dt_data[dt_idx];
+                    let dt_val = softplus_f32(dt_raw);
+                    let decay_val = (-dt_val).exp().max(1e-6).min(1.0);
+                    cpu_sum += decay_val.ln();
                 }
                 running_cpu += cpu_sum;
                 let drift = (running_cpu - running_gpu).abs();
@@ -699,11 +684,6 @@ fn ssd_prefill_single_pass_is_deterministic() {
     assert_deterministic_for_mode(SSDPrefillMode::SinglePass);
 }
 
-#[test]
-#[ignore = "Multi-pass kernels still under investigation for determinism"]
-fn ssd_prefill_multi_pass_is_deterministic() {
-    assert_deterministic_for_mode(SSDPrefillMode::MultiPass);
-}
 
 #[test]
 fn ssd_prefill_sequential_matches_cpu_reference() {
@@ -715,11 +695,6 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
     assert_matches_cpu_reference(SSDPrefillMode::SinglePass);
 }
 
-#[test]
-#[ignore = "Multi-pass kernels still under investigation for determinism"]
-fn ssd_prefill_multi_pass_matches_cpu_reference() {
-    assert_matches_cpu_reference(SSDPrefillMode::MultiPass);
-}
 
 #[test]
 fn ssd_prefill_matrix_is_deterministic() {

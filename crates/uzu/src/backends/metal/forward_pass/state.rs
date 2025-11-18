@@ -436,16 +436,8 @@ struct AuxBuffers {
     ssm_c: Option<ArrayCell>,
     /// [suffix_length, num_heads]
     ssm_dt: Option<ArrayCell>,
-    /// [suffix_length, num_heads]
-    ssm_decay: Option<ArrayCell>,
     /// [suffix_length, num_heads, head_dim]
     ssm_z: Option<ArrayCell>,
-    /// [max_chunks, num_heads, head_dim]
-    ssm_chunk_a: Option<ArrayCell>,
-    /// [max_chunks, num_heads, head_dim, state_dim]
-    ssm_chunk_b: Option<ArrayCell>,
-    /// [max_chunks, num_heads, head_dim, state_dim]
-    ssm_chunk_prefix: Option<ArrayCell>,
     ssm_matrix: Option<SsmMatrixArrays>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
@@ -583,48 +575,12 @@ impl AuxBuffers {
                     )),
                     _ => None,
                 },
-                ssm_decay: match (
-                    scratch.ssm_decay.as_ref(),
-                    model_shape.ssm_decay_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => Some(RefCell::new(
-                        MetalArray::new(buf.clone(), &shape, act_dtype),
-                    )),
-                    _ => None,
-                },
                 ssm_z: match (
                     scratch.ssm_z.as_ref(),
                     model_shape.ssm_z_shape(suffix_length),
                 ) {
                     (Some(buf), Some(shape)) => Some(RefCell::new(
                         MetalArray::new(buf.clone(), &shape, act_dtype),
-                    )),
-                    _ => None,
-                },
-                ssm_chunk_a: match (
-                    scratch.ssm_chunk_a.as_ref(),
-                    model_shape.ssm_chunk_a_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => Some(RefCell::new(
-                        MetalArray::new(buf.clone(), &shape, DataType::F32),
-                    )),
-                    _ => None,
-                },
-                ssm_chunk_b: match (
-                    scratch.ssm_chunk_b.as_ref(),
-                    model_shape.ssm_chunk_state_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => Some(RefCell::new(
-                        MetalArray::new(buf.clone(), &shape, DataType::F32),
-                    )),
-                    _ => None,
-                },
-                ssm_chunk_prefix: match (
-                    scratch.ssm_chunk_prefix.as_ref(),
-                    model_shape.ssm_chunk_state_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => Some(RefCell::new(
-                        MetalArray::new(buf.clone(), &shape, DataType::F32),
                     )),
                     _ => None,
                 },
@@ -1328,44 +1284,12 @@ impl ForwardPassState {
                     .expect("SSM dt buffer not initialized")
                     .clone()
             },
-            ArrayId::SsmDecay(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_decay
-                    .as_ref()
-                    .expect("SSM decay buffer not initialized")
-                    .clone()
-            },
             ArrayId::SsmZ(layer_index) => {
                 let _ = layer_index;
                 self.aux_buffers
                     .ssm_z
                     .as_ref()
                     .expect("SSM z buffer not initialized")
-                    .clone()
-            },
-            ArrayId::SsmChunkA(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_chunk_a
-                    .as_ref()
-                    .expect("SSM chunk A buffer not initialized")
-                    .clone()
-            },
-            ArrayId::SsmChunkB(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_chunk_b
-                    .as_ref()
-                    .expect("SSM chunk B buffer not initialized")
-                    .clone()
-            },
-            ArrayId::SsmChunkPrefix(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_chunk_prefix
-                    .as_ref()
-                    .expect("SSM chunk prefix buffer not initialized")
                     .clone()
             },
             ArrayId::SsmMatrixPrefix(layer_index) => {
@@ -1721,11 +1645,7 @@ pub enum ArrayId {
     SsmB(usize),
     SsmC(usize),
     SsmDt(usize),
-    SsmDecay(usize),
     SsmZ(usize),
-    SsmChunkA(usize),
-    SsmChunkB(usize),
-    SsmChunkPrefix(usize),
     SsmMatrixPrefix(usize),
     SsmMatrixChunkSums(usize),
     SsmMatrixChunkOffsets(usize),

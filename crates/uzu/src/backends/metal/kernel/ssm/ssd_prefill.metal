@@ -18,25 +18,33 @@ struct SILU {
 };
 
 template <typename T>
+inline T softplus(T x) {
+    float xf = float(x);
+    if (xf > 20.0f) {
+        return x;
+    }
+    return static_cast<T>(log(1.0f + fast::exp(xf)));
+}
+
+template <typename T>
 kernel void ssd_prefill_kernel(
     device const T* x [[ buffer(0) ]],      // (suffix, h, dh)
-    device const T* dt [[ buffer(1) ]],     // (suffix, h)
-    device const T* decay [[ buffer(2) ]],  // (suffix, h)
-    device const T* B [[ buffer(3) ]],      // (suffix, g, n)
-    device const T* C [[ buffer(4) ]],      // (suffix, g, n)
-    device const T* D [[ buffer(5) ]],      // (h)
-    device const T* z [[ buffer(6) ]],      // (suffix, h, dh)
-    device T* state [[ buffer(7) ]],        // (h, dh, n)
-    device T* y [[ buffer(8) ]],            // (suffix, h, dh)
-    constant const size_t& suffix_len [[ buffer(9) ]],
-    constant const int& group_size [[ buffer(10) ]],
-    constant const int& state_size [[ buffer(11) ]],
-    constant const size_t* x_strides [[ buffer(12) ]],
-    constant const size_t* dt_strides [[ buffer(13) ]],
-    constant const size_t* cb_strides [[ buffer(14) ]],
-    constant const size_t* state_strides [[ buffer(15) ]],
-    constant const uint& num_heads [[ buffer(16) ]],
-    constant const uint& head_dim [[ buffer(17) ]],
+    device const T* dt_raw [[ buffer(1) ]], // (suffix, h) - raw dt values
+    device const T* B [[ buffer(2) ]],      // (suffix, g, n)
+    device const T* C [[ buffer(3) ]],      // (suffix, g, n)
+    device const T* D [[ buffer(4) ]],      // (h)
+    device const T* z [[ buffer(5) ]],      // (suffix, h, dh)
+    device T* state [[ buffer(6) ]],        // (h, dh, n)
+    device T* y [[ buffer(7) ]],            // (suffix, h, dh)
+    constant const size_t& suffix_len [[ buffer(8) ]],
+    constant const int& group_size [[ buffer(9) ]],
+    constant const int& state_size [[ buffer(10) ]],
+    constant const size_t* x_strides [[ buffer(11) ]],
+    constant const size_t* dt_strides [[ buffer(12) ]],
+    constant const size_t* cb_strides [[ buffer(13) ]],
+    constant const size_t* state_strides [[ buffer(14) ]],
+    constant const uint& num_heads [[ buffer(15) ]],
+    constant const uint& head_dim [[ buffer(16) ]],
     uint3 tg_pos [[ threadgroup_position_in_grid ]],
     ushort lane [[ thread_index_in_threadgroup ]]
 ) {
@@ -110,8 +118,9 @@ kernel void ssd_prefill_kernel(
         const size_t dt_idx = token * dt_token_stride + dt_base;
 
         const float x_val = float(x[x_idx]);
-        const float dt_val = float(dt[dt_idx]);
-        const float decay_val = float(decay[dt_idx]);
+        const float dt_raw_val = float(dt_raw[dt_idx]);
+        const float dt_val = float(softplus(dt_raw_val));
+        const float decay_val = fast::exp(-dt_val);
         const float gate = float(SILU{}(z[x_idx]));
         const float skip = d_scalar * x_val;
         const float dt_safe = fmax(dt_val, 1e-6f);
@@ -156,23 +165,22 @@ kernel void ssd_prefill_kernel(
   template [[host_name("ssd_prefill_kernel_" #type_name)]]   \
   kernel void ssd_prefill_kernel<type>(                      \
     device const type* x [[ buffer(0) ]],                    \
-    device const type* dt [[ buffer(1) ]],                   \
-    device const type* decay [[ buffer(2) ]],                \
-    device const type* B [[ buffer(3) ]],                    \
-    device const type* C [[ buffer(4) ]],                    \
-    device const type* D [[ buffer(5) ]],                    \
-    device const type* z [[ buffer(6) ]],                    \
-    device type* state [[ buffer(7) ]],                      \
-    device type* y [[ buffer(8) ]],                          \
-    constant const size_t& suffix_len [[ buffer(9) ]],       \
-    constant const int& group_size [[ buffer(10) ]],         \
-    constant const int& state_size [[ buffer(11) ]],         \
-    constant const size_t* x_strides [[ buffer(12) ]],       \
-    constant const size_t* dt_strides [[ buffer(13) ]],      \
-    constant const size_t* cb_strides [[ buffer(14) ]],      \
-    constant const size_t* state_strides [[ buffer(15) ]],   \
-    constant const uint& num_heads [[ buffer(16) ]],         \
-    constant const uint& head_dim [[ buffer(17) ]],          \
+    device const type* dt_raw [[ buffer(1) ]],               \
+    device const type* B [[ buffer(2) ]],                    \
+    device const type* C [[ buffer(3) ]],                    \
+    device const type* D [[ buffer(4) ]],                    \
+    device const type* z [[ buffer(5) ]],                    \
+    device type* state [[ buffer(6) ]],                      \
+    device type* y [[ buffer(7) ]],                          \
+    constant const size_t& suffix_len [[ buffer(8) ]],       \
+    constant const int& group_size [[ buffer(9) ]],          \
+    constant const int& state_size [[ buffer(10) ]],         \
+    constant const size_t* x_strides [[ buffer(11) ]],       \
+    constant const size_t* dt_strides [[ buffer(12) ]],      \
+    constant const size_t* cb_strides [[ buffer(13) ]],      \
+    constant const size_t* state_strides [[ buffer(14) ]],   \
+    constant const uint& num_heads [[ buffer(15) ]],         \
+    constant const uint& head_dim [[ buffer(16) ]],          \
     uint3 tg_pos [[ threadgroup_position_in_grid ]],         \
     ushort lane [[ thread_index_in_threadgroup ]]            \
   );
@@ -739,21 +747,20 @@ kernel void ssd_prefill_chunk_apply_kernel<half>(
 template <typename T>
 kernel void ssd_prefill_kernel_sequential(
     device const T* x [[ buffer(0) ]],      // (suffix, h, dh)
-    device const T* dt [[ buffer(1) ]],     // (suffix, h)
-    device const T* decay [[ buffer(2) ]],  // (suffix, h)
-    device const T* B [[ buffer(3) ]],      // (suffix, g, n)
-    device const T* C [[ buffer(4) ]],      // (suffix, g, n)
-    device const T* D [[ buffer(5) ]],      // (h)
-    device const T* z [[ buffer(6) ]],      // (suffix, h, dh)
-    device T* state [[ buffer(7) ]],        // (h, dh, n)
-    device T* y [[ buffer(8) ]],            // (suffix, h, dh)
-    constant const size_t& suffix_len [[ buffer(9) ]],
-    constant const int& group_size [[ buffer(10) ]],
-    constant const int& state_size [[ buffer(11) ]],
-    constant const size_t* x_strides [[ buffer(12) ]],
-    constant const size_t* dt_strides [[ buffer(13) ]],
-    constant const size_t* cb_strides [[ buffer(14) ]],
-    constant const size_t* state_strides [[ buffer(15) ]],
+    device const T* dt_raw [[ buffer(1) ]], // (suffix, h) - raw dt values
+    device const T* B [[ buffer(2) ]],      // (suffix, g, n)
+    device const T* C [[ buffer(3) ]],      // (suffix, g, n)
+    device const T* D [[ buffer(4) ]],      // (h)
+    device const T* z [[ buffer(5) ]],      // (suffix, h, dh)
+    device T* state [[ buffer(6) ]],        // (h, dh, n)
+    device T* y [[ buffer(7) ]],            // (suffix, h, dh)
+    constant const size_t& suffix_len [[ buffer(8) ]],
+    constant const int& group_size [[ buffer(9) ]],
+    constant const int& state_size [[ buffer(10) ]],
+    constant const size_t* x_strides [[ buffer(11) ]],
+    constant const size_t* dt_strides [[ buffer(12) ]],
+    constant const size_t* cb_strides [[ buffer(13) ]],
+    constant const size_t* state_strides [[ buffer(14) ]],
     uint3 tid [[ thread_position_in_grid ]],
     uint3 grid_dim [[ threads_per_grid ]]
 ) {
@@ -778,8 +785,9 @@ kernel void ssd_prefill_kernel_sequential(
             token * cb_strides[0] + group_idx * cb_strides[1];
 
         const T this_x = x[x_idx];
-        const T this_dt = dt[dt_idx];
-        const T this_decay = decay[dt_idx];
+        const T dt_raw_val = dt_raw[dt_idx];
+        const T this_dt = softplus(dt_raw_val);
+        const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
         const T this_D = D[h_idx];
         const T this_z = SILU{}(z[x_idx]);
         const float dt_f = fmax(float(this_dt), 1e-6f);
@@ -819,21 +827,20 @@ kernel void ssd_prefill_kernel_sequential(
   template [[host_name("ssd_prefill_kernel_sequential_" #type_name)]] \
   kernel void ssd_prefill_kernel_sequential<type>(                    \
     device const type* x [[ buffer(0) ]],                    \
-    device const type* dt [[ buffer(1) ]],                   \
-    device const type* decay [[ buffer(2) ]],                \
-    device const type* B [[ buffer(3) ]],                    \
-    device const type* C [[ buffer(4) ]],                    \
-    device const type* D [[ buffer(5) ]],                    \
-    device const type* z [[ buffer(6) ]],                    \
-    device type* state [[ buffer(7) ]],                      \
-    device type* y [[ buffer(8) ]],                          \
-    constant const size_t& suffix_len [[ buffer(9) ]],       \
-    constant const int& group_size [[ buffer(10) ]],         \
-    constant const int& state_size [[ buffer(11) ]],         \
-    constant const size_t* x_strides [[ buffer(12) ]],       \
-    constant const size_t* dt_strides [[ buffer(13) ]],      \
-    constant const size_t* cb_strides [[ buffer(14) ]],      \
-    constant const size_t* state_strides [[ buffer(15) ]],   \
+    device const type* dt_raw [[ buffer(1) ]],               \
+    device const type* B [[ buffer(2) ]],                    \
+    device const type* C [[ buffer(3) ]],                    \
+    device const type* D [[ buffer(4) ]],                    \
+    device const type* z [[ buffer(5) ]],                    \
+    device type* state [[ buffer(6) ]],                      \
+    device type* y [[ buffer(7) ]],                          \
+    constant const size_t& suffix_len [[ buffer(8) ]],       \
+    constant const int& group_size [[ buffer(9) ]],          \
+    constant const int& state_size [[ buffer(10) ]],         \
+    constant const size_t* x_strides [[ buffer(11) ]],       \
+    constant const size_t* dt_strides [[ buffer(12) ]],      \
+    constant const size_t* cb_strides [[ buffer(13) ]],      \
+    constant const size_t* state_strides [[ buffer(14) ]],   \
     uint3 tid [[ thread_position_in_grid ]],                 \
     uint3 grid_dim [[ threads_per_grid ]]                    \
   );

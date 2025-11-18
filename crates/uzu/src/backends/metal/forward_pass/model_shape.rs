@@ -445,13 +445,6 @@ impl ModelShape {
         }
     }
 
-    pub fn ssm_decay_shape(
-        &self,
-        suffix_length: usize,
-    ) -> Option<[usize; 2]> {
-        self.ssm_dt_shape(suffix_length)
-    }
-
     pub fn ssm_bc_shape(
         &self,
         suffix_length: usize,
@@ -473,31 +466,6 @@ impl ModelShape {
             Some((suffix_length + SSM_PREFILL_CHUNK - 1) / SSM_PREFILL_CHUNK)
         } else {
             None
-        }
-    }
-
-    pub fn ssm_chunk_a_shape(
-        &self,
-        suffix_length: usize,
-    ) -> Option<[usize; 3]> {
-        self.ssm_chunk_count(suffix_length).map(|chunks| {
-            [chunks, self.max_mamba_heads, self.max_mamba_head_dim]
-        })
-    }
-
-    pub fn ssm_chunk_state_shape(
-        &self,
-        suffix_length: usize,
-    ) -> Option<[usize; 4]> {
-        match (self.ssm_chunk_count(suffix_length), self.max_mamba_state_dim())
-        {
-            (Some(chunks), Some(state_dim)) => Some([
-                chunks,
-                self.max_mamba_heads,
-                self.max_mamba_head_dim,
-                state_dim,
-            ]),
-            _ => None,
         }
     }
 

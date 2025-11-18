@@ -36,10 +36,10 @@ pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    DtDecayArguments, DtDecayKernel, SSDPrefillArguments, SSDPrefillKernel,
-    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel, SSMKernelError,
-    SSMUpdateArguments, SSMUpdateKernel, SplitConvOutputsArguments,
-    SplitConvOutputsKernel, SplitInProjArguments, SplitInProjKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
+    SplitInProjKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;

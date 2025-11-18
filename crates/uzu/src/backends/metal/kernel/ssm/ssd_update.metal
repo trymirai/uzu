@@ -14,26 +14,34 @@ struct SILU {
 };
 
 template <typename T>
+inline T softplus(T x) {
+    float xf = float(x);
+    if (xf > 20.0f) {
+        return x;
+    }
+    return static_cast<T>(log(1.0f + fast::exp(xf)));
+}
+
+template <typename T>
 kernel void ssd_update_kernel(
     // Input 
     device const T* x [[ buffer(0) ]],      // (b, h, dh)
-    device const T* dt [[ buffer(1) ]],     // (b, h)
-    device const T* decay [[ buffer(2) ]],  // (b, h)
-    device const T* B [[ buffer(3) ]],      // (b, g, n)
-    device const T* C [[ buffer(4) ]],      // (b, g, n)
-    device const T* D [[ buffer(5) ]],      // (h)
-    device const T* z [[ buffer(6) ]],      // (b, d)
-    device const T* state [[ buffer(7) ]],  // (b, h, dh, n)
-    device T* y [[ buffer(8) ]],
-    device T* next_state [[ buffer(9) ]],
+    device const T* dt_raw [[ buffer(1) ]], // (b, h)
+    device const T* B [[ buffer(2) ]],      // (b, g, n)
+    device const T* C [[ buffer(3) ]],      // (b, g, n)
+    device const T* D [[ buffer(4) ]],      // (h)
+    device const T* z [[ buffer(5) ]],      // (b, d)
+    device const T* state [[ buffer(6) ]],  // (b, h, dh, n)
+    device T* y [[ buffer(7) ]],
+    device T* next_state [[ buffer(8) ]],
     // Parameters
-    constant const int& group_size [[ buffer(10) ]],   // h = group_size * g
-    constant const int& state_size [[ buffer(11) ]],
+    constant const int& group_size [[ buffer(9) ]],    // h = group_size * g
+    constant const int& state_size [[ buffer(10) ]],
     // Strides
-    constant const size_t* x_strides [[ buffer(12) ]],
-    constant const size_t* dt_strides [[ buffer(13) ]],
-    constant const size_t* CB_strides [[ buffer(14) ]],
-    constant const size_t* state_strides [[ buffer(15) ]],
+    constant const size_t* x_strides [[ buffer(11) ]],
+    constant const size_t* dt_strides [[ buffer(12) ]],
+    constant const size_t* CB_strides [[ buffer(13) ]],
+    constant const size_t* state_strides [[ buffer(14) ]],
     // Grid
     uint3 grid_idx [[ thread_position_in_grid ]],
     uint3 grid_size [[ threads_per_grid ]]
@@ -48,9 +56,10 @@ kernel void ssd_update_kernel(
     const int state_start_idx = static_cast<int>(b_idx * state_strides[0] + h_idx * state_strides[1] + dh_idx * state_strides[2]);
 
     // load data
-    T this_x = x[x_idx]; // assumed SILU by conv kernel
-    T this_dt = dt[dt_idx];
-    T this_decay = decay[dt_idx];
+    T this_x = x[x_idx];
+    T dt_raw_val = dt_raw[dt_idx];
+    T this_dt = softplus(dt_raw_val);
+    T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
     T this_D = D[h_idx];
     T this_z = z[x_idx];
     this_z = SILU{}(this_z);
@@ -76,21 +85,20 @@ kernel void ssd_update_kernel(
   template [[host_name("ssd_update_kernel_" #type_name)]]   \
   kernel void ssd_update_kernel<type>(                  \
     device const type* x [[buffer(0)]],                     \
-    device const type* dt [[buffer(1)]],                    \
-    device const type* decay [[buffer(2)]],                 \
-    device const type* B [[buffer(3)]],                     \
-    device const type* C [[buffer(4)]],                     \
-    device const type* D [[buffer(5)]],                     \
-    device const type* z [[buffer(6)]],                     \
-    device const type* state [[buffer(7)]],                 \
-    device type* y [[buffer(8)]],                           \
-    device type* next_state [[buffer(9)]],                  \
-    constant const int& group_size [[buffer(10)]],          \
-    constant const int& state_size [[buffer(11)]],          \
-    constant const size_t* x_strides [[buffer(12)]],        \
-    constant const size_t* dt_strides [[buffer(13)]],       \
-    constant const size_t* CB_strides [[buffer(14)]],       \
-    constant const size_t* state_strides [[buffer(15)]],    \
+    device const type* dt_raw [[buffer(1)]],                \
+    device const type* B [[buffer(2)]],                     \
+    device const type* C [[buffer(3)]],                     \
+    device const type* D [[buffer(4)]],                     \
+    device const type* z [[buffer(5)]],                     \
+    device const type* state [[buffer(6)]],                 \
+    device type* y [[buffer(7)]],                           \
+    device type* next_state [[buffer(8)]],                  \
+    constant const int& group_size [[buffer(9)]],           \
+    constant const int& state_size [[buffer(10)]],          \
+    constant const size_t* x_strides [[buffer(11)]],        \
+    constant const size_t* dt_strides [[buffer(12)]],       \
+    constant const size_t* CB_strides [[buffer(13)]],       \
+    constant const size_t* state_strides [[buffer(14)]],    \
     uint3 grid_idx [[thread_position_in_grid]],             \
     uint3 grid_size [[threads_per_grid]]);
 

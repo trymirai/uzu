@@ -13,7 +13,6 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
 }
 
 pub mod conv1d_scan;
-pub mod dt_decay;
 pub mod mamba;
 pub mod split_conv_outputs;
 pub mod split_inproj;
@@ -24,7 +23,6 @@ pub mod ssm_update;
 pub use conv1d_scan::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
 };
-pub use dt_decay::{DtDecayArguments, DtDecayKernel};
 pub(crate) use mamba::MambaMixerEncodable;
 pub use split_conv_outputs::{
     SplitConvOutputsArguments, SplitConvOutputsKernel,

@@ -53,11 +53,7 @@ pub struct ForwardPassBuffers {
     pub ssm_b: Option<MTLBuffer>,
     pub ssm_c: Option<MTLBuffer>,
     pub ssm_dt: Option<MTLBuffer>,
-    pub ssm_decay: Option<MTLBuffer>,
     pub ssm_z: Option<MTLBuffer>,
-    pub ssm_chunk_a: Option<MTLBuffer>,
-    pub ssm_chunk_b: Option<MTLBuffer>,
-    pub ssm_chunk_prefix: Option<MTLBuffer>,
     pub ssm_matrix: Option<SsmMatrixBuffers>,
 
     // 3-D
@@ -224,21 +220,9 @@ impl ForwardPassBuffers {
             ssm_dt: model_shape
                 .ssm_dt_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty)),
-            ssm_decay: model_shape
-                .ssm_decay_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty)),
             ssm_z: model_shape
                 .ssm_z_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty)),
-            ssm_chunk_a: model_shape
-                .ssm_chunk_a_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_chunk_b: model_shape
-                .ssm_chunk_state_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
-            ssm_chunk_prefix: model_shape
-                .ssm_chunk_state_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, DataType::F32)),
             ssm_matrix,
             // 3-D
             rotated_queries: alloc(

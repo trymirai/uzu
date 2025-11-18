@@ -60,10 +60,17 @@ fn ssm_update_ref_bf16(
     (y, next_state)
 }
 
+fn softplus_f32(x: f32) -> f32 {
+    if x > 20.0 {
+        x
+    } else {
+        (1.0 + x.exp()).ln()
+    }
+}
+
 fn ssd_update_no_z_ref_bf16(
     x: &[bf16],
-    dt: &[bf16],
-    decay: &[bf16],
+    dt_raw: &[bf16],
     b: &[bf16],
     c: &[bf16],
     d: &[bf16],
@@ -85,14 +92,18 @@ fn ssd_update_no_z_ref_bf16(
                 let cb_idx0 = bb * g * n + (hh / group_size) * n;
                 let state_idx0 = (bb * h * dh + hh * dh + ddh) * n;
                 let this_x = x[x_idx].to_f32();
-                let this_dt = dt[dt_idx].to_f32();
-                let this_decay = decay[dt_idx].to_f32();
+                let dt_raw_val = dt_raw[dt_idx].to_f32();
+                let this_dt = softplus_f32(dt_raw_val);
+                let this_decay = (-this_dt).exp();
                 let this_d = d[hh].to_f32();
+                let dt_safe = this_dt.max(1e-6);
+                let normalized_x = this_x / dt_safe;
+                let dt_scaled_input = normalized_x * this_dt;
                 let mut acc = 0.0f32;
                 for i in 0..n {
                     let s_old = state[state_idx0 + i].to_f32();
                     let new_s = s_old * this_decay
-                        + b[cb_idx0 + i].to_f32() * this_dt * this_x;
+                        + b[cb_idx0 + i].to_f32() * dt_scaled_input;
                     next_state[state_idx0 + i] = bf16::from_f32(new_s);
                     acc += new_s * c[cb_idx0 + i].to_f32();
                 }
@@ -106,8 +117,7 @@ fn ssd_update_no_z_ref_bf16(
 
 fn ssd_update_ref_bf16(
     x: &[bf16],
-    dt: &[bf16],
-    decay: &[bf16],
+    dt_raw: &[bf16],
     b: &[bf16],
     c: &[bf16],
     d: &[bf16],
@@ -130,9 +140,13 @@ fn ssd_update_ref_bf16(
                 let cb_idx0 = bb * g * n + (hh / group_size) * n;
                 let state_idx0 = (bb * h * dh + hh * dh + ddh) * n;
                 let this_x = x[x_idx].to_f32();
-                let this_dt = dt[dt_idx].to_f32();
-                let this_decay = decay[dt_idx].to_f32();
+                let dt_raw_val = dt_raw[dt_idx].to_f32();
+                let this_dt = softplus_f32(dt_raw_val);
+                let this_decay = (-this_dt).exp();
                 let this_d = d[hh].to_f32();
+                let dt_safe = this_dt.max(1e-6);
+                let normalized_x = this_x / dt_safe;
+                let dt_scaled_input = normalized_x * this_dt;
                 let vz = z[x_idx].to_f32();
                 let sigz = 1.0 / (1.0 + (-vz.abs()).exp());
                 let this_z = if vz < 0.0 {
@@ -144,7 +158,7 @@ fn ssd_update_ref_bf16(
                 for i in 0..n {
                     let s_old = state[state_idx0 + i].to_f32();
                     let new_s = s_old * this_decay
-                        + b[cb_idx0 + i].to_f32() * this_dt * this_x;
+                        + b[cb_idx0 + i].to_f32() * dt_scaled_input;
                     next_state[state_idx0 + i] = bf16::from_f32(new_s);
                     acc += new_s * c[cb_idx0 + i].to_f32();
                 }
@@ -311,10 +325,7 @@ fn ssd_update_with_z_bf16() {
         .map(|i| bf16::from_f32(((i % 5) as f32) * 0.1 - 0.1))
         .collect();
     let dt: Vec<bf16> =
-        (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.03)).collect();
-    let decay: Vec<bf16> = (0..bsz * h)
-        .map(|i| bf16::from_f32(0.8 + ((i % 3) as f32) * 0.01))
-        .collect();
+        (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.3 - 1.0)).collect();
     let b: Vec<bf16> = (0..bsz * g * n)
         .map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.05))
         .collect();
@@ -328,7 +339,7 @@ fn ssd_update_with_z_bf16() {
         .collect();
 
     let (y_exp, ns_exp) = ssd_update_ref_bf16(
-        &x, &dt, &decay, &b, &c, &d, &z, &state, bsz, h, dh, g, n,
+        &x, &dt, &b, &c, &d, &z, &state, bsz, h, dh, g, n,
     );
     let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
     let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
@@ -346,11 +357,6 @@ fn ssd_update_with_z_bf16() {
     let dt_buf = ctx.device.new_buffer_with_data(
         dt.as_ptr() as *const _,
         (dt.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let decay_buf = ctx.device.new_buffer_with_data(
-        decay.as_ptr() as *const _,
-        (decay.len() * std::mem::size_of::<bf16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
     let b_buf = ctx.device.new_buffer_with_data(
@@ -397,7 +403,6 @@ fn ssd_update_with_z_bf16() {
             SSDUpdateArguments {
                 x: &x_buf,
                 dt: &dt_buf,
-                decay: &decay_buf,
                 b: &b_buf,
                 c: &c_buf,
                 d: &d_buf,

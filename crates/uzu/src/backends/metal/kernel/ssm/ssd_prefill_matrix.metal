@@ -22,8 +22,17 @@ struct SILU {
 //------------------------------------------------------------------------------
 
 template <typename T>
+inline T softplus(T x) {
+    float xf = float(x);
+    if (xf > 20.0f) {
+        return x;
+    }
+    return static_cast<T>(log(1.0f + fast::exp(xf)));
+}
+
+template <typename T>
 kernel void ssd_m2_dtA_prefix_chunk_kernel(
-    device const T* decay_in        [[ buffer(0) ]],
+    device const T* dt_raw          [[ buffer(0) ]],
     device       float* prefix      [[ buffer(1) ]],
     device       float* chunk_sums  [[ buffer(2) ]],
     constant const uint& T_len      [[ buffer(3) ]],
@@ -54,7 +63,9 @@ kernel void ssd_m2_dtA_prefix_chunk_kernel(
     if (lane_active) {
         const size_t t = chunk_start + size_t(lid);
         const size_t idx = t * H + h;
-        const float decay_val = clamp(float(decay_in[idx]), 1e-6f, 1.0f);
+        const float dt_raw_val = float(dt_raw[idx]);
+        const float dt_val = float(softplus(dt_raw_val));
+        const float decay_val = clamp(fast::exp(-dt_val), 1e-6f, 1.0f);
         value = log(decay_val);
     }
 
@@ -441,7 +452,7 @@ kernel void ssd_m2_gemm_batched_kernel(
 template <typename T>
 kernel void ssd_m2_dtx_kernel(
     device const T* x        [[ buffer(0) ]],
-    device const T* dt_proc  [[ buffer(1) ]],
+    device const T* dt_raw   [[ buffer(1) ]],
     device       T* dtx_out  [[ buffer(2) ]],
     constant const uint& T_len [[ buffer(3) ]],
     constant const uint& H     [[ buffer(4) ]],
@@ -457,7 +468,8 @@ kernel void ssd_m2_dtx_kernel(
     const size_t x_idx = ((size_t(t) * H) + h) * Dh + dh;
     const size_t dt_idx = size_t(t) * H + h;
     const size_t out_idx = ((size_t(h) * T_len) + t) * Dh + dh;
-    const float dt_val = float(dt_proc[dt_idx]);
+    const float dt_raw_val = float(dt_raw[dt_idx]);
+    const float dt_val = float(softplus(dt_raw_val));
     const float denom = fmax(dt_val, 1e-6f);
     const float scaled = dt_val / denom;
     const float v = float(x[x_idx]) * scaled;
