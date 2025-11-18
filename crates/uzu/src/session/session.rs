@@ -442,7 +442,12 @@ impl Session {
         let prefill_stats = {
             let tokens_count = prefill_result.tokens.len();
             let tokens_per_second = tokens_count as f64 / prefill_duration;
-            let processed_tokens = tokens_count_input + tokens_count;
+
+            let number_of_prefill_steps = (tokens_count_input as f32
+                / prefill_suffix_length as f32)
+                .ceil() as usize;
+            let processed_tokens =
+                prefill_suffix_length * number_of_prefill_steps + tokens_count;
             let processed_tokens_per_second =
                 processed_tokens as f64 / prefill_duration;
 
