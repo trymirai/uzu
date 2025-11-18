@@ -449,13 +449,17 @@ fn run_conv_scan_once(
         padded: &padded_buf,
         w: &w_buf,
         b: Some(&b_buf),
-        y: &y_buf,
+        x_out: &y_buf,
+        b_out: &y_buf,
+        c_out: &y_buf,
         state_out: scratch_buf.as_ref().unwrap_or(&state_buf),
         suffix_len,
         kernel_size,
         row_stride: channels,
         state_stride: tap_count,
         channels,
+        inner_dim: channels,
+        proj_dim: 0,
     };
 
     let command_buffer = ctx.command_queue.new_command_buffer();

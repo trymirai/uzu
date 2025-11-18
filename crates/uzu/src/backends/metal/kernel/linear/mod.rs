@@ -26,6 +26,7 @@ use crate::{
 pub struct QuantizedLinearKernelBlock {
     kernel_mm: QuantizedMatmulKernel,
     kernel_mv: QuantizedMatmulKernel,
+    kernel_mv_fast: Option<QuantizedMatmulKernel>,
     bias_add_kernel: Option<TensorAddBias>,
     biases_buffer: Option<MTLBuffer>,
     weights_buffer: MTLBuffer,
@@ -207,9 +208,25 @@ impl QuantizedLinearKernelBlock {
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
 
+        let can_use_fast = output_dim % 8 == 0 && input_dim % 512 == 0;
+        let kernel_mv_fast = if can_use_fast {
+            let fast_name = format!("{}_fast", kernel_name_mv);
+            let result = QuantizedMatmulKernel::new(
+                mtl_context,
+                kernel_data_type,
+                &fast_name,
+                quantization_type,
+            );
+
+            result.ok()
+        } else {
+            None
+        };
+
         Ok(Self {
             kernel_mm,
             kernel_mv,
+            kernel_mv_fast,
             bias_add_kernel,
             biases_buffer,
             weights_buffer,
@@ -267,7 +284,11 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
 
         let use_gemv = batch_size == 1;
         let kernel = if use_gemv {
-            &self.kernel_mv
+            if let Some(ref fast_kernel) = self.kernel_mv_fast {
+                fast_kernel
+            } else {
+                &self.kernel_mv
+            }
         } else {
             &self.kernel_mm
         };

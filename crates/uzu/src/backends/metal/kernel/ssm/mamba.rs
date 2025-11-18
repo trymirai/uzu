@@ -6,8 +6,8 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMatrixArguments,
-    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel,
-    SplitInProjArguments, SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
+    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel, SplitInProjArguments,
+    SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -239,13 +239,13 @@ impl MambaMixerEncodable {
         let mut x_arr = arrays[2].borrow_mut();
         let mut b_arr = arrays[3].borrow_mut();
         let mut c_arr = arrays[4].borrow_mut();
-        
+
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
         let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
         let c_buf = unsafe { c_arr.mtl_buffer().to_owned() };
-        
+
         let mut weight_storage = self.conv_weight.clone();
         let weight_buf = unsafe { weight_storage.mtl_buffer().to_owned() };
         let bias_buf = self.conv_bias.as_ref().map(|arr| {
