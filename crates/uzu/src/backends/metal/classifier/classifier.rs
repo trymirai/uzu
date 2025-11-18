@@ -202,13 +202,11 @@ impl Classifier {
                 &self.context.command_buffer,
                 &encoding_params,
             );
-
             self.context.pooling.encode(
                 &mut state,
                 &self.context.command_buffer,
                 &encoding_params,
             );
-
             self.context.prediction_head.encode(
                 &mut state,
                 &self.context.command_buffer,
