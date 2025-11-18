@@ -44,6 +44,7 @@ fn make_function_constants(activation: &Activation) -> FunctionConstantValues {
 pub struct Conv1dScanKernel {
     pipeline: MTLComputePipelineState,
     pack_pipeline: MTLComputePipelineState,
+    decode_pipeline: MTLComputePipelineState,
 }
 
 pub struct Conv1dScanArguments<'a> {
@@ -69,6 +70,20 @@ pub struct Conv1dPackArguments<'a> {
     pub channels: usize,
 }
 
+pub struct Conv1dDecodeArguments<'a> {
+    pub x: &'a MTLBuffer,
+    pub w: &'a MTLBuffer,
+    pub b: Option<&'a MTLBuffer>,
+    pub state: &'a MTLBuffer,
+    pub y: &'a MTLBuffer,
+    pub next_state: &'a MTLBuffer,
+    pub suffix_len: usize,
+    pub kernel_size: i32,
+    pub row_stride: usize,
+    pub state_stride: usize,
+    pub channels: usize,
+}
+
 impl Conv1dScanKernel {
     pub fn new(
         context: &MTLContext,
@@ -78,6 +93,8 @@ impl Conv1dScanKernel {
         let fn_name = format!("conv1d_scan_kernel_{}", fn_suffix(data_type));
         let pack_name =
             format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
+        let decode_name =
+            format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
         let function_constants = make_function_constants(activation);
         let pipeline = context
             .compute_pipeline_state(&fn_name, Some(&function_constants))
@@ -85,9 +102,13 @@ impl Conv1dScanKernel {
         let pack_pipeline = context
             .compute_pipeline_state(&pack_name, None)
             .map_err(SSMKernelError::MetalError)?;
+        let decode_pipeline = context
+            .compute_pipeline_state(&decode_name, Some(&function_constants))
+            .map_err(SSMKernelError::MetalError)?;
         Ok(Self {
             pipeline,
             pack_pipeline,
+            decode_pipeline,
         })
     }
 
@@ -134,6 +155,67 @@ impl Conv1dScanKernel {
         let total_threads = MTLSize {
             width: args.channels as u64,
             height: padded_rows as u64,
+            depth: 1,
+        };
+        compute_encoder
+            .dispatch_threads(total_threads, threads_per_threadgroup);
+        Ok(())
+    }
+
+    pub fn encode_decode(
+        &self,
+        compute_encoder: &ComputeCommandEncoderRef,
+        args: Conv1dDecodeArguments,
+    ) -> Result<(), SSMKernelError> {
+        if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
+            return Ok(());
+        }
+
+        compute_encoder.set_compute_pipeline_state(&self.decode_pipeline);
+        compute_encoder.set_buffer(0, Some(args.x), 0);
+        compute_encoder.set_buffer(1, Some(args.w), 0);
+        if let Some(bias) = args.b {
+            compute_encoder.set_buffer(2, Some(bias), 0);
+        } else {
+            compute_encoder.set_buffer(2, None, 0);
+        }
+        compute_encoder.set_buffer(3, Some(args.state), 0);
+        compute_encoder.set_buffer(4, Some(args.y), 0);
+        compute_encoder.set_buffer(5, Some(args.next_state), 0);
+        compute_encoder.set_bytes(
+            6,
+            size_of::<i32>() as u64,
+            &args.kernel_size as *const i32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            7,
+            size_of::<usize>() as u64,
+            &args.row_stride as *const usize as *const _,
+        );
+        compute_encoder.set_bytes(
+            8,
+            size_of::<usize>() as u64,
+            &args.state_stride as *const usize as *const _,
+        );
+        compute_encoder.set_bytes(
+            9,
+            size_of::<u32>() as u64,
+            &(args.channels as u32) as *const u32 as *const _,
+        );
+        compute_encoder.set_bytes(
+            10,
+            size_of::<usize>() as u64,
+            &args.suffix_len as *const usize as *const _,
+        );
+
+        let threads_per_threadgroup = MTLSize {
+            width: CONV1D_SCAN_THREADGROUP_SIZE,
+            height: 1,
+            depth: 1,
+        };
+        let total_threads = MTLSize {
+            width: args.suffix_len as u64,
+            height: args.channels as u64,
             depth: 1,
         };
         compute_encoder

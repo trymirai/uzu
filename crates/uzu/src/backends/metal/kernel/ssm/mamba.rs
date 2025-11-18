@@ -9,6 +9,7 @@ use super::{
     SSDPrefillMatrixArguments, SSDPrefillMode, SSDUpdateArguments,
     SSDUpdateKernel, SplitConvOutputsArguments, SplitConvOutputsKernel,
     SplitInProjArguments, SplitInProjKernel,
+    conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -312,58 +313,82 @@ impl MambaMixerEncodable {
         let state_stride = self.config.kernel_size.saturating_sub(1);
         drop(conv_state);
 
-        let padded_buf = if state_stride > 0 {
-            let array =
-                state.conv_padded_buffer().expect("Missing conv padded buffer");
-            let mut borrow = array.borrow_mut();
-            let buf = unsafe { borrow.mtl_buffer().to_owned() };
-            drop(borrow);
-
-            {
-                let pack_encoder = cmd.new_compute_command_encoder();
-                self.conv_scan
-                    .encode_pack(
-                        &pack_encoder,
-                        Conv1dPackArguments {
-                            state_in: &state_buf,
-                            x: &input_buf,
-                            padded: &buf,
-                            state_stride,
-                            row_stride: conv_dim,
-                            suffix_len: suffix_length,
-                            channels: conv_dim,
-                        },
-                    )
-                    .expect("Failed to encode conv pack kernel");
-                pack_encoder.end_encoding();
-            }
-
-            Some(buf)
+        if suffix_length == 1 {
+            let compute = cmd.new_compute_command_encoder();
+            self.conv_scan
+                .encode_decode(
+                    &compute,
+                    Conv1dDecodeArguments {
+                        x: &input_buf,
+                        w: &weight_buf,
+                        b: bias_buf.as_ref(),
+                        state: &state_buf,
+                        y: &input_buf,
+                        next_state: &state_buf,
+                        suffix_len: suffix_length,
+                        kernel_size: self.config.kernel_size as i32,
+                        row_stride: conv_dim,
+                        state_stride,
+                        channels: conv_dim,
+                    },
+                )
+                .expect("Failed to encode conv decode kernel");
+            compute.end_encoding();
         } else {
-            None
-        };
+            let padded_buf = if state_stride > 0 {
+                let array = state
+                    .conv_padded_buffer()
+                    .expect("Missing conv padded buffer");
+                let mut borrow = array.borrow_mut();
+                let buf = unsafe { borrow.mtl_buffer().to_owned() };
+                drop(borrow);
 
-        let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
+                {
+                    let pack_encoder = cmd.new_compute_command_encoder();
+                    self.conv_scan
+                        .encode_pack(
+                            &pack_encoder,
+                            Conv1dPackArguments {
+                                state_in: &state_buf,
+                                x: &input_buf,
+                                padded: &buf,
+                                state_stride,
+                                row_stride: conv_dim,
+                                suffix_len: suffix_length,
+                                channels: conv_dim,
+                            },
+                        )
+                        .expect("Failed to encode conv pack kernel");
+                    pack_encoder.end_encoding();
+                }
 
-        let compute = cmd.new_compute_command_encoder();
-        self.conv_scan
-            .encode(
-                &compute,
-                Conv1dScanArguments {
-                    padded: conv_source,
-                    w: &weight_buf,
-                    b: bias_buf.as_ref(),
-                    y: &input_buf,
-                    state_out: &state_buf,
-                    suffix_len: suffix_length,
-                    kernel_size: self.config.kernel_size as i32,
-                    row_stride: conv_dim,
-                    state_stride,
-                    channels: conv_dim,
-                },
-            )
-            .expect("Failed to encode conv scan kernel");
-        compute.end_encoding();
+                Some(buf)
+            } else {
+                None
+            };
+
+            let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
+
+            let compute = cmd.new_compute_command_encoder();
+            self.conv_scan
+                .encode(
+                    &compute,
+                    Conv1dScanArguments {
+                        padded: conv_source,
+                        w: &weight_buf,
+                        b: bias_buf.as_ref(),
+                        y: &input_buf,
+                        state_out: &state_buf,
+                        suffix_len: suffix_length,
+                        kernel_size: self.config.kernel_size as i32,
+                        row_stride: conv_dim,
+                        state_stride,
+                        channels: conv_dim,
+                    },
+                )
+                .expect("Failed to encode conv scan kernel");
+            compute.end_encoding();
+        }
     }
 
     fn split_conv_outputs(

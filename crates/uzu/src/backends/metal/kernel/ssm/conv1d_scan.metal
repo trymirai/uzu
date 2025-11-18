@@ -125,6 +125,70 @@ kernel void conv1d_scan_kernel(
     }
 }
 
+template <typename T>
+kernel void conv1d_decode_kernel(
+    device const T* x [[ buffer(0) ]],
+    device const T* w [[ buffer(1) ]],
+    device const T* b [[ buffer(2) ]],
+    device const T* state [[ buffer(3) ]],
+    device T* y [[ buffer(4) ]],
+    device T* next_state [[ buffer(5) ]],
+    constant const int& kernel_size [[ buffer(6) ]],
+    constant const size_t& row_stride [[ buffer(7) ]],
+    constant const size_t& state_stride [[ buffer(8) ]],
+    constant const uint& num_channels [[ buffer(9) ]],
+    constant const size_t& suffix_len [[ buffer(10) ]],
+    uint2 grid_idx [[ thread_position_in_grid ]]
+) {
+    const int kernel_value = kernel_size;
+    if (kernel_value <= 0) {
+        return;
+    }
+
+    const uint token_idx = grid_idx.x;
+    const uint channel_idx = grid_idx.y;
+    if (channel_idx >= num_channels || token_idx >= suffix_len) {
+        return;
+    }
+
+    const size_t x_idx =
+        size_t(token_idx) * row_stride + size_t(channel_idx);
+    const size_t state_offset =
+        size_t(channel_idx) * state_stride;
+    const device T* w_row =
+        w + size_t(channel_idx) * size_t(kernel_value);
+    const bool has_bias = b != nullptr;
+
+    float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+    const int state_taps = max(kernel_value - 1, 0);
+    for (int tap = 0; tap < state_taps; ++tap) {
+        const size_t state_index = state_offset + size_t(tap);
+        const float sample = float(state[state_index]);
+        acc += float(w_row[tap]) * sample;
+    }
+
+    const float current = float(x[x_idx]);
+    const int current_tap_index = state_taps;
+    if (current_tap_index < kernel_value) {
+        acc += float(w_row[current_tap_index]) * current;
+    }
+
+    y[x_idx] = apply_activation_fn(static_cast<T>(acc), activation_type);
+
+    if (state_taps == 0) {
+        return;
+    }
+
+    for (int tap = 0; tap < state_taps - 1; ++tap) {
+        const size_t dst_index = state_offset + size_t(tap);
+        const size_t src_index = state_offset + size_t(tap + 1);
+        next_state[dst_index] = state[src_index];
+    }
+
+    const size_t tail_index = state_offset + size_t(state_taps - 1);
+    next_state[tail_index] = static_cast<T>(current);
+}
+
 #define instantiate_conv1d_pack_prefix_kernel(type_name, type)       \
   template [[host_name("conv1d_pack_prefix_kernel_" #type_name)]]    \
   kernel void conv1d_pack_prefix_kernel<type>(                       \
@@ -162,5 +226,26 @@ instantiate_conv1d_scan_kernel(float, float);
 instantiate_conv1d_scan_kernel(bfloat, bfloat);
 instantiate_conv1d_scan_kernel(half, half);
 
+#define instantiate_conv1d_decode_kernel(type_name, type)        \
+  template [[host_name("conv1d_decode_kernel_" #type_name)]]     \
+  kernel void conv1d_decode_kernel<type>(                        \
+    device const type* x [[ buffer(0) ]],                        \
+    device const type* w [[ buffer(1) ]],                        \
+    device const type* b [[ buffer(2) ]],                        \
+    device const type* state [[ buffer(3) ]],                    \
+    device type* y [[ buffer(4) ]],                              \
+    device type* next_state [[ buffer(5) ]],                     \
+    constant const int& kernel_size [[ buffer(6) ]],             \
+    constant const size_t& row_stride [[ buffer(7) ]],           \
+    constant const size_t& state_stride [[ buffer(8) ]],         \
+    constant const uint& num_channels [[ buffer(9) ]],           \
+    constant const size_t& suffix_len [[ buffer(10) ]],          \
+    uint2 grid_idx [[ thread_position_in_grid ]]                 \
+  );
+
 #undef instantiate_conv1d_pack_prefix_kernel
 #undef instantiate_conv1d_scan_kernel
+instantiate_conv1d_decode_kernel(float, float);
+instantiate_conv1d_decode_kernel(bfloat, bfloat);
+instantiate_conv1d_decode_kernel(half, half);
+#undef instantiate_conv1d_decode_kernel
