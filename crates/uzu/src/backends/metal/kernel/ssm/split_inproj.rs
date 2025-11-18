@@ -9,10 +9,11 @@ pub struct SplitInProjKernel {
 }
 
 pub struct SplitInProjArguments<'a> {
-    pub input: &'a MTLBuffer, // buffer(0) [suffix, total_dim]
+    pub input: &'a MTLBuffer,    // buffer(0) [suffix, total_dim]
     pub conv_out: &'a MTLBuffer, // buffer(1) [suffix, conv_dim]
-    pub z_out: &'a MTLBuffer, // buffer(2) [suffix, inner_dim]
-    pub dt_out: &'a MTLBuffer, // buffer(3) [suffix, num_heads]
+    pub z_out: &'a MTLBuffer,    // buffer(2) [suffix, inner_dim]
+    pub dt_out: &'a MTLBuffer,   // buffer(3) [suffix, num_heads]
+    pub z_bias: &'a MTLBuffer,   // buffer(4) [inner_dim]
     pub total_dim: usize,
     pub conv_dim: usize,
     pub inner_dim: usize,
@@ -45,6 +46,7 @@ impl SplitInProjKernel {
         compute_encoder.set_buffer(1, Some(args.conv_out), 0);
         compute_encoder.set_buffer(2, Some(args.z_out), 0);
         compute_encoder.set_buffer(3, Some(args.dt_out), 0);
+        compute_encoder.set_buffer(4, Some(args.z_bias), 0);
 
         let total_dim = args.total_dim as i32;
         let conv_dim = args.conv_dim as i32;
@@ -54,22 +56,22 @@ impl SplitInProjKernel {
         let cols = args.total_dim as u64;
 
         compute_encoder.set_bytes(
-            4,
+            5,
             std::mem::size_of::<i32>() as u64,
             &total_dim as *const i32 as *const _,
         );
         compute_encoder.set_bytes(
-            5,
+            6,
             std::mem::size_of::<i32>() as u64,
             &conv_dim as *const i32 as *const _,
         );
         compute_encoder.set_bytes(
-            6,
+            7,
             std::mem::size_of::<i32>() as u64,
             &inner_dim as *const i32 as *const _,
         );
         compute_encoder.set_bytes(
-            7,
+            8,
             std::mem::size_of::<i32>() as u64,
             &num_heads as *const i32 as *const _,
         );

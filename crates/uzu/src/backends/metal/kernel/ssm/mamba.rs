@@ -20,7 +20,6 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
-        kernel::TensorAddBias,
     },
     config::{DecoderLayerType, mamba::Mamba2Config},
     parameters::ParameterTree,
@@ -32,7 +31,6 @@ pub(crate) struct MambaMixerEncodable {
     in_projection: Box<dyn EncodableWithState>,
     out_projection: Box<dyn EncodableWithState>,
     split_inproj: SplitInProjKernel,
-    tensor_add_bias: TensorAddBias,
     conv_scan: Conv1dScanKernel,
     split_conv_outputs: SplitConvOutputsKernel,
     ssm_prefill: SSDPrefillKernel,
@@ -119,8 +117,6 @@ impl MambaMixerEncodable {
         let split_inproj =
             SplitInProjKernel::new(mtl_context, kernel_data_type)
                 .expect("Failed to create split in-projection kernel");
-        let tensor_add_bias = TensorAddBias::new(mtl_context, kernel_data_type)
-            .expect("Failed to create tensor add bias kernel");
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
             kernel_data_type,
@@ -142,7 +138,6 @@ impl MambaMixerEncodable {
             in_projection,
             out_projection,
             split_inproj,
-            tensor_add_bias,
             conv_scan,
             split_conv_outputs,
             ssm_prefill,
@@ -169,7 +164,6 @@ impl MambaMixerEncodable {
 
         self.in_projection.encode(state, command_buffer, parameters);
         self.split_inproj(state, command_buffer, active_suffix_length);
-        self.add_gate_bias(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
         self.split_conv_outputs(state, command_buffer, active_suffix_length);
 
@@ -203,6 +197,8 @@ impl MambaMixerEncodable {
         let conv_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
         let gate_buf = unsafe { gate.mtl_buffer().to_owned() };
         let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
+        let mut gate_bias = self.gate_bias.clone();
+        let bias_buf = unsafe { gate_bias.mtl_buffer().to_owned() };
 
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
@@ -220,6 +216,7 @@ impl MambaMixerEncodable {
                     conv_out: &conv_buf,
                     z_out: &gate_buf,
                     dt_out: &dt_buf,
+                    z_bias: &bias_buf,
                     total_dim,
                     conv_dim,
                     inner_dim,
@@ -229,26 +226,6 @@ impl MambaMixerEncodable {
             )
             .expect("Failed to encode split in-projection kernel");
         compute.end_encoding();
-    }
-
-    fn add_gate_bias(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        suffix_length: usize,
-    ) {
-        let gate_arrays = state.arrays(&[ArrayId::SsmZ(self.layer_index)]);
-        let mut gate = gate_arrays[0].borrow_mut();
-        let gate_buf = unsafe { gate.mtl_buffer().to_owned() };
-        let mut gate_bias = self.gate_bias.clone();
-        let bias_buf = unsafe { gate_bias.mtl_buffer().to_owned() };
-
-        let inner_dim = self.config.inner_dim();
-        let total = inner_dim * suffix_length;
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        self.tensor_add_bias.encode_into_command_buffer(
-            &gate_buf, &bias_buf, &gate_buf, inner_dim, total, &cmd,
-        );
     }
 
     fn run_conv_scan(

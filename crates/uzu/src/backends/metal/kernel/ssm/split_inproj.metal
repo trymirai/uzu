@@ -9,10 +9,11 @@ kernel void ssm_split_inproj_kernel(
     device       T* conv_out [[ buffer(1) ]],
     device       T* z_out [[ buffer(2) ]],
     device       T* dt_out [[ buffer(3) ]],
-    constant const int& total_dim [[ buffer(4) ]],
-    constant const int& conv_dim [[ buffer(5) ]],
-    constant const int& inner_dim [[ buffer(6) ]],
-    constant const int& num_heads [[ buffer(7) ]],
+    device const T* z_bias [[ buffer(4) ]],
+    constant const int& total_dim [[ buffer(5) ]],
+    constant const int& conv_dim [[ buffer(6) ]],
+    constant const int& inner_dim [[ buffer(7) ]],
+    constant const int& num_heads [[ buffer(8) ]],
     uint2 grid_idx [[ thread_position_in_grid ]],
     uint2 grid_size [[ threads_per_grid ]]
 ) {
@@ -29,7 +30,8 @@ kernel void ssm_split_inproj_kernel(
         conv_out[dst] = input[input_idx];
     } else if (col < conv_dim + inner_dim) {
         const int dst = row * inner_dim + (col - conv_dim);
-        z_out[dst] = input[input_idx];
+        const int bias_idx = col - conv_dim;
+        z_out[dst] = input[input_idx] + z_bias[bias_idx];
     } else if (col < conv_dim + inner_dim + num_heads) {
         const int dst = row * num_heads + (col - conv_dim - inner_dim);
         dt_out[dst] = input[input_idx];
@@ -43,10 +45,11 @@ kernel void ssm_split_inproj_kernel(
     device       type* conv_out [[ buffer(1) ]],                  \
     device       type* z_out [[ buffer(2) ]],                     \
     device       type* dt_out [[ buffer(3) ]],                    \
-    constant const int& total_dim [[ buffer(4) ]],                \
-    constant const int& conv_dim [[ buffer(5) ]],                 \
-    constant const int& inner_dim [[ buffer(6) ]],                \
-    constant const int& num_heads [[ buffer(7) ]],                \
+    device const type* z_bias [[ buffer(4) ]],                    \
+    constant const int& total_dim [[ buffer(5) ]],                \
+    constant const int& conv_dim [[ buffer(6) ]],                 \
+    constant const int& inner_dim [[ buffer(7) ]],                \
+    constant const int& num_heads [[ buffer(8) ]],                \
     uint2 grid_idx [[ thread_position_in_grid ]],                 \
     uint2 grid_size [[ threads_per_grid ]]                        \
   );
