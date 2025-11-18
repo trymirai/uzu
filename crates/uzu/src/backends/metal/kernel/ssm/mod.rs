@@ -14,7 +14,6 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
 
 pub mod conv1d_scan;
 pub mod mamba;
-pub mod split_conv_outputs;
 pub mod split_inproj;
 pub mod ssd_prefill;
 pub mod ssd_update;
@@ -24,9 +23,6 @@ pub use conv1d_scan::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
 };
 pub(crate) use mamba::MambaMixerEncodable;
-pub use split_conv_outputs::{
-    SplitConvOutputsArguments, SplitConvOutputsKernel,
-};
 pub use split_inproj::{SplitInProjArguments, SplitInProjKernel};
 pub use ssd_prefill::{
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMatrixArguments,

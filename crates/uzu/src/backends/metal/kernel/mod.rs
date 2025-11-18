@@ -38,8 +38,7 @@ pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
     SSDUpdateKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
-    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
-    SplitInProjKernel,
+    SplitInProjArguments, SplitInProjKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;

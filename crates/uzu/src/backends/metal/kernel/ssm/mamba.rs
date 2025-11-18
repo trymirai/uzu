@@ -7,8 +7,7 @@ use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMatrixArguments,
     SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel,
-    SplitConvOutputsArguments, SplitConvOutputsKernel, SplitInProjArguments,
-    SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
+    SplitInProjArguments, SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -32,7 +31,6 @@ pub(crate) struct MambaMixerEncodable {
     out_projection: Box<dyn EncodableWithState>,
     split_inproj: SplitInProjKernel,
     conv_scan: Conv1dScanKernel,
-    split_conv_outputs: SplitConvOutputsKernel,
     ssm_prefill: SSDPrefillKernel,
     ssd_update: SSDUpdateKernel,
     conv_weight: MetalArray,
@@ -123,9 +121,6 @@ impl MambaMixerEncodable {
             &mamba_config.activation,
         )
         .expect("Failed to create conv scan kernel");
-        let split_conv_outputs =
-            SplitConvOutputsKernel::new(mtl_context, kernel_data_type)
-                .expect("Failed to create split conv outputs kernel");
         let ssm_prefill = SSDPrefillKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
@@ -139,7 +134,6 @@ impl MambaMixerEncodable {
             out_projection,
             split_inproj,
             conv_scan,
-            split_conv_outputs,
             ssm_prefill,
             ssd_update,
             conv_weight,
@@ -165,7 +159,6 @@ impl MambaMixerEncodable {
         self.in_projection.encode(state, command_buffer, parameters);
         self.split_inproj(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
-        self.split_conv_outputs(state, command_buffer, active_suffix_length);
 
         if suffix_length == 1 {
             self.run_decode_ssm(state, command_buffer, active_suffix_length);
@@ -237,11 +230,22 @@ impl MambaMixerEncodable {
         let arrays = state.arrays(&[
             ArrayId::SsmPacked(self.layer_index),
             ArrayId::SsmConvState(self.layer_index),
+            ArrayId::SsmX(self.layer_index),
+            ArrayId::SsmB(self.layer_index),
+            ArrayId::SsmC(self.layer_index),
         ]);
         let mut conv_inputs = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
+        let mut x_arr = arrays[2].borrow_mut();
+        let mut b_arr = arrays[3].borrow_mut();
+        let mut c_arr = arrays[4].borrow_mut();
+        
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
+        let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
+        let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
+        let c_buf = unsafe { c_arr.mtl_buffer().to_owned() };
+        
         let mut weight_storage = self.conv_weight.clone();
         let weight_buf = unsafe { weight_storage.mtl_buffer().to_owned() };
         let bias_buf = self.conv_bias.as_ref().map(|arr| {
@@ -250,6 +254,8 @@ impl MambaMixerEncodable {
         });
 
         let conv_dim = self.config.conv_dim();
+        let inner_dim = self.config.inner_dim();
+        let proj_dim = self.config.num_groups * self.config.state_dim;
         let cmd = command_buffer.root_command_buffer().to_owned();
         let state_stride = self.config.kernel_size.saturating_sub(1);
         drop(conv_state);
@@ -264,13 +270,17 @@ impl MambaMixerEncodable {
                         w: &weight_buf,
                         b: bias_buf.as_ref(),
                         state: &state_buf,
-                        y: &input_buf,
+                        x_out: &x_buf,
+                        b_out: &b_buf,
+                        c_out: &c_buf,
                         next_state: &state_buf,
                         suffix_len: suffix_length,
                         kernel_size: self.config.kernel_size as i32,
                         row_stride: conv_dim,
                         state_stride,
                         channels: conv_dim,
+                        inner_dim,
+                        proj_dim,
                     },
                 )
                 .expect("Failed to encode conv decode kernel");
@@ -318,66 +328,22 @@ impl MambaMixerEncodable {
                         padded: conv_source,
                         w: &weight_buf,
                         b: bias_buf.as_ref(),
-                        y: &input_buf,
+                        x_out: &x_buf,
+                        b_out: &b_buf,
+                        c_out: &c_buf,
                         state_out: &state_buf,
                         suffix_len: suffix_length,
                         kernel_size: self.config.kernel_size as i32,
                         row_stride: conv_dim,
                         state_stride,
                         channels: conv_dim,
+                        inner_dim,
+                        proj_dim,
                     },
                 )
                 .expect("Failed to encode conv scan kernel");
             compute.end_encoding();
         }
-    }
-
-    fn split_conv_outputs(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        suffix_length: usize,
-    ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmPacked(self.layer_index),
-            ArrayId::SsmX(self.layer_index),
-            ArrayId::SsmB(self.layer_index),
-            ArrayId::SsmC(self.layer_index),
-        ]);
-        let mut conv = arrays[0].borrow_mut();
-        let conv_buf = unsafe { conv.mtl_buffer().to_owned() };
-        drop(conv);
-        let mut x = arrays[1].borrow_mut();
-        let x_buf = unsafe { x.mtl_buffer().to_owned() };
-        drop(x);
-        let mut b = arrays[2].borrow_mut();
-        let b_buf = unsafe { b.mtl_buffer().to_owned() };
-        drop(b);
-        let mut c = arrays[3].borrow_mut();
-        let c_buf = unsafe { c.mtl_buffer().to_owned() };
-        drop(c);
-
-        let conv_dim = self.config.conv_dim();
-        let inner_dim = self.config.inner_dim();
-        let proj_dim = self.config.num_groups * self.config.state_dim;
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
-        self.split_conv_outputs
-            .encode(
-                &compute,
-                SplitConvOutputsArguments {
-                    conv_input: &conv_buf,
-                    x_out: &x_buf,
-                    b_out: &b_buf,
-                    c_out: &c_buf,
-                    conv_dim,
-                    inner_dim,
-                    proj_dim,
-                    suffix_length,
-                },
-            )
-            .expect("Failed to encode split conv outputs kernel");
-        compute.end_encoding();
     }
 
     fn run_prefill_ssm(

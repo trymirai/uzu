@@ -72,13 +72,17 @@ kernel void conv1d_scan_kernel(
     device const T* padded [[ buffer(0) ]], // (prefix+suffix, channels)
     device const T* w [[ buffer(1) ]],      // (channels, kernel)
     device const T* b [[ buffer(2) ]],      // optional (channels)
-    device T* y [[ buffer(3) ]],            // (suffix, channels)
-    device T* state_out [[ buffer(4) ]],    // (channels, kernel-1)
-    constant const size_t& suffix_len [[ buffer(5) ]],
-    constant const int& kernel_size [[ buffer(6) ]],
-    constant const size_t& row_stride [[ buffer(7) ]],
-    constant const size_t& state_stride [[ buffer(8) ]],
-    constant const uint& num_channels [[ buffer(9) ]],
+    device T* x_out [[ buffer(3) ]],        // (suffix, inner_dim)
+    device T* b_out [[ buffer(4) ]],        // (suffix, proj_dim)
+    device T* c_out [[ buffer(5) ]],        // (suffix, proj_dim)
+    device T* state_out [[ buffer(6) ]],    // (channels, kernel-1)
+    constant const size_t& suffix_len [[ buffer(7) ]],
+    constant const int& kernel_size [[ buffer(8) ]],
+    constant const size_t& row_stride [[ buffer(9) ]],
+    constant const size_t& state_stride [[ buffer(10) ]],
+    constant const uint& num_channels [[ buffer(11) ]],
+    constant const uint& inner_dim [[ buffer(12) ]],
+    constant const uint& proj_dim [[ buffer(13) ]],
     uint3 grid_idx [[ thread_position_in_grid ]]
 ) {
     const int kernel_value = kernel_size;
@@ -111,8 +115,17 @@ kernel void conv1d_scan_kernel(
             acc += float(w_row[tap]) * sample;
         }
 
-        const size_t y_idx = size_t(token_idx) * row_stride + channel_idx;
-        y[y_idx] = apply_activation_fn(static_cast<T>(acc), activation_type);
+        const T activated = apply_activation_fn(static_cast<T>(acc), activation_type);
+        if (channel_idx < inner_dim) {
+            const size_t dst = size_t(token_idx) * inner_dim + channel_idx;
+            x_out[dst] = activated;
+        } else if (channel_idx < inner_dim + proj_dim) {
+            const size_t dst = size_t(token_idx) * proj_dim + (channel_idx - inner_dim);
+            b_out[dst] = activated;
+        } else if (channel_idx < inner_dim + 2 * proj_dim) {
+            const size_t dst = size_t(token_idx) * proj_dim + (channel_idx - inner_dim - proj_dim);
+            c_out[dst] = activated;
+        }
     } else if (tap_count > 0) {
         const size_t tap = size_t(token_idx - suffix_len);
         if (tap >= size_t(tap_count)) {
@@ -131,13 +144,17 @@ kernel void conv1d_decode_kernel(
     device const T* w [[ buffer(1) ]],
     device const T* b [[ buffer(2) ]],
     device const T* state [[ buffer(3) ]],
-    device T* y [[ buffer(4) ]],
-    device T* next_state [[ buffer(5) ]],
-    constant const int& kernel_size [[ buffer(6) ]],
-    constant const size_t& row_stride [[ buffer(7) ]],
-    constant const size_t& state_stride [[ buffer(8) ]],
-    constant const uint& num_channels [[ buffer(9) ]],
-    constant const size_t& suffix_len [[ buffer(10) ]],
+    device T* x_out [[ buffer(4) ]],
+    device T* b_out [[ buffer(5) ]],
+    device T* c_out [[ buffer(6) ]],
+    device T* next_state [[ buffer(7) ]],
+    constant const int& kernel_size [[ buffer(8) ]],
+    constant const size_t& row_stride [[ buffer(9) ]],
+    constant const size_t& state_stride [[ buffer(10) ]],
+    constant const uint& num_channels [[ buffer(11) ]],
+    constant const size_t& suffix_len [[ buffer(12) ]],
+    constant const uint& inner_dim [[ buffer(13) ]],
+    constant const uint& proj_dim [[ buffer(14) ]],
     uint2 grid_idx [[ thread_position_in_grid ]]
 ) {
     const int kernel_value = kernel_size;
@@ -173,7 +190,17 @@ kernel void conv1d_decode_kernel(
         acc += float(w_row[current_tap_index]) * current;
     }
 
-    y[x_idx] = apply_activation_fn(static_cast<T>(acc), activation_type);
+    const T activated = apply_activation_fn(static_cast<T>(acc), activation_type);
+    if (channel_idx < inner_dim) {
+        const size_t dst = size_t(token_idx) * inner_dim + channel_idx;
+        x_out[dst] = activated;
+    } else if (channel_idx < inner_dim + proj_dim) {
+        const size_t dst = size_t(token_idx) * proj_dim + (channel_idx - inner_dim);
+        b_out[dst] = activated;
+    } else if (channel_idx < inner_dim + 2 * proj_dim) {
+        const size_t dst = size_t(token_idx) * proj_dim + (channel_idx - inner_dim - proj_dim);
+        c_out[dst] = activated;
+    }
 
     if (state_taps == 0) {
         return;
@@ -208,13 +235,17 @@ kernel void conv1d_decode_kernel(
     device const type* padded [[ buffer(0) ]],                \
     device const type* w [[ buffer(1) ]],                     \
     device const type* b [[ buffer(2) ]],                     \
-    device type* y [[ buffer(3) ]],                           \
-    device type* state_out [[ buffer(4) ]],                   \
-    constant const size_t& suffix_len [[ buffer(5) ]],        \
-    constant const int& kernel_size [[ buffer(6) ]],          \
-    constant const size_t& row_stride [[ buffer(7) ]],        \
-    constant const size_t& state_stride [[ buffer(8) ]],      \
-    constant const uint& num_channels [[ buffer(9) ]],        \
+    device type* x_out [[ buffer(3) ]],                       \
+    device type* b_out [[ buffer(4) ]],                       \
+    device type* c_out [[ buffer(5) ]],                       \
+    device type* state_out [[ buffer(6) ]],                   \
+    constant const size_t& suffix_len [[ buffer(7) ]],        \
+    constant const int& kernel_size [[ buffer(8) ]],          \
+    constant const size_t& row_stride [[ buffer(9) ]],        \
+    constant const size_t& state_stride [[ buffer(10) ]],     \
+    constant const uint& num_channels [[ buffer(11) ]],       \
+    constant const uint& inner_dim [[ buffer(12) ]],          \
+    constant const uint& proj_dim [[ buffer(13) ]],           \
     uint3 grid_idx [[ thread_position_in_grid ]]              \
   );
 
@@ -233,13 +264,17 @@ instantiate_conv1d_scan_kernel(half, half);
     device const type* w [[ buffer(1) ]],                        \
     device const type* b [[ buffer(2) ]],                        \
     device const type* state [[ buffer(3) ]],                    \
-    device type* y [[ buffer(4) ]],                              \
-    device type* next_state [[ buffer(5) ]],                     \
-    constant const int& kernel_size [[ buffer(6) ]],             \
-    constant const size_t& row_stride [[ buffer(7) ]],           \
-    constant const size_t& state_stride [[ buffer(8) ]],         \
-    constant const uint& num_channels [[ buffer(9) ]],           \
-    constant const size_t& suffix_len [[ buffer(10) ]],          \
+    device type* x_out [[ buffer(4) ]],                          \
+    device type* b_out [[ buffer(5) ]],                          \
+    device type* c_out [[ buffer(6) ]],                          \
+    device type* next_state [[ buffer(7) ]],                     \
+    constant const int& kernel_size [[ buffer(8) ]],             \
+    constant const size_t& row_stride [[ buffer(9) ]],           \
+    constant const size_t& state_stride [[ buffer(10) ]],        \
+    constant const uint& num_channels [[ buffer(11) ]],          \
+    constant const size_t& suffix_len [[ buffer(12) ]],          \
+    constant const uint& inner_dim [[ buffer(13) ]],             \
+    constant const uint& proj_dim [[ buffer(14) ]],              \
     uint2 grid_idx [[ thread_position_in_grid ]]                 \
   );
 
