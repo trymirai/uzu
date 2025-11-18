@@ -33,6 +33,7 @@ serde_json5 = { workspace = true }
 [features]
 default = ["metal-shaders"]
 metal-shaders = []
+tracing = []
 
 [[test]]
 name = "moe"

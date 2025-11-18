@@ -7,7 +7,6 @@ use crate::{
         MTLContext, MetalArray,
         forward_pass::{ForwardPassBuffers, ModelShape},
     },
-    config::DecoderConfig,
 };
 
 pub(super) struct AuxBuffers {
@@ -33,7 +32,6 @@ pub(super) struct AuxBuffers {
 impl AuxBuffers {
     pub(super) fn new(
         scratch: &ForwardPassBuffers,
-        _decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
         context: &MTLContext,

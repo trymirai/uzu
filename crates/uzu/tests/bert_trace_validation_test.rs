@@ -1,7 +1,10 @@
+#[cfg(feature = "tracing")]
 use std::path::PathBuf;
 
+#[cfg(feature = "tracing")]
 use uzu::backends::metal::classifier::ClassifierTraceValidator;
 
+#[cfg(feature = "tracing")]
 #[test]
 fn test_bert_trace_validation() {
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

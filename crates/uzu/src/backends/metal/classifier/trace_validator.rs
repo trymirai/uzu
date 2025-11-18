@@ -19,11 +19,13 @@ use crate::{
     },
 };
 
+#[cfg(feature = "tracing")]
 pub struct ClassifierTraceValidator {
     model_path: PathBuf,
     pub classifier: Classifier,
 }
 
+#[cfg(feature = "tracing")]
 impl ClassifierTraceValidator {
     pub fn new(model_path: &Path) -> Self {
         let classifier =

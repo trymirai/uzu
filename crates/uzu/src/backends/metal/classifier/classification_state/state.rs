@@ -1,18 +1,18 @@
 use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 
-use super::{
-    super::ClassifierActivationTrace, aux_buffers::AuxBuffers, types::ArrayCell,
-};
+use super::{aux_buffers::AuxBuffers, types::ArrayCell};
+#[cfg(feature = "tracing")]
+use crate::backends::metal::classifier::ClassifierActivationTrace;
 use crate::{
     DataType, DeviceContext,
     backends::metal::{
         MTLContext, MetalArray,
         forward_pass::{
             ArrayId, EmbeddingsBuffers, ForwardPassBuffers, ForwardPassState,
-            HashMapId, ModelShape, RopeType, SharedBuffers,
+            HashMapId, KVCache, ModelShape, RopeType, SharedBuffers,
+            traces::DecoderActivationTrace,
         },
     },
-    config::DecoderConfig,
 };
 
 pub struct ClassificationForwardPassState {
@@ -22,21 +22,19 @@ pub struct ClassificationForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
-    pub traces: Option<Rc<RefCell<ClassifierActivationTrace>>>,
+    #[cfg(feature = "tracing")]
+    pub traces: Rc<RefCell<ClassifierActivationTrace>>,
 }
 
 impl ClassificationForwardPassState {
-    #[allow(unused_variables)]
     pub fn new(
         context: Rc<MTLContext>,
-        _decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
         bidirectional_attention: bool,
-        trace: bool,
         num_labels: usize,
     ) -> Self {
         let suffix_length = token_ids.len();
@@ -44,7 +42,6 @@ impl ClassificationForwardPassState {
 
         let aux_buffers = AuxBuffers::new(
             scratch,
-            _decoder_config,
             model_shape,
             suffix_length,
             &context,
@@ -59,7 +56,7 @@ impl ClassificationForwardPassState {
             )
         };
         context.copy_from_view(&mut token_ids_array, token_ids.into());
-        let token_ids_refcell = RefCell::new(token_ids_array);
+        let token_ids = RefCell::new(token_ids_array);
 
         let mut token_positions_array = unsafe {
             MetalArray::new(
@@ -74,7 +71,7 @@ impl ClassificationForwardPassState {
             &mut token_positions_array,
             token_positions_i32.as_ref().into(),
         );
-        let token_positions_refcell = RefCell::new(token_positions_array);
+        let token_positions = RefCell::new(token_positions_array);
 
         let act_dtype = model_shape.activation_data_type();
         let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
@@ -131,24 +128,22 @@ impl ClassificationForwardPassState {
                 .map(|(k, v)| (k, RefCell::new(v)))
                 .collect();
 
-        let traces = if trace {
-            Some(Rc::new(RefCell::new(ClassifierActivationTrace::new(
-                &context,
-                model_shape,
-                suffix_length,
-                num_labels,
-            ))))
-        } else {
-            None
-        };
+        #[cfg(feature = "tracing")]
+        let traces = Rc::new(RefCell::new(ClassifierActivationTrace::new(
+            &context,
+            model_shape,
+            suffix_length,
+            num_labels,
+        )));
 
         Self {
             context,
-            token_ids: token_ids_refcell,
-            token_positions: token_positions_refcell,
+            token_ids,
+            token_positions,
             attention_bias,
             shared_buffers,
             aux_buffers,
+            #[cfg(feature = "tracing")]
             traces,
         }
     }
@@ -253,12 +248,6 @@ impl ClassificationForwardPassState {
             ArrayId::ClassifierPredictionHeadLogits => {
                 self.aux_buffers.logits.clone()
             },
-
-            ArrayId::Logits => {
-                panic!(
-                    "ClassificationForwardPassState doesn't support Logits array - use ClassifierPredictionHeadLogits instead"
-                )
-            },
             _ => panic!("Unsupported ArrayId for classifier: {:?}", id),
         }
     }
@@ -269,10 +258,9 @@ impl ClassificationForwardPassState {
     pub fn mtl_context(&self) -> &Rc<MTLContext> {
         &self.context
     }
-    pub fn classifier_traces(
-        &self
-    ) -> Option<&Rc<RefCell<ClassifierActivationTrace>>> {
-        self.traces.as_ref()
+    #[cfg(feature = "tracing")]
+    pub fn classifier_traces(&self) -> &Rc<RefCell<ClassifierActivationTrace>> {
+        &self.traces
     }
 }
 
@@ -298,16 +286,13 @@ impl ForwardPassState for ClassificationForwardPassState {
     fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
         &self.shared_buffers
     }
-    fn kv_cache(
-        &self
-    ) -> Option<&Rc<RefCell<crate::backends::metal::forward_pass::KVCache>>>
-    {
+    fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
         None
     }
     fn sampling_output(&self) -> Option<&ArrayCell> {
         None
     }
-    fn traces(&self) -> Option<&Rc<RefCell<crate::backends::metal::forward_pass::traces::DecoderActivationTrace>>>{
+    fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
         None
     }
     fn as_any(&self) -> &dyn Any {

@@ -6,7 +6,9 @@ use std::{
 use mpsgraph::{CommandBuffer as MPSCommandBuffer, Device as MPSDevice, Graph};
 use objc2::rc::{Retained, autoreleasepool};
 
-use super::ClassifierLayerExecutable;
+use super::{
+    ClassifierLayerExecutable, PoolingEncodable, PredictionHeadEncodable,
+};
 use crate::{
     DataType,
     backends::metal::{
@@ -47,12 +49,9 @@ pub struct ClassifierContext {
     pub global_rope: Rc<Box<dyn EncodableWithState>>,
     pub local_rope: Option<Rc<Box<dyn EncodableWithState>>>,
 
-    pub prediction_head_dense: Box<dyn EncodableWithState>,
-    pub prediction_head_activation: Box<dyn EncodableWithState>,
-    pub prediction_head_norm: NormalizationEncodable,
-    pub prediction_head_final_linear: Box<dyn EncodableWithState>,
+    pub pooling: Box<dyn EncodableWithState>,
+    pub prediction_head: Box<dyn EncodableWithState>,
 
-    pub pooling_kernel: PoolingKernel,
     pub sigmoid_kernel: SigmoidKernel,
 }
 
@@ -340,6 +339,23 @@ impl ClassifierContext {
                 Error::UnableToCreateMetalContext
             })?;
 
+        let pooling = Box::new(PoolingEncodable::new(
+            pooling_kernel,
+            classifier_model_config
+                .classifier_config
+                .classifier_pooling
+                .clone(),
+            model_dim,
+        ));
+
+        let prediction_head = Box::new(PredictionHeadEncodable::new(
+            prediction_head_dense,
+            prediction_head_activation,
+            Box::new(prediction_head_norm),
+            prediction_head_final_linear,
+            num_labels,
+        ));
+
         Ok(Self {
             mtl_context,
             command_buffer,
@@ -354,11 +370,8 @@ impl ClassifierContext {
             output_norm,
             global_rope,
             local_rope,
-            prediction_head_dense,
-            prediction_head_activation,
-            prediction_head_norm,
-            prediction_head_final_linear,
-            pooling_kernel,
+            pooling,
+            prediction_head,
             sigmoid_kernel,
         })
     }

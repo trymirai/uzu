@@ -3,6 +3,7 @@ use std::rc::Rc;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
+#[cfg(feature = "tracing")]
 use super::ClassificationForwardPassState;
 use crate::{
     DataType,
@@ -24,6 +25,7 @@ use crate::{
 };
 
 pub struct ClassifierLayerExecutable {
+    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     layer_index: usize,
     copy_main_to_shortcut: Box<dyn EncodableWithState>,
     pre_attention_norm: Option<Box<dyn EncodableWithState>>,
@@ -203,21 +205,21 @@ impl EncodableWithState for ClassifierLayerExecutable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        // Try to get classifier traces if available
-        let layer_traces = if let Some(classifier_state) =
-            state.as_any().downcast_ref::<ClassificationForwardPassState>()
-        {
-            if let Some(traces) = classifier_state.classifier_traces() {
-                traces.borrow().layer_results.get(self.layer_index).cloned()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        #[cfg(feature = "tracing")]
+        let layer_traces = state
+            .as_any()
+            .downcast_ref::<ClassificationForwardPassState>()
+            .and_then(|classifier_state| {
+                classifier_state
+                    .classifier_traces()
+                    .borrow()
+                    .layer_results
+                    .get(self.layer_index)
+                    .cloned()
+            });
 
-        // Capture inputs
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,
@@ -229,7 +231,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(state, command_buffer, parameters);
-            if let Some(layer_traces) = layer_traces.clone() {
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
                     command_buffer,
                     ArrayId::Main,
@@ -237,8 +240,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
                 );
             }
         } else {
-            // If no pre_attention_norm, copy inputs directly (for Lalamo trace parity)
-            if let Some(layer_traces) = layer_traces.clone() {
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
                     command_buffer,
                     ArrayId::Main,
@@ -251,7 +254,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
         self.rope.encode(state, command_buffer, parameters);
         self.attention.encode(state, command_buffer, parameters);
         self.out_projection.encode(state, command_buffer, parameters);
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,
@@ -260,8 +264,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
         }
 
         self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
-        // Capture mlp_inputs (input + attention_result)
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,
@@ -270,7 +274,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
         }
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,
@@ -279,7 +284,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
         }
 
         self.mlp.encode(state, command_buffer, parameters);
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,
@@ -288,8 +294,8 @@ impl EncodableWithState for ClassifierLayerExecutable {
         }
 
         self.main_shortcut_add_swap_2.encode(state, command_buffer, parameters);
-        // Capture outputs (input + attention_result + mlp_result)
-        if let Some(layer_traces) = layer_traces.clone() {
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
                 command_buffer,
                 ArrayId::Main,

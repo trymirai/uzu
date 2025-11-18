@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct ClassificationOutput {
-    pub logits: Vec<f32>,
+    pub logits: Box<[f32]>,
     pub probabilities: HashMap<String, f32>,
     pub stats: ClassificationStats,
 }
