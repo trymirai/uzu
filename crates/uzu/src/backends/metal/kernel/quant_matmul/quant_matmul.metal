@@ -689,9 +689,7 @@ void qmm_transposed_impl(
   loader_x_t loader_x(x, K, Xs, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
 
-  // Create appropriate loader based on quantization type
   if (kUseMlxQuant) {
-    // MLX quantization: uses pre-computed biases
     using loader_w_t = QuantizedBlockLoader<
         T,
         BN,

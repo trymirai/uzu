@@ -563,7 +563,7 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
             "matrix" | "gemm" => SSDPrefillMode::Matrix,
             _ => SSDPrefillMode::SinglePass,
         },
-        Err(_) => SSDPrefillMode::SinglePass,
+        Err(_) => SSDPrefillMode::Matrix,
     }
 }
 
