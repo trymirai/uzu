@@ -431,8 +431,9 @@ impl QuantizedEmbeddingReadoutKernelBlock {
             QuantizationType, QuantizedMatmulKernel, quantized_kernel_names,
         };
 
+        let aligned_n = vocab_size % 32 == 0;
         let Some((kernel_name_mm, kernel_name_mv)) =
-            quantized_kernel_names(data_type, group_size)
+            quantized_kernel_names(data_type, group_size, aligned_n)
         else {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(

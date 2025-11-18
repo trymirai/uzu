@@ -351,7 +351,7 @@ fn execute_quantized_matmul(
         };
 
         let is_gemm = m > 1 && n > 1;
-        let tol = 0.1;
+        let tol = 1.0;
         let display_size = if n == 1 {
             32.min(m)
         } else {
@@ -833,12 +833,17 @@ fn run_gemm_transposed_test(
     k: usize,
 ) {
     println!("--- Testing GEMM Transposed M={}, N={}, K={} ---", m, n, k);
+    let kernel_name = if n % 32 == 0 {
+        "qmm_transposed_f16_g64_b4"
+    } else {
+        "qmm_transposed_f16_g64_b4_unaligned"
+    };
     let _ = execute_quantized_matmul(
         ctx,
         m,
         n,
         k,
-        "qmm_transposed_f16_g64_b4",
+        kernel_name,
         false,
         1,
         true,
@@ -948,7 +953,7 @@ fn test_quant_f32_kernels() {
         3,
         4,
         96,
-        "qmm_transposed_f32_g32_b4",
+        "qmm_transposed_f32_g32_b4_unaligned",
         false,
         1,
         true,

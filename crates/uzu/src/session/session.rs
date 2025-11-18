@@ -449,7 +449,6 @@ impl Session {
     fn build_context_from_generator(&self) -> Result<Context, Error> {
         let generator =
             self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
-        let prefix_len = generator.prefix_len();
         let cache_layers = generator
             .context
             .cache_layers

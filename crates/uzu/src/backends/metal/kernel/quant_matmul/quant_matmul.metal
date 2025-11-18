@@ -707,13 +707,19 @@ void qmm_transposed_impl(
     const int k_blocks = (K + BK - 1) / BK;
     for (int kb = 0; kb < k_blocks; kb++) {
       const short k_len = (kb < (K / BK)) ? BK : static_cast<short>(K - (K / BK) * BK);
+      const bool needs_safe_x = (num_els < BM) || (k_len < BK);
+      const bool needs_safe_w = (!aligned_N && num_outs < BN) || (k_len < BK);
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      if (num_els < BM || k_len < BK) {
+      if (needs_safe_x) {
         loader_x.load_safe(short2(k_len, num_els));
       } else {
         loader_x.load_unsafe();
       }
-      loader_w.load_safe(short2(num_outs, k_len));
+      if (needs_safe_w) {
+        loader_w.load_safe(short2(num_outs, k_len));
+      } else {
+        loader_w.load_unsafe();
+      }
       threadgroup_barrier(mem_flags::mem_threadgroup);
       mma_op.mma(Xs, Ws);
       if (kb + 1 < k_blocks) {
@@ -738,13 +744,19 @@ void qmm_transposed_impl(
     const int k_blocks = (K + BK - 1) / BK;
     for (int kb = 0; kb < k_blocks; kb++) {
       const short k_len = (kb < (K / BK)) ? BK : static_cast<short>(K - (K / BK) * BK);
+      const bool needs_safe_x = (num_els < BM) || (k_len < BK);
+      const bool needs_safe_w = (!aligned_N && num_outs < BN) || (k_len < BK);
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      if (num_els < BM || k_len < BK) {
+      if (needs_safe_x) {
         loader_x.load_safe(short2(k_len, num_els));
       } else {
         loader_x.load_unsafe();
       }
-      loader_w.load_safe(short2(num_outs, k_len));
+      if (needs_safe_w) {
+        loader_w.load_safe(short2(num_outs, k_len));
+      } else {
+        loader_w.load_unsafe();
+      }
       threadgroup_barrier(mem_flags::mem_threadgroup);
       mma_op.mma(Xs, Ws);
       if (kb + 1 < k_blocks) {
@@ -1363,6 +1375,22 @@ template [[host_name("qmm_transposed_f16_g32_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmm_transposed_f16_g32_b4_unaligned")]]
+[[kernel]] void qmm_transposed<half, 32, 4, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmv_f16_g32_b4")]]
 [[kernel]] void qmv<half, 32, 4>(
     const device uint32_t* w [[buffer(0)]],
@@ -1410,6 +1438,22 @@ template [[host_name("qmm_f16_g64_b4")]]
 
 template [[host_name("qmm_transposed_f16_g64_b4")]]
 [[kernel]] void qmm_transposed<half, 64, 4, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g64_b4_unaligned")]]
+[[kernel]] void qmm_transposed<half, 64, 4, false>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2)]],
@@ -1485,6 +1529,22 @@ template [[host_name("qmm_transposed_f16_g128_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmm_transposed_f16_g128_b4_unaligned")]]
+[[kernel]] void qmm_transposed<half, 128, 4, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmv_f16_g128_b4")]]
 [[kernel]] void qmv<half, 128, 4>(
     const device uint32_t* w [[buffer(0)]],
@@ -1532,6 +1592,22 @@ template [[host_name("qmm_f32_g32_b4")]]
 
 template [[host_name("qmm_transposed_f32_g32_b4")]]
 [[kernel]] void qmm_transposed<float, 32, 4, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g32_b4_unaligned")]]
+[[kernel]] void qmm_transposed<float, 32, 4, false>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2)]],
@@ -1607,6 +1683,22 @@ template [[host_name("qmm_transposed_f32_g64_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmm_transposed_f32_g64_b4_unaligned")]]
+[[kernel]] void qmm_transposed<float, 64, 4, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmv_f32_g64_b4")]]
 [[kernel]] void qmv<float, 64, 4>(
     const device uint32_t* w [[buffer(0)]],
@@ -1654,6 +1746,22 @@ template [[host_name("qmm_f32_g128_b4")]]
 
 template [[host_name("qmm_transposed_f32_g128_b4")]]
 [[kernel]] void qmm_transposed<float, 128, 4, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g128_b4_unaligned")]]
+[[kernel]] void qmm_transposed<float, 128, 4, false>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2)]],
@@ -1729,6 +1837,22 @@ template [[host_name("qmm_transposed_bf16_g32_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmm_transposed_bf16_g32_b4_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 32, 4, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmv_bf16_g32_b4")]]
 [[kernel]] void qmv<bfloat, 32, 4>(
     const device uint32_t* w [[buffer(0)]],
@@ -1790,6 +1914,22 @@ template [[host_name("qmm_transposed_bf16_g64_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmm_transposed_bf16_g64_b4_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 64, 4, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmv_bf16_g64_b4")]]
 [[kernel]] void qmv<bfloat, 64, 4>(
     const device uint32_t* w [[buffer(0)]],
@@ -1837,6 +1977,22 @@ template [[host_name("qmm_bf16_g128_b4")]]
 
 template [[host_name("qmm_transposed_bf16_g128_b4")]]
 [[kernel]] void qmm_transposed<bfloat, 128, 4, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g128_b4_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 128, 4, false>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2)]],
