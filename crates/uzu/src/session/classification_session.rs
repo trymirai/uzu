@@ -72,10 +72,10 @@ impl ClassificationSession {
         &mut self,
         input: Input,
     ) -> Result<ClassificationOutput, Error> {
-        eprintln!("[DEBUG] classify - Processing input...");
+        // Debug print removed
         let text = self.input_processor.process(&input, false)?;
 
-        eprintln!("[DEBUG] classify - Tokenizing...");
+        // Debug print removed
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
@@ -84,11 +84,11 @@ impl ClassificationSession {
             .iter()
             .map(|&id| id as u64)
             .collect();
-        eprintln!("[DEBUG] classify - Tokenized to {} tokens", tokens.len());
+        // Debug print removed
 
         let token_positions: Vec<usize> = (0..tokens.len()).collect();
 
-        eprintln!("[DEBUG] classify - Running classifier...");
+        // Debug print removed
         self.classifier.classify_tokens(tokens, token_positions)
     }
 }

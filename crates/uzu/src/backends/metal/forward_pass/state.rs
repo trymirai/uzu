@@ -1004,7 +1004,6 @@ impl LLMForwardPassState {
 
             // Classifier prediction head buffers (not supported in LLM state)
             ArrayId::ClassifierPooling
-            | ArrayId::ClassifierPredictionHeadPooled
             | ArrayId::ClassifierPredictionHeadDense
             | ArrayId::ClassifierPredictionHeadNorm
             | ArrayId::ClassifierPredictionHeadLogits => {
@@ -1201,7 +1200,6 @@ pub enum ArrayId {
 
     // Classifier prediction head buffers
     ClassifierPooling,
-    ClassifierPredictionHeadPooled,
     ClassifierPredictionHeadDense,
     ClassifierPredictionHeadNorm,
     ClassifierPredictionHeadLogits,

@@ -22,16 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🤖 Classifying input with {}:", model_path.display());
 
-    let session_start = Instant::now();
-    println!("[DEBUG] Creating classification session...");
+    let _session_start = Instant::now();
     let mut session = match ClassificationSession::new(model_path.clone()) {
-        Ok(s) => {
-            println!(
-                "[DEBUG] Session created in {:.2}s",
-                session_start.elapsed().as_secs_f64()
-            );
-            s
-        },
+        Ok(s) => s,
         Err(e) => {
             eprintln!("Error creating session: {:?}", e);
             eprintln!("Model path: {:?}", model_path);

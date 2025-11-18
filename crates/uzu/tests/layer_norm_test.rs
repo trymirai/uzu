@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use uzu::{Array, DataType, DeviceContext, backends::metal::MTLContext};
+use uzu::{Array, backends::metal::MTLContext};
 
 #[test]
 fn test_layer_norm_vs_lalamo() {

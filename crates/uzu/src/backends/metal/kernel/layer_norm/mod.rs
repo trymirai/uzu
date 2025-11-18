@@ -66,10 +66,6 @@ impl LayerNormKernel {
             full_layer,
         )?;
 
-        eprintln!(
-            "[DEBUG] LayerNormKernel::new - Requesting kernel: {}",
-            kernel_name
-        );
         let pipeline = context
             .compute_pipeline_state(&kernel_name, None)
             .map_err(LayerNormError::MetalError)?;

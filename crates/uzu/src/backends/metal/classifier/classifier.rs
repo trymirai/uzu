@@ -1,4 +1,6 @@
-use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell, collections::HashMap, path::Path, rc::Rc, time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 
@@ -7,7 +9,7 @@ use super::{
     ClassifierContext,
 };
 use crate::{
-    DataType,
+    Array, DataType,
     backends::metal::{
         MetalArray,
         forward_pass::{
@@ -77,8 +79,6 @@ impl Classifier {
     ) -> Result<(Vec<f32>, Rc<RefCell<super::ClassifierActivationTrace>>), Error>
     {
         autoreleasepool(|_| {
-            // Create ClassificationForwardPassState with bidirectional attention
-            // No KV cache, no vocabulary-sized buffers - designed for classification
             let num_labels =
                 self.context.model_config.classifier_config.num_labels;
             let mut state = ClassificationForwardPassState::new(
@@ -93,15 +93,12 @@ impl Classifier {
                 self.context.shared_buffers.clone(),
                 token_ids,
                 token_positions,
-                true, // Bidirectional attention for BERT
+                true,
                 enable_traces,
                 num_labels,
             );
 
             let encoding_params = EncodingParameters::new(false, true, false);
-
-            // Reset command buffer for this forward pass
-            self.context.reset_command_buffer();
 
             self.context.embed.encode(
                 &mut state,
@@ -113,7 +110,6 @@ impl Classifier {
                 &self.context.command_buffer,
                 &encoding_params,
             );
-            // Trace: embedding_norm
             if enable_traces {
                 if let Some(traces) = state.classifier_traces().cloned() {
                     state.encode_copy_array(
@@ -130,25 +126,12 @@ impl Classifier {
                     &self.context.command_buffer,
                     &encoding_params,
                 );
-
-                // If tracing is enabled, commit and wait after each layer
-                // to ensure trace copies complete before next layer starts
-                if enable_traces {
-                    let root = self
-                        .context
-                        .command_buffer
-                        .root_command_buffer()
-                        .to_owned();
-                    self.context.command_buffer.commit_and_continue();
-                    root.wait_until_completed();
-                }
             }
             self.context.output_norm.encode(
                 &mut state,
                 &self.context.command_buffer,
                 &encoding_params,
             );
-            // Trace: output_norm
             if enable_traces {
                 if let Some(traces) = state.classifier_traces().cloned() {
                     state.encode_copy_array(
@@ -159,15 +142,10 @@ impl Classifier {
                 }
             }
 
-            // Apply pooling: [batch, seq_len, model_dim] → [batch, model_dim]
             let mut pooled_output = self.apply_pooling(&mut state)?;
 
-            // Apply prediction head: [batch, model_dim] → [batch, num_labels]
             self.apply_prediction_head(&mut state, &mut pooled_output)?;
 
-            // Non-trace path synchronization is handled inside apply_prediction_head
-
-            // Copy result from GPU to CPU (Array::buffer() will implicitly sync)
             let logits = self.copy_logits_from_state(&state)?;
 
             let traces = if enable_traces {
@@ -198,14 +176,10 @@ impl Classifier {
         let model_dim = self.context.model_config.classifier_config.model_dim;
 
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::ClassifierPooling]);
-        let data_type = {
-            use crate::Array;
-            Array::data_type(&*arrays[0].borrow())
-        };
+        let data_type = { Array::data_type(&*arrays[0].borrow()) };
         let mut main_array = arrays[0].borrow_mut();
         let input_buffer = unsafe { main_array.mtl_buffer() };
 
-        // Use pre-allocated pooling buffer from state
         let mut pooling_array = arrays[1].borrow_mut();
         let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
 
@@ -246,7 +220,6 @@ impl Classifier {
 
         self.context.command_buffer.commit_and_continue();
 
-        // Trace: output_pooling
         if let Some(traces_rc) = state.classifier_traces().cloned() {
             let traces_ref = traces_rc.borrow();
             let mut trace_arr = traces_ref.output_pooling.borrow_mut();
@@ -270,7 +243,6 @@ impl Classifier {
             root_owned.wait_until_completed();
         }
 
-        // Return the pooling array directly (already has correct buffer/shape/dtype)
         Ok(pooling_array.clone())
     }
 
@@ -279,40 +251,9 @@ impl Classifier {
         state: &mut ClassificationForwardPassState,
         pooled_input: &mut MetalArray,
     ) -> Result<(), Error> {
-        let batch_size = {
-            use crate::Array;
-            Array::shape(pooled_input)[0]
-        };
+        let batch_size = { Array::shape(pooled_input)[0] };
         let num_labels = self.context.model_config.classifier_config.num_labels;
-        let data_type = {
-            use crate::Array;
-            Array::data_type(pooled_input)
-        };
-
-        // Copy pooled input into ClassifierPredictionHeadPooled buffer (GPU blit, in-order)
-        {
-            let arrays = state.arrays(&[
-                ArrayId::ClassifierPredictionHeadPooled,
-                ArrayId::ClassifierPooling,
-            ]);
-            let mut dst = arrays[0].borrow_mut();
-            let dst_buf = unsafe { dst.mtl_buffer().to_owned() };
-            drop(dst);
-            let mut src = arrays[1].borrow_mut();
-            let src_buf = unsafe { src.mtl_buffer().to_owned() };
-            drop(src);
-
-            let copy_size_bytes = (batch_size
-                * self.context.model_config.classifier_config.model_dim
-                * data_type.size_in_bytes())
-                as u64;
-
-            let root = self.context.command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
-            blit.copy_from_buffer(&src_buf, 0, &dst_buf, 0, copy_size_bytes);
-            blit.end_encoding();
-            self.context.command_buffer.commit_and_continue();
-        }
+        let data_type = { Array::data_type(pooled_input) };
 
         let encoding_params = EncodingParameters::new(false, true, false);
 
@@ -400,7 +341,6 @@ impl Classifier {
             state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
         let logits_array = logits_arrays[0].borrow();
 
-        use crate::Array;
         let num_labels = self.context.model_config.classifier_config.num_labels;
         let buffer = Array::buffer(&*logits_array);
 
@@ -424,14 +364,11 @@ impl Classifier {
     fn logits_to_probabilities(
         &self,
         logits: &[f32],
-    ) -> Result<std::collections::HashMap<String, f32>, Error> {
-        use std::collections::HashMap;
-
+    ) -> Result<HashMap<String, f32>, Error> {
         let output_labels =
             &self.context.model_config.classifier_config.output_labels;
         let mut probabilities = HashMap::new();
 
-        // Apply sigmoid on CPU to convert linear logits to probabilities
         for (idx, &logit) in logits.iter().enumerate() {
             let prob = 1.0 / (1.0 + (-logit).exp());
 

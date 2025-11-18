@@ -66,8 +66,6 @@ struct AuxBuffers {
     /// [batch, model_dim] - pooling output (after mean/CLS pooling from [batch, seq_len, model_dim])
     pooling: ArrayCell,
     // Prediction head buffers
-    /// [batch, model_dim] - pooled output (after mean/CLS pooling)
-    pooled: ArrayCell,
     /// [batch, model_dim] - dense layer output
     dense: ArrayCell,
     /// [batch, model_dim] - normalization output
@@ -186,20 +184,6 @@ impl AuxBuffers {
                 })
             },
             // Initialize prediction head buffers
-            pooled: {
-                let batch_size = 1;
-                let model_dim = model_shape.main_shape(1)[1];
-                let data_type = model_shape.activation_data_type();
-                let buffer_size =
-                    (batch_size * model_dim * data_type.size_in_bytes()) as u64;
-                let buffer = context.device.new_buffer(
-                    buffer_size,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
-                RefCell::new(unsafe {
-                    MetalArray::new(buffer, &[batch_size, model_dim], data_type)
-                })
-            },
             dense: {
                 let batch_size = 1;
                 let model_dim = model_shape.main_shape(1)[1];
@@ -336,20 +320,13 @@ impl ClassificationForwardPassState {
         // For causal attention, we'd set upper triangle to -inf
         // For sliding window, mask tokens outside the window
         for (window, bias_array) in attention_bias_map.iter_mut() {
-            eprintln!(
-                "[DEBUG] Filling attention bias for window: {:?}, suffix_length: {}",
-                window, suffix_length
-            );
             if bidirectional_attention {
                 if let Some(window_size) = window {
                     // Bidirectional with sliding window: mask tokens outside ±window_size/2
                     // Matches Lalamo: top_zeroed = tril(result, k=window_size//2)
                     //                 result = triu(top_zeroed, k=-window_size//2)
                     let half_window = (window_size / 2) as isize;
-                    eprintln!(
-                        "[DEBUG] Using sliding window: half_window = {}",
-                        half_window
-                    );
+                    // Debug print removed
                     context.fill_attention_bias(
                         bias_array,
                         suffix_length,
@@ -504,9 +481,6 @@ impl ClassificationForwardPassState {
             // Pooling buffer
             ArrayId::ClassifierPooling => self.aux_buffers.pooling.clone(),
             // Prediction head buffers
-            ArrayId::ClassifierPredictionHeadPooled => {
-                self.aux_buffers.pooled.clone()
-            },
             ArrayId::ClassifierPredictionHeadDense => {
                 self.aux_buffers.dense.clone()
             },

@@ -223,9 +223,6 @@ impl ClassifierContext {
             context_length,
         )));
 
-        eprintln!(
-            "[DEBUG] ClassifierContext::new - Creating embedding normalization..."
-        );
         use crate::backends::metal::{
             forward_pass::ArrayId, kernel::create_normalization_encodable,
         };
@@ -242,9 +239,6 @@ impl ClassifierContext {
         )
         .expect("Failed to create embedding norm kernel");
 
-        eprintln!(
-            "[DEBUG] ClassifierContext::new - Creating prediction head..."
-        );
         let model_dim = classifier_model_config.classifier_config.model_dim;
         let num_labels = classifier_model_config.classifier_config.num_labels;
         let prediction_head = PredictionHeadExecutables::new(
@@ -256,9 +250,6 @@ impl ClassifierContext {
             compilation_config.clone(),
         );
 
-        eprintln!(
-            "[DEBUG] ClassifierContext::new - Creating pooling and sigmoid kernels..."
-        );
         let pooling_kernel = PoolingKernel::new(&mtl_context, data_type)
             .map_err(|e| {
                 eprintln!("Failed to create pooling kernel: {:?}", e);
