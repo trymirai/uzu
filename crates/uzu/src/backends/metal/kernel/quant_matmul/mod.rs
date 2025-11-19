@@ -52,6 +52,61 @@ pub struct QuantizedMatmulArguments<'a> {
     pub quantization_type: QuantizationType,
 }
 
+fn dtype_suffix(data_type: DataType) -> Option<&'static str> {
+    match data_type {
+        DataType::F16 => Some("f16"),
+        DataType::BF16 => Some("bf16"),
+        DataType::F32 => Some("f32"),
+        _ => None,
+    }
+}
+
+fn base_qmm_kernel_name(
+    type_suffix: &str,
+    group_size: usize,
+    transpose_infix: &str,
+) -> Result<String, QuantizedMatmulError> {
+    let kernel_name = match (type_suffix, group_size) {
+        ("f16", 32) => format!("qmm{}_f16_g32_b4", transpose_infix),
+        ("f16", 64) => format!("qmm{}_f16_g64_b4", transpose_infix),
+        ("f16", 128) => format!("qmm{}_f16_g128_b4", transpose_infix),
+        ("bf16", 32) => format!("qmm{}_bf16_g32_b4", transpose_infix),
+        ("bf16", 64) => format!("qmm{}_bf16_g64_b4", transpose_infix),
+        ("bf16", 128) => format!("qmm{}_bf16_g128_b4", transpose_infix),
+        ("f32", 32) => format!("qmm{}_f32_g32_b4", transpose_infix),
+        ("f32", 64) => format!("qmm{}_f32_g64_b4", transpose_infix),
+        ("f32", 128) => format!("qmm{}_f32_g128_b4", transpose_infix),
+        _ => {
+            return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
+        },
+    };
+    Ok(kernel_name)
+}
+
+fn resolve_qmm_kernel_name(
+    type_suffix: &str,
+    group_size: usize,
+    transpose: bool,
+    n: i32,
+    k: i32,
+) -> Result<String, QuantizedMatmulError> {
+    let transpose_infix = if transpose {
+        "_transposed"
+    } else {
+        ""
+    };
+    let mut kernel_name =
+        base_qmm_kernel_name(type_suffix, group_size, transpose_infix)?;
+    if transpose {
+        if n % 32 != 0 {
+            kernel_name.push_str("_unaligned");
+        }
+    } else if k % 32 == 0 {
+        kernel_name.push_str("_alignedk");
+    }
+    Ok(kernel_name)
+}
+
 impl QuantizedMatmulKernel {
     pub fn new(
         mtl_context: &MTLContext,
@@ -184,32 +239,38 @@ impl QuantizedMatmulKernel {
     }
 }
 
+pub fn select_qmm_kernel_name(
+    data_type: DataType,
+    group_size: usize,
+    transpose: bool,
+    n: usize,
+    k: usize,
+) -> Result<String, QuantizedMatmulError> {
+    let type_suffix = dtype_suffix(data_type)
+        .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+    resolve_qmm_kernel_name(
+        type_suffix,
+        group_size,
+        transpose,
+        n as i32,
+        k as i32,
+    )
+}
+
 pub fn quantized_kernel_names(
     data_type: DataType,
     group_size: usize,
-    aligned_n: bool,
+    n: usize,
+    k: usize,
 ) -> Option<(String, String)> {
-    let dtype_suffix = match data_type {
-        DataType::F16 => "f16",
-        DataType::BF16 => "bf16",
-        DataType::F32 => "f32",
-        _ => return None,
-    };
-
-    match group_size {
-        32 | 64 | 128 => {
-            let base_mm =
-                format!("qmm_transposed_{dtype_suffix}_g{group_size}_b4");
-            let mm = if aligned_n {
-                base_mm
-            } else {
-                format!("{base_mm}_unaligned")
-            };
-            let mv = format!("qmv_{dtype_suffix}_g{group_size}_b4");
-            Some((mm, mv))
-        },
-        _ => None,
+    let type_suffix = dtype_suffix(data_type)?;
+    if !matches!(group_size, 32 | 64 | 128) {
+        return None;
     }
+
+    let mm = select_qmm_kernel_name(data_type, group_size, true, n, k).ok()?;
+    let mv = format!("qmv_{type_suffix}_g{group_size}_b4");
+    Some((mm, mv))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,35 +288,13 @@ pub fn encode_quantized_matmul(
     transpose: bool,
     args: QuantizedMatmulArguments,
 ) -> Result<(), QuantizedMatmulError> {
-    let type_suffix = match kernel_data_type {
-        DataType::F16 => "f16",
-        DataType::BF16 => "bf16",
-        DataType::F32 => "f32",
-        other => return Err(QuantizedMatmulError::UnsupportedDataType(other)),
-    };
-
-    let transpose_infix = if transpose {
-        "_transposed"
-    } else {
-        ""
-    };
-    let mut kernel_name = match (type_suffix, group_size) {
-        ("f16", 32) => format!("qmm{}_f16_g32_b4", transpose_infix),
-        ("f16", 64) => format!("qmm{}_f16_g64_b4", transpose_infix),
-        ("f16", 128) => format!("qmm{}_f16_g128_b4", transpose_infix),
-        ("bf16", 32) => format!("qmm{}_bf16_g32_b4", transpose_infix),
-        ("bf16", 64) => format!("qmm{}_bf16_g64_b4", transpose_infix),
-        ("bf16", 128) => format!("qmm{}_bf16_g128_b4", transpose_infix),
-        ("f32", 32) => format!("qmm{}_f32_g32_b4", transpose_infix),
-        ("f32", 64) => format!("qmm{}_f32_g64_b4", transpose_infix),
-        ("f32", 128) => format!("qmm{}_f32_g128_b4", transpose_infix),
-        _ => {
-            return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
-        },
-    };
-    if transpose && args.n % 32 != 0 {
-        kernel_name.push_str("_unaligned");
-    }
+    let kernel_name = select_qmm_kernel_name(
+        kernel_data_type,
+        group_size,
+        transpose,
+        args.n as usize,
+        args.k as usize,
+    )?;
 
     let kernel = QuantizedMatmulKernel::new(
         mtl_context,

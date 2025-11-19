@@ -8,6 +8,7 @@ use uzu::{
         MTLContext,
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+            select_qmm_kernel_name,
         },
     },
 };
@@ -402,6 +403,17 @@ fn execute_quantized_matmul(
             errors: None,
         }
     }
+}
+
+fn select_qmm_kernel_for_test(
+    data_type: DataType,
+    group_size: usize,
+    transpose: bool,
+    n: usize,
+    k: usize,
+) -> String {
+    select_qmm_kernel_name(data_type, group_size, transpose, n, k)
+        .expect("failed to resolve qmm kernel name")
 }
 
 fn run_gemv_test(
@@ -808,12 +820,14 @@ fn run_gemm_test(
     k: usize,
 ) {
     println!("--- Testing GEMM M={}, N={}, K={} ---", m, n, k);
+    let kernel_name =
+        select_qmm_kernel_for_test(DataType::F16, 64, false, n, k);
     let _ = execute_quantized_matmul(
         ctx,
         m,
         n,
         k,
-        "qmm_f16_g64_b4",
+        kernel_name.as_str(),
         true,
         1,
         true,
@@ -833,17 +847,14 @@ fn run_gemm_transposed_test(
     k: usize,
 ) {
     println!("--- Testing GEMM Transposed M={}, N={}, K={} ---", m, n, k);
-    let kernel_name = if n % 32 == 0 {
-        "qmm_transposed_f16_g64_b4"
-    } else {
-        "qmm_transposed_f16_g64_b4_unaligned"
-    };
+    let kernel_name =
+        select_qmm_kernel_for_test(DataType::F16, 64, true, n, k);
     let _ = execute_quantized_matmul(
         ctx,
         m,
         n,
         k,
-        kernel_name,
+        kernel_name.as_str(),
         false,
         1,
         true,
@@ -932,12 +943,14 @@ fn test_quant_f32_kernels() {
         DataType::F32,
     );
 
+    let kernel_name_qmm =
+        select_qmm_kernel_for_test(DataType::F32, 32, false, 3, 96);
     let _ = execute_quantized_matmul(
         &ctx,
         4,
         3,
         96,
-        "qmm_f32_g32_b4",
+        kernel_name_qmm.as_str(),
         true,
         1,
         true,
@@ -948,12 +961,14 @@ fn test_quant_f32_kernels() {
         DataType::F32,
     );
 
+    let kernel_name_qmm_t =
+        select_qmm_kernel_for_test(DataType::F32, 32, true, 4, 96);
     let _ = execute_quantized_matmul(
         &ctx,
         3,
         4,
         96,
-        "qmm_transposed_f32_g32_b4_unaligned",
+        kernel_name_qmm_t.as_str(),
         false,
         1,
         true,
