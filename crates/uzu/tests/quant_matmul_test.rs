@@ -351,7 +351,6 @@ fn execute_quantized_matmul(
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };
 
-        let is_gemm = m > 1 && n > 1;
         let tol = 1.0;
         let display_size = if n == 1 {
             32.min(m)
@@ -847,8 +846,7 @@ fn run_gemm_transposed_test(
     k: usize,
 ) {
     println!("--- Testing GEMM Transposed M={}, N={}, K={} ---", m, n, k);
-    let kernel_name =
-        select_qmm_kernel_for_test(DataType::F16, 64, true, n, k);
+    let kernel_name = select_qmm_kernel_for_test(DataType::F16, 64, true, n, k);
     let _ = execute_quantized_matmul(
         ctx,
         m,
@@ -1052,60 +1050,102 @@ fn test_quantized_matmul_performance_mlx_g128_bf16() {
 
     let test_configs = vec![
         // (M, N, K, iterations, description)
+        // GEMV (N=1)
         (512, 1, 512, 100, "GEMV 512×512"),
         (1024, 1, 1024, 50, "GEMV 1024×1024"),
-        (2048, 1, 2048, 20, "GEMV 2048×2048"),
-        (4096, 1, 4096, 200, "GEMV 4096×4096 (fast path ✓)"),
+        (4096, 1, 4096, 200, "GEMV 4096×4096"),
+        (11008, 1, 4096, 100, "GEMV 11008×4096 (Llama FFN)"),
+        // QVM (M=1)
         (1, 512, 512, 100, "QVM 1×512 × 512×512"),
-        (1, 1024, 1024, 50, "QVM 1×1024 × 1024×1024"),
-        (1, 2048, 2048, 20, "QVM 1×2048 × 2048×2048"),
-        (1, 4096, 4096, 200, "QVM 1×4096 × 4096×4096 (fast path ✓)"),
-        (1, 11008, 4096, 100, "QVM 1×11008 × 4096×11008 (Llama FFN)"),
+        (1, 4096, 4096, 200, "QVM 1×4096 × 4096×4096"),
+        // GEMM Transposed (Batch > 1) - Simulating Prefill
+        (4096, 128, 4096, 10, "GEMM Transposed 4096×128×4096"),
+        (11008, 128, 4096, 10, "GEMM Transposed 11008×128×4096"),
     ];
 
-    for (m, n, k, iterations, description) in test_configs {
-        let ops = 2.0 * (m as f64) * (n as f64) * (k as f64);
+    let quant_types = vec![
+        (QuantizationType::Mlx, "MLX"),
+        (QuantizationType::ZeroPoint, "ZeroPoint"),
+    ];
 
-        if n == 1 {
-            let time = benchmark_quantized_gemv(
-                &ctx,
-                m,
-                k,
-                iterations,
-                128,
-                "qmv_bf16_g128_b4",
-                DataType::BF16,
-                QuantizationType::Mlx,
-            );
-            let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12;
+    for (q_type, q_name) in quant_types {
+        println!("\n--- {} Quantization ---", q_name);
+        for (m, n, k, iterations, description) in &test_configs {
+            let ops = 2.0 * (*m as f64) * (*n as f64) * (*k as f64);
 
-            println!("{}", description);
-            println!(
-                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
-                avg_time * 1000.0,
-                throughput
-            );
-        } else if m == 1 {
-            let time = benchmark_quantized_qvm(
-                &ctx,
-                n,
-                k,
-                iterations,
-                128,
-                "qvm_bf16_g128_b4",
-                DataType::BF16,
-                QuantizationType::Mlx,
-            );
-            let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12;
-
-            println!("{}", description);
-            println!(
-                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
-                avg_time * 1000.0,
-                throughput
-            );
+            if *n == 1 {
+                // GEMV
+                let time = benchmark_quantized_gemv(
+                    &ctx,
+                    *m,
+                    *k,
+                    *iterations,
+                    128,
+                    "qmv_bf16_g128_b4_fast", // Force fast kernel
+                    DataType::BF16,
+                    q_type,
+                );
+                let avg_time = time / (*iterations as f64);
+                let throughput = (ops / avg_time) / 1e12;
+                println!(
+                    "{}: {:.4}ms, {:.4} TFLOPS",
+                    description,
+                    avg_time * 1000.0,
+                    throughput
+                );
+            } else if *m == 1 {
+                // QVM
+                let time = benchmark_quantized_qvm(
+                    &ctx,
+                    *n,
+                    *k,
+                    *iterations,
+                    128,
+                    "qvm_bf16_g128_b4",
+                    DataType::BF16,
+                    q_type,
+                );
+                let avg_time = time / (*iterations as f64);
+                let throughput = (ops / avg_time) / 1e12;
+                println!(
+                    "{}: {:.4}ms, {:.4} TFLOPS",
+                    description,
+                    avg_time * 1000.0,
+                    throughput
+                );
+            } else {
+                // GEMM Transposed (assuming n > 1 and m > 1)
+                let kernel_name = select_qmm_kernel_for_test(
+                    DataType::BF16,
+                    128,
+                    true,
+                    *n,
+                    *k,
+                );
+                let result = execute_quantized_matmul(
+                    &ctx,
+                    *m,
+                    *n,
+                    *k,
+                    &kernel_name,
+                    false, // cpu_transpose (doesn't matter for perf)
+                    *iterations,
+                    false, // validate
+                    false,
+                    q_type,
+                    false,
+                    128,
+                    DataType::BF16,
+                );
+                let avg_time = result.elapsed / (*iterations as f64);
+                let throughput = (ops / avg_time) / 1e12;
+                println!(
+                    "{}: {:.4}ms, {:.4} TFLOPS",
+                    description,
+                    avg_time * 1000.0,
+                    throughput
+                );
+            }
         }
     }
 }

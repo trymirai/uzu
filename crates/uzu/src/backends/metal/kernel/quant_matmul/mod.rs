@@ -35,9 +35,11 @@ pub enum QuantizedMatmulError {
 pub struct QuantizedMatmulKernel {
     pipeline: MTLComputePipelineState,
     kind: KernelKind,
+    bm: u64,
+    bn: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulArguments<'a> {
     pub a_buffer: &'a MTLBuffer, // Input A (float)
     pub b_buffer: &'a MTLBuffer, // Input B (quantized)
@@ -83,7 +85,7 @@ fn base_qmm_kernel_name(
     Ok(kernel_name)
 }
 
-fn resolve_qmm_kernel_name(
+    fn resolve_qmm_kernel_name(
     type_suffix: &str,
     group_size: usize,
     transpose: bool,
@@ -100,6 +102,9 @@ fn resolve_qmm_kernel_name(
     if transpose {
         if n % 32 != 0 {
             kernel_name.push_str("_unaligned");
+        } else if type_suffix == "bf16" && group_size == 128 {
+            // Use optimized 64x64 kernel for BF16 G128 aligned
+            kernel_name.push_str("_64x64");
         }
     } else if k % 32 == 0 {
         kernel_name.push_str("_alignedk");
@@ -143,9 +148,21 @@ impl QuantizedMatmulKernel {
             KernelKind::Qmm
         };
 
+        let (bm, bn) = if kernel_name.contains("_64x64") {
+            (64, 64)
+        } else if kernel_name.contains("_64x128") {
+            (64, 128)
+        } else if kernel_name.contains("_128x64") {
+            (128, 64)
+        } else {
+            (32, 32)
+        };
+
         Ok(Self {
             pipeline,
             kind,
+            bm,
+            bn,
         })
     }
 
@@ -218,8 +235,8 @@ impl QuantizedMatmulKernel {
                 );
             },
             KernelKind::Qmm => {
-                let bm = 32;
-                let bn = 32;
+                let bm = self.bm;
+                let bn = self.bn;
                 let wm = 2;
                 let wn = 2;
                 let threads_per_threadgroup = MTLSize::new(32, wn, wm);
@@ -269,7 +286,7 @@ pub fn quantized_kernel_names(
     }
 
     let mm = select_qmm_kernel_name(data_type, group_size, true, n, k).ok()?;
-    let mv = format!("qmv_{type_suffix}_g{group_size}_b4");
+    let mv = format!("qmv_{type_suffix}_g{group_size}_b4_fast");
     Some((mm, mv))
 }
 
