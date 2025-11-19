@@ -1149,3 +1149,45 @@ fn test_quantized_matmul_performance_mlx_g128_bf16() {
         }
     }
 }
+
+#[test]
+fn test_quant_gemv_fast_kernels() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping fast kernel test");
+            return;
+        },
+    };
+
+    println!("Testing explicit fast kernels with ZeroPoint (AWQ)");
+    run_gemv_test(
+        &ctx,
+        512,
+        512,
+        64,
+        "qmv_f16_g64_b4_fast",
+        DataType::F16,
+        QuantizationType::ZeroPoint,
+    );
+    run_gemv_test(
+        &ctx,
+        1024,
+        1024,
+        128,
+        "qmv_bf16_g128_b4_fast",
+        DataType::BF16,
+        QuantizationType::ZeroPoint,
+    );
+
+    println!("Testing explicit fast kernels with MLX");
+    run_gemv_test(
+        &ctx,
+        512,
+        512,
+        64,
+        "qmv_f16_g64_b4_fast",
+        DataType::F16,
+        QuantizationType::Mlx,
+    );
+}

@@ -747,7 +747,7 @@ void qmv_impl_dispatch(
     uint3 tid [[threadgroup_position_in_grid]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
-  constexpr int num_simdgroups = 4;
+  constexpr int num_simdgroups = 2;
   constexpr int results_per_simdgroup = 4;
   constexpr int packs_per_thread = 1;
   constexpr int pack_factor = get_pack_factor<bits, 32>();
@@ -776,8 +776,15 @@ void qmv_impl_dispatch(
   if (N < (num_simdgroups * results_per_simdgroup)) {
     ws += out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
     scales += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
-    const device uint8_t* zps_row_base = zero_points + out_row * ((in_vec_size_g + 1) / 2);
-    const device T* biases_row_base = biases + out_row * in_vec_size_g;
+    
+    const device uint8_t* zps_row_base = nullptr;
+    const device T* biases_row_base = nullptr;
+    if (UseMlx) {
+      biases_row_base = biases + out_row * in_vec_size_g;
+    } else {
+      zps_row_base = zero_points + out_row * ((in_vec_size_g + 1) / 2);
+    }
+
     x += tid.x * K + simd_lid * values_per_thread;
     y += tid.x * N + out_row;
 
@@ -788,17 +795,17 @@ void qmv_impl_dispatch(
       for (int row = 0; out_row + row < N; row++) {
         if (row >= results_per_simdgroup) break;
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
-        const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-        const device T* bl = biases_row_base + row * in_vec_size_g;
         const int row_idx = out_row + row;
         const device T* sr = scales_base + row_idx * in_vec_size_g;
 
         int g = (k + simd_lid * values_per_thread) / group_size;
         U s = static_cast<U>(sr[g]);
         if (UseMlx) {
+          const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
         } else {
+          const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
           uint8_t zp_b = zl[g >> 1];
           U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
           result[row] +=
@@ -821,17 +828,17 @@ void qmv_impl_dispatch(
         for (int row = 0; out_row + row < N; row++) {
             if (row >= results_per_simdgroup) break;
             auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
-            const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-            const device T* bl = biases_row_base + row * in_vec_size_g;
             const int row_idx = out_row + row;
             const device T* sr = scales_base + row_idx * in_vec_size_g;
 
             int g = (k + simd_lid * values_per_thread) / group_size;
             U s = static_cast<U>(sr[g]);
             if (UseMlx) {
+                const device T* bl = biases_row_base + row * in_vec_size_g;
                 U b = static_cast<U>(bl[g]);
                 result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
             } else {
+                const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
                 uint8_t zp_b = zl[g >> 1];
                 U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
                 result[row] += qdot_zero_point<U, values_per_thread, bits>(
@@ -851,8 +858,15 @@ void qmv_impl_dispatch(
   else {
     ws += used_out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
     scales += used_out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
-    const device uint8_t* zps_row_base = zero_points + used_out_row * ((in_vec_size_g + 1) / 2);
-    const device T* biases_row_base = biases + used_out_row * in_vec_size_g;
+    
+    const device uint8_t* zps_row_base = nullptr;
+    const device T* biases_row_base = nullptr;
+    if (UseMlx) {
+      biases_row_base = biases + used_out_row * in_vec_size_g;
+    } else {
+      zps_row_base = zero_points + used_out_row * ((in_vec_size_g + 1) / 2);
+    }
+
     x += tid.x * K + simd_lid * values_per_thread;
     y += tid.x * N + used_out_row;
 
@@ -862,17 +876,17 @@ void qmv_impl_dispatch(
 
       for (int row = 0; row < results_per_simdgroup; row++) {
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
-        const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-        const device T* bl = biases_row_base + row * in_vec_size_g;
         const int row_idx = used_out_row + row;
         const device T* sr = scales_base + row_idx * in_vec_size_g;
 
         int g = (k + simd_lid * values_per_thread) / group_size;
         U s = static_cast<U>(sr[g]);
         if (UseMlx) {
+          const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
         } else {
+          const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
           uint8_t zp_b = zl[g >> 1];
           U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
           result[row] +=
@@ -895,18 +909,18 @@ void qmv_impl_dispatch(
 
         for (int row = 0; row < results_per_simdgroup; row++) {
             auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
-            const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-            const device T* bl = biases_row_base + row * in_vec_size_g;
             const int row_idx = used_out_row + row;
             const device T* sr = scales_base + row_idx * in_vec_size_g;
 
             int g = (k + simd_lid * values_per_thread) / group_size;
             U s = static_cast<U>(sr[g]);
             if (UseMlx) {
+                const device T* bl = biases_row_base + row * in_vec_size_g;
                 U b = static_cast<U>(bl[g]);
                 result[row] += qdot_safe<U, values_per_thread, bits>(
                     wl, x_thread, s, b, sum, remaining);
             } else {
+                const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
                 uint8_t zp_b = zl[g >> 1];
                 U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
                 result[row] += qdot_zero_point<U, values_per_thread, bits>(
@@ -950,6 +964,7 @@ template <typename T, int group_size, int bits>
 void qmv_fast_impl(
     const device uint32_t* w,
     const device T* scales,
+    const device uint8_t* zero_points,
     const device T* biases,
     const device T* x,
     device T* y,
@@ -977,7 +992,21 @@ void qmv_fast_impl(
       simd_gid * results_per_simdgroup;
   ws += out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
   scales += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
-  biases += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+  
+  int zp_stride = 0;
+  const device uint8_t* zps = nullptr;
+  bool high_nibble = false;
+
+  if (kUseMlxQuant) {
+    biases += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+  } else {
+    zp_stride = (in_vec_size_g + 1) / 2;
+    zps = zero_points + out_row * zp_stride;
+    int g_offset = simd_lid / scale_step_per_thread;
+    zps += g_offset / 2;
+    high_nibble = (g_offset & 1);
+  }
+
   x += tid.x * in_vec_size + simd_lid * values_per_thread;
   y += tid.x * out_vec_size + out_row;
 
@@ -987,15 +1016,27 @@ void qmv_fast_impl(
     for (int row = 0; row < results_per_simdgroup; row++) {
       auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
       const device T* sl = scales + row * in_vec_size_g;
-      const device T* bl = biases + row * in_vec_size_g;
       U s = sl[0];
-      U b = bl[0];
-      result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
+      
+      if (kUseMlxQuant) {
+        const device T* bl = biases + row * in_vec_size_g;
+        U b = bl[0];
+        result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
+      } else {
+        const device uint8_t* zl = zps + row * zp_stride;
+        uint8_t zp_byte = *zl;
+        U zp = static_cast<U>(high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F));
+        result[row] += qdot_zero_point<U, values_per_thread, bits>(wl, x_thread, s, zp);
+      }
     }
 
     ws += block_size * bytes_per_pack / pack_factor;
     scales += block_size / group_size;
-    biases += block_size / group_size;
+    if (kUseMlxQuant) {
+      biases += block_size / group_size;
+    } else {
+      zps += (block_size / group_size) / 2;
+    }
     x += block_size;
   }
 
@@ -1042,9 +1083,17 @@ void qvm_impl_dispatch(
   const device uint8_t* w_row = ((const device uint8_t*)w) + out_col * K * bytes_per_pack / pack_factor;
   const int in_vec_size_g = (K + group_size - 1) / group_size;
   const device T* scales_row = scales + out_col * in_vec_size_g;
-  const device T* biases_row = biases + out_col * in_vec_size_g;
-  const int zp_stride = (in_vec_size_g + 1) / 2;
-  const device uint8_t* zps_row = zero_points + out_col * zp_stride;
+  
+  const device T* biases_row = nullptr;
+  int zp_stride = 0;
+  const device uint8_t* zps_row = nullptr;
+  if (UseMlx) {
+    biases_row = biases + out_col * in_vec_size_g;
+  } else {
+    zp_stride = (in_vec_size_g + 1) / 2;
+    zps_row = zero_points + out_col * zp_stride;
+  }
+
   const device T* x_row = x + in_row * K;
   device T* y_row = y + in_row * N + out_col;
 
@@ -1219,7 +1268,8 @@ template <typename T, int group_size, int bits>
 [[kernel]] void qmv_fast(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
-    const device T* biases [[buffer(2)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device T* biases [[buffer(2), function_constant(kUseMlxQuant)]],
     const device T* x [[buffer(3)]],
     device T* y [[buffer(4)]],
     const constant int& K [[buffer(5)]],
@@ -1227,13 +1277,14 @@ template <typename T, int group_size, int bits>
     uint3 tid [[threadgroup_position_in_grid]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
-  qmv_fast_impl<T, group_size, bits>(w, scales, biases, x, y, K, N, tid, simd_gid, simd_lid);
+  qmv_fast_impl<T, group_size, bits>(w, scales, zero_points, biases, x, y, K, N, tid, simd_gid, simd_lid);
 }
 
 template [[host_name("qmv_f16_g32_b4_fast")]]
 [[kernel]] void qmv_fast<half, 32, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device half* biases [[buffer(2)]],
     const device half* x [[buffer(3)]],
     device half* y [[buffer(4)]],
@@ -1247,6 +1298,7 @@ template [[host_name("qmv_f16_g64_b4_fast")]]
 [[kernel]] void qmv_fast<half, 64, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device half* biases [[buffer(2)]],
     const device half* x [[buffer(3)]],
     device half* y [[buffer(4)]],
@@ -1260,6 +1312,7 @@ template [[host_name("qmv_f16_g128_b4_fast")]]
 [[kernel]] void qmv_fast<half, 128, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device half* biases [[buffer(2)]],
     const device half* x [[buffer(3)]],
     device half* y [[buffer(4)]],
@@ -1273,6 +1326,7 @@ template [[host_name("qmv_bf16_g32_b4_fast")]]
 [[kernel]] void qmv_fast<bfloat, 32, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device bfloat* biases [[buffer(2)]],
     const device bfloat* x [[buffer(3)]],
     device bfloat* y [[buffer(4)]],
@@ -1286,6 +1340,7 @@ template [[host_name("qmv_bf16_g64_b4_fast")]]
 [[kernel]] void qmv_fast<bfloat, 64, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device bfloat* biases [[buffer(2)]],
     const device bfloat* x [[buffer(3)]],
     device bfloat* y [[buffer(4)]],
@@ -1299,6 +1354,7 @@ template [[host_name("qmv_bf16_g128_b4_fast")]]
 [[kernel]] void qmv_fast<bfloat, 128, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device bfloat* biases [[buffer(2)]],
     const device bfloat* x [[buffer(3)]],
     device bfloat* y [[buffer(4)]],
@@ -1312,6 +1368,7 @@ template [[host_name("qmv_f32_g32_b4_fast")]]
 [[kernel]] void qmv_fast<float, 32, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device float* biases [[buffer(2)]],
     const device float* x [[buffer(3)]],
     device float* y [[buffer(4)]],
@@ -1325,6 +1382,7 @@ template [[host_name("qmv_f32_g64_b4_fast")]]
 [[kernel]] void qmv_fast<float, 64, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device float* biases [[buffer(2)]],
     const device float* x [[buffer(3)]],
     device float* y [[buffer(4)]],
@@ -1338,6 +1396,7 @@ template [[host_name("qmv_f32_g128_b4_fast")]]
 [[kernel]] void qmv_fast<float, 128, 4>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
     const device float* biases [[buffer(2)]],
     const device float* x [[buffer(3)]],
     device float* y [[buffer(4)]],
