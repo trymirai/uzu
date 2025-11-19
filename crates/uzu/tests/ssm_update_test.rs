@@ -324,8 +324,9 @@ fn ssd_update_with_z_bf16() {
     let z: Vec<bf16> = (0..bsz * h * dh)
         .map(|i| bf16::from_f32(((i % 5) as f32) * 0.1 - 0.1))
         .collect();
-    let dt: Vec<bf16> =
-        (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.3 - 1.0)).collect();
+    let dt: Vec<bf16> = (0..bsz * h)
+        .map(|i| bf16::from_f32(((i % 5) as f32) * 0.3 - 1.0))
+        .collect();
     let b: Vec<bf16> = (0..bsz * g * n)
         .map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.05))
         .collect();
@@ -338,9 +339,8 @@ fn ssd_update_with_z_bf16() {
         .map(|i| bf16::from_f32(((i % 23) as f32) * 0.01 - 0.05))
         .collect();
 
-    let (y_exp, ns_exp) = ssd_update_ref_bf16(
-        &x, &dt, &b, &c, &d, &z, &state, bsz, h, dh, g, n,
-    );
+    let (y_exp, ns_exp) =
+        ssd_update_ref_bf16(&x, &dt, &b, &c, &d, &z, &state, bsz, h, dh, g, n);
     let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
     let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
 

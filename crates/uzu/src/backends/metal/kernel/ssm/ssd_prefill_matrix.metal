@@ -470,9 +470,7 @@ kernel void ssd_m2_dtx_kernel(
     const size_t out_idx = ((size_t(h) * T_len) + t) * Dh + dh;
     const float dt_raw_val = float(dt_raw[dt_idx]);
     const float dt_val = float(softplus(dt_raw_val));
-    const float denom = fmax(dt_val, 1e-6f);
-    const float scaled = dt_val / denom;
-    const float v = float(x[x_idx]) * scaled;
+    const float v = float(x[x_idx]);
     dtx_out[out_idx] = static_cast<T>(v);
 }
 

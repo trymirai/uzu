@@ -167,6 +167,13 @@ impl MambaMixerEncodable {
         }
 
         self.out_projection.encode(state, command_buffer, parameters);
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
     }
 
     fn split_inproj(

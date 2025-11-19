@@ -160,10 +160,10 @@ impl EncodableWithState for MlpBlockEncodable {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
-        _params: &EncodingParameters,
+        params: &EncodingParameters,
     ) {
         // Up
-        self.up.encode(state, command_buffer, _params);
+        self.up.encode(state, command_buffer, params);
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
         let mut fused = arrays[0].borrow_mut();
@@ -180,6 +180,13 @@ impl EncodableWithState for MlpBlockEncodable {
         drop(fused);
         drop(hidden);
         // Down
-        self.down.encode(state, command_buffer, _params);
+        self.down.encode(state, command_buffer, params);
+
+        if params.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
     }
 }

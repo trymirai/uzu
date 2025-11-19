@@ -37,6 +37,7 @@ use crate::{
 
 enum Transform {
     KVCacheSlice,
+    SsmConvState,
 }
 
 pub struct TracerValidationMetrics {
@@ -353,17 +354,25 @@ impl Tracer {
             |expected_array_path: &str,
              produced_array: &Ref<MetalArray>,
              produced_transform: Option<Transform>| {
-                let metrics = Self::validate_array_with_name(
-                    data_type,
-                    traces_view,
-                    expected_array_path.to_string(),
-                    produced_array,
-                    produced_transform,
-                );
-                results.push(TracerValidationResult {
-                    name: expected_array_path.to_string(),
-                    metrics,
-                });
+                if let Ok(expected_array) =
+                    traces_view.leaf(expected_array_path)
+                {
+                    let metrics = Self::validate_array(
+                        data_type,
+                        &expected_array,
+                        produced_array,
+                        produced_transform,
+                    );
+                    results.push(TracerValidationResult {
+                        name: expected_array_path.to_string(),
+                        metrics,
+                    });
+                } else {
+                    println!(
+                        "Warning: Trace key not found: {}",
+                        expected_array_path
+                    );
+                }
             };
 
         for (index, layer_traces) in
@@ -383,12 +392,12 @@ impl Tracer {
                 None,
             );
             validate(
-                path("pre_attention_norm").as_str(),
+                path("pre_mixer_norm").as_str(),
                 &layer_traces.borrow().pre_attention_norm.borrow(),
                 None,
             );
             validate(
-                path("attention").as_str(),
+                path("mixer").as_str(),
                 &layer_traces.borrow().attention.borrow(),
                 None,
             );
@@ -397,7 +406,7 @@ impl Tracer {
                 .is_some()
             {
                 validate(
-                    path("post_attention_norm").as_str(),
+                    path("post_mixer_norm").as_str(),
                     &layer_traces.borrow().post_attention_norm.borrow(),
                     None,
                 );
@@ -476,6 +485,57 @@ impl Tracer {
             );
         }
 
+        let ssm_layers: Vec<usize> = {
+            let cache = state.cache_layers.borrow();
+            cache
+                .data
+                .iter()
+                .enumerate()
+                .filter_map(|(index, layer)| {
+                    layer.as_state_space().map(|_| index)
+                })
+                .collect()
+        };
+
+        for index in ssm_layers {
+            let arrays = state.arrays(&[
+                ArrayId::SsmConvState(index),
+                ArrayId::SsmState(index),
+            ]);
+
+            let conv_state = arrays[0].borrow();
+            validate(
+                format!("updated_state.{}.conv_state", index).as_str(),
+                &conv_state,
+                Some(Transform::SsmConvState),
+            );
+            validate(
+                format!(
+                    "activation_trace.layer_results.{}.updated_state.conv_state",
+                    index
+                )
+                .as_str(),
+                &conv_state,
+                Some(Transform::SsmConvState),
+            );
+
+            let ssm_state = arrays[1].borrow();
+            validate(
+                format!("updated_state.{}.ssm_state", index).as_str(),
+                &ssm_state,
+                None,
+            );
+            validate(
+                format!(
+                    "activation_trace.layer_results.{}.updated_state.ssm_state",
+                    index
+                )
+                .as_str(),
+                &ssm_state,
+                None,
+            );
+        }
+
         let expected_tokens =
             Self::get_tokens_from_logits(&traces_view.leaf("logits").unwrap());
         let produced_tokens =
@@ -498,23 +558,6 @@ impl Tracer {
             results,
             tokens_violation_indices,
         };
-    }
-
-    fn validate_array_with_name(
-        data_type: DataType,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
-        expected_array_path: String,
-        produced_array: &Ref<MetalArray>,
-        produced_transform: Option<Transform>,
-    ) -> TracerValidationMetrics {
-        let expected_array =
-            traces_view.leaf(expected_array_path.as_str()).unwrap();
-        return Self::validate_array(
-            data_type,
-            &expected_array,
-            produced_array,
-            produced_transform,
-        );
     }
 
     fn validate_array(
@@ -577,6 +620,29 @@ impl Tracer {
                         .expect("Failed to reshape KV cache slice")
                         .to_owned();
                     (expected_view.to_owned(), reshaped)
+                },
+                Transform::SsmConvState => {
+                    // expected: [1, T, D]
+                    // produced: [D, K]
+                    let produced_shape = produced_view.shape();
+                    let history_len = produced_shape[1];
+                    let dim = produced_shape[0];
+
+                    // Permute expected to [1, D, T]
+                    let permuted =
+                        expected_view.permuted_axes(IxDyn(&[0, 2, 1]));
+                    let total_time = permuted.shape()[2];
+                    let start = total_time.saturating_sub(history_len);
+                    // Slice last K elements from time axis: [1, D, K]
+                    let sliced = permuted.slice(s![.., .., start..]);
+
+                    let reshaped_expected = sliced
+                        .into_owned()
+                        .to_shape(IxDyn(&[dim, history_len]))
+                        .expect("Failed to reshape SSM conv state slice")
+                        .to_owned();
+
+                    (reshaped_expected, produced_view.to_owned())
                 },
             },
             None => (expected_view.to_owned(), produced_view.to_owned()),

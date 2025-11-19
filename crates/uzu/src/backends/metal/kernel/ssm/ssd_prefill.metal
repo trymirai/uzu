@@ -123,9 +123,7 @@ kernel void ssd_prefill_kernel(
         const float decay_val = fast::exp(-dt_val);
         const float gate = float(SILU{}(z[x_idx]));
         const float skip = d_scalar * x_val;
-        const float dt_safe = fmax(dt_val, 1e-6f);
-        const float normalized_x = x_val / dt_safe;
-        const float dt_scaled_input = normalized_x * dt_val;
+        const float dt_scaled_input = x_val;
 
         float contrib = 0.0f;
         if (has0) {
@@ -237,9 +235,7 @@ kernel void ssd_prefill_kernel_sequential(
         const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
         const T this_D = D[h_idx];
         const T this_z = SILU{}(z[x_idx]);
-        const float dt_f = fmax(float(this_dt), 1e-6f);
-        const float normalized_x = float(this_x) / dt_f;
-        const T dt_scaled_input = static_cast<T>(normalized_x) * this_dt;
+        const T dt_scaled_input = this_x;
 
         T acc = T(0);
         int s = 0;

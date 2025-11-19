@@ -268,7 +268,7 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &CommandBuffer,
-        _parameters: &EncodingParameters,
+        parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let token_ids_array = arrays[0].borrow();
@@ -301,6 +301,13 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
             .expect("Failed to encode quantized embedding lookup kernel");
 
         encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
     }
 }
 
@@ -431,9 +438,9 @@ impl QuantizedEmbeddingReadoutKernelBlock {
             QuantizationType, QuantizedMatmulKernel, quantized_kernel_names,
         };
 
-        let Some((kernel_name_mm, kernel_name_mv)) =
-            quantized_kernel_names(data_type, group_size, vocab_size, model_dim)
-        else {
+        let Some((kernel_name_mm, kernel_name_mv)) = quantized_kernel_names(
+            data_type, group_size, vocab_size, model_dim,
+        ) else {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Unsupported group size {} for transposed {:?} kernel",
@@ -485,7 +492,7 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &CommandBuffer,
-        _parameters: &EncodingParameters,
+        parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let input_array = arrays[0].borrow();
@@ -529,5 +536,12 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
             .expect("Failed to encode quantized embedding readout kernel");
 
         encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
     }
 }

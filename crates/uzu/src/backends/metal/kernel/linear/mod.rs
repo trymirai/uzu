@@ -248,7 +248,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
-        _parameters: &EncodingParameters,
+        parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow();
@@ -312,6 +312,13 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 total_len,
                 &retained_cb,
             );
+        }
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
         }
     }
 }

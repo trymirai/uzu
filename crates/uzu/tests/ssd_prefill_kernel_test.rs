@@ -105,8 +105,7 @@ fn ssd_prefill_cpu_reference(
                 let dt_raw = dt_raw_data[dt_idx];
                 let dt_val = softplus_f32(dt_raw);
                 let decay_val = (-dt_val).exp();
-                let dt_safe = dt_val.max(1e-6);
-                let dt_scaled_input = (x_val / dt_safe) * dt_val;
+                let dt_scaled_input = x_val;
                 let gate = silu_scalar(z_data[x_idx]);
                 let mut acc = d_data[h] * x_val;
 

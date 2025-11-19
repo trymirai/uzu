@@ -63,9 +63,7 @@ kernel void ssd_update_kernel(
     T this_D = D[h_idx];
     T this_z = z[x_idx];
     this_z = SILU{}(this_z);
-    float dt_f = fmax(float(this_dt), 1e-6f);
-    float normalized_x = float(this_x) / dt_f;
-    T dt_scaled_input = static_cast<T>(normalized_x) * this_dt;
+    T dt_scaled_input = this_x;
 
     T temp = T(0);
     #pragma unroll
