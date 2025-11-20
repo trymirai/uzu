@@ -50,9 +50,6 @@ kernel void ssd_prefill_kernel(
 ) {
     const uint simd_width = 32;
     const int state_dim = state_size;
-    if (state_dim <= 0 || state_dim > int(2 * simd_width)) {
-        return;
-    }
 
     const uint total_pairs = num_heads * head_dim;
     const uint pair_idx = tg_pos.x;
@@ -86,33 +83,6 @@ kernel void ssd_prefill_kernel(
     const size_t cb_group_base = size_t(group_idx) * cb_group_stride;
     const float d_scalar = float(D[h_idx]);
 
-    const uint idx0 = lane_idx;
-    const uint idx1 = lane_idx + simd_width;
-    const bool has0 = idx0 < uint(state_dim);
-    const bool has1 = idx1 < uint(state_dim);
-
-    float state0 = 0.0f;
-    float state1 = 0.0f;
-    size_t state_idx0 = 0;
-    size_t state_idx1 = 0;
-    if (has0) {
-        state_idx0 = state_base + size_t(idx0) * state_inner_stride;
-        state0 = float(state[state_idx0]);
-    }
-    if (has1) {
-        state_idx1 = state_base + size_t(idx1) * state_inner_stride;
-        state1 = float(state[state_idx1]);
-    }
-
-    size_t cb_idx0 = 0;
-    size_t cb_idx1 = 0;
-    if (has0) {
-        cb_idx0 = cb_group_base + size_t(idx0) * cb_state_stride;
-    }
-    if (has1) {
-        cb_idx1 = cb_group_base + size_t(idx1) * cb_state_stride;
-    }
-
     for (size_t token = 0; token < suffix_len; ++token) {
         const size_t x_idx = token * x_token_stride + x_base;
         const size_t dt_idx = token * dt_token_stride + dt_base;
@@ -125,37 +95,32 @@ kernel void ssd_prefill_kernel(
         const float skip = d_scalar * x_val;
         const float dt_scaled_input = x_val;
 
-        float contrib = 0.0f;
-        if (has0) {
-            const float b0 = float(B[cb_idx0]);
-            const float c0 = float(C[cb_idx0]);
-            const float new_state0 =
-                decay_val * state0 + dt_scaled_input * b0;
-            state0 = new_state0;
-            contrib += new_state0 * c0;
-            cb_idx0 += cb_token_stride;
-        }
-        if (has1) {
-            const float b1 = float(B[cb_idx1]);
-            const float c1 = float(C[cb_idx1]);
-            const float new_state1 =
-                decay_val * state1 + dt_scaled_input * b1;
-            state1 = new_state1;
-            contrib += new_state1 * c1;
-            cb_idx1 += cb_token_stride;
+        float dot_acc = 0.0f;
+        for (int base = 0; base < state_dim; base += int(simd_width)) {
+            const int idx = base + int(lane_idx);
+            const bool has_idx = idx < state_dim;
+            float contrib = 0.0f;
+            if (has_idx) {
+                const size_t state_idx =
+                    state_base + size_t(idx) * state_inner_stride;
+                const float prev_state = float(state[state_idx]);
+                const size_t cb_idx =
+                    cb_group_base + size_t(idx) * cb_state_stride
+                    + token * cb_token_stride;
+                const float b_val = float(B[cb_idx]);
+                const float c_val = float(C[cb_idx]);
+                const float new_state =
+                    decay_val * prev_state + dt_scaled_input * b_val;
+                state[state_idx] = static_cast<T>(new_state);
+                contrib = new_state * c_val;
+            }
+            dot_acc += contrib;
         }
 
-        float dot = simd_sum(contrib);
+        float dot = simd_sum(dot_acc);
         if (lane_idx == 0) {
             y[x_idx] = static_cast<T>((skip + dot) * gate);
         }
-    }
-
-    if (has0) {
-        state[state_idx0] = static_cast<T>(state0);
-    }
-    if (has1) {
-        state[state_idx1] = static_cast<T>(state1);
     }
 }
 
