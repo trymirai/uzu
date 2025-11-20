@@ -35,6 +35,7 @@ impl Node {
     pub fn get_or_insert_next(
         &mut self,
         token: u64,
+        seed: u64,
     ) -> &mut Node {
         if let Some(pos) =
             self.transitions.iter().position(|t| t.token() == token)
@@ -42,23 +43,23 @@ impl Node {
             return &mut self.transitions[pos].node;
         }
 
-        self.transitions.push(Transition::new(token));
+        self.transitions.push(Transition::new(token, seed));
         &mut self.transitions.last_mut().unwrap().node
     }
 
     pub fn dfs_with_path<F>(
         &self,
-        path: &mut Vec<(isize, u64)>,
+        path: &mut Vec<(isize, u64, u64)>,
         callback: &mut F,
     ) -> isize
     where
-        F: FnMut(&[(isize, u64)]),
+        F: FnMut(&[(isize, u64, u64)]),
     {
-        let mut node_index = path.last().map(|(idx, _)| *idx).unwrap_or(-1);
+        let mut node_index = path.last().map(|(idx, _, _)| *idx).unwrap_or(-1);
 
         for transition in self.transitions.iter() {
             node_index += 1;
-            path.push((node_index, transition.token()));
+            path.push((node_index, transition.token(), transition.seed()));
             callback(path);
             node_index = transition.node.dfs_with_path(path, callback);
             path.pop();
@@ -71,9 +72,9 @@ impl Node {
         &self,
         mut callback: F,
     ) where
-        F: FnMut(&[(isize, u64)]),
+        F: FnMut(&[(isize, u64, u64)]),
     {
-        let mut path: Vec<(isize, u64)> = Vec::new();
+        let mut path: Vec<(isize, u64, u64)> = Vec::new();
         self.dfs_with_path(&mut path, &mut callback);
     }
 }

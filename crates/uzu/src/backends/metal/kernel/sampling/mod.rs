@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem::size_of, rc::Rc};
+use std::{mem::size_of, rc::Rc};
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
@@ -9,6 +9,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
 use crate::{
+    DataType,
     backends::metal::{
         KernelDataType, MTLContext, MTLError,
         forward_pass::{
@@ -20,27 +21,13 @@ use crate::{
 };
 
 const BLOCK_SIZE: usize = 1024;
-const GRAIN_SIZE: usize = 4;
+const ELEMENTWISE_GRAIN_SIZE: usize = 64;
+const TWOPASS_ARGMAX_GRAIN_SIZE: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArgmaxStrategy {
     SinglePass, // One threadgroup per batch item
     TwoPass,    // Multi-stage reduction
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CategoricalStrategy {
-    SinglePass, // One threadgroup per batch item
-    TwoPass,    // Multi-stage reduction for large vocabularies
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum SamplingAlgorithm {
-    ArgmaxSinglePass,
-    ArgmaxTwoPass,
-    TopP,
-    CategoricalSinglePass,
-    CategoricalTwoPass,
 }
 
 #[repr(C)]
@@ -59,17 +46,29 @@ impl Default for ArgmaxPair {
     }
 }
 
+enum ArgmaxImplementation {
+    SinglePass {
+        pipeline: MTLComputePipelineState,
+    },
+    TwoPass {
+        main_pipeline: MTLComputePipelineState,
+        final_pipeline: MTLComputePipelineState,
+        partial_results_buffer: MTLBuffer,
+    },
+}
+
 pub struct SamplingKernel {
-    // Pipeline lookup by algorithm -> array of pipeline stages
-    pipelines: HashMap<SamplingAlgorithm, Vec<MTLComputePipelineState>>,
-    argmax_strategy: ArgmaxStrategy,
-    categorical_strategy: CategoricalStrategy,
-    partial_results_buffer: MTLBuffer,
-    categorical_partial_buffer: MTLBuffer,
+    temperature_pipeline: MTLComputePipelineState,
+    partial_temperature_buffer: MTLBuffer,
+    topk_pipeline: MTLComputePipelineState,
+    partial_topk_buffer: MTLBuffer,
+    topp_pipeline: MTLComputePipelineState,
+    partial_topp_buffer: MTLBuffer,
+    gumbel_pipeline: MTLComputePipelineState,
+    partial_gumbel_buffer: MTLBuffer,
+    argmax_implementation: ArgmaxImplementation,
     max_batch_size: usize,
     max_vocab_size: usize,
-    sampling_seed: u64,
-    invocation_count: std::cell::Cell<u64>,
 }
 
 #[derive(Debug, Error)]
@@ -82,28 +81,16 @@ pub enum SamplingError {
     BatchSizeExceeded(usize, usize),
     #[error("Vocab size {0} exceeds maximum {1}")]
     VocabSizeExceeded(usize, usize),
+    #[error("Stochastic sampling encode must have a seed")]
+    StochasticWithoutSeed,
 }
 
 impl SamplingKernel {
-    fn hash_seed(
-        base_seed: u64,
-        invocation: u64,
-    ) -> u64 {
-        let mut hash = base_seed.wrapping_add(invocation);
-        hash ^= hash >> 33;
-        hash = hash.wrapping_mul(0xff51afd7ed558ccd);
-        hash ^= hash >> 33;
-        hash = hash.wrapping_mul(0xc4ceb9fe1a85ec53);
-        hash ^= hash >> 33;
-        hash
-    }
-
     pub fn new(
         context: &MTLContext,
         data_type: KernelDataType,
         max_batch_size: usize,
         max_vocab_size: usize,
-        sampling_seed: u64,
     ) -> Result<Self, SamplingError> {
         Self::new_with_strategy(
             context,
@@ -111,7 +98,6 @@ impl SamplingKernel {
             max_batch_size,
             max_vocab_size,
             ArgmaxStrategy::TwoPass,
-            sampling_seed,
         )
     }
 
@@ -121,33 +107,67 @@ impl SamplingKernel {
         max_batch_size: usize,
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
-        sampling_seed: u64,
-    ) -> Result<Self, SamplingError> {
-        Self::new_with_strategies(
-            context,
-            data_type,
-            max_batch_size,
-            max_vocab_size,
-            argmax_strategy,
-            CategoricalStrategy::SinglePass,
-            sampling_seed,
-        )
-    }
-
-    pub fn new_with_strategies(
-        context: &MTLContext,
-        data_type: KernelDataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
-        argmax_strategy: ArgmaxStrategy,
-        categorical_strategy: CategoricalStrategy,
-        sampling_seed: u64,
     ) -> Result<Self, SamplingError> {
         let data_suffix = data_type.function_name_suffix();
-        let mut pipelines = HashMap::new();
+        let max_elements = max_batch_size * max_vocab_size;
 
-        // Build argmax pipelines based on strategy
-        match argmax_strategy {
+        let temperature_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_temperature_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let partial_temperature_buffer = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let topk_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_topk_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let partial_topk_buffer = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let topp_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_topp_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let partial_topp_buffer = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let gumbel_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_gumbel_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let partial_gumbel_buffer = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
                 let pipeline = context
                     .compute_pipeline_state_with_reflection(
@@ -156,10 +176,10 @@ impl SamplingKernel {
                     )
                     .map(|(pipeline, _)| pipeline)
                     .map_err(SamplingError::MetalError)?;
-                pipelines.insert(
-                    SamplingAlgorithm::ArgmaxSinglePass,
-                    vec![pipeline],
-                );
+
+                ArgmaxImplementation::SinglePass {
+                    pipeline,
+                }
             },
             ArgmaxStrategy::TwoPass => {
                 let main_pipeline = context
@@ -178,112 +198,57 @@ impl SamplingKernel {
                     .map(|(pipeline, _)| pipeline)
                     .map_err(SamplingError::MetalError)?;
 
-                pipelines.insert(
-                    SamplingAlgorithm::ArgmaxTwoPass,
-                    vec![main_pipeline, final_pipeline],
+                let elements_per_group = BLOCK_SIZE * TWOPASS_ARGMAX_GRAIN_SIZE;
+                let max_vocab_groups_per_batch =
+                    (max_vocab_size + elements_per_group - 1)
+                        / elements_per_group;
+                let max_partial_results =
+                    max_batch_size * max_vocab_groups_per_batch;
+
+                let partial_results_buffer = context.device.new_buffer(
+                    (max_partial_results * size_of::<ArgmaxPair>()) as u64,
+                    MTLResourceOptions::StorageModeShared,
                 );
+
+                ArgmaxImplementation::TwoPass {
+                    main_pipeline,
+                    final_pipeline,
+                    partial_results_buffer,
+                }
             },
-        }
-
-        // Build top-p pipeline (single pass)
-        let top_p_pipeline = context
-            .compute_pipeline_state_with_reflection(
-                &format!("batched_topp_main_{}", data_suffix),
-                None,
-            )
-            .map(|(pipeline, _)| pipeline)
-            .map_err(SamplingError::MetalError)?;
-        pipelines.insert(SamplingAlgorithm::TopP, vec![top_p_pipeline]);
-
-        // Build categorical pipelines based on strategy
-        match categorical_strategy {
-            CategoricalStrategy::SinglePass => {
-                let categorical_pipeline = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!("batched_categorical_main_{}", data_suffix),
-                        None,
-                    )
-                    .map(|(pipeline, _)| pipeline)
-                    .map_err(SamplingError::MetalError)?;
-                pipelines.insert(
-                    SamplingAlgorithm::CategoricalSinglePass,
-                    vec![categorical_pipeline],
-                );
-            },
-            CategoricalStrategy::TwoPass => {
-                let main_pipeline = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "batched_categorical_main_2pass_{}",
-                            data_suffix
-                        ),
-                        None,
-                    )
-                    .map(|(pipeline, _)| pipeline)
-                    .map_err(SamplingError::MetalError)?;
-
-                let final_pipeline = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "batched_categorical_final_2pass_{}",
-                            data_suffix
-                        ),
-                        None,
-                    )
-                    .map(|(pipeline, _)| pipeline)
-                    .map_err(SamplingError::MetalError)?;
-
-                pipelines.insert(
-                    SamplingAlgorithm::CategoricalTwoPass,
-                    vec![main_pipeline, final_pipeline],
-                );
-            },
-        }
-
-        let elements_per_group = BLOCK_SIZE * GRAIN_SIZE;
-        let max_vocab_groups_per_batch =
-            (max_vocab_size + elements_per_group - 1) / elements_per_group;
-        let max_partial_results = max_batch_size * max_vocab_groups_per_batch;
-
-        let partial_results_buffer = context.device.new_buffer(
-            (max_partial_results * size_of::<ArgmaxPair>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
-        // Buffer for categorical 2-pass: stores CategoricalChunkResult per chunk
-        // CategoricalChunkResult has 3 floats: max_logit, sum_exp, cumulative_prob
-        let categorical_partial_buffer = context.device.new_buffer(
-            (max_partial_results * size_of::<f32>() * 3) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        };
 
         Ok(Self {
-            pipelines,
-            argmax_strategy,
-            categorical_strategy,
-            partial_results_buffer,
-            categorical_partial_buffer,
+            temperature_pipeline,
+            partial_temperature_buffer,
+            topk_pipeline,
+            partial_topk_buffer,
+            topp_pipeline,
+            partial_topp_buffer,
+            gumbel_pipeline,
+            partial_gumbel_buffer,
+            argmax_implementation,
             max_batch_size,
             max_vocab_size,
-            sampling_seed,
-            invocation_count: std::cell::Cell::new(0),
         })
     }
 
     pub fn encode(
         &self,
-        sampling_method: &SamplingMethod,
         logits_buffer: &MTLBuffer,
+        seeds_buffer: Option<&MTLBuffer>,
         sampled_tokens_buffer: &MTLBuffer,
+        sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
         command_buffer: &MTLCommandBuffer,
     ) -> Result<(), SamplingError> {
         let compute_encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_encoder(
-            sampling_method,
             logits_buffer,
+            seeds_buffer,
             sampled_tokens_buffer,
+            sampling_method,
             batch_size,
             vocab_size,
             &compute_encoder,
@@ -294,9 +259,10 @@ impl SamplingKernel {
 
     pub fn encode_with_encoder(
         &self,
-        sampling_method: &SamplingMethod,
         logits_buffer: &MTLBuffer,
+        seeds_buffer: Option<&MTLBuffer>,
         sampled_tokens_buffer: &MTLBuffer,
+        sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
         compute_encoder: &ComputeCommandEncoderRef,
@@ -314,109 +280,246 @@ impl SamplingKernel {
             ));
         }
 
-        let batch_size_u32 = batch_size as u32;
-        let vocab_size_u32 = vocab_size as u32;
+        let mut last_logits_buffer = logits_buffer;
 
-        let elements_per_group = BLOCK_SIZE * GRAIN_SIZE;
-        let vocab_groups_per_batch =
-            (vocab_size + elements_per_group - 1) / elements_per_group;
+        if let SamplingMethod::Stochastic {
+            temperature,
+            top_k,
+            top_p,
+        } = sampling_method
+        {
+            if let Some(temperature) = temperature {
+                self.encode_temperature(
+                    last_logits_buffer,
+                    &self.partial_temperature_buffer,
+                    batch_size as u32,
+                    vocab_size as u32,
+                    temperature,
+                    compute_encoder,
+                )?;
+                last_logits_buffer = &self.partial_temperature_buffer;
+            }
 
-        let threads_per_threadgroup = MTLSize::new(BLOCK_SIZE as u64, 1, 1);
+            if let Some(top_k) = top_k {
+                self.encode_topk(
+                    last_logits_buffer,
+                    &self.partial_topk_buffer,
+                    batch_size as u32,
+                    vocab_size as u32,
+                    top_k,
+                    compute_encoder,
+                )?;
+                last_logits_buffer = &self.partial_topk_buffer;
+            }
 
-        match sampling_method {
-            SamplingMethod::Greedy => self.encode_argmax(
-                logits_buffer,
+            if let Some(top_p) = top_p {
+                self.encode_topp(
+                    last_logits_buffer,
+                    &self.partial_topp_buffer,
+                    batch_size as u32,
+                    vocab_size as u32,
+                    top_p,
+                    compute_encoder,
+                )?;
+                last_logits_buffer = &self.partial_topp_buffer;
+            }
+
+            self.encode_gumbel(
+                last_logits_buffer,
+                seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                &self.partial_gumbel_buffer,
+                batch_size as u32,
+                vocab_size as u32,
+                compute_encoder,
+            )?;
+            last_logits_buffer = &self.partial_gumbel_buffer;
+        }
+
+        match &self.argmax_implementation {
+            ArgmaxImplementation::SinglePass {
+                pipeline,
+            } => self.encode_argmax_single_pass(
+                pipeline,
+                last_logits_buffer,
                 sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                vocab_groups_per_batch,
-                threads_per_threadgroup,
+                batch_size,
+                vocab_size,
                 compute_encoder,
             ),
-            SamplingMethod::TopP {
-                top_p,
-            } => self.encode_top_p(
-                *top_p,
-                logits_buffer,
+            ArgmaxImplementation::TwoPass {
+                main_pipeline,
+                final_pipeline,
+                partial_results_buffer,
+            } => self.encode_argmax_two_pass(
+                main_pipeline,
+                final_pipeline,
+                last_logits_buffer,
+                partial_results_buffer,
                 sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                vocab_groups_per_batch,
-                threads_per_threadgroup,
-                compute_encoder,
-            ),
-            SamplingMethod::Temperature {
-                temperature,
-            } => self.encode_categorical(
-                *temperature,
-                logits_buffer,
-                sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                vocab_groups_per_batch,
-                threads_per_threadgroup,
+                batch_size,
+                vocab_size,
                 compute_encoder,
             ),
         }
     }
 
-    fn encode_argmax(
+    pub fn encode_temperature(
         &self,
         logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        vocab_groups_per_batch: usize,
-        threads_per_threadgroup: MTLSize,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        temperature: f32,
         compute_encoder: &ComputeCommandEncoderRef,
     ) -> Result<(), SamplingError> {
-        match self.argmax_strategy {
-            ArgmaxStrategy::SinglePass => self.encode_argmax_single_pass(
-                logits_buffer,
-                sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                threads_per_threadgroup,
-                compute_encoder,
-            ),
-            ArgmaxStrategy::TwoPass => self.encode_argmax_two_pass(
-                logits_buffer,
-                sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                vocab_groups_per_batch,
-                threads_per_threadgroup,
-                compute_encoder,
-            ),
-        }
-    }
+        compute_encoder.set_compute_pipeline_state(&self.temperature_pipeline);
 
-    fn encode_argmax_single_pass(
-        &self,
-        logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        threads_per_threadgroup: MTLSize,
-        compute_encoder: &ComputeCommandEncoderRef,
-    ) -> Result<(), SamplingError> {
-        compute_encoder.set_compute_pipeline_state(
-            &self.pipelines[&SamplingAlgorithm::ArgmaxSinglePass][0],
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
         );
+        compute_encoder.set_bytes(
+            3,
+            size_of::<f32>() as u64,
+            &temperature as *const f32 as *const std::ffi::c_void,
+        );
+
+        let elements_in_group = BLOCK_SIZE * ELEMENTWISE_GRAIN_SIZE;
+        let groups = (vocab_size + (elements_in_group as u32 - 1))
+            / elements_in_group as u32;
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(groups as u64, batch_size as u64, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
+    }
+
+    pub fn encode_topk(
+        &self,
+        logits_buffer: &MTLBuffer,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        top_k: u32,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(&self.topk_pipeline);
+
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &top_k as *const u32 as *const std::ffi::c_void,
+        );
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(batch_size as u64, 1, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
+    }
+
+    pub fn encode_topp(
+        &self,
+        logits_buffer: &MTLBuffer,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        top_p: f32,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(&self.topp_pipeline);
+
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            3,
+            size_of::<f32>() as u64,
+            &top_p as *const f32 as *const std::ffi::c_void,
+        );
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(batch_size as u64, 1, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
+    }
+
+    pub fn encode_gumbel(
+        &self,
+        logits_buffer: &MTLBuffer,
+        seeds_buffer: &MTLBuffer,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(&self.gumbel_pipeline);
+
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(seeds_buffer), 0);
+        compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
+        );
+
+        let elements_in_group = BLOCK_SIZE * ELEMENTWISE_GRAIN_SIZE;
+        let groups = (vocab_size + (elements_in_group as u32 - 1))
+            / elements_in_group as u32;
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(groups as u64, batch_size as u64, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
+    }
+
+    pub fn encode_argmax_single_pass(
+        &self,
+        pipeline: &MTLComputePipelineState,
+        logits_buffer: &MTLBuffer,
+        sampled_tokens_buffer: &MTLBuffer,
+        batch_size: usize,
+        vocab_size: usize,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(pipeline);
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
         compute_encoder.set_buffer(1, Some(sampled_tokens_buffer), 0);
         compute_encoder.set_bytes(
             2,
             size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(batch_size as u32) as *const u32 as *const std::ffi::c_void,
         );
         compute_encoder.set_bytes(
             3,
             size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(vocab_size as u32) as *const u32 as *const std::ffi::c_void,
         );
 
-        let threadgroups_per_grid = MTLSize::new(batch_size_u32 as u64, 1, 1);
+        let threadgroups_per_grid = MTLSize::new(batch_size as u64, 1, 1);
+        let threads_per_threadgroup = MTLSize::new(BLOCK_SIZE as u64, 1, 1);
         compute_encoder.dispatch_thread_groups(
             threadgroups_per_grid,
             threads_per_threadgroup,
@@ -425,299 +528,60 @@ impl SamplingKernel {
         Ok(())
     }
 
-    fn encode_argmax_two_pass(
+    pub fn encode_argmax_two_pass(
         &self,
+        main_pipeline: &MTLComputePipelineState,
+        final_pipeline: &MTLComputePipelineState,
         logits_buffer: &MTLBuffer,
+        partial_results_buffer: &MTLBuffer,
         sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        vocab_groups_per_batch: usize,
-        threads_per_threadgroup: MTLSize,
+        batch_size: usize,
+        vocab_size: usize,
         compute_encoder: &ComputeCommandEncoderRef,
     ) -> Result<(), SamplingError> {
+        let elements_per_group = BLOCK_SIZE * TWOPASS_ARGMAX_GRAIN_SIZE;
+        let vocab_groups_per_batch =
+            (vocab_size + elements_per_group - 1) / elements_per_group;
+
         // Main pass
-        compute_encoder.set_compute_pipeline_state(
-            &self.pipelines[&SamplingAlgorithm::ArgmaxTwoPass][0],
-        );
+        compute_encoder.set_compute_pipeline_state(main_pipeline);
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(&self.partial_results_buffer), 0);
+        compute_encoder.set_buffer(1, Some(partial_results_buffer), 0);
         compute_encoder.set_bytes(
             2,
             size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(batch_size as u32) as *const u32 as *const std::ffi::c_void,
         );
         compute_encoder.set_bytes(
             3,
             size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(vocab_size as u32) as *const u32 as *const std::ffi::c_void,
         );
 
-        let threadgroups_per_grid = MTLSize::new(
-            batch_size_u32 as u64,
-            vocab_groups_per_batch as u64,
-            1,
-        );
+        let threadgroups_per_grid =
+            MTLSize::new(batch_size as u64, vocab_groups_per_batch as u64, 1);
+        let threads_per_threadgroup = MTLSize::new(BLOCK_SIZE as u64, 1, 1);
         compute_encoder.dispatch_thread_groups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
 
         // Final pass - two-pass argmax always has exactly 2 stages
-        let final_pipeline =
-            &self.pipelines[&SamplingAlgorithm::ArgmaxTwoPass][1];
         compute_encoder.set_compute_pipeline_state(final_pipeline);
-        compute_encoder.set_buffer(0, Some(&self.partial_results_buffer), 0);
+        compute_encoder.set_buffer(0, Some(partial_results_buffer), 0);
         compute_encoder.set_buffer(1, Some(sampled_tokens_buffer), 0);
         compute_encoder.set_bytes(
             2,
             size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(batch_size as u32) as *const u32 as *const std::ffi::c_void,
         );
         compute_encoder.set_bytes(
             3,
             size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
+            &(vocab_size as u32) as *const u32 as *const std::ffi::c_void,
         );
 
-        let final_threadgroups = MTLSize::new(batch_size_u32 as u64, 1, 1);
-        compute_encoder.dispatch_thread_groups(
-            final_threadgroups,
-            threads_per_threadgroup,
-        );
-
-        Ok(())
-    }
-
-    fn encode_top_p(
-        &self,
-        top_p: f32,
-        logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        _vocab_groups_per_batch: usize,
-        threads_per_threadgroup: MTLSize,
-        compute_encoder: &ComputeCommandEncoderRef,
-    ) -> Result<(), SamplingError> {
-        let current_invocation = self.invocation_count.get();
-        self.invocation_count.set(current_invocation + 1);
-        let seed = Self::hash_seed(self.sampling_seed, current_invocation);
-
-        // Single pass - directly write to sampled_tokens_buffer
-        compute_encoder.set_compute_pipeline_state(
-            &self.pipelines[&SamplingAlgorithm::TopP][0],
-        );
-        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(sampled_tokens_buffer), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<f32>() as u64,
-            &top_p as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u64>() as u64,
-            &seed as *const u64 as *const std::ffi::c_void,
-        );
-
-        let threadgroups_per_grid = MTLSize::new(batch_size_u32 as u64, 1, 1);
-        compute_encoder.dispatch_thread_groups(
-            threadgroups_per_grid,
-            threads_per_threadgroup,
-        );
-
-        Ok(())
-    }
-
-    fn encode_categorical(
-        &self,
-        temperature: f32,
-        logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        vocab_groups_per_batch: usize,
-        threads_per_threadgroup: MTLSize,
-        compute_encoder: &ComputeCommandEncoderRef,
-    ) -> Result<(), SamplingError> {
-        match self.categorical_strategy {
-            CategoricalStrategy::SinglePass => self
-                .encode_categorical_single_pass(
-                    temperature,
-                    logits_buffer,
-                    sampled_tokens_buffer,
-                    batch_size_u32,
-                    vocab_size_u32,
-                    threads_per_threadgroup,
-                    compute_encoder,
-                ),
-            CategoricalStrategy::TwoPass => self.encode_categorical_two_pass(
-                temperature,
-                logits_buffer,
-                sampled_tokens_buffer,
-                batch_size_u32,
-                vocab_size_u32,
-                vocab_groups_per_batch,
-                threads_per_threadgroup,
-                compute_encoder,
-            ),
-        }
-    }
-
-    fn encode_categorical_single_pass(
-        &self,
-        temperature: f32,
-        logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        threads_per_threadgroup: MTLSize,
-        compute_encoder: &ComputeCommandEncoderRef,
-    ) -> Result<(), SamplingError> {
-        let current_invocation = self.invocation_count.get();
-        self.invocation_count.set(current_invocation + 1);
-        let seed = Self::hash_seed(self.sampling_seed, current_invocation);
-
-        compute_encoder.set_compute_pipeline_state(
-            &self.pipelines[&SamplingAlgorithm::CategoricalSinglePass][0],
-        );
-        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(sampled_tokens_buffer), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<f32>() as u64,
-            &temperature as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u64>() as u64,
-            &seed as *const u64 as *const std::ffi::c_void,
-        );
-
-        let threadgroups_per_grid = MTLSize::new(batch_size_u32 as u64, 1, 1);
-        compute_encoder.dispatch_thread_groups(
-            threadgroups_per_grid,
-            threads_per_threadgroup,
-        );
-
-        Ok(())
-    }
-
-    fn encode_categorical_two_pass(
-        &self,
-        temperature: f32,
-        logits_buffer: &MTLBuffer,
-        sampled_tokens_buffer: &MTLBuffer,
-        batch_size_u32: u32,
-        vocab_size_u32: u32,
-        vocab_groups_per_batch: usize,
-        threads_per_threadgroup: MTLSize,
-        compute_encoder: &ComputeCommandEncoderRef,
-    ) -> Result<(), SamplingError> {
-        let current_invocation = self.invocation_count.get();
-        self.invocation_count.set(current_invocation + 1);
-        let seed = Self::hash_seed(self.sampling_seed, current_invocation);
-
-        // Main pass - parallel chunk processing
-        compute_encoder.set_compute_pipeline_state(
-            &self.pipelines[&SamplingAlgorithm::CategoricalTwoPass][0],
-        );
-        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(
-            1,
-            Some(&self.categorical_partial_buffer),
-            0,
-        );
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<f32>() as u64,
-            &temperature as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u64>() as u64,
-            &seed as *const u64 as *const std::ffi::c_void,
-        );
-
-        let threadgroups_per_grid = MTLSize::new(
-            batch_size_u32 as u64,
-            vocab_groups_per_batch as u64,
-            1,
-        );
-        compute_encoder.dispatch_thread_groups(
-            threadgroups_per_grid,
-            threads_per_threadgroup,
-        );
-
-        // Final pass - combine results and sample
-        let final_pipeline =
-            &self.pipelines[&SamplingAlgorithm::CategoricalTwoPass][1];
-        compute_encoder.set_compute_pipeline_state(final_pipeline);
-        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(
-            1,
-            Some(&self.categorical_partial_buffer),
-            0,
-        );
-        compute_encoder.set_buffer(2, Some(sampled_tokens_buffer), 0);
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &batch_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &vocab_size_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &(vocab_groups_per_batch as u32) as *const u32
-                as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<f32>() as u64,
-            &temperature as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<u64>() as u64,
-            &seed as *const u64 as *const std::ffi::c_void,
-        );
-
-        let final_threadgroups = MTLSize::new(batch_size_u32 as u64, 1, 1);
+        let final_threadgroups = MTLSize::new(batch_size as u64, 1, 1);
         compute_encoder.dispatch_thread_groups(
             final_threadgroups,
             threads_per_threadgroup,
@@ -737,14 +601,12 @@ impl SamplingKernelEncodable {
         data_type: KernelDataType,
         max_batch_size: usize,
         max_vocab_size: usize,
-        sampling_seed: u64,
     ) -> Result<Self, SamplingError> {
         let kernel = SamplingKernel::new(
             context,
             data_type,
             max_batch_size,
             max_vocab_size,
-            sampling_seed,
         )?;
         Ok(Self {
             kernel,
@@ -757,7 +619,6 @@ impl SamplingKernelEncodable {
         max_batch_size: usize,
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
-        sampling_seed: u64,
     ) -> Result<Self, SamplingError> {
         let kernel = SamplingKernel::new_with_strategy(
             context,
@@ -765,30 +626,6 @@ impl SamplingKernelEncodable {
             max_batch_size,
             max_vocab_size,
             argmax_strategy,
-            sampling_seed,
-        )?;
-        Ok(Self {
-            kernel,
-        })
-    }
-
-    pub fn new_with_strategies(
-        context: &Rc<MTLContext>,
-        data_type: KernelDataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
-        argmax_strategy: ArgmaxStrategy,
-        categorical_strategy: CategoricalStrategy,
-        sampling_seed: u64,
-    ) -> Result<Self, SamplingError> {
-        let kernel = SamplingKernel::new_with_strategies(
-            context,
-            data_type,
-            max_batch_size,
-            max_vocab_size,
-            argmax_strategy,
-            categorical_strategy,
-            sampling_seed,
         )?;
         Ok(Self {
             kernel,
@@ -803,19 +640,6 @@ impl EncodableWithState for SamplingKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let sampling_method = state.sampling_method.unwrap_or_default();
-
-        let logits_binding = state
-            .arrays(&[crate::backends::metal::forward_pass::ArrayId::Logits]);
-        let logits = logits_binding[0].borrow();
-        let logits_shape = {
-            use crate::Array;
-            logits.shape()
-        };
-        let batch_size = logits_shape[0];
-        let vocab_size = logits_shape[1];
-        drop(logits);
-
         assert!(
             state.sampling_output.is_some(),
             "Sampling output buffer must be pre-allocated"
@@ -825,15 +649,30 @@ impl EncodableWithState for SamplingKernelEncodable {
             .arrays(&[crate::backends::metal::forward_pass::ArrayId::Logits]);
         let mut logits = logits_binding[0].borrow_mut();
 
+        let logits_shape = {
+            use crate::Array;
+            logits.shape()
+        };
+        let batch_size = logits_shape[0];
+        let vocab_size = logits_shape[1];
+
+        let seeds_binding = state.arrays(&[
+            crate::backends::metal::forward_pass::ArrayId::TokenSeeds,
+        ]);
+        let mut seeds = seeds_binding[0].borrow_mut();
+
         let mut output_buffer_ref =
             state.sampling_output.as_ref().unwrap().borrow_mut();
+
+        let sampling_method = state.sampling_method.unwrap();
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         if let Err(e) = self.kernel.encode(
-            &sampling_method,
             unsafe { &logits.mtl_buffer() },
+            unsafe { Some(&seeds.mtl_buffer()) },
             unsafe { &output_buffer_ref.mtl_buffer() },
+            sampling_method,
             batch_size,
             vocab_size,
             &root_command_buffer,

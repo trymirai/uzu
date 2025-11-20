@@ -18,6 +18,7 @@ pub struct ForwardPassBuffers {
     // 1-D
     pub token_ids: MTLBuffer,
     pub token_positions: MTLBuffer,
+    pub token_seeds: MTLBuffer,
     pub sampling_output: MTLBuffer,
 
     // 2-D
@@ -89,6 +90,7 @@ impl ForwardPassBuffers {
             // 1-D
             token_ids: alloc(&[max_suffix_len], DataType::U64),
             token_positions: alloc(&[max_suffix_len], DataType::I32),
+            token_seeds: alloc(&[max_suffix_len], DataType::U64),
             sampling_output: alloc(&[max_suffix_len], DataType::U32),
 
             // 2-D

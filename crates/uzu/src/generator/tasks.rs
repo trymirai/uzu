@@ -14,6 +14,7 @@ pub struct GeneratorEncodedTask {
 pub struct GeneratorRunTask {
     pub token_ids: Vec<u64>,
     pub token_positions: Vec<usize>,
+    pub token_seeds: Vec<u64>,
     pub expected_number_of_new_tokens: usize,
 }
 
@@ -22,6 +23,7 @@ impl GeneratorRunTask {
         GeneratorRunTask {
             token_ids: self.token_ids.clone(),
             token_positions: self.token_positions.clone(),
+            token_seeds: self.token_seeds.clone(),
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
         }
     }
@@ -50,6 +52,7 @@ impl GeneratorRunTask {
             context.shared_buffers.clone(),
             &self.token_ids,
             &self.token_positions,
+            &self.token_seeds,
             false,
             external_bias_fn,
         );
