@@ -91,17 +91,13 @@ kernel void ssd_prefill_kernel(
     }
 
     thread float lane_states[SSM_PREFILL_MAX_STATE / 32];
-    thread size_t state_indices[SSM_PREFILL_MAX_STATE / 32];
-    thread size_t cb_base_indices[SSM_PREFILL_MAX_STATE / 32];
 
+    #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
         const int idx = chunk * int(simd_width) + int(lane_idx);
-        const bool has_idx = idx < state_dim;
-        state_indices[chunk] = state_base + size_t(idx) * state_inner_stride;
-        cb_base_indices[chunk] =
-            cb_group_base + size_t(idx) * cb_state_stride;
-        lane_states[chunk] = float(state[state_indices[chunk]]);
-    
+        const size_t state_idx =
+            state_base + size_t(idx) * state_inner_stride;
+        lane_states[chunk] = float(state[state_idx]);
     }
 
     for (size_t token = 0; token < suffix_len; ++token) {
@@ -117,11 +113,15 @@ kernel void ssd_prefill_kernel(
         const float dt_scaled_input = x_val;
 
         float contrib_sum = 0.0f;
+        #pragma unroll
         for (int chunk = 0; chunk < chunk_count; ++chunk) {
             const int idx = chunk * int(simd_width) + int(lane_idx);
-            const size_t cb_idx = cb_base_indices[chunk] + token * cb_token_stride;
+            const size_t cb_idx =
+                cb_group_base + size_t(idx) * cb_state_stride
+                + token * cb_token_stride;
             const float b_val = float(B[cb_idx]);
             const float c_val = float(C[cb_idx]);
+
             const float new_state =
                 decay_val * lane_states[chunk] + dt_scaled_input * b_val;
             lane_states[chunk] = new_state;
@@ -134,12 +134,13 @@ kernel void ssd_prefill_kernel(
         }
     }
 
+    // Store final state back to device memory once at the end.
+    #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
         const int idx = chunk * int(simd_width) + int(lane_idx);
-        const bool has_idx = idx < state_dim;
-        if (has_idx) {
-            state[state_indices[chunk]] = static_cast<T>(lane_states[chunk]);
-        }
+        const size_t state_idx =
+            state_base + size_t(idx) * state_inner_stride;
+        state[state_idx] = static_cast<T>(lane_states[chunk]);
     }
 }
 

@@ -343,6 +343,11 @@ impl SSDPrefillKernel {
         if state_size == 0 {
             return Ok(());
         }
+        assert!(
+            state_size % 32 == 0,
+            "ssd_prefill expects state_size to be a multiple of 32, got {}",
+            state_size
+        );
         let group_size = args.group_size.max(1) as usize;
         if group_size == 0 {
             return Ok(());
