@@ -482,7 +482,6 @@ struct QuantizedBlockLoaderZp {
         return;
       }
 
-      // K-tail: strictly limit to valid packs and zero trailing nibbles
       int valid_cols = src_tile_dim.y; // 0..BK
       int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
 
@@ -494,9 +493,11 @@ struct QuantizedBlockLoaderZp {
         if (pack_idx < valid_packs) {
           dequantize<T, pack_factor, bits>(
               src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+          
+          // Mask the last pack if needed
           if (pack_idx == valid_packs - 1) {
-            int rem = valid_cols - (valid_packs - 1) * pack_factor;
-            if (rem > 0 && rem < pack_factor) {
+            int rem = valid_cols - pack_idx * pack_factor;
+            if (rem < pack_factor) {
               for (int r = rem; r < pack_factor; ++r) {
                 dst[i * pack_factor + r] = T(0);
               }

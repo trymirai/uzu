@@ -136,12 +136,13 @@ impl QuantizedEmbeddingLookupKernelBlock {
         vocab_size: usize,
         model_dim: usize,
         group_size: usize,
+        mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
         let kernel =
             QuantizedEmbeddingLookupKernel::new(mtl_context, data_type)?;
 
-        // Load weights [vocab_size, model_dim/2] as U8
+        // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
@@ -152,10 +153,11 @@ impl QuantizedEmbeddingLookupKernelBlock {
             })?,
         };
 
-        if weights.data_type() != DataType::U8 {
+        if weights.data_type() != mode.storage_type() {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
-                    "Expected packed U8 weights, got {:?}",
+                    "Expected packed weights of type {:?}, got {:?}",
+                    mode.storage_type(),
                     weights.data_type()
                 )),
             ));
@@ -174,13 +176,14 @@ impl QuantizedEmbeddingLookupKernelBlock {
 
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
-        if weights.shape() != [vocab_size, model_dim / 2] {
+        let packing_divisor = mode.packing_divisor();
+        if weights.shape() != [vocab_size, model_dim / packing_divisor] {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding lookup weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
-                    model_dim / 2
+                    model_dim / packing_divisor
                 )),
             ));
         }
@@ -357,13 +360,15 @@ impl QuantizedEmbeddingReadoutKernelBlock {
 
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
-        if weights.shape() != [vocab_size, model_dim / 2] {
+        let packing_divisor = mode.packing_divisor();
+
+        if weights.shape() != [vocab_size, model_dim / packing_divisor] {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
-                    model_dim / 2
+                    model_dim / packing_divisor
                 )),
             ));
         }

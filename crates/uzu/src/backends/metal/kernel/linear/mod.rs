@@ -69,9 +69,13 @@ impl QuantizedLinearKernelBlock {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
-        if weights.data_type() != DataType::U8 {
+        let packing_divisor = config.weight_quantization_mode.packing_divisor();
+        let storage_type = config.weight_quantization_mode.storage_type();
+
+        if weights.data_type() != storage_type {
             return Err(MTLError::Generic(format!(
-                "Expected packed U8 weights, got {:?}",
+                "Expected weights of type {:?}, got {:?}",
+                storage_type,
                 weights.data_type()
             )));
         }
@@ -96,13 +100,13 @@ impl QuantizedLinearKernelBlock {
             match parameter_tree.leaf("deq_biases") {
                 Ok(mut deq_biases) => {
                     let db_shape = deq_biases.shape();
-                    if !(w_shape == [output_dim, input_dim / 2]
+                    if !(w_shape == [output_dim, input_dim / packing_divisor]
                         && s_shape == [output_dim, k_g]
                         && db_shape == [output_dim, k_g])
                     {
                         return Err(MTLError::Generic(format!(
-                            "Unexpected MLX shapes. weights={:?}, scales={:?}, deq_biases={:?}; expected [N,K/2],[N,K_g],[N,K_g]",
-                            w_shape, s_shape, db_shape,
+                            "Unexpected MLX shapes. weights={:?}, scales={:?}, deq_biases={:?}; expected [N,K/{}],[N,K_g],[N,K_g]",
+                            w_shape, s_shape, db_shape, packing_divisor
                         )));
                     }
                     if deq_biases.data_type() != kernel_data_type {
@@ -127,19 +131,27 @@ impl QuantizedLinearKernelBlock {
                             ))
                         })?;
                     let zp_shape = zero_points.shape();
-                    if !(w_shape == [output_dim, input_dim / 2]
+                    let expected_zp_entries =
+                        (k_g + packing_divisor - 1) / packing_divisor;
+                    if !(w_shape == [output_dim, input_dim / packing_divisor]
                         && s_shape == [output_dim, k_g]
-                        && zp_shape == [output_dim, (k_g + 1) / 2])
+                        && zp_shape == [output_dim, expected_zp_entries])
                     {
                         return Err(MTLError::Generic(format!(
-                            "Unexpected AWQ shapes. weights={:?}, scales={:?}, zero_points={:?}; expected [N,K/2],[N,K_g],[N,(K_g+1)/2]",
-                            w_shape, s_shape, zp_shape,
+                            "Unexpected AWQ shapes. weights={:?}, scales={:?}, zero_points={:?}; expected [N,K/{}],[N,K_g],[N,(K_g+{})/{}]",
+                            w_shape,
+                            s_shape,
+                            zp_shape,
+                            packing_divisor,
+                            packing_divisor - 1,
+                            packing_divisor
                         )));
                     }
-                    if zero_points.data_type() != DataType::U8 {
+                    if zero_points.data_type() != storage_type {
                         return Err(MTLError::Generic(format!(
-                            "Zero-points dtype mismatch: got {:?}, expected U8 (packed u4)",
-                            zero_points.data_type()
+                            "Zero-points dtype mismatch: got {:?}, expected {:?}",
+                            zero_points.data_type(),
+                            storage_type
                         )));
                     }
                     let scales_buffer =

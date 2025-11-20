@@ -81,15 +81,20 @@ impl EmbeddingsBuffers {
                     )),
                 },
                 EmbeddingConfig::QuantizedTied {
-                    embedding_quantization_mode: _,
+                    embedding_quantization_mode,
                     ..
                 } => {
                     let [vocab_size, model_dim] =
                         model_shape.quantized_embeddings_weights_shape();
                     Self::QuantizedTied {
                         weights: RefCell::new(context.array_uninitialized(
-                            &[vocab_size, model_dim / 2],
-                            DataType::U8,
+                            &[
+                                vocab_size,
+                                model_dim
+                                    / embedding_quantization_mode
+                                        .packing_divisor(),
+                            ],
+                            embedding_quantization_mode.storage_type(),
                         )),
                         scales: RefCell::new(context.array_uninitialized(
                             &model_shape.quantized_embeddings_scales_shape(),
@@ -99,7 +104,7 @@ impl EmbeddingsBuffers {
                 },
                 EmbeddingConfig::MLXQuantizedTied {
                     group_size,
-                    embedding_quantization_mode: _,
+                    embedding_quantization_mode,
                     ..
                 } => {
                     let [vocab_size, model_dim] =
@@ -107,8 +112,13 @@ impl EmbeddingsBuffers {
                     let num_groups = model_dim / group_size;
                     Self::QuantizedTied {
                         weights: RefCell::new(context.array_uninitialized(
-                            &[vocab_size, model_dim / 2],
-                            DataType::U8,
+                            &[
+                                vocab_size,
+                                model_dim
+                                    / embedding_quantization_mode
+                                        .packing_divisor(),
+                            ],
+                            embedding_quantization_mode.storage_type(),
                         )),
                         scales: RefCell::new(context.array_uninitialized(
                             &[vocab_size, num_groups],
@@ -118,7 +128,7 @@ impl EmbeddingsBuffers {
                 },
                 EmbeddingConfig::MLXSemiQuantizedUntied {
                     group_size,
-                    embedding_quantization_mode: _,
+                    embedding_quantization_mode,
                     ..
                 } => {
                     let [vocab_size, model_dim] =
@@ -133,8 +143,13 @@ impl EmbeddingsBuffers {
                         ),
                         packed_output_weights: RefCell::new(
                             context.array_uninitialized(
-                                &[vocab_size, model_dim / 2],
-                                DataType::U8,
+                                &[
+                                    vocab_size,
+                                    model_dim
+                                        / embedding_quantization_mode
+                                            .packing_divisor(),
+                                ],
+                                embedding_quantization_mode.storage_type(),
                             ),
                         ),
                         output_scales: RefCell::new(

@@ -997,6 +997,71 @@ fn test_quant_qvm_mlx_g128_bf16() {
         QuantizationType::Mlx,
         4,
     );
+
+    run_qvm_test(
+        &ctx,
+        256,
+        128,
+        128,
+        "qvm_bf16_g128_b8",
+        DataType::BF16,
+        QuantizationType::Mlx,
+        8,
+    );
+    run_qvm_test(
+        &ctx,
+        4096,
+        4096,
+        128,
+        "qvm_bf16_g128_b8",
+        DataType::BF16,
+        QuantizationType::Mlx,
+        8,
+    );
+}
+
+fn run_gemm_mlx_test(
+    ctx: &MTLContext,
+    m: usize,
+    n: usize,
+    k: usize,
+    bits: usize,
+) {
+    println!("--- Testing GEMM MLX M={}, N={}, K={} B={} ---", m, n, k, bits);
+    let kernel_name =
+        select_qmm_kernel_for_test(DataType::F16, 64, false, n, k, bits);
+    let _ = execute_quantized_matmul(
+        ctx,
+        m,
+        n,
+        k,
+        kernel_name.as_str(),
+        true,
+        1,
+        true,
+        QuantizationType::Mlx,
+        false,
+        64,
+        DataType::F16,
+        bits,
+    );
+    println!("✅ GEMM MLX M={}, N={}, K={} passed", m, n, k);
+}
+
+#[test]
+fn test_quant_gemm_mlx() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping GEMM MLX test");
+            return;
+        },
+    };
+
+    run_gemm_mlx_test(&ctx, 8, 16, 256, 4);
+    run_gemm_mlx_test(&ctx, 9, 9, 64, 4);
+    run_gemm_mlx_test(&ctx, 8, 16, 256, 8);
+    run_gemm_mlx_test(&ctx, 9, 9, 64, 8);
 }
 
 fn run_gemm_test(

@@ -46,6 +46,24 @@ pub enum QuantizationMode {
     UInt8,
 }
 
+impl QuantizationMode {
+    pub fn packing_divisor(&self) -> usize {
+        match self {
+            QuantizationMode::UInt4 => 2,
+            QuantizationMode::Int8 => 1,
+            QuantizationMode::UInt8 => 1,
+        }
+    }
+
+    pub fn storage_type(&self) -> DataType {
+        match self {
+            QuantizationMode::UInt4 => DataType::U8,
+            QuantizationMode::Int8 => DataType::I8,
+            QuantizationMode::UInt8 => DataType::U8,
+        }
+    }
+}
+
 impl Into<DataType> for QuantizationMode {
     fn into(self) -> DataType {
         match self {

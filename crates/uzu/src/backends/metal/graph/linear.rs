@@ -6,9 +6,7 @@ use objc2::rc::Retained;
 use super::{super::MTLContext, GraphConstructionError, load_constant};
 use crate::{
     DataType,
-    config::{
-        ConfigDataType, LinearConfig, QuantizationConfig, QuantizationMode,
-    },
+    config::{ConfigDataType, LinearConfig, QuantizationConfig},
     parameters::ParameterTree,
 };
 
@@ -36,14 +34,6 @@ fn quantized_weights_subgraph<const N: usize>(
     output_dims: [usize; N],
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
-    if config.weight_quantization_mode != QuantizationMode::UInt4 {
-        return Err(GraphConstructionError::IncompatibleDataTypes {
-            node_path: parameter_tree.path_prefix().map(str::to_string),
-            node_name: "weights".to_string(),
-            expected: DataType::U4,
-            actual: DataType::U8,
-        });
-    }
     let output_dim_sum: usize = output_dims.iter().sum();
 
     let weights = load_constant(
@@ -51,7 +41,7 @@ fn quantized_weights_subgraph<const N: usize>(
         parameter_tree,
         "weights",
         &[input_dim, output_dim_sum],
-        DataType::U4,
+        config.weight_quantization_mode.into(),
     )?;
 
     let scales = load_constant(
@@ -67,7 +57,7 @@ fn quantized_weights_subgraph<const N: usize>(
         parameter_tree,
         "zero_points",
         &[input_dim, output_dim_sum / config.group_size],
-        DataType::U4,
+        config.weight_quantization_mode.into(),
     )?;
 
     let result = graph.dequantize(
@@ -89,14 +79,6 @@ fn mlx_quantized_weights_subgraph<const N: usize>(
     output_dims: [usize; N],
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Result<Retained<Tensor>, GraphConstructionError> {
-    if config.weight_quantization_mode != QuantizationMode::UInt4 {
-        return Err(GraphConstructionError::IncompatibleDataTypes {
-            node_path: parameter_tree.path_prefix().map(str::to_string),
-            node_name: "weights".to_string(),
-            expected: DataType::U4,
-            actual: DataType::U8,
-        });
-    }
     let output_dim_sum: usize = output_dims.iter().sum();
 
     let weights = load_constant(
@@ -104,7 +86,7 @@ fn mlx_quantized_weights_subgraph<const N: usize>(
         parameter_tree,
         "weights",
         &[input_dim, output_dim_sum],
-        DataType::U4,
+        config.weight_quantization_mode.into(),
     )?;
 
     let scales = load_constant(
