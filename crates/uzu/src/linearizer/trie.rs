@@ -38,6 +38,14 @@ impl TokenTrie {
         }
     }
 
+    pub fn from_sequences(sequences: &[Vec<u64>]) -> Self {
+        let mut trie = Self::new();
+        for sequence in sequences {
+            trie.insert(sequence);
+        }
+        trie
+    }
+
     pub fn from_speculator(
         prefix: &[u64],
         seed: &mut DerivableSeed,
