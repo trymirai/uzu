@@ -4,10 +4,7 @@
 
 using namespace metal;
 
-constant ushort SSM_PREFILL_CHUNK = 64;
-constant ushort SSM_PREFILL_MAX_STATE = 1024;
-constant ushort SSM_PREFILL_MAX_SIMD_GROUPS =
-    (SSM_PREFILL_MAX_STATE + 31) / 32;
+constant ushort SSM_PREFILL_MAX_STATE = 256;
 
 struct SILU {
   template <typename T>
@@ -52,20 +49,14 @@ kernel void ssd_prefill_kernel(
 ) {
     const uint simd_width = 32;
     const int state_dim = state_size;
+
     const uint total_pairs = num_heads * head_dim;
     const uint pair_idx = tg_pos.x;
-    if (pair_idx >= total_pairs || state_dim <= 0) {
+    if (pair_idx >= total_pairs) {
         return;
     }
 
-    threadgroup float simd_partials[SSM_PREFILL_MAX_SIMD_GROUPS];
-
     const uint lane_idx = uint(lane);
-    const bool lane_active = lane_idx < uint(state_dim);
-    const uint simd_lane = lane_idx & (simd_width - 1);
-    const uint simd_group_idx = lane_idx / simd_width;
-    const uint simd_groups =
-        max(1u, (uint(state_dim) + simd_width - 1) / simd_width);
     const uint h_idx = pair_idx / head_dim;
     const uint dh_idx = pair_idx % head_dim;
     const uint safe_group = uint(max(group_size, 1));
@@ -91,15 +82,26 @@ kernel void ssd_prefill_kernel(
     const size_t cb_group_base = size_t(group_idx) * cb_group_stride;
     const float d_scalar = float(D[h_idx]);
 
-    size_t lane_state_idx = 0;
-    float lane_state = 0.0f;
-    size_t lane_cb_idx = 0;
-    if (lane_active) {
-        lane_state_idx =
-            state_base + size_t(lane_idx) * state_inner_stride;
-        lane_state = float(state[lane_state_idx]);
-        lane_cb_idx =
-            cb_group_base + size_t(lane_idx) * cb_state_stride;
+    // Keep up to SSM_PREFILL_MAX_STATE taps per (h, dh) in registers.
+    const int max_chunks = SSM_PREFILL_MAX_STATE / simd_width;
+    const int chunk_count =
+        (state_dim + int(simd_width) - 1) / int(simd_width);
+    if (state_dim <= 0 || chunk_count > max_chunks) {
+        return;
+    }
+
+    thread float lane_states[SSM_PREFILL_MAX_STATE / 32];
+    thread size_t state_indices[SSM_PREFILL_MAX_STATE / 32];
+    thread size_t cb_base_indices[SSM_PREFILL_MAX_STATE / 32];
+
+    for (int chunk = 0; chunk < chunk_count; ++chunk) {
+        const int idx = chunk * int(simd_width) + int(lane_idx);
+        const bool has_idx = idx < state_dim;
+        state_indices[chunk] = state_base + size_t(idx) * state_inner_stride;
+        cb_base_indices[chunk] =
+            cb_group_base + size_t(idx) * cb_state_stride;
+        lane_states[chunk] = float(state[state_indices[chunk]]);
+    
     }
 
     for (size_t token = 0; token < suffix_len; ++token) {
@@ -114,33 +116,30 @@ kernel void ssd_prefill_kernel(
         const float skip = d_scalar * x_val;
         const float dt_scaled_input = x_val;
 
-        float contrib = 0.0f;
-
-        if (lane_active) {
-            const float b_val = float(B[lane_cb_idx]);
-            const float c_val = float(C[lane_cb_idx]);
-            lane_state = decay_val * lane_state + dt_scaled_input * b_val;
-            contrib = lane_state * c_val;
-            lane_cb_idx += cb_token_stride;
+        float contrib_sum = 0.0f;
+        for (int chunk = 0; chunk < chunk_count; ++chunk) {
+            const int idx = chunk * int(simd_width) + int(lane_idx);
+            const size_t cb_idx = cb_base_indices[chunk] + token * cb_token_stride;
+            const float b_val = float(B[cb_idx]);
+            const float c_val = float(C[cb_idx]);
+            const float new_state =
+                decay_val * lane_states[chunk] + dt_scaled_input * b_val;
+            lane_states[chunk] = new_state;
+            contrib_sum += new_state * c_val;
         }
 
-        float warp_sum = simd_sum(contrib);
-        if (lane_active && simd_lane == 0) {
-            simd_partials[simd_group_idx] = warp_sum;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
+        float dot = simd_sum(contrib_sum);
         if (lane_idx == 0) {
-            float dot = 0.0f;
-            for (uint g = 0; g < simd_groups; ++g) {
-                dot += simd_partials[g];
-            }
             y[x_idx] = static_cast<T>((skip + dot) * gate);
         }
     }
 
-    if (lane_active) {
-        state[lane_state_idx] = static_cast<T>(lane_state);
+    for (int chunk = 0; chunk < chunk_count; ++chunk) {
+        const int idx = chunk * int(simd_width) + int(lane_idx);
+        const bool has_idx = idx < state_dim;
+        if (has_idx) {
+            state[state_indices[chunk]] = static_cast<T>(lane_states[chunk]);
+        }
     }
 }
 
