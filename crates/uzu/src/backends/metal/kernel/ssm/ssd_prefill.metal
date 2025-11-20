@@ -94,13 +94,11 @@ kernel void ssd_prefill_kernel_64(
 
     state_idx1 = state_base + size_t(idx1) * state_inner_stride;
     state1 = float(state[state_idx1]);
-    
 
     size_t cb_idx0 = 0;
     size_t cb_idx1 = 0;
     cb_idx0 = cb_group_base + size_t(idx0) * cb_state_stride;
     cb_idx1 = cb_group_base + size_t(idx1) * cb_state_stride;
-    
 
     for (size_t token = 0; token < suffix_len; ++token) {
         const size_t x_idx = token * x_token_stride + x_base;
@@ -113,18 +111,14 @@ kernel void ssd_prefill_kernel_64(
         const float dt_scaled_input = x_val;
 
         float contrib = 0.0f;
-        const float b0 = float(B[cb_idx0]);
-        const float c0 = float(C[cb_idx0]);
-        const float new_state0 = decay_val * state0 + dt_scaled_input * b0;
+        const float new_state0 = decay_val * state0 + dt_scaled_input * float(B[cb_idx0]);
         state0 = new_state0;
-        contrib += new_state0 * c0;
+        contrib += new_state0 * float(C[cb_idx0]);
         cb_idx0 += cb_token_stride;
 
-        const float b1 = float(B[cb_idx1]);
-        const float c1 = float(C[cb_idx1]);
-        const float new_state1 = decay_val * state1 + dt_scaled_input * b1;
+        const float new_state1 = decay_val * state1 + dt_scaled_input * float(B[cb_idx1]);
         state1 = new_state1;
-        contrib += new_state1 * c1;
+        contrib += new_state1 * float(C[cb_idx1]);
         cb_idx1 += cb_token_stride;
 
         float dot = simd_sum(contrib);

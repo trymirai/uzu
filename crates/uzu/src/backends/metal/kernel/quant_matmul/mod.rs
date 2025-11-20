@@ -85,7 +85,7 @@ fn base_qmm_kernel_name(
     Ok(kernel_name)
 }
 
-    fn resolve_qmm_kernel_name(
+fn resolve_qmm_kernel_name(
     type_suffix: &str,
     group_size: usize,
     transpose: bool,

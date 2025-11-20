@@ -9,11 +9,11 @@ pub struct SplitInProjKernel {
 }
 
 pub struct SplitInProjArguments<'a> {
-    pub input: &'a MTLBuffer,    // buffer(0) [suffix, total_dim]
+    pub input: &'a MTLBuffer, // buffer(0) [suffix, total_dim]
     pub conv_out: &'a MTLBuffer, // buffer(1) [suffix, conv_dim]
-    pub z_out: &'a MTLBuffer,    // buffer(2) [suffix, inner_dim]
-    pub dt_out: &'a MTLBuffer,   // buffer(3) [suffix, num_heads]
-    pub z_bias: &'a MTLBuffer,   // buffer(4) [inner_dim]
+    pub z_out: &'a MTLBuffer, // buffer(2) [suffix, inner_dim]
+    pub dt_out: &'a MTLBuffer, // buffer(3) [suffix, num_heads]
+    pub z_bias: &'a MTLBuffer, // buffer(4) [inner_dim]
     pub total_dim: usize,
     pub conv_dim: usize,
     pub inner_dim: usize,

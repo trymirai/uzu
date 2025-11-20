@@ -309,18 +309,12 @@ fn run_prefill_kernel_mode(
         None
     };
 
-    let chunk_sums_debug = matrix_args
-        .as_ref()
-        .map(|m| m.chunk_sums.to_owned());
-    let chunk_offsets_debug = matrix_args
-        .as_ref()
-        .map(|m| m.chunk_offsets.to_owned());
-    let prefix_debug = matrix_args
-        .as_ref()
-        .map(|m| m.prefix.to_owned());
-    let attn_debug = matrix_args
-        .as_ref()
-        .map(|m| m.attn.to_owned());
+    let chunk_sums_debug =
+        matrix_args.as_ref().map(|m| m.chunk_sums.to_owned());
+    let chunk_offsets_debug =
+        matrix_args.as_ref().map(|m| m.chunk_offsets.to_owned());
+    let prefix_debug = matrix_args.as_ref().map(|m| m.prefix.to_owned());
+    let attn_debug = matrix_args.as_ref().map(|m| m.attn.to_owned());
 
     let args = SSDPrefillArguments {
         x: &x_buf,
@@ -352,11 +346,14 @@ fn run_prefill_kernel_mode(
 
     let y_vec = read_buffer(&y_buf, fixture.total_x);
     let state_vec = read_buffer(&state_buf, fixture.total_state);
-    let chunk_offsets = chunk_offsets_debug.map(|buf| read_buffer(&buf, chunk_total));
+    let chunk_offsets =
+        chunk_offsets_debug.map(|buf| read_buffer(&buf, chunk_total));
     let chunk_sums = chunk_sums_debug.map(|buf| read_buffer(&buf, chunk_total));
-    let prefix_vals = prefix_debug.map(|buf| read_buffer(&buf, fixture.total_dt));
+    let prefix_vals =
+        prefix_debug.map(|buf| read_buffer(&buf, fixture.total_dt));
     let attn_vals = attn_debug.map(|buf| read_buffer(&buf, square_heads_dbg));
-    let chunk_debug = match (chunk_sums, chunk_offsets, prefix_vals, attn_vals) {
+    let chunk_debug = match (chunk_sums, chunk_offsets, prefix_vals, attn_vals)
+    {
         (Some(sums), Some(offsets), Some(prefix), Some(attn)) => {
             Some((sums, offsets, prefix, attn))
         },
@@ -491,8 +488,10 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
     let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
-    let (y_a, state_a, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
-    let (y_b, state_b, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+    let (y_a, state_a, _) =
+        run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+    let (y_b, state_b, _) =
+        run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
 
     assert_eq!(y_a, y_b, "Prefill outputs differ in {:?} mode", mode);
     assert_eq!(state_a, state_b, "Prefill states differ in {:?} mode", mode);
@@ -528,7 +527,9 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
     let (y_gpu, state_gpu, chunk_debug) =
         run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
 
-    if let Some((chunk_sums_gpu, chunk_offsets_gpu, prefix_vals, attn_vals)) = chunk_debug {
+    if let Some((chunk_sums_gpu, chunk_offsets_gpu, prefix_vals, attn_vals)) =
+        chunk_debug
+    {
         let num_chunks = fixture.chunk_count;
         let heads = fixture.num_heads;
         let mut max_diff = 0.0f32;
@@ -554,10 +555,8 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
                 }
                 running_gpu += chunk_sums_gpu[idx];
                 let chunk_start = c * SSD_PREFILL_CHUNK;
-                let chunk_end = min(
-                    chunk_start + SSD_PREFILL_CHUNK,
-                    fixture.suffix_len,
-                );
+                let chunk_end =
+                    min(chunk_start + SSD_PREFILL_CHUNK, fixture.suffix_len);
                 let mut cpu_sum = 0.0f32;
                 for t_idx in chunk_start..chunk_end {
                     let dt_idx = t_idx * heads + h;
@@ -607,9 +606,8 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
                 &chunk_offsets_gpu[start..end]
             );
         }
-        let prefix_head0: Vec<_> = (0..4)
-            .map(|t| prefix_vals[t * heads])
-            .collect();
+        let prefix_head0: Vec<_> =
+            (0..4).map(|t| prefix_vals[t * heads]).collect();
         eprintln!("prefix head0 first 4 tokens: {:?}", prefix_head0);
         let prefix_tail_head0: Vec<_> = (0..4)
             .map(|t| {
@@ -687,7 +685,6 @@ fn ssd_prefill_single_pass_is_deterministic() {
     assert_deterministic_for_mode(SSDPrefillMode::SinglePass);
 }
 
-
 #[test]
 fn ssd_prefill_sequential_matches_cpu_reference() {
     assert_matches_cpu_reference(SSDPrefillMode::Sequential);
@@ -697,7 +694,6 @@ fn ssd_prefill_sequential_matches_cpu_reference() {
 fn ssd_prefill_single_pass_matches_cpu_reference() {
     assert_matches_cpu_reference(SSDPrefillMode::SinglePass);
 }
-
 
 #[test]
 fn ssd_prefill_matrix_is_deterministic() {
