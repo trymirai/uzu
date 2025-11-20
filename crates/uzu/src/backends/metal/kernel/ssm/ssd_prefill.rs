@@ -22,6 +22,7 @@ pub enum SSDPrefillMode {
 pub struct SSDPrefillKernel {
     sequential: MTLComputePipelineState,
     single_pass: MTLComputePipelineState,
+    single_pass_64: MTLComputePipelineState,
     matrix_dt_prefix_chunk: MTLComputePipelineState,
     matrix_dt_chunk_scan: MTLComputePipelineState,
     matrix_dt_prefix_apply: MTLComputePipelineState,
@@ -83,11 +84,16 @@ impl SSDPrefillKernel {
             format!("ssd_prefill_kernel_sequential_{}", fn_suffix(data_type));
         let single_name =
             format!("ssd_prefill_kernel_{}", fn_suffix(data_type));
+        let single_64_name =
+            format!("ssd_prefill_kernel_64_{}", fn_suffix(data_type));
         let sequential = context
             .compute_pipeline_state(&sequential_name, None)
             .map_err(SSMKernelError::MetalError)?;
         let single_pass = context
             .compute_pipeline_state(&single_name, None)
+            .map_err(SSMKernelError::MetalError)?;
+        let single_pass_64 = context
+            .compute_pipeline_state(&single_64_name, None)
             .map_err(SSMKernelError::MetalError)?;
         let matrix_dt_prefix_chunk = context
             .compute_pipeline_state(
@@ -221,6 +227,7 @@ impl SSDPrefillKernel {
         Ok(Self {
             sequential,
             single_pass,
+            single_pass_64,
             matrix_dt_prefix_chunk,
             matrix_dt_chunk_scan,
             matrix_dt_prefix_apply,
@@ -293,7 +300,11 @@ impl SSDPrefillKernel {
         if args.channels == 0 || args.head_dim == 0 || args.suffix_len == 0 {
             return Ok(());
         }
-        compute_encoder.set_compute_pipeline_state(&self.single_pass);
+        if args.state_size == 64 {
+            compute_encoder.set_compute_pipeline_state(&self.single_pass_64);
+        } else {
+            compute_encoder.set_compute_pipeline_state(&self.single_pass);
+        }
         self.bind_common_buffers(compute_encoder, args);
         let channels = args.channels as u32;
         let head_dim = args.head_dim as u32;

@@ -26,7 +26,7 @@ inline T softplus(T x) {
 }
 
 template <typename T>
-kernel void ssd_prefill_kernel(
+kernel void ssd_prefill_kernel_64(
     device const T* x [[ buffer(0) ]],      // (suffix, h, dh)
     device const T* dt_raw [[ buffer(1) ]], // (suffix, h) - raw dt values
     device const T* B [[ buffer(2) ]],      // (suffix, g, n)
@@ -82,7 +82,146 @@ kernel void ssd_prefill_kernel(
     const size_t cb_group_base = size_t(group_idx) * cb_group_stride;
     const float d_scalar = float(D[h_idx]);
 
-    // Keep up to SSM_PREFILL_MAX_STATE taps per (h, dh) in registers.
+    const uint idx0 = lane_idx;
+    const uint idx1 = lane_idx + simd_width;
+
+    float state0 = 0.0f;
+    float state1 = 0.0f;
+    size_t state_idx0 = 0;
+    size_t state_idx1 = 0;
+    state_idx0 = state_base + size_t(idx0) * state_inner_stride;
+    state0 = float(state[state_idx0]);
+
+    state_idx1 = state_base + size_t(idx1) * state_inner_stride;
+    state1 = float(state[state_idx1]);
+    
+
+    size_t cb_idx0 = 0;
+    size_t cb_idx1 = 0;
+    cb_idx0 = cb_group_base + size_t(idx0) * cb_state_stride;
+    cb_idx1 = cb_group_base + size_t(idx1) * cb_state_stride;
+    
+
+    for (size_t token = 0; token < suffix_len; ++token) {
+        const size_t x_idx = token * x_token_stride + x_base;
+        const size_t dt_idx = token * dt_token_stride + dt_base;
+
+        const float x_val = float(x[x_idx]);
+        const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
+        const float gate = float(SILU{}(z[x_idx]));
+        const float skip = d_scalar * x_val;
+        const float dt_scaled_input = x_val;
+
+        float contrib = 0.0f;
+        const float b0 = float(B[cb_idx0]);
+        const float c0 = float(C[cb_idx0]);
+        const float new_state0 = decay_val * state0 + dt_scaled_input * b0;
+        state0 = new_state0;
+        contrib += new_state0 * c0;
+        cb_idx0 += cb_token_stride;
+
+        const float b1 = float(B[cb_idx1]);
+        const float c1 = float(C[cb_idx1]);
+        const float new_state1 = decay_val * state1 + dt_scaled_input * b1;
+        state1 = new_state1;
+        contrib += new_state1 * c1;
+        cb_idx1 += cb_token_stride;
+
+        float dot = simd_sum(contrib);
+        if (lane_idx == 0) {
+            y[x_idx] = static_cast<T>((skip + dot) * gate);
+        }
+    }
+
+    state[state_idx0] = static_cast<T>(state0);
+    state[state_idx1] = static_cast<T>(state1);
+}
+
+#define instantiate_ssd_prefill_kernel_64(type_name, type)           \
+  template [[host_name("ssd_prefill_kernel_64_" #type_name)]]        \
+  kernel void ssd_prefill_kernel_64<type>(                           \
+    device const type* x [[ buffer(0) ]],                            \
+    device const type* dt_raw [[ buffer(1) ]],                       \
+    device const type* B [[ buffer(2) ]],                            \
+    device const type* C [[ buffer(3) ]],                            \
+    device const type* D [[ buffer(4) ]],                            \
+    device const type* z [[ buffer(5) ]],                            \
+    device type* state [[ buffer(6) ]],                              \
+    device type* y [[ buffer(7) ]],                                  \
+    constant const size_t& suffix_len [[ buffer(8) ]],               \
+    constant const int& group_size [[ buffer(9) ]],                  \
+    constant const int& state_size [[ buffer(10) ]],                 \
+    constant const size_t* x_strides [[ buffer(11) ]],               \
+    constant const size_t* dt_strides [[ buffer(12) ]],              \
+    constant const size_t* cb_strides [[ buffer(13) ]],              \
+    constant const size_t* state_strides [[ buffer(14) ]],           \
+    constant const uint& num_heads [[ buffer(15) ]],                 \
+    constant const uint& head_dim [[ buffer(16) ]],                  \
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],                 \
+    ushort lane [[ thread_index_in_threadgroup ]]                    \
+  );
+
+instantiate_ssd_prefill_kernel_64(float, float);
+instantiate_ssd_prefill_kernel_64(bfloat, bfloat);
+instantiate_ssd_prefill_kernel_64(half, half);
+
+#undef instantiate_ssd_prefill_kernel_64
+
+template <typename T>
+kernel void ssd_prefill_kernel(
+    device const T* x [[ buffer(0) ]],      // (suffix, h, dh)
+    device const T* dt_raw [[ buffer(1) ]], // (suffix, h) - raw dt values
+    device const T* B [[ buffer(2) ]],      // (suffix, g, n)
+    device const T* C [[ buffer(3) ]],      // (suffix, g, n)
+    device const T* D [[ buffer(4) ]],      // (h)
+    device const T* z [[ buffer(5) ]],      // (suffix, h, dh)
+    device T* state [[ buffer(6) ]],        // (h, dh, n)
+    device T* y [[ buffer(7) ]],            // (suffix, h, dh)
+    constant const size_t& suffix_len [[ buffer(8) ]],
+    constant const int& group_size [[ buffer(9) ]],
+    constant const int& state_size [[ buffer(10) ]],
+    constant const size_t* x_strides [[ buffer(11) ]],
+    constant const size_t* dt_strides [[ buffer(12) ]],
+    constant const size_t* cb_strides [[ buffer(13) ]],
+    constant const size_t* state_strides [[ buffer(14) ]],
+    constant const uint& num_heads [[ buffer(15) ]],
+    constant const uint& head_dim [[ buffer(16) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    ushort lane [[ thread_index_in_threadgroup ]]
+) {
+    const uint simd_width = 32;
+    const int state_dim = state_size;
+
+    const uint total_pairs = num_heads * head_dim;
+    const uint pair_idx = tg_pos.x;
+    if (pair_idx >= total_pairs) {
+        return;
+    }
+
+    const uint lane_idx = uint(lane);
+    const uint h_idx = pair_idx / head_dim;
+    const uint dh_idx = pair_idx % head_dim;
+    const uint safe_group = uint(max(group_size, 1));
+    const uint group_idx = h_idx / safe_group;
+
+    const size_t x_token_stride = x_strides[0];
+    const size_t x_head_stride = x_strides[1];
+    const size_t x_dim_stride = x_strides[2];
+    const size_t dt_token_stride = dt_strides[0];
+    const size_t dt_head_stride = dt_strides[1];
+    const size_t cb_token_stride = cb_strides[0];
+    const size_t cb_group_stride = cb_strides[1];
+    const size_t cb_state_stride = cb_strides[2];
+    const size_t state_head_stride = state_strides[0];
+    const size_t state_dim_stride = state_strides[1];
+    const size_t state_inner_stride = state_strides[2];
+
+    const size_t x_base = size_t(h_idx) * x_head_stride + size_t(dh_idx) * x_dim_stride;
+    const size_t dt_base = size_t(h_idx) * dt_head_stride;
+    const size_t state_base = size_t(h_idx) * state_head_stride + size_t(dh_idx) * state_dim_stride;
+    const size_t cb_group_base = size_t(group_idx) * cb_group_stride;
+    const float d_scalar = float(D[h_idx]);
+
     const int max_chunks = SSM_PREFILL_MAX_STATE / simd_width;
     const int chunk_count =
         (state_dim + int(simd_width) - 1) / int(simd_width);
@@ -105,9 +244,7 @@ kernel void ssd_prefill_kernel(
         const size_t dt_idx = token * dt_token_stride + dt_base;
 
         const float x_val = float(x[x_idx]);
-        const float dt_raw_val = float(dt_raw[dt_idx]);
-        const float dt_val = float(softplus(dt_raw_val));
-        const float decay_val = fast::exp(-dt_val);
+        const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
         const float gate = float(SILU{}(z[x_idx]));
         const float skip = d_scalar * x_val;
         const float dt_scaled_input = x_val;
@@ -116,16 +253,11 @@ kernel void ssd_prefill_kernel(
         #pragma unroll
         for (int chunk = 0; chunk < chunk_count; ++chunk) {
             const int idx = chunk * int(simd_width) + int(lane_idx);
-            const size_t cb_idx =
-                cb_group_base + size_t(idx) * cb_state_stride
-                + token * cb_token_stride;
-            const float b_val = float(B[cb_idx]);
-            const float c_val = float(C[cb_idx]);
+            const size_t cb_idx = cb_group_base + size_t(idx) * cb_state_stride + token * cb_token_stride;
 
-            const float new_state =
-                decay_val * lane_states[chunk] + dt_scaled_input * b_val;
+            const float new_state = decay_val * lane_states[chunk] + dt_scaled_input * float(B[cb_idx]);
             lane_states[chunk] = new_state;
-            contrib_sum += new_state * c_val;
+            contrib_sum += new_state * float(C[cb_idx]);
         }
 
         float dot = simd_sum(contrib_sum);
@@ -134,12 +266,10 @@ kernel void ssd_prefill_kernel(
         }
     }
 
-    // Store final state back to device memory once at the end.
     #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
         const int idx = chunk * int(simd_width) + int(lane_idx);
-        const size_t state_idx =
-            state_base + size_t(idx) * state_inner_stride;
+        const size_t state_idx = state_base + size_t(idx) * state_inner_stride;
         state[state_idx] = static_cast<T>(lane_states[chunk]);
     }
 }
