@@ -34,8 +34,19 @@ fn test_layer_norm_vs_lalamo() {
 
     let scales_arr =
         tree.leaf("embedding_norm.scales").expect("Failed to load scales");
-    let scales: &[half::bf16] =
-        scales_arr.as_slice().expect("Failed to cast scales");
+
+    // Support both BF16 and F32 scales
+    let scales: Vec<f32> =
+        if let Ok(bf16_slice) = scales_arr.as_slice::<half::bf16>() {
+            bf16_slice.iter().map(|s| s.to_f32()).collect()
+        } else if let Ok(f32_slice) = scales_arr.as_slice::<f32>() {
+            f32_slice.to_vec()
+        } else {
+            panic!(
+                "Unsupported scales dtype: {:?}",
+                uzu::Array::data_type(&scales_arr)
+            );
+        };
 
     println!("Scales (first 10): {:?}", &scales[..10]);
     println!("Scale offset from config should be: None (0.0)");
@@ -55,7 +66,7 @@ fn test_layer_norm_vs_lalamo() {
     let expected: Vec<f32> = centered
         .iter()
         .zip(scales.iter())
-        .map(|(x, s)| x * inv_std * s.to_f32())
+        .map(|(x, s)| x * inv_std * *s)
         .collect();
 
     println!("\nTest input mean: {:.6}", mean);

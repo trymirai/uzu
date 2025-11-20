@@ -10,11 +10,17 @@ pub struct AttentionConfig {
     pub query_norm_config: Option<NormalizationConfig>,
     pub key_norm_config: Option<NormalizationConfig>,
 
+    #[serde(default)]
     pub num_heads: usize,
+    #[serde(default)]
     pub num_groups: usize,
+    #[serde(default)]
     pub head_dim: usize,
+    #[serde(default)]
     pub is_causal: bool,
+    #[serde(default)]
     pub scale: Option<f32>,
+    #[serde(default)]
     pub sliding_window_size: Option<usize>,
 
     pub logit_soft_cap: Option<f32>,

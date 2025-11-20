@@ -101,7 +101,7 @@ mod tests {
             has_down_biases: false,
             gate_clipping: None,
             up_clipping: None,
-            activation_to_gate: false,
+            activation_to_gate: true,
         });
 
         let deserialized_config: MLPConfig = from_str(config_str).unwrap();
