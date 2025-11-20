@@ -138,16 +138,16 @@ impl ClassifierTraceValidator {
                 &layer_traces.borrow().inputs.borrow(),
             );
 
-            // Check if pre_attention_norm exists (first layer might not have it)
-            if traces_view.leaf(path("pre_attention_norm").as_str()).is_ok() {
+            // Check if pre_mixer_norm exists (first layer might not have it)
+            if traces_view.leaf(path("pre_mixer_norm").as_str()).is_ok() {
                 validate(
-                    path("pre_attention_norm").as_str(),
+                    path("pre_mixer_norm").as_str(),
                     &layer_traces.borrow().pre_attention_norm.borrow(),
                 );
             }
 
             validate(
-                path("attention").as_str(),
+                path("mixer").as_str(),
                 &layer_traces.borrow().attention.borrow(),
             );
             validate(

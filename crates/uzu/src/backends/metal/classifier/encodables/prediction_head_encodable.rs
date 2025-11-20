@@ -15,7 +15,7 @@ pub struct PredictionHeadEncodable {
     dense: Box<dyn EncodableWithState>,
     activation: Box<dyn EncodableWithState>,
     norm: Box<dyn EncodableWithState>,
-    final_linear: Box<dyn EncodableWithState>,
+    readout: Box<dyn EncodableWithState>,
     #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     num_labels: usize,
 }
@@ -25,14 +25,14 @@ impl PredictionHeadEncodable {
         dense: Box<dyn EncodableWithState>,
         activation: Box<dyn EncodableWithState>,
         norm: Box<dyn EncodableWithState>,
-        final_linear: Box<dyn EncodableWithState>,
+        readout: Box<dyn EncodableWithState>,
         num_labels: usize,
     ) -> Self {
         Self {
             dense,
             activation,
             norm,
-            final_linear,
+            readout,
             num_labels,
         }
     }
@@ -48,7 +48,7 @@ impl EncodableWithState for PredictionHeadEncodable {
         self.dense.encode(state, command_buffer, parameters);
         self.activation.encode(state, command_buffer, parameters);
         self.norm.encode(state, command_buffer, parameters);
-        self.final_linear.encode(state, command_buffer, parameters);
+        self.readout.encode(state, command_buffer, parameters);
 
         #[cfg_attr(feature = "tracing", allow(unused_variables))]
         let root_after_head = command_buffer.root_command_buffer().to_owned();

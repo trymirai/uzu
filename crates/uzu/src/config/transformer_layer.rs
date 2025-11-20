@@ -4,8 +4,11 @@ use crate::{AttentionConfig, MLPConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
+    #[serde(alias = "pre_mixer_norm_config")]
     pub pre_attention_norm_config: Option<NormalizationConfig>,
+    #[serde(alias = "mixer_config")]
     pub attention_config: AttentionConfig,
+    #[serde(alias = "post_mixer_norm_config")]
     pub post_attention_norm_config: Option<NormalizationConfig>,
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,

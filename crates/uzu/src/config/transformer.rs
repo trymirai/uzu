@@ -11,10 +11,15 @@ pub struct TransformerConfig {
 
     pub model_dim: usize,
     pub hidden_dim: usize,
-    pub num_heads: usize,
-    pub num_groups: usize,
-    pub head_dim: usize,
+    #[serde(default)]
+    pub num_heads: Option<usize>,
+    #[serde(default)]
+    pub num_groups: Option<usize>,
+    #[serde(default)]
+    pub head_dim: Option<usize>,
+    #[serde(default)]
     pub attention_scale: Option<f32>,
-    pub num_layers: usize,
+    #[serde(default)]
+    pub num_layers: Option<usize>,
     pub context_length: usize,
 }

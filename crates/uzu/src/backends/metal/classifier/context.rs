@@ -317,12 +317,12 @@ impl ClassifierContext {
         .expect("Failed to create prediction head norm kernel");
 
         let prediction_head_final_linear = linear_block::<1>(
-            &prediction_head_config.final_linear_config,
+            &prediction_head_config.readout_config,
             true,
             model_dim,
             [num_labels],
             &mtl_context,
-            &prediction_head_tree.subtree("final_linear").unwrap(),
+            &prediction_head_tree.subtree("readout").unwrap(),
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
             &compilation_config.descriptor_general,

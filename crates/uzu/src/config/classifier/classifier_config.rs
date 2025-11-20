@@ -12,7 +12,7 @@ pub struct ClassifierConfig {
     pub embedding_norm_config: NormalizationConfig,
     pub transformer_config: TransformerConfig,
     pub prediction_head_config: PredictionHeadConfig,
-    pub final_linear_config: LinearConfig,
+    pub readout_config: LinearConfig,
 
     pub vocab_size: usize,
     pub model_dim: usize,
@@ -22,6 +22,7 @@ pub struct ClassifierConfig {
     pub head_dim: usize,
     pub attention_scale: Option<f32>,
     pub num_layers: usize,
+    #[serde(default)]
     pub sliding_window_sizes: Option<Vec<Option<usize>>>,
     pub context_length: usize,
     pub num_labels: usize,

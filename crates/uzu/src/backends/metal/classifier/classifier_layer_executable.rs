@@ -76,7 +76,7 @@ impl ClassifierLayerExecutable {
                 if let Some(norm_config) =
                     &layer_config.pre_attention_norm_config
                 {
-                    if layer_loader.subtree("pre_attention_norm").is_ok() {
+                    if layer_loader.subtree("pre_mixer_norm").is_ok() {
                         Some(Box::new(
                             NormalizationEncodable::new(
                                 mtl_context,
@@ -85,7 +85,7 @@ impl ClassifierLayerExecutable {
                                 ArrayId::Main,
                                 ArrayId::Main,
                                 &layer_loader
-                                    .subtree("pre_attention_norm")
+                                    .subtree("pre_mixer_norm")
                                     .unwrap(),
                             )
                             .expect(
@@ -109,7 +109,7 @@ impl ClassifierLayerExecutable {
                     num_groups * head_dim,
                 ],
                 mtl_context,
-                &layer_loader.subtree("attention.qkv_projection").unwrap(),
+                &layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 ArrayId::Main,
                 ArrayId::QKV,
                 &compilation_config.descriptor_mlp,
@@ -121,7 +121,7 @@ impl ClassifierLayerExecutable {
                 num_heads * head_dim,
                 [model_dim],
                 mtl_context,
-                &layer_loader.subtree("attention.out_projection").unwrap(),
+                &layer_loader.subtree("mixer.out_projection").unwrap(),
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
                 &compilation_config.descriptor_mlp,
