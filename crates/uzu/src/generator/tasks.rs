@@ -33,21 +33,21 @@ impl GeneratorEncodedTask {
 }
 
 #[derive(Debug, Clone)]
-pub struct GeneratorRunTask {
-    pub token_ids: Vec<u64>,
-    pub token_positions: Vec<usize>,
-    pub token_seeds: Vec<u64>,
+pub struct GeneratorRunTask<'a> {
+    pub token_ids: &'a [u64],
+    pub token_positions: &'a [usize],
+    pub token_seeds: &'a [u64],
     pub expected_number_of_new_tokens: usize,
     pub active_suffix_length: usize,
     pub is_prefilling: bool,
 }
 
-impl GeneratorRunTask {
+impl<'a> GeneratorRunTask<'a> {
     pub fn speculate_next_task(&self) -> Self {
         GeneratorRunTask {
-            token_ids: self.token_ids.clone(),
-            token_positions: self.token_positions.clone(),
-            token_seeds: self.token_seeds.clone(),
+            token_ids: self.token_ids,
+            token_positions: self.token_positions,
+            token_seeds: self.token_seeds,
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
             active_suffix_length: self.active_suffix_length,
             is_prefilling: self.is_prefilling,
@@ -76,11 +76,11 @@ impl GeneratorRunTask {
             &context.scratch_buffers,
             context.cache_layers.clone(),
             context.shared_buffers.clone(),
-            &self.token_ids,
-            &self.token_positions,
+            self.token_ids,
+            self.token_positions,
+            self.token_seeds,
             self.active_suffix_length,
             self.is_prefilling,
-            &self.token_seeds,
             false,
             external_bias_fn,
             false,
