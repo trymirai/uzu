@@ -13,11 +13,15 @@ enum Commands {
     Run {
         /// Folder with model's files
         model_path: String,
+        /// Prefill step size
+        prefill_step_size: Option<usize>,
     },
     /// Start a server with the specified model path
     Serve {
         /// Folder with model's files
         model_path: String,
+        /// Prefill step size
+        prefill_step_size: Option<usize>,
     },
 }
 
@@ -27,13 +31,15 @@ fn main() {
     match cli.command {
         Some(Commands::Run {
             model_path,
+            prefill_step_size,
         }) => {
-            handle_run(model_path, 2048);
+            handle_run(model_path, 2048, prefill_step_size);
         },
         Some(Commands::Serve {
             model_path,
+            prefill_step_size,
         }) => {
-            handle_serve(model_path);
+            handle_serve(model_path, prefill_step_size);
         },
         None => {
             let mut cmd = Cli::command();
