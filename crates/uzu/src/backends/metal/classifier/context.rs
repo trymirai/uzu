@@ -164,12 +164,7 @@ impl ClassifierContext {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let mut rope = global_rope.clone();
-                if let Some(_window) = classifier_model_config
-                    .classifier_config
-                    .sliding_window_sizes
-                    .as_ref()
-                    .and_then(|v| v.get(layer_index).copied().flatten())
-                {
+                if layer_config.attention_config.sliding_window_size.is_some() {
                     if let Some(local_rope_block) = local_rope.clone() {
                         rope = local_rope_block;
                     }

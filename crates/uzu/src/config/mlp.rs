@@ -23,8 +23,12 @@ pub struct DenseMLPConfig {
     pub gate_clipping: Option<[Option<f32>; 2]>,
     #[serde(default)]
     pub up_clipping: Option<[Option<f32>; 2]>,
-    #[serde(default)]
+    #[serde(default = "default_activation_to_gate")]
     pub activation_to_gate: bool,
+}
+
+fn default_activation_to_gate() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

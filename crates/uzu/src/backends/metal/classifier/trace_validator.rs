@@ -146,6 +146,14 @@ impl ClassifierTraceValidator {
                 );
             }
 
+            // Validate optional post_mixer_norm if present
+            if traces_view.leaf(path("post_mixer_norm").as_str()).is_ok() {
+                validate(
+                    path("post_mixer_norm").as_str(),
+                    &layer_traces.borrow().post_attention_norm.borrow(),
+                );
+            }
+
             validate(
                 path("mixer").as_str(),
                 &layer_traces.borrow().attention.borrow(),
@@ -159,6 +167,14 @@ impl ClassifierTraceValidator {
                 &layer_traces.borrow().pre_mlp_norm.borrow(),
             );
             validate(path("mlp").as_str(), &layer_traces.borrow().mlp.borrow());
+
+            // Validate optional post_mlp_norm if present
+            if traces_view.leaf(path("post_mlp_norm").as_str()).is_ok() {
+                validate(
+                    path("post_mlp_norm").as_str(),
+                    &layer_traces.borrow().post_mlp_norm.borrow(),
+                );
+            }
             validate(
                 format!("activation_trace.layer_results.{}.outputs", index)
                     .as_str(),

@@ -80,10 +80,22 @@ impl ClassifierConfig {
             head_dim: self.head_dim,
             attention_scale: self.attention_scale,
             num_layers: self.num_layers,
-            sliding_window_sizes: self
-                .sliding_window_sizes
-                .as_ref()
-                .map(|v| v.clone().into_boxed_slice()),
+            sliding_window_sizes: {
+                // If sliding_window_sizes is explicitly provided, use it
+                // Otherwise, extract from per-layer attention configs
+                if let Some(sizes) = &self.sliding_window_sizes {
+                    Some(sizes.clone().into_boxed_slice())
+                } else {
+                    // Extract sliding_window_size from each layer's attention_config
+                    let sizes: Vec<Option<usize>> = self
+                        .transformer_config
+                        .layer_configs
+                        .iter()
+                        .map(|layer| layer.attention_config.sliding_window_size)
+                        .collect();
+                    Some(sizes.into_boxed_slice())
+                }
+            },
             context_length: self.context_length,
         }
     }

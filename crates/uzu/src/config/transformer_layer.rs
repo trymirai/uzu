@@ -13,7 +13,6 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
-    pub sliding_window_size: Option<usize>,
 }
 
 #[cfg(test)]
@@ -63,6 +62,12 @@ mod tests {
                     },
                     "query_norm_config": null,
                     "key_norm_config": null,
+                    "num_heads": 12,
+                    "num_groups": 12,
+                    "head_dim": 64,
+                    "is_causal": false,
+                    "scale": null,
+                    "sliding_window_size": null,
                     "logit_soft_cap": null,
                     "has_sinks": false,
                     "has_qkv_biases": false,
@@ -95,8 +100,7 @@ mod tests {
                     "up_clipping": null,
                     "activation_to_gate": false
                 },
-                "post_mlp_norm_config": null,
-                "sliding_window_size": null
+                "post_mlp_norm_config": null
             }
         "#;
 
@@ -144,6 +148,12 @@ mod tests {
                 },
                 query_norm_config: None,
                 key_norm_config: None,
+                num_heads: 12,
+                num_groups: 12,
+                head_dim: 64,
+                is_causal: false,
+                scale: None,
+                sliding_window_size: None,
                 logit_soft_cap: None,
                 has_sinks: false,
                 has_qkv_biases: false,
@@ -173,7 +183,6 @@ mod tests {
             }),
             post_attention_norm_config: None,
             post_mlp_norm_config: None,
-            sliding_window_size: None,
         };
 
         let deserialized_config: TransformerLayerConfig =

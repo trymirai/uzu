@@ -1,12 +1,25 @@
-#[cfg(feature = "tracing")]
-use std::path::PathBuf;
+// Intentionally keep top-level imports minimal to avoid cfg-related warnings
 
-#[cfg(feature = "tracing")]
-use uzu::backends::metal::classifier::ClassifierTraceValidator;
-
-#[cfg(feature = "tracing")]
 #[test]
 fn test_bert_trace_validation() {
+    #[cfg(feature = "tracing")]
+    {
+        run_bert_trace_validation();
+        return;
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        eprintln!(
+            "Skipping test: 'tracing' feature disabled. Enable with `cargo test -p uzu --features tracing`."
+        );
+    }
+}
+
+#[cfg(feature = "tracing")]
+fn run_bert_trace_validation() {
+    use std::path::PathBuf;
+
+    use uzu::backends::metal::classifier::ClassifierTraceValidator;
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -107,16 +120,10 @@ fn test_bert_trace_validation() {
         println!("\n✓ All validations passed!");
     }
 
-    // Note: Trace validation is currently experimental
-    // Some failures are expected due to timing issues with GPU-to-CPU copy
-    println!("\nℹ️  NOTE: Trace capture implementation is work-in-progress");
-    println!("The infrastructure is in place, but traces need GPU-sync fixes");
-
-    // Don't fail the test for now - this is a diagnostic tool
-    // assert!(
-    //     all_passed,
-    //     "Trace validation failed. {} / {} traces did not match.",
-    //     failed_count,
-    //     results.results.len()
-    // );
+    assert!(
+        all_passed,
+        "Trace validation failed. {} / {} traces did not match.",
+        failed_count,
+        results.results.len()
+    );
 }

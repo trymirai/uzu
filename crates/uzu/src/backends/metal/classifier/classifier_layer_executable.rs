@@ -17,7 +17,7 @@ use crate::{
         },
         kernel::{
             AttentionKernelEncodable, KernelDataType, NormalizationEncodable,
-            TensorAddSwap, TensorCopy,
+            QKNormKernelEncodable, TensorAddSwap, TensorCopy,
         },
     },
     config::TransformerLayerConfig,
@@ -27,16 +27,20 @@ use crate::{
 pub struct ClassifierLayerExecutable {
     #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     layer_index: usize,
-    copy_main_to_shortcut: Box<dyn EncodableWithState>,
+    copy_main_to_shortcut_mixer: Box<dyn EncodableWithState>,
     pre_attention_norm: Option<Box<dyn EncodableWithState>>,
     qkv_projection: Box<dyn EncodableWithState>,
+    qk_norm: Option<Box<dyn EncodableWithState>>,
     rope: Rc<Box<dyn EncodableWithState>>,
     attention: Box<dyn EncodableWithState>,
     out_projection: Box<dyn EncodableWithState>,
-    main_shortcut_add_swap: Box<dyn EncodableWithState>,
+    post_attention_norm: Option<Box<dyn EncodableWithState>>,
+    mixer_residual_add: Box<dyn EncodableWithState>,
+    copy_main_to_shortcut_mlp: Box<dyn EncodableWithState>,
     pre_mlp_norm: Box<dyn EncodableWithState>,
     mlp: Box<dyn EncodableWithState>,
-    main_shortcut_add_swap_2: Box<dyn EncodableWithState>,
+    post_mlp_norm: Option<Box<dyn EncodableWithState>>,
+    mlp_residual_add: Box<dyn EncodableWithState>,
 }
 
 impl ClassifierLayerExecutable {
@@ -63,14 +67,17 @@ impl ClassifierLayerExecutable {
             let kernel_data_type: KernelDataType =
                 intermediate_data_type.into();
 
-            let copy_main_to_shortcut: Box<dyn EncodableWithState> = Box::new(
-                TensorCopy::new(
-                    mtl_context,
-                    kernel_data_type,
-                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-                )
-                .unwrap(),
-            );
+            // Copy for mixer residual connection
+            let copy_main_to_shortcut_mixer: Box<dyn EncodableWithState> =
+                Box::new(
+                    TensorCopy::new(
+                        mtl_context,
+                        kernel_data_type,
+                        vec![ArrayId::Main, ArrayId::Shortcut]
+                            .into_boxed_slice(),
+                    )
+                    .unwrap(),
+                );
 
             let pre_attention_norm: Option<Box<dyn EncodableWithState>> =
                 if let Some(norm_config) =
@@ -115,6 +122,33 @@ impl ClassifierLayerExecutable {
                 &compilation_config.descriptor_mlp,
             );
 
+            let qk_norm: Option<Box<dyn EncodableWithState>> = if layer_config
+                .attention_config
+                .query_norm_config
+                .is_some()
+                || layer_config.attention_config.key_norm_config.is_some()
+            {
+                match QKNormKernelEncodable::new(
+                    mtl_context,
+                    intermediate_data_type,
+                    layer_config.attention_config.query_norm_config.clone(),
+                    layer_config.attention_config.key_norm_config.clone(),
+                    ArrayId::QKV,
+                    &layer_loader.subtree("mixer").unwrap(),
+                    num_heads,  // num_q_heads
+                    num_groups, // num_kv_heads
+                    head_dim,
+                ) {
+                    Ok(norm) => Some(Box::new(norm)),
+                    Err(e) => panic!(
+                        "Failed to create QK norm kernel for layer {}: {:?}",
+                        layer_index, e
+                    ),
+                }
+            } else {
+                None
+            };
+
             let out_projection = transformer_layer::linear_block(
                 &layer_config.attention_config.out_projection_config,
                 layer_config.attention_config.has_out_biases,
@@ -127,14 +161,46 @@ impl ClassifierLayerExecutable {
                 &compilation_config.descriptor_mlp,
             );
 
-            let main_shortcut_add_swap: Box<dyn EncodableWithState> = Box::new(
+            let post_attention_norm: Option<Box<dyn EncodableWithState>> =
+                if let Some(norm_config) =
+                    &layer_config.post_attention_norm_config
+                {
+                    Some(Box::new(
+                        NormalizationEncodable::new(
+                            mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &layer_loader.subtree("post_mixer_norm").unwrap(),
+                        )
+                        .expect("Failed to create post-attention norm kernel"),
+                    ))
+                } else {
+                    None
+                };
+
+            // Add operation for mixer residual connection
+            let mixer_residual_add: Box<dyn EncodableWithState> = Box::new(
                 TensorAddSwap::new(
                     mtl_context,
                     kernel_data_type,
-                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )
                 .unwrap(),
             );
+
+            // Copy for MLP residual connection
+            let copy_main_to_shortcut_mlp: Box<dyn EncodableWithState> =
+                Box::new(
+                    TensorCopy::new(
+                        mtl_context,
+                        kernel_data_type,
+                        vec![ArrayId::Main, ArrayId::Shortcut]
+                            .into_boxed_slice(),
+                    )
+                    .unwrap(),
+                );
 
             let pre_mlp_norm: Box<dyn EncodableWithState> = Box::new(
                 NormalizationEncodable::new(
@@ -157,16 +223,22 @@ impl ClassifierLayerExecutable {
                 &compilation_config.descriptor_mlp,
             );
 
-            let main_shortcut_add_swap_2: Box<dyn EncodableWithState> =
-                Box::new(
-                    TensorAddSwap::new(
-                        mtl_context,
-                        kernel_data_type,
-                        vec![ArrayId::Main, ArrayId::Shortcut]
-                            .into_boxed_slice(),
-                    )
-                    .unwrap(),
-                );
+            let post_mlp_norm: Option<Box<dyn EncodableWithState>> =
+                if let Some(norm_config) = &layer_config.post_mlp_norm_config {
+                    Some(Box::new(
+                        NormalizationEncodable::new(
+                            mtl_context,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &layer_loader.subtree("post_mlp_norm").unwrap(),
+                        )
+                        .expect("Failed to create post-MLP norm kernel"),
+                    ))
+                } else {
+                    None
+                };
 
             let attention: Box<dyn EncodableWithState> = Box::new(
                 AttentionKernelEncodable::new(
@@ -176,23 +248,37 @@ impl ClassifierLayerExecutable {
                     attention_scale,
                     layer_config.attention_config.has_sinks,
                     false, // is_causal - Classifier uses bidirectional attention
-                    layer_config.sliding_window_size, // Pass sliding window size
+                    layer_config.attention_config.sliding_window_size, // Pass sliding window size
                 )
                 .expect("Failed to create attention kernel"),
             );
 
+            // Add operation for MLP residual connection
+            let mlp_residual_add: Box<dyn EncodableWithState> = Box::new(
+                TensorAddSwap::new(
+                    mtl_context,
+                    kernel_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
+            );
+
             Self {
                 layer_index,
-                copy_main_to_shortcut,
+                copy_main_to_shortcut_mixer,
                 pre_attention_norm,
                 qkv_projection,
+                qk_norm,
                 rope,
                 attention,
                 out_projection,
-                main_shortcut_add_swap,
+                post_attention_norm,
+                mixer_residual_add,
+                copy_main_to_shortcut_mlp,
                 pre_mlp_norm,
                 mlp,
-                main_shortcut_add_swap_2,
+                post_mlp_norm,
+                mlp_residual_add,
             }
         })
     }
@@ -227,7 +313,12 @@ impl EncodableWithState for ClassifierLayerExecutable {
             );
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
+        // Save input for mixer residual connection
+        self.copy_main_to_shortcut_mixer.encode(
+            state,
+            command_buffer,
+            parameters,
+        );
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(state, command_buffer, parameters);
@@ -251,6 +342,9 @@ impl EncodableWithState for ClassifierLayerExecutable {
         }
 
         self.qkv_projection.encode(state, command_buffer, parameters);
+        if let Some(ref qk_norm) = self.qk_norm {
+            qk_norm.encode(state, command_buffer, parameters);
+        }
         self.rope.encode(state, command_buffer, parameters);
         self.attention.encode(state, command_buffer, parameters);
         self.out_projection.encode(state, command_buffer, parameters);
@@ -263,7 +357,20 @@ impl EncodableWithState for ClassifierLayerExecutable {
             );
         }
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        if let Some(ref post_attn_norm) = self.post_attention_norm {
+            post_attn_norm.encode(state, command_buffer, parameters);
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().post_attention_norm.clone(),
+                );
+            }
+        }
+
+        // Residual add after mixer: main += shortcut (gives mlp_inputs)
+        self.mixer_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
@@ -272,6 +379,13 @@ impl EncodableWithState for ClassifierLayerExecutable {
                 layer_traces.borrow().mlp_inputs.clone(),
             );
         }
+
+        // Save mlp_inputs for MLP residual connection
+        self.copy_main_to_shortcut_mlp.encode(
+            state,
+            command_buffer,
+            parameters,
+        );
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
@@ -293,7 +407,20 @@ impl EncodableWithState for ClassifierLayerExecutable {
             );
         }
 
-        self.main_shortcut_add_swap_2.encode(state, command_buffer, parameters);
+        if let Some(ref post_mlp_norm) = self.post_mlp_norm {
+            post_mlp_norm.encode(state, command_buffer, parameters);
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().post_mlp_norm.clone(),
+                );
+            }
+        }
+
+        // Residual add after MLP: main += shortcut (gives final outputs)
+        self.mlp_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(
