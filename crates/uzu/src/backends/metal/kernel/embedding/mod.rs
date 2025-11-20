@@ -14,7 +14,8 @@ use super::super::{
     },
 };
 use crate::{
-    Array, DataType, backends::metal::MTLError, parameters::ParameterTree,
+    Array, DataType, backends::metal::MTLError, config::QuantizationMode,
+    parameters::ParameterTree,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -329,6 +330,7 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         vocab_size: usize,
         model_dim: usize,
         group_size: usize,
+        mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
@@ -439,12 +441,12 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         };
 
         let Some((kernel_name_mm, kernel_name_mv)) = quantized_kernel_names(
-            data_type, group_size, vocab_size, model_dim,
+            data_type, group_size, vocab_size, model_dim, mode,
         ) else {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
-                    "Unsupported group size {} for transposed {:?} kernel",
-                    group_size, data_type
+                    "Unsupported group size {} or bits {:?} for transposed {:?} kernel",
+                    group_size, mode, data_type
                 )),
             ));
         };

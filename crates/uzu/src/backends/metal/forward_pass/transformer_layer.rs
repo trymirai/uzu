@@ -631,6 +631,7 @@ pub fn readout_block(
         EmbeddingConfig::MLXSemiQuantizedUntied {
             group_size,
             activation_precision,
+            embedding_quantization_mode,
             ..
         } => {
             let data_type: DataType = activation_precision.into();
@@ -644,6 +645,7 @@ pub fn readout_block(
                 config.vocab_size,
                 config.model_dim,
                 group_size,
+                embedding_quantization_mode,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
@@ -717,7 +719,7 @@ pub fn readout_block(
         },
         EmbeddingConfig::MLXQuantizedTied {
             group_size,
-            embedding_quantization_mode: _,
+            embedding_quantization_mode,
             ..
         } => {
             // Use Metal kernel for MLX quantized readout
@@ -735,6 +737,7 @@ pub fn readout_block(
                 config.vocab_size,
                 config.model_dim,
                 group_size,
+                embedding_quantization_mode,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");

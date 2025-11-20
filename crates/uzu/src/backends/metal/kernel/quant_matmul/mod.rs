@@ -6,7 +6,7 @@ use metal::{
 };
 
 use super::super::MTLContext;
-use crate::{DataType, backends::metal::MTLError};
+use crate::{DataType, backends::metal::MTLError, config::QuantizationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizationType {
@@ -30,6 +30,8 @@ pub enum QuantizedMatmulError {
         n: usize,
         k: usize,
     },
+    #[error("Unsupported bits: {0}")]
+    UnsupportedBits(usize),
 }
 
 pub struct QuantizedMatmulKernel {
@@ -67,17 +69,22 @@ fn base_qmm_kernel_name(
     type_suffix: &str,
     group_size: usize,
     transpose_infix: &str,
+    bits: usize,
 ) -> Result<String, QuantizedMatmulError> {
+    if bits != 4 && bits != 8 {
+        return Err(QuantizedMatmulError::UnsupportedBits(bits));
+    }
+
     let kernel_name = match (type_suffix, group_size) {
-        ("f16", 32) => format!("qmm{}_f16_g32_b4", transpose_infix),
-        ("f16", 64) => format!("qmm{}_f16_g64_b4", transpose_infix),
-        ("f16", 128) => format!("qmm{}_f16_g128_b4", transpose_infix),
-        ("bf16", 32) => format!("qmm{}_bf16_g32_b4", transpose_infix),
-        ("bf16", 64) => format!("qmm{}_bf16_g64_b4", transpose_infix),
-        ("bf16", 128) => format!("qmm{}_bf16_g128_b4", transpose_infix),
-        ("f32", 32) => format!("qmm{}_f32_g32_b4", transpose_infix),
-        ("f32", 64) => format!("qmm{}_f32_g64_b4", transpose_infix),
-        ("f32", 128) => format!("qmm{}_f32_g128_b4", transpose_infix),
+        ("f16", 32) => format!("qmm{}_f16_g32_b{}", transpose_infix, bits),
+        ("f16", 64) => format!("qmm{}_f16_g64_b{}", transpose_infix, bits),
+        ("f16", 128) => format!("qmm{}_f16_g128_b{}", transpose_infix, bits),
+        ("bf16", 32) => format!("qmm{}_bf16_g32_b{}", transpose_infix, bits),
+        ("bf16", 64) => format!("qmm{}_bf16_g64_b{}", transpose_infix, bits),
+        ("bf16", 128) => format!("qmm{}_bf16_g128_b{}", transpose_infix, bits),
+        ("f32", 32) => format!("qmm{}_f32_g32_b{}", transpose_infix, bits),
+        ("f32", 64) => format!("qmm{}_f32_g64_b{}", transpose_infix, bits),
+        ("f32", 128) => format!("qmm{}_f32_g128_b{}", transpose_infix, bits),
         _ => {
             return Err(QuantizedMatmulError::UnsupportedGroupSize(group_size));
         },
@@ -91,6 +98,7 @@ fn resolve_qmm_kernel_name(
     transpose: bool,
     n: i32,
     k: i32,
+    bits: usize,
 ) -> Result<String, QuantizedMatmulError> {
     let transpose_infix = if transpose {
         "_transposed"
@@ -98,12 +106,12 @@ fn resolve_qmm_kernel_name(
         ""
     };
     let mut kernel_name =
-        base_qmm_kernel_name(type_suffix, group_size, transpose_infix)?;
+        base_qmm_kernel_name(type_suffix, group_size, transpose_infix, bits)?;
     if transpose {
         if n % 32 != 0 {
             kernel_name.push_str("_unaligned");
-        } else if type_suffix == "bf16" && group_size == 128 {
-            // Use optimized 64x64 kernel for BF16 G128 aligned
+        } else if type_suffix == "bf16" && group_size == 128 && bits == 4 {
+            // Use optimized 64x64 kernel for BF16 G128 aligned (only b4 for now)
             kernel_name.push_str("_64x64");
         }
     } else if k % 32 == 0 {
@@ -262,15 +270,21 @@ pub fn select_qmm_kernel_name(
     transpose: bool,
     n: usize,
     k: usize,
+    mode: QuantizationMode,
 ) -> Result<String, QuantizedMatmulError> {
     let type_suffix = dtype_suffix(data_type)
         .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+    let bits = match mode {
+        QuantizationMode::UInt4 => 4,
+        QuantizationMode::Int8 | QuantizationMode::UInt8 => 8,
+    };
     resolve_qmm_kernel_name(
         type_suffix,
         group_size,
         transpose,
         n as i32,
         k as i32,
+        bits,
     )
 }
 
@@ -279,14 +293,21 @@ pub fn quantized_kernel_names(
     group_size: usize,
     n: usize,
     k: usize,
+    mode: QuantizationMode,
 ) -> Option<(String, String)> {
     let type_suffix = dtype_suffix(data_type)?;
     if !matches!(group_size, 32 | 64 | 128) {
         return None;
     }
 
-    let mm = select_qmm_kernel_name(data_type, group_size, true, n, k).ok()?;
-    let mv = format!("qmv_{type_suffix}_g{group_size}_b4_fast");
+    let bits = match mode {
+        QuantizationMode::UInt4 => 4,
+        QuantizationMode::Int8 | QuantizationMode::UInt8 => 8,
+    };
+
+    let mm =
+        select_qmm_kernel_name(data_type, group_size, true, n, k, mode).ok()?;
+    let mv = format!("qmv_{type_suffix}_g{group_size}_b{}_fast", bits);
     Some((mm, mv))
 }
 
@@ -303,6 +324,7 @@ pub fn encode_quantized_matmul(
     kernel_data_type: DataType,
     group_size: usize,
     transpose: bool,
+    mode: QuantizationMode,
     args: QuantizedMatmulArguments,
 ) -> Result<(), QuantizedMatmulError> {
     let kernel_name = select_qmm_kernel_name(
@@ -311,6 +333,7 @@ pub fn encode_quantized_matmul(
         transpose,
         args.n as usize,
         args.k as usize,
+        mode,
     )?;
 
     let kernel = QuantizedMatmulKernel::new(

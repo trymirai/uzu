@@ -184,12 +184,16 @@ impl QuantizedLinearKernelBlock {
             };
 
         let g = config.group_size;
-        let Some((kernel_name_mm, kernel_name_mv)) =
-            quantized_kernel_names(kernel_data_type, g, output_dim, input_dim)
-        else {
+        let Some((kernel_name_mm, kernel_name_mv)) = quantized_kernel_names(
+            kernel_data_type,
+            g,
+            output_dim,
+            input_dim,
+            config.weight_quantization_mode,
+        ) else {
             return Err(MTLError::Generic(format!(
-                "Unsupported group size {} for transposed {:?} kernel",
-                g, kernel_data_type
+                "Unsupported group size {} or bits {:?} for transposed {:?} kernel",
+                g, config.weight_quantization_mode, kernel_data_type
             )));
         };
 

@@ -23,38 +23,56 @@ inline constexpr short get_bytes_per_pack() {
 
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector(const device T* x, thread U* x_thread) {
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U sum = 0;
-  for (int i = 0; i < values_per_thread; i += 4) {
-    sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
-    x_thread[i] = x[i];
-    x_thread[i + 1] = x[i + 1] / 16.0f;
-    x_thread[i + 2] = x[i + 2] / 256.0f;
-    x_thread[i + 3] = x[i + 3] / 4096.0f;
+  if (bits == 4) {
+    for (int i = 0; i < values_per_thread; i += 4) {
+      sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
+      x_thread[i] = x[i];
+      x_thread[i + 1] = x[i + 1] / 16.0f;
+      x_thread[i + 2] = x[i + 2] / 256.0f;
+      x_thread[i + 3] = x[i + 3] / 4096.0f;
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      sum += x[i];
+      x_thread[i] = x[i];
+    }
   }
   return sum;
 }
 
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
-  static_assert(bits == 4, "Only int4 supported");
-
-  const U scale_lut[4] = {
-    static_cast<U>(1.0f),
-    static_cast<U>(1.0f / 16.0f),
-    static_cast<U>(1.0f / 256.0f),
-    static_cast<U>(1.0f / 4096.0f)
-  };
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U sum = 0;
-  for (int i = 0; i < values_per_thread; ++i) {
-    x_thread[i] = 0;
-  }
-  for (int i = 0; i < N; ++i) {
-    U v = x[i];
-    sum += v;
-    x_thread[i] = v * scale_lut[i & 3];
+  if (bits == 4) {
+    const U scale_lut[4] = {
+      static_cast<U>(1.0f),
+      static_cast<U>(1.0f / 16.0f),
+      static_cast<U>(1.0f / 256.0f),
+      static_cast<U>(1.0f / 4096.0f)
+    };
+
+    for (int i = 0; i < values_per_thread; ++i) {
+      x_thread[i] = 0;
+    }
+    for (int i = 0; i < N; ++i) {
+      U v = x[i];
+      sum += v;
+      x_thread[i] = v * scale_lut[i & 3];
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < N; ++i) {
+      U v = x[i];
+      sum += v;
+      x_thread[i] = v;
+    }
+    for (int i = N; i < values_per_thread; ++i) {
+      x_thread[i] = 0;
+    }
   }
   return sum;
 }
@@ -66,16 +84,22 @@ inline U qdot(
     U scale,
     U bias,
     U sum) {
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U accum = 0;
-  const device uint16_t* ws = (const device uint16_t*)w;
-  for (int i = 0; i < (values_per_thread / 4); i++) {
-    accum +=
-        (x_thread[4 * i] * (ws[i] & 0x000f) +
-         x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
-         x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
-         x_thread[4 * i + 3] * (ws[i] & 0xf000));
+  if (bits == 4) {
+    const device uint16_t* ws = (const device uint16_t*)w;
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      accum +=
+          (x_thread[4 * i] * (ws[i] & 0x000f) +
+           x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
+           x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
+           x_thread[4 * i + 3] * (ws[i] & 0xf000));
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      accum += x_thread[i] * w[i];
+    }
   }
   return scale * accum + sum * bias;
 }
@@ -86,25 +110,31 @@ inline U qdot_zero_point(
     const thread U* x_thread,
     U scale,
     U zero_point) {
-  static_assert(bits == 4, "Only int4 supported");
-
-  const device uint16_t* ws = (const device uint16_t*)w;
-  const uint16_t zp0 = static_cast<uint16_t>(zero_point);
-  const uint16_t zp1 = static_cast<uint16_t>(zero_point) << 4;
-  const uint16_t zp2 = static_cast<uint16_t>(zero_point) << 8;
-  const uint16_t zp3 = static_cast<uint16_t>(zero_point) << 12;
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U accum = 0;
-  for (int i = 0; i < (values_per_thread / 4); i++) {
-    uint16_t word = ws[i];
-    accum += x_thread[4 * i] *
-        static_cast<U>(static_cast<int>(word & 0x000f) - static_cast<int>(zp0));
-    accum += x_thread[4 * i + 1] *
-        static_cast<U>(static_cast<int>(word & 0x00f0) - static_cast<int>(zp1));
-    accum += x_thread[4 * i + 2] *
-        static_cast<U>(static_cast<int>(word & 0x0f00) - static_cast<int>(zp2));
-    accum += x_thread[4 * i + 3] *
-        static_cast<U>(static_cast<int>(word & 0xf000) - static_cast<int>(zp3));
+  if (bits == 4) {
+    const device uint16_t* ws = (const device uint16_t*)w;
+    const uint16_t zp0 = static_cast<uint16_t>(zero_point);
+    const uint16_t zp1 = static_cast<uint16_t>(zero_point) << 4;
+    const uint16_t zp2 = static_cast<uint16_t>(zero_point) << 8;
+    const uint16_t zp3 = static_cast<uint16_t>(zero_point) << 12;
+
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      uint16_t word = ws[i];
+      accum += x_thread[4 * i] *
+          static_cast<U>(static_cast<int>(word & 0x000f) - static_cast<int>(zp0));
+      accum += x_thread[4 * i + 1] *
+          static_cast<U>(static_cast<int>(word & 0x00f0) - static_cast<int>(zp1));
+      accum += x_thread[4 * i + 2] *
+          static_cast<U>(static_cast<int>(word & 0x0f00) - static_cast<int>(zp2));
+      accum += x_thread[4 * i + 3] *
+          static_cast<U>(static_cast<int>(word & 0xf000) - static_cast<int>(zp3));
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      accum += x_thread[i] * (static_cast<U>(w[i]) - zero_point);
+    }
   }
   return scale * accum;
 }
@@ -117,27 +147,33 @@ inline U qdot_safe(
     U bias,
     U sum,
     int N) {
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U accum = 0;
-  const device uint16_t* ws = (const device uint16_t*)w;
+  if (bits == 4) {
+    const device uint16_t* ws = (const device uint16_t*)w;
 
-  int full = N / 4;
-  for (int i = 0; i < full; i++) {
-    accum +=
-        (x_thread[4 * i] * (ws[i] & 0x000f) +
-         x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
-         x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
-         x_thread[4 * i + 3] * (ws[i] & 0xf000));
-  }
+    int full = N / 4;
+    for (int i = 0; i < full; i++) {
+      accum +=
+          (x_thread[4 * i] * (ws[i] & 0x000f) +
+           x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
+           x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
+           x_thread[4 * i + 3] * (ws[i] & 0xf000));
+    }
 
-  int rem = N & 3;
-  if (rem > 0) {
-    uint16_t wv = ws[full];
-    int base = 4 * full;
-    if (rem > 0) accum += x_thread[base] * (wv & 0x000f);
-    if (rem > 1) accum += x_thread[base + 1] * (wv & 0x00f0);
-    if (rem > 2) accum += x_thread[base + 2] * (wv & 0x0f00);
+    int rem = N & 3;
+    if (rem > 0) {
+      uint16_t wv = ws[full];
+      int base = 4 * full;
+      if (rem > 0) accum += x_thread[base] * (wv & 0x000f);
+      if (rem > 1) accum += x_thread[base + 1] * (wv & 0x00f0);
+      if (rem > 2) accum += x_thread[base + 2] * (wv & 0x0f00);
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < N; i++) {
+      accum += x_thread[i] * w[i];
+    }
   }
 
   return scale * accum + sum * bias;
@@ -145,12 +181,18 @@ inline U qdot_safe(
 
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local) {
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  U s[2] = {scale, scale / static_cast<U>(16.0f)};
-  for (int i = 0; i < (N / 2); i++) {
-    w_local[2 * i] = s[0] * (w[i] & 0x0f) + bias;
-    w_local[2 * i + 1] = s[1] * (w[i] & 0xf0) + bias;
+  if (bits == 4) {
+    U s[2] = {scale, scale / static_cast<U>(16.0f)};
+    for (int i = 0; i < (N / 2); i++) {
+      w_local[2 * i] = s[0] * (w[i] & 0x0f) + bias;
+      w_local[2 * i + 1] = s[1] * (w[i] & 0xf0) + bias;
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < N; i++) {
+      w_local[i] = scale * w[i] + bias;
+    }
   }
 }
 
@@ -194,7 +236,7 @@ template <
 struct QuantizedBlockLoader {
   static_assert(BCOLS <= group_size, "Group size should be larger than columns");
   static_assert(group_size % BCOLS == 0, "Group size should be divisible by columns");
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
   UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
@@ -343,7 +385,7 @@ template <
 struct QuantizedBlockLoaderZp {
   static_assert(BCOLS <= group_size, "Group size should be larger than columns");
   static_assert(group_size % BCOLS == 0, "Group size should be divisible by columns");
-  static_assert(bits == 4, "Only int4 supported");
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
   UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
@@ -392,15 +434,21 @@ struct QuantizedBlockLoaderZp {
         src(src_ + bi * src_ld * bytes_per_pack / pack_factor + bj * bytes_per_pack),
         scales(reduction_dim == 1 ? (scales_ + bi * groups_per_row_) : scales_),
         scales_row_start(reduction_dim == 1 ? (scales_ + bi * groups_per_row_) : scales_),
-        zps_row_start(reduction_dim == 1 ? (zero_points_row_start_ + bi * ((groups_per_row_ + 1) / 2))
-                                          : zero_points_row_start_) {}
+        zps_row_start(reduction_dim == 1 
+            ? (zero_points_row_start_ + bi * (bits == 4 ? ((groups_per_row_ + 1) / 2) : groups_per_row_))
+            : zero_points_row_start_) {}
 
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
     int g = reduction_dim == 0 ? (k_base / group_size)
                                : (int)(scales - scales_row_start);
-    const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
-    uint8_t zp_b = *zp_ptr;
-    uint zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+    uint zp_n;
+    if (bits == 4) {
+        const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
+        uint8_t zp_b = *zp_ptr;
+        zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+    } else {
+        zp_n = zps_row_start[g];
+    }
     T scale_val = reduction_dim == 0 ? scales_row_start[g] : *scales;
     out_scale = scale_val;
     out_bias = static_cast<T>(-scale_val * static_cast<T>(zp_n));
@@ -425,9 +473,40 @@ struct QuantizedBlockLoaderZp {
       return;
     }
 
-    if (reduction_dim == 1 && bi >= src_tile_dim.x) {
-      for (int i = 0; i < n_reads * pack_factor; i++) {
-        dst[i] = T(0);
+    if (reduction_dim == 1) {
+      // N-tail: zero out rows beyond valid outputs
+      if (bi >= src_tile_dim.x) {
+        for (int i = 0; i < n_reads * pack_factor; i++) {
+          dst[i] = T(0);
+        }
+        return;
+      }
+
+      // K-tail: strictly limit to valid packs and zero trailing nibbles
+      int valid_cols = src_tile_dim.y; // 0..BK
+      int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
+
+      T scale;
+      T bias;
+      current_scale_bias(scale, bias);
+      for (int i = 0; i < n_reads; i++) {
+        int pack_idx = bj + i; // global pack index across the BK packs
+        if (pack_idx < valid_packs) {
+          dequantize<T, pack_factor, bits>(
+              src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+          if (pack_idx == valid_packs - 1) {
+            int rem = valid_cols - (valid_packs - 1) * pack_factor;
+            if (rem > 0 && rem < pack_factor) {
+              for (int r = rem; r < pack_factor; ++r) {
+                dst[i * pack_factor + r] = T(0);
+              }
+            }
+          }
+        } else {
+          for (int j = 0; j < pack_factor; ++j) {
+            dst[i * pack_factor + j] = T(0);
+          }
+        }
       }
       return;
     }
@@ -590,7 +669,7 @@ void qmm_impl(
   } else {
     // GroupQuantized: uses zero-points
     using loader_w_t = QuantizedBlockLoaderZp<T, BK, BN, BN_padded, 0, WM * WN * 32, group_size, bits>;
-    const device uint8_t* zero_points_row_start = zero_points + y_col * ((groups_per_row + 1) / 2);
+    const device uint8_t* zero_points_row_start = zero_points + y_col * (bits == 4 ? ((groups_per_row + 1) / 2) : groups_per_row);
     loader_w_t loader_w(wl, scales, zero_points_row_start, N, groups_per_row, Ws, simd_gid, simd_lid);
     qmm_core<loader_w_t, loader_x_t, mma_t, T, aligned_K, BM, BK, BN>(
         loader_x, loader_w, mma_op, num_els, num_outs, K, y, N, Xs, Ws, lid);
@@ -697,7 +776,7 @@ void qmm_transposed_impl(
   const device uint8_t* w_block = wl + y_col * K_w;
   const device T* scales_row = scales + y_col * K_g;
   const device T* biases_row = biases + y_col * K_g;
-  const device uint8_t* zero_points_row = zero_points + y_col * ((K_g + 1) / 2);
+  const device uint8_t* zero_points_row = zero_points + y_col * (bits == 4 ? ((K_g + 1) / 2) : K_g);
   device T* y_block = y + y_row * static_cast<int64_t>(N) + y_col;
 
   const short num_els = min(BM, M - y_row);
@@ -777,12 +856,13 @@ void qmv_impl_dispatch(
     ws += out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
     scales += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
     
+    const int zp_stride = bits == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
     const device T* biases_row_base = nullptr;
     if (UseMlx) {
       biases_row_base = biases + out_row * in_vec_size_g;
     } else {
-      zps_row_base = zero_points + out_row * ((in_vec_size_g + 1) / 2);
+      zps_row_base = zero_points + out_row * zp_stride;
     }
 
     x += tid.x * K + simd_lid * values_per_thread;
@@ -805,9 +885,14 @@ void qmv_impl_dispatch(
           U b = static_cast<U>(bl[g]);
           result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
         } else {
-          const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-          uint8_t zp_b = zl[g >> 1];
-          U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+          const device uint8_t* zl = zps_row_base + row * zp_stride;
+          U zp;
+          if (bits == 4) {
+            uint8_t zp_b = zl[g >> 1];
+            zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+          } else {
+            zp = static_cast<U>(zl[g]);
+          }
           result[row] +=
               qdot_zero_point<U, values_per_thread, bits>(wl, x_thread, s, zp);
         }
@@ -838,9 +923,14 @@ void qmv_impl_dispatch(
                 U b = static_cast<U>(bl[g]);
                 result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
             } else {
-                const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-                uint8_t zp_b = zl[g >> 1];
-                U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+                const device uint8_t* zl = zps_row_base + row * zp_stride;
+                U zp;
+                if (bits == 4) {
+                    uint8_t zp_b = zl[g >> 1];
+                    zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+                } else {
+                    zp = static_cast<U>(zl[g]);
+                }
                 result[row] += qdot_zero_point<U, values_per_thread, bits>(
                     wl, x_thread, s, zp);
             }
@@ -859,12 +949,13 @@ void qmv_impl_dispatch(
     ws += used_out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
     scales += used_out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
     
+    const int zp_stride = bits == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
     const device T* biases_row_base = nullptr;
     if (UseMlx) {
       biases_row_base = biases + used_out_row * in_vec_size_g;
     } else {
-      zps_row_base = zero_points + used_out_row * ((in_vec_size_g + 1) / 2);
+      zps_row_base = zero_points + used_out_row * zp_stride;
     }
 
     x += tid.x * K + simd_lid * values_per_thread;
@@ -886,9 +977,14 @@ void qmv_impl_dispatch(
           U b = static_cast<U>(bl[g]);
           result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
         } else {
-          const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-          uint8_t zp_b = zl[g >> 1];
-          U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+          const device uint8_t* zl = zps_row_base + row * zp_stride;
+          U zp;
+          if (bits == 4) {
+            uint8_t zp_b = zl[g >> 1];
+            zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+          } else {
+            zp = static_cast<U>(zl[g]);
+          }
           result[row] +=
               qdot_zero_point<U, values_per_thread, bits>(wl, x_thread, s, zp);
         }
@@ -920,9 +1016,14 @@ void qmv_impl_dispatch(
                 result[row] += qdot_safe<U, values_per_thread, bits>(
                     wl, x_thread, s, b, sum, remaining);
             } else {
-                const device uint8_t* zl = zps_row_base + row * ((in_vec_size_g + 1) / 2);
-                uint8_t zp_b = zl[g >> 1];
-                U zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+                const device uint8_t* zl = zps_row_base + row * zp_stride;
+                U zp;
+                if (bits == 4) {
+                    uint8_t zp_b = zl[g >> 1];
+                    zp = static_cast<U>((g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+                } else {
+                    zp = static_cast<U>(zl[g]);
+                }
                 result[row] += qdot_zero_point<U, values_per_thread, bits>(
                     wl, x_thread, s, zp);
             }
@@ -1000,11 +1101,17 @@ void qmv_fast_impl(
   if (kUseMlxQuant) {
     biases += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
   } else {
-    zp_stride = (in_vec_size_g + 1) / 2;
-    zps = zero_points + out_row * zp_stride;
-    int g_offset = simd_lid / scale_step_per_thread;
-    zps += g_offset / 2;
-    high_nibble = (g_offset & 1);
+    if (bits == 4) {
+        zp_stride = (in_vec_size_g + 1) / 2;
+        zps = zero_points + out_row * zp_stride;
+        int g_offset = simd_lid / scale_step_per_thread;
+        zps += g_offset / 2;
+        high_nibble = (g_offset & 1);
+    } else {
+        zp_stride = in_vec_size_g;
+        zps = zero_points + out_row * zp_stride;
+        zps += simd_lid / scale_step_per_thread;
+    }
   }
 
   x += tid.x * in_vec_size + simd_lid * values_per_thread;
@@ -1025,7 +1132,8 @@ void qmv_fast_impl(
       } else {
         const device uint8_t* zl = zps + row * zp_stride;
         uint8_t zp_byte = *zl;
-        U zp = static_cast<U>(high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F));
+        U zp = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte >> 4) : (zp_byte & 0x0F));
+        if (bits == 8) zp = static_cast<U>(zp_byte);
         result[row] += qdot_zero_point<U, values_per_thread, bits>(wl, x_thread, s, zp);
       }
     }
@@ -1035,7 +1143,11 @@ void qmv_fast_impl(
     if (kUseMlxQuant) {
       biases += block_size / group_size;
     } else {
-      zps += (block_size / group_size) / 2;
+      if (bits == 4) {
+          zps += (block_size / group_size) / 2;
+      } else {
+          zps += block_size / group_size;
+      }
     }
     x += block_size;
   }
@@ -1090,7 +1202,11 @@ void qvm_impl_dispatch(
   if (UseMlx) {
     biases_row = biases + out_col * in_vec_size_g;
   } else {
-    zp_stride = (in_vec_size_g + 1) / 2;
+    if (bits == 4) {
+        zp_stride = (in_vec_size_g + 1) / 2;
+    } else {
+        zp_stride = in_vec_size_g;
+    }
     zps_row = zero_points + out_col * zp_stride;
   }
 
@@ -1119,8 +1235,13 @@ void qvm_impl_dispatch(
             w_row + w_offset, x_thread, scale, bias, x_sum, remaining);
       } else {
         const device uint8_t* zp_row = zps_row + n * zp_stride;
-        uint8_t zp_b = zp_row[group_idx >> 1];
-        U zp = static_cast<U>((group_idx & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+        U zp;
+        if (bits == 4) {
+            uint8_t zp_b = zp_row[group_idx >> 1];
+            zp = static_cast<U>((group_idx & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
+        } else {
+            zp = static_cast<U>(zp_row[group_idx]);
+        }
         U bias = -scale * zp;
         
         result[n] += qdot_safe<U, pack_factor, bits>(
@@ -1406,6 +1527,132 @@ template [[host_name("qmv_f32_g128_b4_fast")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+template [[host_name("qmv_f16_g32_b8_fast")]]
+[[kernel]] void qmv_fast<half, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f16_g64_b8_fast")]]
+[[kernel]] void qmv_fast<half, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f16_g128_b8_fast")]]
+[[kernel]] void qmv_fast<half, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g32_b8_fast")]]
+[[kernel]] void qmv_fast<bfloat, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g64_b8_fast")]]
+[[kernel]] void qmv_fast<bfloat, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g128_b8_fast")]]
+[[kernel]] void qmv_fast<bfloat, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g32_b8_fast")]]
+[[kernel]] void qmv_fast<float, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g64_b8_fast")]]
+[[kernel]] void qmv_fast<float, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g128_b8_fast")]]
+[[kernel]] void qmv_fast<float, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 // Group size 32 (F16)
 template [[host_name("qmm_f16_g32_b4")]]
 [[kernel]] void qmm<half, 32, 4, false>(
@@ -1487,6 +1734,99 @@ template [[host_name("qmv_f16_g32_b4")]]
 
 template [[host_name("qvm_f16_g32_b4")]]
 [[kernel]] void qvm<half, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device half* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+// Group size 32 (F16) - 8 bit
+template [[host_name("qmm_f16_g32_b8")]]
+[[kernel]] void qmm<half, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g32_b8")]]
+[[kernel]] void qmm_transposed<half, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g32_b8_unaligned")]]
+[[kernel]] void qmm_transposed<half, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f16_g32_b8_alignedk")]]
+[[kernel]] void qmm<half, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f16_g32_b8")]]
+[[kernel]] void qmv<half, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f16_g32_b8")]]
+[[kernel]] void qvm<half, 32, 8>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
@@ -1592,6 +1932,99 @@ template [[host_name("qvm_f16_g64_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+// Group size 64 (F16) - 8 bit
+template [[host_name("qmm_f16_g64_b8")]]
+[[kernel]] void qmm<half, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f16_g64_b8_alignedk")]]
+[[kernel]] void qmm<half, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g64_b8")]]
+[[kernel]] void qmm_transposed<half, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g64_b8_unaligned")]]
+[[kernel]] void qmm_transposed<half, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f16_g64_b8")]]
+[[kernel]] void qmv<half, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f16_g64_b8")]]
+[[kernel]] void qvm<half, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device half* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 // Group size 128 (F16)
 template [[host_name("qmm_f16_g128_b4")]]
 [[kernel]] void qmm<half, 128, 4, false>(
@@ -1673,6 +2106,99 @@ template [[host_name("qmv_f16_g128_b4")]]
 
 template [[host_name("qvm_f16_g128_b4")]]
 [[kernel]] void qvm<half, 128, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device half* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+// Group size 128 (F16) - 8 bit
+template [[host_name("qmm_f16_g128_b8")]]
+[[kernel]] void qmm<half, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f16_g128_b8_alignedk")]]
+[[kernel]] void qmm<half, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g128_b8")]]
+[[kernel]] void qmm_transposed<half, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f16_g128_b8_unaligned")]]
+[[kernel]] void qmm_transposed<half, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f16_g128_b8")]]
+[[kernel]] void qmv<half, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f16_g128_b8")]]
+[[kernel]] void qvm<half, 128, 8>(
     const device uint32_t* w [[buffer(0)]],
     const device half* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
@@ -1778,6 +2304,99 @@ template [[host_name("qvm_f32_g32_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+// Group size 32 (F32) - 8 bit
+template [[host_name("qmm_f32_g32_b8")]]
+[[kernel]] void qmm<float, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g32_b8")]]
+[[kernel]] void qmm_transposed<float, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g32_b8_unaligned")]]
+[[kernel]] void qmm_transposed<float, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f32_g32_b8_alignedk")]]
+[[kernel]] void qmm<float, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g32_b8")]]
+[[kernel]] void qmv<float, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f32_g32_b8")]]
+[[kernel]] void qvm<float, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device float* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 // Group size 64 (F32)
 template [[host_name("qmm_f32_g64_b4")]]
 [[kernel]] void qmm<float, 64, 4, false>(
@@ -1859,6 +2478,99 @@ template [[host_name("qmv_f32_g64_b4")]]
 
 template [[host_name("qvm_f32_g64_b4")]]
 [[kernel]] void qvm<float, 64, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device float* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+// Group size 64 (F32) - 8 bit
+template [[host_name("qmm_f32_g64_b8")]]
+[[kernel]] void qmm<float, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f32_g64_b8_alignedk")]]
+[[kernel]] void qmm<float, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g64_b8")]]
+[[kernel]] void qmm_transposed<float, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g64_b8_unaligned")]]
+[[kernel]] void qmm_transposed<float, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g64_b8")]]
+[[kernel]] void qmv<float, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f32_g64_b8")]]
+[[kernel]] void qvm<float, 64, 8>(
     const device uint32_t* w [[buffer(0)]],
     const device float* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
@@ -1964,6 +2676,99 @@ template [[host_name("qvm_f32_g128_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+// Group size 128 (F32) - 8 bit
+template [[host_name("qmm_f32_g128_b8")]]
+[[kernel]] void qmm<float, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_f32_g128_b8_alignedk")]]
+[[kernel]] void qmm<float, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g128_b8")]]
+[[kernel]] void qmm_transposed<float, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_f32_g128_b8_unaligned")]]
+[[kernel]] void qmm_transposed<float, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_f32_g128_b8")]]
+[[kernel]] void qmv<float, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_f32_g128_b8")]]
+[[kernel]] void qvm<float, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device float* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 // Group size 32 (BF16)
 template [[host_name("qmm_bf16_g32_b4")]]
 [[kernel]] void qmm<bfloat, 32, 4, false>(
@@ -2045,6 +2850,99 @@ template [[host_name("qmv_bf16_g32_b4")]]
 
 template [[host_name("qvm_bf16_g32_b4")]]
 [[kernel]] void qvm<bfloat, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device bfloat* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+// Group size 32 (BF16) - 8 bit
+template [[host_name("qmm_bf16_g32_b8")]]
+[[kernel]] void qmm<bfloat, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_bf16_g32_b8_alignedk")]]
+[[kernel]] void qmm<bfloat, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g32_b8")]]
+[[kernel]] void qmm_transposed<bfloat, 32, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g32_b8_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 32, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g32_b8")]]
+[[kernel]] void qmv<bfloat, 32, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_bf16_g32_b8")]]
+[[kernel]] void qvm<bfloat, 32, 8>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
@@ -2150,6 +3048,99 @@ template [[host_name("qvm_bf16_g64_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+// Group size 64 (BF16) - 8 bit
+template [[host_name("qmm_bf16_g64_b8")]]
+[[kernel]] void qmm<bfloat, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_bf16_g64_b8_alignedk")]]
+[[kernel]] void qmm<bfloat, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g64_b8")]]
+[[kernel]] void qmm_transposed<bfloat, 64, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g64_b8_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 64, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g64_b8")]]
+[[kernel]] void qmv<bfloat, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_bf16_g64_b8")]]
+[[kernel]] void qvm<bfloat, 64, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device bfloat* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 // Group size 128 (BF16)
 template [[host_name("qmm_bf16_g128_b4")]]
 [[kernel]] void qmm<bfloat, 128, 4, false>(
@@ -2243,6 +3234,99 @@ template [[host_name("qvm_bf16_g128_b4")]]
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
 
+// Group size 128 (BF16) - 8 bit
+template [[host_name("qmm_bf16_g128_b8")]]
+[[kernel]] void qmm<bfloat, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_bf16_g128_b8_alignedk")]]
+[[kernel]] void qmm<bfloat, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g128_b8")]]
+[[kernel]] void qmm_transposed<bfloat, 128, 8, true>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmm_transposed_bf16_g128_b8_unaligned")]]
+[[kernel]] void qmm_transposed<bfloat, 128, 8, false>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qmv_bf16_g128_b8")]]
+[[kernel]] void qmv<bfloat, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
+template [[host_name("qvm_bf16_g128_b8")]]
+[[kernel]] void qvm<bfloat, 128, 8>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device bfloat* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]);
+
 template [[host_name("qmm_transposed_bf16_g128_b4_64x64")]]
 [[kernel]] void qmm_transposed<bfloat, 128, 4, true, 64, 32, 64>(
     const device uint32_t* w [[buffer(0)]],
@@ -2274,6 +3358,7 @@ template [[host_name("qmm_transposed_bf16_g128_b4_64x128")]]
     uint lid [[thread_index_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]);
+
 
 template [[host_name("qmm_transposed_bf16_g128_b4_128x64")]]
 [[kernel]] void qmm_transposed<bfloat, 128, 4, true, 128, 32, 64>(
