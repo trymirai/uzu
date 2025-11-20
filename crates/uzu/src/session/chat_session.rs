@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-pub struct Session {
+pub struct ChatSession {
     pub model_path: PathBuf,
     pub model_metadata: ModelMetadata,
 
@@ -34,7 +34,7 @@ pub struct Session {
     static_context: Option<Context>,
 }
 
-impl Session {
+impl ChatSession {
     pub fn new(
         model_path: PathBuf,
         decoding_config: DecodingConfig,
@@ -161,7 +161,7 @@ impl Session {
     }
 }
 
-impl Session {
+impl ChatSession {
     fn extend(
         &mut self,
         input: Input,
@@ -442,7 +442,7 @@ impl Session {
     }
 }
 
-impl Session {
+impl ChatSession {
     fn build_stats(
         prefill_result: PrefillResult,
         prefill_duration: f64,
@@ -536,7 +536,7 @@ impl Session {
     }
 }
 
-impl Drop for Session {
+impl Drop for ChatSession {
     fn drop(&mut self) {
         autoreleasepool(|_| {
             self.generator = None;

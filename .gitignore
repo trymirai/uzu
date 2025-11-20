@@ -24,3 +24,4 @@ target/
 # Models
 models/
 .github/copilot-instructions.md
+.cursor

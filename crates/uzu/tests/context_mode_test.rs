@@ -2,7 +2,7 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::session::{
-    Session,
+    ChatSession,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
         ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
@@ -27,7 +27,7 @@ fn build_decoding_config() -> DecodingConfig {
 }
 
 fn request(
-    session: &mut Session,
+    session: &mut ChatSession,
     input_text: String,
     tokens_limit: u64,
 ) -> String {
@@ -55,7 +55,7 @@ fn test_context_mode_none() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::None);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        ChatSession::new(build_model_path(), decoding_config).unwrap();
 
     let tokens_limit = 48;
     let input_text = "What is Alice's occupation?".to_string();
@@ -95,7 +95,7 @@ fn test_context_mode_static() {
             ]),
         });
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        ChatSession::new(build_model_path(), decoding_config).unwrap();
 
     let tokens_limit = 48;
     let response_occupation = request(
@@ -140,12 +140,12 @@ fn test_context_mode_dynamic() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::Dynamic);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        ChatSession::new(build_model_path(), decoding_config).unwrap();
 
-    let update = |session: &mut Session, input_text: String| {
+    let update = |session: &mut ChatSession, input_text: String| {
         request(session, input_text, 0)
     };
-    let ask = |session: &mut Session, input_text: String| {
+    let ask = |session: &mut ChatSession, input_text: String| {
         request(session, input_text, 48)
     };
 
@@ -193,7 +193,7 @@ fn test_context_mode_dynamic_scenario() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::Dynamic);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        ChatSession::new(build_model_path(), decoding_config).unwrap();
 
     let user_prompts = vec![
         String::from("Tell about London"),
