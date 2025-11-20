@@ -10,7 +10,6 @@ use crate::backends::metal::{KernelDataType, MTLContext};
 
 pub const SSD_PREFILL_CHUNK: usize = 64;
 const SSD_PREFILL_THREADGROUP_WIDTH: u64 = SSD_PREFILL_CHUNK as u64;
-const SSD_PREFILL_SINGLE_THREADS: u64 = 32;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {
@@ -293,6 +292,7 @@ impl SSDPrefillKernel {
         if args.channels == 0 || args.head_dim == 0 || args.suffix_len == 0 {
             return Ok(());
         }
+
         compute_encoder.set_compute_pipeline_state(&self.single_pass);
         self.bind_common_buffers(compute_encoder, args);
         let channels = args.channels as u32;
@@ -308,13 +308,13 @@ impl SSDPrefillKernel {
             &head_dim as *const u32 as *const _,
         );
         let threads_per_threadgroup = MTLSize {
-            width: SSD_PREFILL_SINGLE_THREADS,
+            width: args.state_size as u64,
             height: 1,
             depth: 1,
         };
         let pair_count = args.channels as u64 * args.head_dim as u64;
         let total_threads = MTLSize {
-            width: pair_count * SSD_PREFILL_SINGLE_THREADS,
+            width: pair_count * threads_per_threadgroup.width,
             height: 1,
             depth: 1,
         };

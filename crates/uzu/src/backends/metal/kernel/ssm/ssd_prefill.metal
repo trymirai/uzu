@@ -5,7 +5,9 @@
 using namespace metal;
 
 constant ushort SSM_PREFILL_CHUNK = 64;
-constant ushort SSM_PREFILL_MAX_STATE = 64;
+constant ushort SSM_PREFILL_MAX_STATE = 1024;
+constant ushort SSM_PREFILL_MAX_SIMD_GROUPS =
+    (SSM_PREFILL_MAX_STATE + 31) / 32;
 
 struct SILU {
   template <typename T>
@@ -50,14 +52,20 @@ kernel void ssd_prefill_kernel(
 ) {
     const uint simd_width = 32;
     const int state_dim = state_size;
-
     const uint total_pairs = num_heads * head_dim;
     const uint pair_idx = tg_pos.x;
-    if (pair_idx >= total_pairs) {
+    if (pair_idx >= total_pairs || state_dim <= 0) {
         return;
     }
 
+    threadgroup float simd_partials[SSM_PREFILL_MAX_SIMD_GROUPS];
+
     const uint lane_idx = uint(lane);
+    const bool lane_active = lane_idx < uint(state_dim);
+    const uint simd_lane = lane_idx & (simd_width - 1);
+    const uint simd_group_idx = lane_idx / simd_width;
+    const uint simd_groups =
+        max(1u, (uint(state_dim) + simd_width - 1) / simd_width);
     const uint h_idx = pair_idx / head_dim;
     const uint dh_idx = pair_idx % head_dim;
     const uint safe_group = uint(max(group_size, 1));
@@ -83,6 +91,17 @@ kernel void ssd_prefill_kernel(
     const size_t cb_group_base = size_t(group_idx) * cb_group_stride;
     const float d_scalar = float(D[h_idx]);
 
+    size_t lane_state_idx = 0;
+    float lane_state = 0.0f;
+    size_t lane_cb_idx = 0;
+    if (lane_active) {
+        lane_state_idx =
+            state_base + size_t(lane_idx) * state_inner_stride;
+        lane_state = float(state[lane_state_idx]);
+        lane_cb_idx =
+            cb_group_base + size_t(lane_idx) * cb_state_stride;
+    }
+
     for (size_t token = 0; token < suffix_len; ++token) {
         const size_t x_idx = token * x_token_stride + x_base;
         const size_t dt_idx = token * dt_token_stride + dt_base;
@@ -95,32 +114,33 @@ kernel void ssd_prefill_kernel(
         const float skip = d_scalar * x_val;
         const float dt_scaled_input = x_val;
 
-        float dot_acc = 0.0f;
-        for (int base = 0; base < state_dim; base += int(simd_width)) {
-            const int idx = base + int(lane_idx);
-            const bool has_idx = idx < state_dim;
-            float contrib = 0.0f;
-            if (has_idx) {
-                const size_t state_idx =
-                    state_base + size_t(idx) * state_inner_stride;
-                const float prev_state = float(state[state_idx]);
-                const size_t cb_idx =
-                    cb_group_base + size_t(idx) * cb_state_stride
-                    + token * cb_token_stride;
-                const float b_val = float(B[cb_idx]);
-                const float c_val = float(C[cb_idx]);
-                const float new_state =
-                    decay_val * prev_state + dt_scaled_input * b_val;
-                state[state_idx] = static_cast<T>(new_state);
-                contrib = new_state * c_val;
-            }
-            dot_acc += contrib;
+        float contrib = 0.0f;
+
+        if (lane_active) {
+            const float b_val = float(B[lane_cb_idx]);
+            const float c_val = float(C[lane_cb_idx]);
+            lane_state = decay_val * lane_state + dt_scaled_input * b_val;
+            contrib = lane_state * c_val;
+            lane_cb_idx += cb_token_stride;
         }
 
-        float dot = simd_sum(dot_acc);
+        float warp_sum = simd_sum(contrib);
+        if (lane_active && simd_lane == 0) {
+            simd_partials[simd_group_idx] = warp_sum;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
         if (lane_idx == 0) {
+            float dot = 0.0f;
+            for (uint g = 0; g < simd_groups; ++g) {
+                dot += simd_partials[g];
+            }
             y[x_idx] = static_cast<T>((skip + dot) * gate);
         }
+    }
+
+    if (lane_active) {
+        state[lane_state_idx] = static_cast<T>(lane_state);
     }
 }
 
