@@ -1,6 +1,9 @@
-use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use block::ConcreteBlock;
+use itertools::izip;
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -15,12 +18,12 @@ use crate::{
         ForwardPassState, INVALID_POSITION,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
-    linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
         types::Error,
     },
+    trie::{TrieCreationConfig, TrieNode},
     utils::env_utils::MetalEnvVar,
 };
 
@@ -73,86 +76,76 @@ impl Generator {
 
         self.tokens.extend(tokens.clone());
 
+        let tokens_length = tokens.len();
+
         let prefill_step_size = self
             .decoding_config
             .prefill_step_size
             .resolve(&self.context.model_config);
-
-        let tokens_length = tokens.len();
-        let number_of_prefill_steps =
-            (tokens_length as f32 / prefill_step_size as f32).ceil() as usize;
-        let total_prefill_tokens_count =
-            number_of_prefill_steps * prefill_step_size;
-        let unused_tokens_count = total_prefill_tokens_count - tokens_length;
+        let prefill_steps = tokens_length.div_ceil(prefill_step_size);
+        let prefill_size = prefill_steps * prefill_step_size;
 
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let speculated_suffix = TokenTrie::from_speculator(
+
+        let suffix_length = prefill_size - tokens_length;
+        let suffix_root = TrieNode::from_speculator(
             &tokens,
             &mut self.context.next_seed,
-            false,
             speculator.as_ref(),
             &TrieCreationConfig::default(),
-            unused_tokens_count,
-        )
-        .linearize(0, unused_tokens_count);
-
-        let zero_padding_tokens: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-
-        let padded_tokens = [
-            &tokens[..],
-            &speculated_suffix.tokens[..],
-            &zero_padding_tokens[..],
-        ]
-        .concat();
-
-        let mut padded_positions: Vec<usize> =
-            (prefix_offset..prefix_offset + tokens_length).collect();
-        padded_positions.extend(
-            speculated_suffix
-                .indices
-                .iter()
-                .map(|index| index + prefix_offset + tokens_length),
+            suffix_length + 1,
         );
-        let padding_count =
-            unused_tokens_count - speculated_suffix.tokens.len();
-        padded_positions
-            .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
+        let flat_trie = suffix_root.linearize();
+        let active_suffix_length = flat_trie.len() - 1;
 
-        let zero_padding_left_seeds: Vec<u64> = vec![0; tokens_length];
-        let zero_padding_right_seeds: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.seeds.len()];
-        let padded_seeds = [
-            &zero_padding_left_seeds[..],
-            &speculated_suffix.seeds[..],
-            &zero_padding_right_seeds[..],
-        ]
-        .concat();
+        let token_ids = tokens
+            .iter()
+            .copied()
+            .take(tokens_length - 1)
+            .chain(flat_trie.token_ids())
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
+
+        let token_positions = (prefix_offset
+            ..prefix_offset + tokens_length - 1)
+            .chain(flat_trie.token_positions().map(|trie_position| {
+                prefix_offset + tokens_length - 1 + trie_position
+            }))
+            .chain(repeat_n(
+                INVALID_POSITION,
+                suffix_length - active_suffix_length,
+            ))
+            .collect::<Box<[usize]>>();
+
+        let token_seeds = repeat_n(0, tokens_length - 1)
+            .chain(flat_trie.token_seeds())
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
-        for step in 0..number_of_prefill_steps {
+        for (step, (step_token_ids, step_token_positions, step_token_seeds)) in
+            izip!(
+                token_ids.chunks(prefill_step_size),
+                token_positions.chunks(prefill_step_size),
+                token_seeds.chunks(prefill_step_size)
+            )
+            .enumerate()
+        {
             let tokens_start_index = step * prefill_step_size;
             let tokens_end_index = tokens_start_index + prefill_step_size;
-            let tokens_for_step =
-                &padded_tokens[tokens_start_index..tokens_end_index];
-            let positions_for_step =
-                &padded_positions[tokens_start_index..tokens_end_index];
-            let active_suffix_length = positions_for_step
+            let active_suffix_length = step_token_positions
                 .iter()
                 .position(|&pos| pos == INVALID_POSITION)
                 .unwrap_or(prefill_step_size);
-            let seeds_for_step =
-                &padded_seeds[tokens_start_index..tokens_end_index];
-            let is_last_prefill_step = step == number_of_prefill_steps - 1;
+            let is_last_prefill_step = step == prefill_steps - 1;
             let should_sample_after_step =
                 sample_suffix && is_last_prefill_step;
 
-            let is_first_prefill = step == 0;
             let should_capture =
-                self.gpu_capture.should_capture_prefill(is_first_prefill);
+                self.gpu_capture.should_capture_prefill(step == 0);
 
             if should_capture {
                 let _ = self
@@ -165,9 +158,9 @@ impl Generator {
             });
 
             let task = GeneratorRunTask {
-                token_ids: tokens_for_step.to_vec(),
-                token_positions: positions_for_step.to_vec(),
-                token_seeds: seeds_for_step.to_vec(),
+                token_ids: step_token_ids,
+                token_positions: step_token_positions,
+                token_seeds: step_token_seeds,
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
                 is_prefilling: !should_sample_after_step,
@@ -196,7 +189,7 @@ impl Generator {
                     ..step_end_token_index)
                     .map(|idx| idx + prefix_offset)
                     .collect();
-                if step == number_of_prefill_steps - 1 && sample_suffix {
+                if step == prefill_steps - 1 && sample_suffix {
                     // Exclude the last token because it belongs to the suffix for sampling.
                     positions_for_step.pop();
                 }
@@ -237,42 +230,22 @@ impl Generator {
         }
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let last_suffix_start =
-            prefill_step_size * (number_of_prefill_steps - 1);
+        let last_suffix_start = prefill_step_size * (prefill_steps - 1);
+        let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let sampling_row = (tokens_length - last_suffix_start) - 1;
-        let mut current_token_index: isize = -1;
-        let mut accepted_token_indices: Vec<usize> = vec![sampling_row];
-        let mut accepted_tokens: Vec<u64> = Vec::new();
-        loop {
-            let current_index_in_window =
-                ((current_token_index + tokens_length as isize)
-                    % prefill_step_size as isize) as usize;
-            let new_token = sampled_tokens[current_index_in_window];
-            accepted_tokens.push(new_token);
-
-            if let Some(map) =
-                speculated_suffix.transition_map.get(&current_token_index)
-            {
-                if let Some(&next_token_index) = map.get(&new_token) {
-                    accepted_token_indices.push(next_token_index as usize);
-                    current_token_index = next_token_index;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens[suffix_root_index..]);
 
         self.update_cache_layers(
-            &accepted_token_indices,
+            &accepted_token_indices
+                .into_iter()
+                .map(|p| suffix_root_index + p)
+                .collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             false,
         );
 
         self.tokens.extend(accepted_tokens.clone());
-
         self.sync_prefix();
 
         Ok(PrefillResult {
@@ -286,45 +259,43 @@ impl Generator {
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let speculated_suffix = TokenTrie::from_speculator(
+
+        let suffix_length = self.decoding_config.generate_suffix_length();
+        let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &mut self.context.next_seed,
-            true,
             speculator.as_ref(),
             &TrieCreationConfig::default(),
-            self.decoding_config.generate_suffix_length(),
-        )
-        .linearize(0, self.decoding_config.generate_suffix_length());
+            suffix_length,
+        );
 
-        let expected_suffix_length =
-            self.decoding_config.generate_suffix_length();
-        let unused_tokens_count =
-            expected_suffix_length - speculated_suffix.tokens.len();
+        let flat_trie = suffix_root.linearize();
+        let active_suffix_length = flat_trie.len();
 
-        let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
-        let padded_tokens =
-            [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
-
-        let zero_padding_seeds: Vec<u64> = vec![0; unused_tokens_count];
-        let padded_seeds =
-            [speculated_suffix.seeds.clone(), zero_padding_seeds].concat();
+        let token_ids = flat_trie
+            .token_ids()
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
 
         let start_position = self.tokens.len() - 1;
+        let token_positions = flat_trie
+            .token_positions()
+            .map(|trie_position| start_position + trie_position)
+            .chain(repeat_n(
+                INVALID_POSITION,
+                suffix_length - active_suffix_length,
+            ))
+            .collect::<Box<[usize]>>();
 
-        let padded_positions: Vec<usize> = speculated_suffix
-            .indices
-            .iter()
-            .map(|idx| idx + start_position)
-            .chain(
-                std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
-            )
-            .collect();
-        let active_suffix_length = speculated_suffix.tokens.len();
+        let token_seeds = flat_trie
+            .token_seeds()
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
 
         let task = GeneratorRunTask {
-            token_ids: padded_tokens,
-            token_positions: padded_positions,
-            token_seeds: padded_seeds,
+            token_ids: &token_ids,
+            token_positions: &token_positions,
+            token_seeds: &token_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
             is_prefilling: false,
@@ -339,27 +310,10 @@ impl Generator {
 
         let sampled_tokens = self.sample(&mut state)?;
 
-        let mut accepted_token_indices = Vec::new();
-        let mut accepted_tokens = Vec::new();
-        let mut current_token_index: isize = 0;
-        loop {
-            let new_token = sampled_tokens[current_token_index as usize];
-            accepted_tokens.push(new_token);
-            if let Some(map) =
-                speculated_suffix.transition_map.get(&(current_token_index))
-            {
-                if let Some(&next_token_index) = map.get(&new_token) {
-                    accepted_token_indices.push(next_token_index as usize);
-                    current_token_index = next_token_index;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens);
 
-        self.update_cache_layers(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices[1..], None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -393,9 +347,9 @@ impl Generator {
         suffix_length: usize,
     ) {
         let task = GeneratorRunTask {
-            token_ids: vec![0; suffix_length],
-            token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            token_seeds: vec![0; suffix_length],
+            token_ids: &repeat_n(0, suffix_length).collect::<Box<[u64]>>(),
+            token_positions: &(0..suffix_length).collect::<Box<[usize]>>(),
+            token_seeds: &repeat_n(0, suffix_length).collect::<Box<[u64]>>(),
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
             is_prefilling: false,
@@ -618,9 +572,9 @@ impl Generator {
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let task = GeneratorRunTask {
-            token_ids: vec![last_token],
-            token_positions: vec![0], // Ignored, using async buffer
-            token_seeds: vec![0],     // Ignored, using async buffer
+            token_ids: &[last_token],
+            token_positions: &[0], // Ignored, using async buffer
+            token_seeds: &[0],     // Ignored, using async buffer
             expected_number_of_new_tokens: 1,
             active_suffix_length: 1,
             is_prefilling: false,
@@ -638,9 +592,9 @@ impl Generator {
             self.context.shared_buffers.clone(),
             &task.token_ids,
             &task.token_positions,
+            &task.token_seeds,
             task.active_suffix_length,
             task.is_prefilling,
-            &task.token_seeds,
             false,
             None,
             is_continuation,
