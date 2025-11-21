@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::speculators::speculator::Speculator;
+use crate::{
+    generator::rng::DerivableSeed, speculators::speculator::Speculator,
+};
 
 use super::{node::Node, speculated_suffix::SpeculatedSuffix};
 
@@ -36,8 +38,17 @@ impl TokenTrie {
         }
     }
 
+    pub fn from_sequences(sequences: &[Vec<u64>]) -> Self {
+        let mut trie = Self::new();
+        for sequence in sequences {
+            trie.insert(sequence);
+        }
+        trie
+    }
+
     pub fn from_speculator(
         prefix: &[u64],
+        seed: &mut DerivableSeed,
         include_last_prefix_token: bool,
         speculator: &dyn Speculator,
         creation_config: &TrieCreationConfig,
@@ -48,8 +59,8 @@ impl TokenTrie {
         let mut trie_size = 0;
 
         if include_last_prefix_token {
-            current_node =
-                current_node.get_or_insert_next(*prefix.last().unwrap());
+            current_node = current_node
+                .get_or_insert_next(*prefix.last().unwrap(), seed.current());
             trie_size += 1;
         }
 
@@ -77,21 +88,13 @@ impl TokenTrie {
 
             trie_size += arr.len();
             for &(tok, _) in arr.iter() {
-                current_node.get_or_insert_next(tok);
+                current_node.get_or_insert_next(tok, seed.next());
             }
 
-            current_node = current_node.get_or_insert_next(top_token);
+            current_node = current_node.get_or_insert_next(top_token, 0);
             speculation_prefix.push(top_token);
         }
 
-        trie
-    }
-
-    pub fn from_sequences(sequences: &[Vec<u64>]) -> Self {
-        let mut trie = Self::new();
-        for sequence in sequences {
-            trie.insert(sequence);
-        }
         trie
     }
 
@@ -103,7 +106,7 @@ impl TokenTrie {
     {
         let mut current_node = &mut self.root;
         for &token in sequence {
-            current_node = current_node.get_or_insert_next(token);
+            current_node = current_node.get_or_insert_next(token, 0);
         }
     }
 
@@ -113,6 +116,7 @@ impl TokenTrie {
         max_length: usize,
     ) -> SpeculatedSuffix {
         let mut tokens = Vec::new();
+        let mut seeds = Vec::new();
         let mut indices = Vec::new();
 
         self.root.dfs(|path| {
@@ -121,6 +125,7 @@ impl TokenTrie {
             }
             if !path.is_empty() {
                 tokens.push(path.last().unwrap().1);
+                seeds.push(path.last().unwrap().2);
                 indices.push(start_index + path.len() - 1);
             }
         });
@@ -142,7 +147,7 @@ impl TokenTrie {
                 return;
             }
 
-            let (current_index, current_token) = *path.last().unwrap();
+            let (current_index, current_token, _) = *path.last().unwrap();
             let parent_index = if path.len() > 1 {
                 path[path.len() - 2].0
             } else {
@@ -157,6 +162,7 @@ impl TokenTrie {
         SpeculatedSuffix {
             tokens,
             indices,
+            seeds,
             transition_map,
         }
     }

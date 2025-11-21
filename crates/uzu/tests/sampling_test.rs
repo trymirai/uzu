@@ -1,15 +1,14 @@
 mod common;
 use metal::{Device, MTLResourceOptions};
-use rand::seq::SliceRandom; // for Vec::shuffle
+use rand::{Rng, seq::SliceRandom};
+// for Vec::shuffle
 use uzu::{
     backends::metal::{
         KernelDataType, MTLContext,
-        kernel::{
-            SamplingKernel,
-            sampling::{ArgmaxStrategy, CategoricalStrategy},
-        },
+        kernel::{SamplingKernel, sampling::ArgmaxStrategy},
         metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
     },
+    generator::gumbel::{gumbel_float, revidx},
     session::parameter::SamplingMethod,
 };
 
@@ -35,6 +34,7 @@ fn cpu_reference_top_p(
         .enumerate()
         .map(|(idx, &z)| (idx, (z - max_logit).exp()))
         .collect();
+    let total_mass: f32 = softmax.iter().map(|(_, p)| p).sum();
 
     // 2. sort descending
     softmax.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -42,7 +42,8 @@ fn cpu_reference_top_p(
     // 3. accumulate until cumulative ≥ top_p
     let mut cum = 0.0_f32;
     let mut cutoff = 0;
-    while cutoff < softmax.len() && cum < top_p {
+    let target = top_p * total_mass;
+    while cutoff < softmax.len() && cum < target {
         cum += softmax[cutoff].1;
         cutoff += 1;
     }
@@ -76,7 +77,6 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         batch_size,
         vocab_size,
         strategy,
-        TEST_SAMPLING_SEED,
     )
     .expect("Failed to create argmax kernel");
 
@@ -105,9 +105,10 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     // Run sampling
     kernel
         .encode(
-            &SamplingMethod::Greedy,
             &logits_buffer,
+            None,
             &output_buffer,
+            SamplingMethod::Greedy,
             batch_size,
             vocab_size,
             &command_buffer,
@@ -178,7 +179,6 @@ fn test_topp_sampling_from_prob_exact_match(
         KernelDataType::Float32,
         batch_size,
         vocab_size,
-        TEST_SAMPLING_SEED,
     )
     .expect("Failed to create sampling kernel");
 
@@ -233,16 +233,26 @@ fn test_topp_sampling_from_prob_exact_match(
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     // Draw samples
-    for _draw in 0..num_samples {
+    for draw in 0..num_samples {
+        let seeds_buf = context.device.new_buffer_with_data(
+            vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
+                as *const _,
+            (batch_size * std::mem::size_of::<u64>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let cb_ref = context.command_queue.new_command_buffer();
         let cb = cb_ref.to_owned();
         kernel
             .encode(
-                &SamplingMethod::TopP {
-                    top_p: p,
-                },
                 &logits_buf,
+                Some(&seeds_buf),
                 &output_buf,
+                SamplingMethod::Stochastic {
+                    temperature: None,
+                    top_k: None,
+                    top_p: Some(p),
+                },
                 batch_size,
                 vocab_size,
                 &cb,
@@ -315,14 +325,9 @@ fn test_topp_sampling_statistical_large() {
     const TOLERANCE_KL: f32 = 0.05;
 
     // ===== 3. Build kernel =====
-    let kernel = SamplingKernel::new(
-        &context,
-        KernelDataType::Float32,
-        BATCH,
-        VOCAB,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create sampling kernel");
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
 
     // ===== 4. Generate reproducible random logits =====
     let mut rng = StdRng::seed_from_u64(42);
@@ -355,17 +360,26 @@ fn test_topp_sampling_statistical_large() {
     let mut counters = vec![0u32; BATCH * VOCAB];
 
     // ===== 8. Draw NUM_DRAWS samples =====
-    for _ in 0..NUM_DRAWS {
+    for draw in 0..NUM_DRAWS {
+        let seeds_buf = context.device.new_buffer_with_data(
+            vec![TEST_SAMPLING_SEED + draw as u64; BATCH].as_ptr() as *const _,
+            (BATCH * std::mem::size_of::<u64>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let cb_ref = context.command_queue.new_command_buffer();
         let cb = cb_ref.to_owned();
 
         kernel
             .encode(
-                &SamplingMethod::TopP {
-                    top_p: TOP_P,
-                },
                 &logits_buf,
+                Some(&seeds_buf),
                 &output_buf,
+                SamplingMethod::Stochastic {
+                    temperature: None,
+                    top_k: None,
+                    top_p: Some(TOP_P),
+                },
                 BATCH,
                 VOCAB,
                 &cb,
@@ -432,14 +446,9 @@ fn perf_topp_128k_vocab() {
     const TOP_P: f32 = 0.9;
 
     // ---- Kernel ----
-    let kernel = SamplingKernel::new(
-        &context,
-        KernelDataType::Float32,
-        BATCH,
-        VOCAB,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create sampling kernel");
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
 
     // ---- Build random logits ----
     let mut rng = StdRng::seed_from_u64(123);
@@ -454,6 +463,12 @@ fn perf_topp_128k_vocab() {
         metal::MTLResourceOptions::StorageModeShared,
     );
 
+    let seeds_buf = context.device.new_buffer_with_data(
+        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
+        (BATCH * std::mem::size_of::<u64>()) as u64,
+        metal::MTLResourceOptions::StorageModeShared,
+    );
+
     let output_buf = context.device.new_buffer(
         (BATCH * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -465,11 +480,14 @@ fn perf_topp_128k_vocab() {
 
     kernel
         .encode(
-            &SamplingMethod::TopP {
-                top_p: TOP_P,
-            },
             &logits_buf,
+            Some(&seeds_buf),
             &output_buf,
+            SamplingMethod::Stochastic {
+                temperature: None,
+                top_k: None,
+                top_p: Some(TOP_P),
+            },
             BATCH,
             VOCAB,
             &cb,
@@ -534,7 +552,6 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         BATCH,
         VOCAB,
         strategy,
-        TEST_SAMPLING_SEED,
     )
     .expect("Failed to create Argmax kernel");
 
@@ -551,6 +568,12 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         metal::MTLResourceOptions::StorageModeShared,
     );
 
+    let seeds_buf = context.device.new_buffer_with_data(
+        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
+        (BATCH * std::mem::size_of::<u64>()) as u64,
+        metal::MTLResourceOptions::StorageModeShared,
+    );
+
     let output_buf = context.device.new_buffer(
         (BATCH * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -562,9 +585,10 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
     kernel
         .encode(
-            &SamplingMethod::Greedy,
             &logits_buf,
+            Some(&seeds_buf),
             &output_buf,
+            SamplingMethod::Greedy,
             BATCH,
             VOCAB,
             &cb,
@@ -643,7 +667,6 @@ fn test_categorical_sampling() {
         KernelDataType::Float32,
         batch_size,
         vocab_size,
-        TEST_SAMPLING_SEED,
     )
     .expect("Failed to create sampling kernel");
 
@@ -670,17 +693,27 @@ fn test_categorical_sampling() {
     let num_samples = 1000;
     let mut counts = vec![0; batch_size * vocab_size];
 
-    for _ in 0..num_samples {
+    for sample_idx in 0..num_samples {
+        let seeds_buffer = context.device.new_buffer_with_data(
+            vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size].as_ptr()
+                as *const _,
+            (batch_size * std::mem::size_of::<u64>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let command_buffer_ref = context.command_queue.new_command_buffer();
         let command_buffer = command_buffer_ref.to_owned();
 
         kernel
             .encode(
-                &SamplingMethod::Temperature {
-                    temperature: 1.0,
-                },
                 &logits_buffer,
+                Some(&seeds_buffer),
                 &output_buffer,
+                SamplingMethod::Stochastic {
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                },
                 batch_size,
                 vocab_size,
                 &command_buffer,
@@ -758,14 +791,9 @@ fn test_categorical_sampling_statistical() {
     const NUM_SAMPLES: usize = 5000;
     const TOLERANCE: f32 = 0.05; // 5% tolerance
 
-    let kernel = SamplingKernel::new(
-        &context,
-        KernelDataType::Float32,
-        BATCH,
-        VOCAB,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create sampling kernel");
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
 
     // Generate random logits
     let mut rng = StdRng::seed_from_u64(42);
@@ -808,17 +836,27 @@ fn test_categorical_sampling_statistical() {
     let mut counts = vec![0; BATCH * VOCAB];
 
     // Sample many times
-    for _ in 0..NUM_SAMPLES {
+    for sample_idx in 0..NUM_SAMPLES {
+        let seeds_buffer = context.device.new_buffer_with_data(
+            vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH].as_ptr()
+                as *const _,
+            (BATCH * std::mem::size_of::<u64>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let command_buffer_ref = context.command_queue.new_command_buffer();
         let command_buffer = command_buffer_ref.to_owned();
 
         kernel
             .encode(
-                &SamplingMethod::Temperature {
-                    temperature: 1.0,
-                },
                 &logits_buffer,
+                Some(&seeds_buffer),
                 &output_buffer,
+                SamplingMethod::Stochastic {
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                },
                 BATCH,
                 VOCAB,
                 &command_buffer,
@@ -883,14 +921,9 @@ fn perf_categorical_128k_vocab() {
     const BATCH: usize = 8;
     const VOCAB: usize = 128000; // 128K
 
-    let kernel = SamplingKernel::new(
-        &context,
-        KernelDataType::Float32,
-        BATCH,
-        VOCAB,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create sampling kernel");
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
 
     // Build random logits
     let mut rng = StdRng::seed_from_u64(123);
@@ -905,6 +938,12 @@ fn perf_categorical_128k_vocab() {
         metal::MTLResourceOptions::StorageModeShared,
     );
 
+    let seeds_buf = context.device.new_buffer_with_data(
+        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
+        (BATCH * std::mem::size_of::<u64>()) as u64,
+        metal::MTLResourceOptions::StorageModeShared,
+    );
+
     let output_buf = context.device.new_buffer(
         (BATCH * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -916,11 +955,14 @@ fn perf_categorical_128k_vocab() {
 
     kernel
         .encode(
-            &SamplingMethod::Temperature {
-                temperature: 1.0,
-            },
             &logits_buf,
+            Some(&seeds_buf),
             &output_buf,
+            SamplingMethod::Stochastic {
+                temperature: None,
+                top_k: None,
+                top_p: None,
+            },
             BATCH,
             VOCAB,
             &cb,
@@ -960,449 +1002,328 @@ fn perf_categorical_128k_vocab() {
 }
 
 #[test]
-fn test_categorical_sampling_single_pass() {
-    test_categorical_sampling_with_strategy(CategoricalStrategy::SinglePass);
-}
-
-#[test]
-fn test_categorical_sampling_two_pass() {
-    test_categorical_sampling_with_strategy(CategoricalStrategy::TwoPass);
-}
-
-#[test]
-fn test_categorical_1pass_vs_2pass_equivalence() {
+fn test_temperature_gpu_cpu_match() {
     let context = match create_test_context() {
         Ok(ctx) => ctx,
         Err(e) => {
-            println!("Skipping categorical equivalence test: {}", e);
+            println!("Skipping temperature gpu cpu match test: {}", e);
             return;
         },
     };
 
-    let batch_size = 4;
-    let vocab_size = 16;
-    const NUM_SAMPLES: usize = 5000;
-    const TOLERANCE: f32 = 0.05; // 5% tolerance for statistical comparison
+    const BATCH: usize = 4;
+    const VOCAB: usize = 1024;
+    const TEMPERATURE: f32 = 0.7;
+    const RTOL: f32 = 1e-6;
+    const ATOL: f32 = 1e-6;
 
-    // Create kernels for both strategies
-    let kernel_1pass = SamplingKernel::new_with_strategies(
-        &context,
-        KernelDataType::Float32,
-        batch_size,
-        vocab_size,
-        ArgmaxStrategy::TwoPass,
-        CategoricalStrategy::SinglePass,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create single-pass categorical kernel");
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
 
-    let kernel_2pass = SamplingKernel::new_with_strategies(
-        &context,
-        KernelDataType::Float32,
-        batch_size,
-        vocab_size,
-        ArgmaxStrategy::TwoPass,
-        CategoricalStrategy::TwoPass,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create two-pass categorical kernel");
-
-    // Create test data with varied probability distributions
-    use rand::{Rng, SeedableRng, rngs::StdRng};
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut test_logits = vec![0.0f32; batch_size * vocab_size];
-    for x in test_logits.iter_mut() {
-        *x = rng.random_range(-3.0f32..3.0f32);
-    }
+    let logits: Vec<f32> = (0..BATCH * VOCAB)
+        .map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01)
+        .collect();
 
     let logits_buffer = context.device.new_buffer_with_data(
-        test_logits.as_ptr() as *const _,
-        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let output_buffer_1pass = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let output_buffer_2pass = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    // Collect samples from both strategies
-    let mut counts_1pass = vec![0; batch_size * vocab_size];
-    let mut counts_2pass = vec![0; batch_size * vocab_size];
-
-    for _ in 0..NUM_SAMPLES {
-        // Sample from single-pass
-        let command_buffer_ref = context.command_queue.new_command_buffer();
-        let command_buffer = command_buffer_ref.to_owned();
-
-        kernel_1pass
-            .encode(
-                &SamplingMethod::Temperature {
-                    temperature: 1.0,
-                },
-                &logits_buffer,
-                &output_buffer_1pass,
-                batch_size,
-                vocab_size,
-                &command_buffer,
-            )
-            .expect("Single-pass encoding should succeed");
-
-        command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
-
-        let result_ptr = output_buffer_1pass.contents() as *const u32;
-        let results_1pass =
-            unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
-
-        for (batch_idx, &token) in results_1pass.iter().enumerate() {
-            counts_1pass[batch_idx * vocab_size + token as usize] += 1;
-        }
-
-        // Sample from two-pass
-        let command_buffer_ref = context.command_queue.new_command_buffer();
-        let command_buffer = command_buffer_ref.to_owned();
-
-        kernel_2pass
-            .encode(
-                &SamplingMethod::Temperature {
-                    temperature: 1.0,
-                },
-                &logits_buffer,
-                &output_buffer_2pass,
-                batch_size,
-                vocab_size,
-                &command_buffer,
-            )
-            .expect("Two-pass encoding should succeed");
-
-        command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
-
-        let result_ptr = output_buffer_2pass.contents() as *const u32;
-        let results_2pass =
-            unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
-
-        for (batch_idx, &token) in results_2pass.iter().enumerate() {
-            counts_2pass[batch_idx * vocab_size + token as usize] += 1;
-        }
-    }
-
-    // Compute expected probabilities from logits (reference distribution)
-    let mut expected_probs = vec![0.0f32; batch_size * vocab_size];
-    for batch_idx in 0..batch_size {
-        let batch_logits =
-            &test_logits[batch_idx * vocab_size..(batch_idx + 1) * vocab_size];
-        let max_logit =
-            batch_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-        let mut sum_exp = 0.0f32;
-        for j in 0..vocab_size {
-            let exp_val = (batch_logits[j] - max_logit).exp();
-            expected_probs[batch_idx * vocab_size + j] = exp_val;
-            sum_exp += exp_val;
-        }
-
-        // Normalize
-        for j in 0..vocab_size {
-            expected_probs[batch_idx * vocab_size + j] /= sum_exp;
-        }
-    }
-
-    // Compare both strategies against expected distribution and each other
-    println!(
-        "Comparing single-pass vs two-pass categorical sampling distributions:"
-    );
-
-    for batch_idx in 0..batch_size {
-        println!("Batch {}:", batch_idx);
-
-        // Check that both strategies match the expected distribution
-        for token_idx in 0..vocab_size {
-            let expected_freq =
-                expected_probs[batch_idx * vocab_size + token_idx];
-
-            let observed_freq_1pass =
-                counts_1pass[batch_idx * vocab_size + token_idx] as f32
-                    / NUM_SAMPLES as f32;
-            let observed_freq_2pass =
-                counts_2pass[batch_idx * vocab_size + token_idx] as f32
-                    / NUM_SAMPLES as f32;
-
-            // Only check tokens with reasonable probability
-            if expected_freq > 0.01 {
-                let error_1pass = (observed_freq_1pass - expected_freq).abs();
-                let error_2pass = (observed_freq_2pass - expected_freq).abs();
-
-                assert!(
-                    error_1pass < TOLERANCE,
-                    "Single-pass: Batch {}, Token {}: expected freq {:.3}, got {:.3}, error {:.3} > tolerance {:.3}",
-                    batch_idx,
-                    token_idx,
-                    expected_freq,
-                    observed_freq_1pass,
-                    error_1pass,
-                    TOLERANCE
-                );
-
-                assert!(
-                    error_2pass < TOLERANCE,
-                    "Two-pass: Batch {}, Token {}: expected freq {:.3}, got {:.3}, error {:.3} > tolerance {:.3}",
-                    batch_idx,
-                    token_idx,
-                    expected_freq,
-                    observed_freq_2pass,
-                    error_2pass,
-                    TOLERANCE
-                );
-
-                // Compare the two strategies directly
-                let strategy_diff =
-                    (observed_freq_1pass - observed_freq_2pass).abs();
-                assert!(
-                    strategy_diff < TOLERANCE,
-                    "Strategy difference: Batch {}, Token {}: 1-pass {:.3}, 2-pass {:.3}, diff {:.3} > tolerance {:.3}",
-                    batch_idx,
-                    token_idx,
-                    observed_freq_1pass,
-                    observed_freq_2pass,
-                    strategy_diff,
-                    TOLERANCE
-                );
-
-                println!(
-                    "  Token {}: expected={:.3}, 1-pass={:.3}, 2-pass={:.3}, diff={:.3}",
-                    token_idx,
-                    expected_freq,
-                    observed_freq_1pass,
-                    observed_freq_2pass,
-                    strategy_diff
-                );
-            }
-        }
-    }
-
-    println!(
-        "✓ Single-pass and two-pass categorical sampling produce equivalent distributions (tolerance: {:.1}%)",
-        TOLERANCE * 100.0
-    );
-}
-
-fn test_categorical_sampling_with_strategy(strategy: CategoricalStrategy) {
-    let context = match create_test_context() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping categorical test with {:?}: {}", strategy, e);
-            return;
-        },
-    };
-
-    let batch_size = 2;
-    let vocab_size = 4;
-
-    let kernel = SamplingKernel::new_with_strategies(
-        &context,
-        KernelDataType::Float32,
-        batch_size,
-        vocab_size,
-        ArgmaxStrategy::TwoPass,
-        strategy,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create categorical kernel");
-
-    // Create test data with different probability distributions
-    let test_logits: Vec<f32> = vec![
-        1.0, 2.0, 1.5, 0.5, // batch 0
-        0.0, 1.0, 0.0, 0.0, // batch 1
-    ];
-
-    let logits_buffer = context.device.new_buffer_with_data(
-        test_logits.as_ptr() as *const _,
-        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let output_buffer = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    // Run sampling multiple times to check distribution
-    let num_samples = 1000;
-    let mut counts = vec![0; batch_size * vocab_size];
-
-    for _ in 0..num_samples {
-        let command_buffer_ref = context.command_queue.new_command_buffer();
-        let command_buffer = command_buffer_ref.to_owned();
-
-        kernel
-            .encode(
-                &SamplingMethod::Temperature {
-                    temperature: 1.0,
-                },
-                &logits_buffer,
-                &output_buffer,
-                batch_size,
-                vocab_size,
-                &command_buffer,
-            )
-            .expect("Categorical sampling should succeed");
-
-        command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
-
-        let result_ptr = output_buffer.contents() as *const u32;
-        let results =
-            unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
-
-        for (batch_idx, &token) in results.iter().enumerate() {
-            assert!(
-                (token as usize) < vocab_size,
-                "Sampled token {} out of range for vocab size {}",
-                token,
-                vocab_size
-            );
-            counts[batch_idx * vocab_size + token as usize] += 1;
-        }
-    }
-
-    // Check that all batches produced valid outputs
-    for batch_idx in 0..batch_size {
-        let batch_counts =
-            &counts[batch_idx * vocab_size..(batch_idx + 1) * vocab_size];
-        let total_samples: usize = batch_counts.iter().sum();
-        assert_eq!(
-            total_samples, num_samples,
-            "Batch {} should have {} samples, got {}",
-            batch_idx, num_samples, total_samples
-        );
-
-        // For the second batch, token 1 should be sampled most frequently
-        if batch_idx == 1 {
-            let max_count = *batch_counts.iter().max().unwrap();
-            assert_eq!(
-                batch_counts[1], max_count,
-                "Token 1 should be most frequent in batch 1 with strategy {:?}, got counts: {:?}",
-                strategy, batch_counts
-            );
-        }
-    }
-
-    println!(
-        "✓ Categorical sampling test passed with {:?} strategy - sampled {} times per batch",
-        strategy, num_samples
-    );
-}
-
-fn perf_categorical_128k_vocab_with_strategy(strategy: CategoricalStrategy) {
-    use std::time::Instant;
-
-    use rand::{Rng, SeedableRng, rngs::StdRng};
-
-    let context = match create_test_context() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!(
-                "Skipping categorical perf test with {:?}: {}",
-                strategy, e
-            );
-            return;
-        },
-    };
-
-    const BATCH: usize = 8;
-    const VOCAB: usize = 128000; // 128K
-
-    let kernel = SamplingKernel::new_with_strategies(
-        &context,
-        KernelDataType::Float32,
-        BATCH,
-        VOCAB,
-        ArgmaxStrategy::TwoPass,
-        strategy,
-        TEST_SAMPLING_SEED,
-    )
-    .expect("Failed to create sampling kernel");
-
-    // Build random logits
-    let mut rng = StdRng::seed_from_u64(123);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        *x = rng.random_range(-6.0f32..6.0f32);
-    }
-
-    let logits_buf = context.device.new_buffer_with_data(
         logits.as_ptr() as *const _,
         (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
+        MTLResourceOptions::StorageModeShared,
     );
 
-    let output_buf = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
+    let processed_buffer = context.device.new_buffer(
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
     );
 
-    // Launch and time
-    let cb_ref = context.command_queue.new_command_buffer();
-    let cb = cb_ref.to_owned();
+    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer = command_buffer_ref.to_owned();
 
+    let compute_encoder = command_buffer.new_compute_command_encoder();
     kernel
-        .encode(
-            &SamplingMethod::Temperature {
-                temperature: 1.0,
-            },
-            &logits_buf,
-            &output_buf,
-            BATCH,
-            VOCAB,
-            &cb,
+        .encode_temperature(
+            &logits_buffer,
+            &processed_buffer,
+            BATCH as u32,
+            VOCAB as u32,
+            TEMPERATURE,
+            compute_encoder,
+        )
+        .expect("encode_temperature");
+    compute_encoder.end_encoding();
+
+    command_buffer_ref.commit();
+    command_buffer_ref.wait_until_completed();
+
+    let gpu_ptr = processed_buffer.contents() as *const f32;
+    let gpu_results =
+        unsafe { std::slice::from_raw_parts(gpu_ptr, logits.len()) };
+
+    for (idx, (&logit, &processed)) in
+        logits.iter().zip(gpu_results.iter()).enumerate()
+    {
+        let expected = logit / TEMPERATURE;
+        let abs_diff = (expected - processed).abs();
+        let tolerance = ATOL + RTOL * expected.abs();
+        assert!(
+            abs_diff <= tolerance,
+            "Mismatch at element {}: expected={} actual={} (abs_diff={}, tolerance={})",
+            idx,
+            expected,
+            processed,
+            abs_diff,
+            tolerance
+        );
+    }
+
+    println!(
+        "✓ Temperature processor gpu cpu match (temp={}, rtol={}, atol={})",
+        TEMPERATURE, RTOL, ATOL
+    );
+}
+
+#[test]
+fn test_topk_gpu_cpu_match() {
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Skipping topk gpu cpu match test: {}", e);
+            return;
+        },
+    };
+
+    const BATCH: usize = 4;
+    const VOCAB: usize = 1024;
+    const TOPK: u32 = 16;
+
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut logits = vec![0.0f32; BATCH * VOCAB];
+    for x in logits.iter_mut() {
+        *x = rng.random_range(-1024.0f32..1024.0f32);
+    }
+
+    let logits_buffer = context.device.new_buffer_with_data(
+        logits.as_ptr() as *const _,
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let processed_buffer = context.device.new_buffer(
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer = command_buffer_ref.to_owned();
+
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+    kernel
+        .encode_topk(
+            &logits_buffer,
+            &processed_buffer,
+            BATCH as u32,
+            VOCAB as u32,
+            TOPK,
+            compute_encoder,
+        )
+        .expect("encode_topk");
+    compute_encoder.end_encoding();
+
+    command_buffer_ref.commit();
+    command_buffer_ref.wait_until_completed();
+
+    let results_ptr = processed_buffer.contents() as *const f32;
+    let all_results =
+        unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
+
+    for batch_idx in 0..BATCH {
+        let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+        let mut cpu_sorted_logits: Vec<(usize, f32)> =
+            cpu_logits.iter().copied().enumerate().collect();
+        cpu_sorted_logits.sort_by(|(_, a), (_, b)| f32::total_cmp(b, a));
+        let mut cpu_processed_logits: Vec<f32> = vec![f32::NEG_INFINITY; VOCAB];
+        for (idx, val) in cpu_sorted_logits.into_iter().take(TOPK as usize) {
+            cpu_processed_logits[idx] = val;
+        }
+
+        let gpu_processed_logits =
+            &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+
+        assert_eq!(cpu_processed_logits, gpu_processed_logits);
+    }
+
+    println!("✓ Topk processor gpu cpu match (topk={})", TOPK);
+}
+
+#[test]
+fn test_topp_gpu_cpu_match() {
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Skipping topp gpu cpu match test: {}", e);
+            return;
+        },
+    };
+
+    const BATCH: usize = 4;
+    const VOCAB: usize = 1024;
+    const TOPP: f32 = 0.9;
+
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut logits = vec![0.0f32; BATCH * VOCAB];
+    for x in logits.iter_mut() {
+        *x = rng.random_range(-16.0f32..16.0f32);
+    }
+
+    let logits_buffer = context.device.new_buffer_with_data(
+        logits.as_ptr() as *const _,
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let processed_buffer = context.device.new_buffer(
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer = command_buffer_ref.to_owned();
+
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+    kernel
+        .encode_topp(
+            &logits_buffer,
+            &processed_buffer,
+            BATCH as u32,
+            VOCAB as u32,
+            TOPP,
+            compute_encoder,
+        )
+        .expect("encode_topp");
+    compute_encoder.end_encoding();
+
+    command_buffer_ref.commit();
+    command_buffer_ref.wait_until_completed();
+
+    let results_ptr = processed_buffer.contents() as *const f32;
+    let all_results =
+        unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
+
+    for batch_idx in 0..BATCH {
+        let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+        let cpu_processed_logits = cpu_reference_top_p(cpu_logits, TOPP)
+            .into_iter()
+            .zip(cpu_logits.iter().copied())
+            .map(|(cpu_ref_topp, logit)| {
+                if cpu_ref_topp > 0.0 {
+                    logit
+                } else {
+                    f32::NEG_INFINITY
+                }
+            })
+            .collect::<Vec<f32>>();
+
+        let gpu_processed_logits =
+            &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+
+        assert_eq!(&cpu_processed_logits, gpu_processed_logits);
+    }
+
+    println!("✓ Topp processor gpu cpu match (topp={})", TOPP);
+}
+
+#[test]
+fn test_gumbel_gpu_cpu_match() {
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Skipping gumbel gpu cpu match test: {}", e);
+            return;
+        },
+    };
+
+    const BATCH: usize = 7;
+    const VOCAB: usize = 16 * 1024 * 64;
+    const RTOL: f32 = 0.01;
+    const ATOL: f32 = 1e-6;
+
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
+
+    let logits = vec![0.0f32; BATCH * VOCAB];
+    let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();
+
+    let logits_buffer = context.device.new_buffer_with_data(
+        logits.as_ptr() as *const _,
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let seeds_buffer = context.device.new_buffer_with_data(
+        seeds.as_ptr() as *const _,
+        (BATCH * std::mem::size_of::<u64>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let gumbel_logits_buffer = context.device.new_buffer(
+        (BATCH * VOCAB * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer = command_buffer_ref.to_owned();
+
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+    kernel
+        .encode_gumbel(
+            &logits_buffer,
+            &seeds_buffer,
+            &gumbel_logits_buffer,
+            BATCH as u32,
+            VOCAB as u32,
+            compute_encoder,
         )
         .expect("encode");
+    compute_encoder.end_encoding();
 
-    let host_timer = Instant::now();
-    cb_ref.commit();
-    cb_ref.wait_until_completed();
-    let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
+    command_buffer_ref.commit();
+    command_buffer_ref.wait_until_completed();
 
-    let gpu_elapsed_ms = cb.gpu_execution_time_ms();
+    let result_ptr = gumbel_logits_buffer.contents() as *const f32;
+    let all_results =
+        unsafe { std::slice::from_raw_parts(result_ptr, BATCH * VOCAB) };
 
-    match gpu_elapsed_ms {
-        Some(gpu_time) => {
-            println!(
-                "Categorical sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, strategy, gpu_time, host_elapsed_ms
+    for (batch_idx, batch_seed) in seeds.iter().copied().enumerate() {
+        let results = &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+        for (logit_idx, gpu_logit_value) in results.iter().copied().enumerate()
+        {
+            let cpu_logit_value =
+                gumbel_float(batch_seed, revidx(logit_idx as u32));
+            let abs_diff = (cpu_logit_value - gpu_logit_value).abs();
+            let tolerance = ATOL + RTOL * cpu_logit_value.abs();
+            assert!(
+                abs_diff <= tolerance,
+                "Mismatch at batch {batch_idx} element {logit_idx}: CPU={cpu_logit_value} GPU={gpu_logit_value} (abs_diff={abs_diff}, tolerance={tolerance})"
             );
-        },
-        None => {
-            println!(
-                "Categorical sampling perf (batch={}, vocab={}, strategy={:?}): Host-side={:.2} ms (GPU timing unavailable)",
-                BATCH, VOCAB, strategy, host_elapsed_ms
-            );
-        },
+        }
     }
 
-    // Sanity check
-    let ptr = output_buf.contents() as *const u32;
-    let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-    for &tok in sample_ids {
-        assert!((tok as usize) < VOCAB, "Sampled id out of range");
-    }
-
-    println!("✓ Categorical correctness verified with {:?} strategy", strategy);
-}
-
-#[test]
-fn perf_categorical_128k_vocab_single_pass() {
-    perf_categorical_128k_vocab_with_strategy(CategoricalStrategy::SinglePass);
-}
-
-#[test]
-fn perf_categorical_128k_vocab_two_pass() {
-    perf_categorical_128k_vocab_with_strategy(CategoricalStrategy::TwoPass);
+    println!(
+        "✓ Gumbel cpu gpu match test passed (rtol: {:.1}%, atol: {:.1e})",
+        RTOL * 100.0,
+        ATOL
+    );
 }

@@ -716,6 +716,8 @@ pub struct LLMForwardPassState {
     token_ids: ArrayCell,
     /// [suffix_length] - i32
     token_positions: ArrayCell,
+    /// [suffix_length] - u64
+    token_seeds: ArrayCell,
     /// [suffix_length, suffix_length + prefix_length]
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
@@ -740,6 +742,7 @@ impl LLMForwardPassState {
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
+        token_seeds: &[u64],
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> Self {
@@ -794,6 +797,19 @@ impl LLMForwardPassState {
             token_positions_i32.as_ref().into(),
         );
         let token_positions_refcell = RefCell::new(token_positions_array);
+
+        // --------------------
+        // Token Seeds
+        // --------------------
+        let mut token_seeds_array = unsafe {
+            MetalArray::new(
+                scratch.token_seeds.clone(),
+                &[suffix_length],
+                DataType::U64,
+            )
+        };
+        context.copy_from_view(&mut token_seeds_array, token_seeds.into());
+        let token_seeds_refcell = RefCell::new(token_seeds_array);
 
         // --------------------
         // Attention Bias
@@ -869,6 +885,7 @@ impl LLMForwardPassState {
             context,
             token_ids: token_ids_refcell,
             token_positions: token_positions_refcell,
+            token_seeds: token_seeds_refcell,
             attention_bias,
             logits,
             kv_cache,
@@ -887,6 +904,7 @@ impl LLMForwardPassState {
         match id {
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
+            ArrayId::TokenSeeds => self.token_seeds.clone(),
             ArrayId::Logits => self.logits.clone(),
             ArrayId::Main => self.aux_buffers.main.clone(),
             ArrayId::Shortcut => self.aux_buffers.shortcut.clone(),
@@ -1151,6 +1169,7 @@ pub enum ArrayId {
     TokenIds,
     TokenPositions,
     Logits,
+    TokenSeeds,
 
     Main,
     Shortcut,
