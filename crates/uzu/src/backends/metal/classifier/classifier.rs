@@ -49,11 +49,25 @@ impl Classifier {
             let logits = self.forward_pass(&token_ids, &token_positions)?;
 
             let forward_duration = forward_start.elapsed().as_secs_f64();
+            
+            let postprocessing_start = Instant::now();
             let probabilities = self.logits_to_probabilities(&logits)?;
+            let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
+            
+            let (predicted_label, confidence) = probabilities
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(label, prob)| (label.clone(), *prob))
+                .unwrap_or((String::from("unknown"), 0.0));
 
             let stats = ClassificationStats::new(
+                0.0,
                 forward_duration,
+                postprocessing_duration,
                 run_start.elapsed().as_secs_f64(),
+                token_ids.len() as u64,
+                predicted_label,
+                confidence,
             );
 
             Ok(ClassificationOutput {

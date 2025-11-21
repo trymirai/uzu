@@ -63,6 +63,7 @@ impl ClassificationSession {
         &mut self,
         input: Input,
     ) -> Result<ClassificationOutput, Error> {
+        let preprocessing_start = std::time::Instant::now();
         let text = self.input_processor.process(&input, false)?;
         let tokens: Vec<u64> = self
             .tokenizer
@@ -74,7 +75,13 @@ impl ClassificationSession {
             .collect();
 
         let token_positions: Vec<usize> = (0..tokens.len()).collect();
+        let preprocessing_duration =
+            preprocessing_start.elapsed().as_secs_f64();
 
-        self.classifier.classify_tokens(tokens, token_positions)
+        let mut output =
+            self.classifier.classify_tokens(tokens, token_positions)?;
+        output.stats.preprocessing_duration = preprocessing_duration;
+
+        Ok(output)
     }
 }
