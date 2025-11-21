@@ -50,7 +50,7 @@ inline void curand_philox4x32_10(thread uint* ctr, thread uint* key, thread uint
     uint local_key[2] = {key[0], key[1]};
     
     // 10 rounds
-    philox4x32round(local_ctr, local_key);                                    // 1
+    philox4x32round(local_ctr, local_key);                                   // 1
     philox4x32bumpkey(local_key); philox4x32round(local_ctr, local_key);     // 2
     philox4x32bumpkey(local_key); philox4x32round(local_ctr, local_key);     // 3
     philox4x32bumpkey(local_key); philox4x32round(local_ctr, local_key);     // 4
@@ -107,4 +107,4 @@ inline float uniform_float(thread PhiloxState* state) {
     return float(philox_next(state)) * (1.0f/4294967296.0f);  /* (0,1) */
 }
 
-#endif /* rng_metal */ 
+#endif /* rng_metal */

@@ -107,6 +107,7 @@ impl DecoderTestContext {
         let token_ids: Vec<u64> =
             (0..max_suffix_length).map(|i| (i % 1000) as u64).collect();
         let token_positions: Vec<usize> = (0..max_suffix_length).collect();
+        let token_seeds: Vec<u64> = (0_u64..max_suffix_length as u64).collect();
 
         // Scratch buffers sized for the maximum prefix/suffix lengths in this test
         let scratch_buffers = ForwardPassBuffers::new(
@@ -127,6 +128,7 @@ impl DecoderTestContext {
             &token_ids,
             &token_positions,
             token_ids.len(),
+            &token_seeds,
             false,
             None,
         );

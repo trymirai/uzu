@@ -87,6 +87,7 @@ impl Generator {
         let speculator = &self.decoding_config.speculator_config.speculator;
         let speculated_suffix = TokenTrie::from_speculator(
             &tokens,
+            &mut self.context.next_seed,
             false,
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -117,6 +118,16 @@ impl Generator {
         padded_positions
             .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
 
+        let zero_padding_left_seeds: Vec<u64> = vec![0; tokens_length];
+        let zero_padding_right_seeds: Vec<u64> =
+            vec![0; unused_tokens_count - speculated_suffix.seeds.len()];
+        let padded_seeds = [
+            &zero_padding_left_seeds[..],
+            &speculated_suffix.seeds[..],
+            &zero_padding_right_seeds[..],
+        ]
+        .concat();
+
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
@@ -132,6 +143,8 @@ impl Generator {
                 .iter()
                 .position(|&pos| pos == INVALID_POSITION)
                 .unwrap_or(prefill_step_size);
+            let seeds_for_step =
+                &padded_seeds[tokens_start_index..tokens_end_index];
 
             let is_first_prefill = step == 0;
             let should_capture =
@@ -150,6 +163,7 @@ impl Generator {
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
+                token_seeds: seeds_for_step.to_vec(),
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
             };
@@ -269,6 +283,7 @@ impl Generator {
         let speculator = &self.decoding_config.speculator_config.speculator;
         let speculated_suffix = TokenTrie::from_speculator(
             &self.tokens,
+            &mut self.context.next_seed,
             true,
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -280,9 +295,14 @@ impl Generator {
             self.decoding_config.generate_suffix_length();
         let unused_tokens_count =
             expected_suffix_length - speculated_suffix.tokens.len();
+
         let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
         let padded_tokens =
             [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
+
+        let zero_padding_seeds: Vec<u64> = vec![0; unused_tokens_count];
+        let padded_seeds =
+            [speculated_suffix.seeds.clone(), zero_padding_seeds].concat();
 
         let start_position = self.tokens.len() - 1;
 
@@ -299,6 +319,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
             token_positions: padded_positions,
+            token_seeds: padded_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
         };
@@ -368,11 +389,13 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
+            token_seeds: vec![0; suffix_length],
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
         };
 
-        let (_, _) = self.run_model(task, true, false, SamplingMethod::Greedy);
+        let (_, _) =
+            self.run_model(task, true, false, SamplingMethod::default());
     }
 
     fn run_model(

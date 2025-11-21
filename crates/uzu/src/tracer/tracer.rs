@@ -30,7 +30,7 @@ use crate::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{
             ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize,
-            ResolvableValue, SamplingSeed,
+            SamplingSeed,
         },
     },
 };
@@ -270,13 +270,11 @@ impl Tracer {
             .expect("Failed to create KV cache update kernel"),
         );
 
-        let sampling_seed = decoding_config.sampling_seed.resolve();
         context.gpu_sampler = SamplingKernelEncodable::new(
             &context.mtl_context,
             kernel_dtype,
             desired_suffix_length,
             decoder_config.vocab_size,
-            sampling_seed,
         )
         .expect("Failed to create sampling kernel");
     }
@@ -304,6 +302,8 @@ impl Tracer {
             "activation_trace.token_positions".to_string(),
         );
 
+        let token_seeds: Vec<u64> = vec![0; token_ids.len()];
+
         let mut state = ForwardPassState::new(
             self.generator_context.mtl_context.clone(),
             &self.generator_context.model_config.decoder_config,
@@ -314,6 +314,7 @@ impl Tracer {
             &token_ids,
             &token_positions,
             token_ids.len(),
+            &token_seeds,
             true,
             None,
         );

@@ -13,6 +13,7 @@ use crate::{
         kernel::SamplingKernelEncodable,
     },
     config::{LanguageModelConfig, ModelMetadata},
+    generator::rng::DerivableSeed,
     parameters::ParameterLoader,
     session::{
         config::DecodingConfig,
@@ -34,6 +35,7 @@ pub struct GeneratorContext {
     pub executables: DecoderExecutables,
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: SamplingKernelEncodable,
+    pub next_seed: DerivableSeed,
 }
 
 impl GeneratorContext {
@@ -134,9 +136,11 @@ impl GeneratorContext {
             kernel_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
-            decoding_config.sampling_seed.resolve(),
         )
         .map_err(|_| Error::UnableToCreateMetalContext)?;
+
+        let base_seed = decoding_config.sampling_seed.resolve();
+        let next_seed = DerivableSeed::new(base_seed);
 
         let context = Self {
             mtl_context,
@@ -149,6 +153,7 @@ impl GeneratorContext {
             executables,
             kv_cache_update,
             gpu_sampler,
+            next_seed,
         };
 
         return Ok(context);
