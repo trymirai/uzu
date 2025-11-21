@@ -67,7 +67,6 @@ impl ClassifierLayerExecutable {
             let kernel_data_type: KernelDataType =
                 intermediate_data_type.into();
 
-            // Copy for mixer residual connection
             let copy_main_to_shortcut_mixer: Box<dyn EncodableWithState> =
                 Box::new(
                     TensorCopy::new(
@@ -135,8 +134,8 @@ impl ClassifierLayerExecutable {
                     layer_config.attention_config.key_norm_config.clone(),
                     ArrayId::QKV,
                     &layer_loader.subtree("mixer").unwrap(),
-                    num_heads,  // num_q_heads
-                    num_groups, // num_kv_heads
+                    num_heads,
+                    num_groups,
                     head_dim,
                 ) {
                     Ok(norm) => Some(Box::new(norm)),
@@ -180,7 +179,6 @@ impl ClassifierLayerExecutable {
                     None
                 };
 
-            // Add operation for mixer residual connection
             let mixer_residual_add: Box<dyn EncodableWithState> = Box::new(
                 TensorAddSwap::new(
                     mtl_context,
@@ -190,7 +188,6 @@ impl ClassifierLayerExecutable {
                 .unwrap(),
             );
 
-            // Copy for MLP residual connection
             let copy_main_to_shortcut_mlp: Box<dyn EncodableWithState> =
                 Box::new(
                     TensorCopy::new(
@@ -247,13 +244,12 @@ impl ClassifierLayerExecutable {
                     layer_index,
                     attention_scale,
                     layer_config.attention_config.has_sinks,
-                    false, // is_causal - Classifier uses bidirectional attention
-                    layer_config.attention_config.sliding_window_size, // Pass sliding window size
+                    false,
+                    layer_config.attention_config.sliding_window_size,
                 )
                 .expect("Failed to create attention kernel"),
             );
 
-            // Add operation for MLP residual connection
             let mlp_residual_add: Box<dyn EncodableWithState> = Box::new(
                 TensorAddSwap::new(
                     mtl_context,
@@ -313,7 +309,6 @@ impl EncodableWithState for ClassifierLayerExecutable {
             );
         }
 
-        // Save input for mixer residual connection
         self.copy_main_to_shortcut_mixer.encode(
             state,
             command_buffer,
@@ -369,7 +364,6 @@ impl EncodableWithState for ClassifierLayerExecutable {
             }
         }
 
-        // Residual add after mixer: main += shortcut (gives mlp_inputs)
         self.mixer_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
@@ -380,7 +374,6 @@ impl EncodableWithState for ClassifierLayerExecutable {
             );
         }
 
-        // Save mlp_inputs for MLP residual connection
         self.copy_main_to_shortcut_mlp.encode(
             state,
             command_buffer,
@@ -419,7 +412,6 @@ impl EncodableWithState for ClassifierLayerExecutable {
             }
         }
 
-        // Residual add after MLP: main += shortcut (gives final outputs)
         self.mlp_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {

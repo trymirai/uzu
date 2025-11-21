@@ -83,7 +83,7 @@ impl Classifier {
     {
         autoreleasepool(|_| {
             let num_labels =
-                self.context.model_config.classifier_config.num_labels;
+                self.context.model_config.model_config.num_labels;
             let mut state = ClassificationForwardPassState::new(
                 self.context.mtl_context.clone(),
                 &self.context.model_shape,
@@ -166,7 +166,7 @@ impl Classifier {
     ) -> Result<Box<[f32]>, Error> {
         autoreleasepool(|_| {
             let num_labels =
-                self.context.model_config.classifier_config.num_labels;
+                self.context.model_config.model_config.num_labels;
             let mut state = ClassificationForwardPassState::new(
                 self.context.mtl_context.clone(),
                 &self.context.model_shape,
@@ -227,7 +227,7 @@ impl Classifier {
             state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
         let logits_array = logits_arrays[0].borrow();
 
-        let num_labels = self.context.model_config.classifier_config.num_labels;
+        let num_labels = self.context.model_config.model_config.num_labels;
         let buffer = Array::buffer(&*logits_array);
 
         match Array::data_type(&*logits_array) {
@@ -260,7 +260,7 @@ impl Classifier {
         logits: &[f32],
     ) -> Result<HashMap<String, f32>, Error> {
         let output_labels =
-            &self.context.model_config.classifier_config.output_labels;
+            &self.context.model_config.model_config.output_labels;
         let mut probabilities = HashMap::new();
 
         for (idx, &logit) in logits.iter().enumerate() {

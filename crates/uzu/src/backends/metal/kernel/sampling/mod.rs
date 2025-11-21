@@ -664,7 +664,7 @@ impl EncodableWithState for SamplingKernelEncodable {
         let mut output_buffer_ref =
             state.sampling_output().unwrap().borrow_mut();
 
-        let sampling_method = state.sampling_method.unwrap();
+        let sampling_method = state.sampling_method().unwrap();
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();

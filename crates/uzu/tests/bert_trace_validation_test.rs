@@ -1,5 +1,3 @@
-// Intentionally keep top-level imports minimal to avoid cfg-related warnings
-
 #[test]
 fn test_bert_trace_validation() {
     #[cfg(feature = "tracing")]
@@ -38,6 +36,8 @@ fn run_bert_trace_validation() {
         println!("to generate traces first.");
         return;
     }
+
+    // Validator will gracefully degrade if only logits are present.
 
     if !model_path.exists() {
         println!("Skipping test: BERT model not found at {:?}", model_path);

@@ -17,9 +17,12 @@ pub struct ClassifierConfig {
     pub vocab_size: usize,
     pub model_dim: usize,
     pub hidden_dim: usize,
-    pub num_heads: usize,
-    pub num_groups: usize,
-    pub head_dim: usize,
+    #[serde(default)]
+    pub num_heads: Option<usize>,
+    #[serde(default)]
+    pub num_groups: Option<usize>,
+    #[serde(default)]
+    pub head_dim: Option<usize>,
     pub attention_scale: Option<f32>,
     pub num_layers: usize,
     #[serde(default)]
@@ -57,6 +60,15 @@ impl ClassifierConfig {
             panic!("TransformerConfig must have at least one layer");
         };
 
+        // Derive head parameters from either top-level config or first layer
+        let heads = self
+            .transformer_config
+            .layer_configs
+            .first()
+            .expect("TransformerConfig must have at least one layer")
+            .attention_config
+            .clone();
+
         DecoderConfig {
             embedding_config: self.embedding_config.clone(),
             global_rope_config: self
@@ -75,9 +87,9 @@ impl ClassifierConfig {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             hidden_dim: self.transformer_config.hidden_dim,
-            num_heads: self.num_heads,
-            num_groups: self.num_groups,
-            head_dim: self.head_dim,
+            num_heads: self.num_heads.unwrap_or(heads.num_heads),
+            num_groups: self.num_groups.unwrap_or(heads.num_groups),
+            head_dim: self.head_dim.unwrap_or(heads.head_dim),
             attention_scale: self.attention_scale,
             num_layers: self.num_layers,
             sliding_window_sizes: {

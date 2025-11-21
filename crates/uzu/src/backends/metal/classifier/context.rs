@@ -78,12 +78,10 @@ impl ClassifierContext {
         let classifier_model_config = model_metadata
             .model_config
             .as_classifier()
-            .ok_or(Error::UnableToLoadConfig)?
-            .clone();
+            .ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config = Rc::new(
-            classifier_model_config.classifier_config.to_decoder_config(),
-        );
+        let decoder_config =
+            Rc::new(classifier_model_config.model_config.to_decoder_config());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let mtl_context = Rc::new(
@@ -107,13 +105,9 @@ impl ClassifierContext {
             &decoder_config,
             &model_shape,
         )));
-        // Load weights into shared buffers
-        // For BERT, RoPE is under transformer/, not at root, so we need to load them separately
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
-            // Load embeddings from root
             shared_bufs.embeddings.update_data(&root_loader_view);
-            // Load RoPE from transformer subtree
             let transformer_tree =
                 root_loader_view.subtree("transformer").unwrap();
             shared_bufs
@@ -144,7 +138,7 @@ impl ClassifierContext {
         let global_rope =
             Self::create_rope_block(&mtl_context, data_type, RopeType::Global);
         let local_rope = classifier_model_config
-            .classifier_config
+            .model_config
             .transformer_config
             .local_rope_config
             .as_ref()
@@ -157,7 +151,7 @@ impl ClassifierContext {
             });
 
         let layers = classifier_model_config
-            .classifier_config
+            .model_config
             .transformer_config
             .layer_configs
             .iter()
@@ -170,20 +164,21 @@ impl ClassifierContext {
                     }
                 }
 
+                let attn = &layer_config.attention_config;
                 ClassifierLayerExecutable::new(
                     &mtl_context,
                     layer_config,
                     compilation_config.clone(),
                     layer_index,
-                    classifier_model_config.classifier_config.model_dim,
+                    classifier_model_config.model_config.model_dim,
                     classifier_model_config
-                        .classifier_config
+                        .model_config
                         .transformer_config
                         .hidden_dim,
-                    classifier_model_config.classifier_config.num_heads,
-                    classifier_model_config.classifier_config.head_dim,
-                    classifier_model_config.classifier_config.num_groups,
-                    classifier_model_config.classifier_config.attention_scale,
+                    attn.num_heads,
+                    attn.head_dim,
+                    attn.num_groups,
+                    attn.scale,
                     &transformer_loader
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),
@@ -197,7 +192,7 @@ impl ClassifierContext {
             &mtl_context,
             data_type,
             classifier_model_config
-                .classifier_config
+                .model_config
                 .transformer_config
                 .output_norm_config
                 .clone(),
@@ -208,7 +203,7 @@ impl ClassifierContext {
         .expect("Failed to create output norm kernel");
 
         let context_length =
-            classifier_model_config.classifier_config.context_length;
+            classifier_model_config.model_config.context_length;
         let scratch_buffers = ForwardPassBuffers::new(
             &mtl_context,
             &decoder_config,
@@ -227,20 +222,17 @@ impl ClassifierContext {
         let embedding_norm = NormalizationEncodable::new(
             &mtl_context,
             data_type,
-            classifier_model_config
-                .classifier_config
-                .embedding_norm_config
-                .clone(),
+            classifier_model_config.model_config.embedding_norm_config.clone(),
             ArrayId::Main,
             ArrayId::Main,
             &root_loader_view.subtree("embedding_norm").unwrap(),
         )
         .expect("Failed to create embedding norm kernel");
 
-        let model_dim = classifier_model_config.classifier_config.model_dim;
-        let num_labels = classifier_model_config.classifier_config.num_labels;
+        let model_dim = classifier_model_config.model_config.model_dim;
+        let num_labels = classifier_model_config.model_config.num_labels;
         let prediction_head_config =
-            &classifier_model_config.classifier_config.prediction_head_config;
+            &classifier_model_config.model_config.prediction_head_config;
         let prediction_head_tree =
             root_loader_view.subtree("prediction_head").unwrap();
 
@@ -336,10 +328,7 @@ impl ClassifierContext {
 
         let pooling = Box::new(PoolingEncodable::new(
             pooling_kernel,
-            classifier_model_config
-                .classifier_config
-                .classifier_pooling
-                .clone(),
+            classifier_model_config.model_config.classifier_pooling.clone(),
             model_dim,
         ));
 
@@ -357,7 +346,7 @@ impl ClassifierContext {
             kv_cache,
             shared_buffers,
             scratch_buffers,
-            model_config: classifier_model_config,
+            model_config: classifier_model_config.clone(),
             model_shape,
             embed,
             embedding_norm,
