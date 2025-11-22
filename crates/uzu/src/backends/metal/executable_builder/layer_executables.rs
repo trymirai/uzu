@@ -23,7 +23,7 @@ use crate::{
         DecoderLayerType,
         decoder_layer::{DecoderLayerConfig, MixerConfig},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 pub struct LayerExecutables {
@@ -49,18 +49,6 @@ pub(crate) enum MixerExecutables {
     StateSpace {
         mixer: Box<dyn EncodableWithState>,
     },
-}
-
-fn resolve_subtree<'a>(
-    loader: &'a ParameterTree<Rc<MTLContext>>,
-    candidates: &[&str],
-) -> Result<ParameterTree<'a, Rc<MTLContext>>, ParameterLoaderError> {
-    for name in candidates {
-        if let Ok(tree) = loader.subtree(name) {
-            return Ok(tree);
-        }
-    }
-    loader.subtree(candidates.first().copied().unwrap_or_default())
 }
 
 impl LayerExecutables {
@@ -110,11 +98,7 @@ impl LayerExecutables {
                     layer_config.pre_attention_norm_config.clone(),
                     ArrayId::Main,
                     ArrayId::Main,
-                    &resolve_subtree(
-                        decoder_layer_loader,
-                        &["pre_attention_norm", "pre_mixer_norm"],
-                    )
-                    .unwrap(),
+                    &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
                 )
                 .expect("Failed to create RMS norm kernel"),
             );
@@ -135,14 +119,9 @@ impl LayerExecutables {
                             num_groups * head_dim,
                         ],
                         mtl_context,
-                        &resolve_subtree(
-                            decoder_layer_loader,
-                            &[
-                                "attention.qkv_projection",
-                                "mixer.qkv_projection",
-                            ],
-                        )
-                        .unwrap(),
+                        &decoder_layer_loader
+                            .subtree("mixer.qkv_projection")
+                            .unwrap(),
                         ArrayId::Main,
                         ArrayId::QKV,
                         &compilation_config.descriptor_mlp,
@@ -158,11 +137,7 @@ impl LayerExecutables {
                                 attention_config.query_norm_config.clone(),
                                 attention_config.key_norm_config.clone(),
                                 ArrayId::QKV,
-                                &resolve_subtree(
-                                    decoder_layer_loader,
-                                    &["attention", "mixer"],
-                                )
-                                .unwrap(),
+                                &decoder_layer_loader.subtree("mixer").unwrap(),
                                 num_heads,
                                 num_groups,
                                 head_dim,
@@ -184,14 +159,9 @@ impl LayerExecutables {
                         num_heads * head_dim,
                         [model_dim],
                         mtl_context,
-                        &resolve_subtree(
-                            decoder_layer_loader,
-                            &[
-                                "attention.out_projection",
-                                "mixer.out_projection",
-                            ],
-                        )
-                        .unwrap(),
+                        &decoder_layer_loader
+                            .subtree("mixer.out_projection")
+                            .unwrap(),
                         ArrayId::AttentionOutput,
                         ArrayId::Main,
                         &compilation_config.descriptor_mlp,
@@ -249,11 +219,9 @@ impl LayerExecutables {
                             norm_config.clone(),
                             ArrayId::Main,
                             ArrayId::Main,
-                            &resolve_subtree(
-                                decoder_layer_loader,
-                                &["post_attention_norm", "post_mixer_norm"],
-                            )
-                            .unwrap(),
+                            &decoder_layer_loader
+                                .subtree("post_mixer_norm")
+                                .unwrap(),
                         )
                         .expect("Failed to create RMS norm kernel"),
                     ))

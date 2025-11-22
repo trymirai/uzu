@@ -373,7 +373,7 @@ impl SharedBuffers {
                 let layer_tree = parameter_tree
                     .subtree(&format!("layers.{}", layer_idx))
                     .unwrap();
-                let attn_tree = layer_tree.subtree("attention").unwrap();
+                let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf("sinks").unwrap();
                 let mut dst = sink_cell.borrow_mut();
                 let dst_slice = dst.as_slice_mut::<f32>().unwrap();
