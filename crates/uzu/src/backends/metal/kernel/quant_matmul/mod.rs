@@ -261,7 +261,7 @@ impl QuantizedMatmulKernel {
         &self,
         batch: usize,
     ) -> KernelKind {
-        if batch == 1 || self.output_dim == 1 {
+        if batch < 32 || self.output_dim == 1 {
             KernelKind::MatrixVector
         } else {
             KernelKind::MatrixMatrix

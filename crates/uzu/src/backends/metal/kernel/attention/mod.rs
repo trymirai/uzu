@@ -588,9 +588,7 @@ impl EncodableWithState for AttentionKernelEncodable {
             num_groups,
             max_sequence_length,
         ) = {
-            let qkv_binding = state.arrays(&[ArrayId::QKV]);
-            let qkv_array = qkv_binding[0].borrow();
-            let suffix_length = qkv_array.shape()[0];
+            let suffix_length = state.active_suffix_length();
 
             let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
             let queries_array = queries_binding[0].borrow();

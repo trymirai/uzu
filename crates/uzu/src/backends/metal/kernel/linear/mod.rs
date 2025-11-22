@@ -230,11 +230,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let input_array = arrays[0].borrow();
-
-        let batch_size = input_array.shape()[0];
-
-        drop(input_array);
+        let batch_size = state.active_suffix_length();
 
         let mut input_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();

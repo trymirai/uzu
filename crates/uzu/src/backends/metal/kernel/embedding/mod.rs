@@ -286,10 +286,7 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
-        let token_ids_array = arrays[0].borrow();
-        let batch_size = token_ids_array.shape()[0];
-        drop(token_ids_array);
-
+        let batch_size = state.active_suffix_length();
         let mut token_ids_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
 
@@ -494,10 +491,7 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
-        let input_array = arrays[0].borrow();
-        let batch_size = input_array.shape()[0];
-        drop(input_array);
-
+        let batch_size = state.active_suffix_length();
         let mut input_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
 
