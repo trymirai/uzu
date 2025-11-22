@@ -29,10 +29,11 @@ void batched_gumbel(
     PhiloxState rng;
     philox_init(&rng, rng_seed, rng_offset);
 
+    #pragma unroll(4)
     for (uint i = 0; i < GRAIN_SIZE; i++) {
         uint global_idx = grain_offset + i * BLOCK_SIZE;
         if (global_idx < batch_end) {
-            processed_logits[global_idx] = logits_data[global_idx] + T(-log(-log(uniform_float(&rng))));
+            processed_logits[global_idx] = logits_data[global_idx] + T(-fast::log(-fast::log(uniform_float(&rng))));
         }
     }
 }
