@@ -317,8 +317,7 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
 
 // Quantized embedding readout block - uses quantized matmul for efficiency
 pub struct QuantizedEmbeddingReadoutKernelBlock {
-    kernel_mm: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
-    kernel_mv: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
+    kernel: super::super::kernel::quant_matmul::QuantizedMatmulKernel,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
     biases_buffer: MTLBuffer,
@@ -361,6 +360,9 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
         let packing_divisor = mode.packing_divisor();
+
+        // Determine if weights are transposed by checking shape
+        let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
             return Err(QuantizedEmbeddingError::MetalError(
@@ -442,38 +444,18 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         let scales_buffer = unsafe { scales.mtl_buffer().to_owned() };
 
         use super::super::kernel::quant_matmul::{
-            QuantizationType, QuantizedMatmulKernel, quantized_kernel_names,
+            QuantizationType, QuantizedMatmulKernel,
         };
 
-        let Some((kernel_name_mm, kernel_name_mv)) = quantized_kernel_names(
-            data_type, group_size, vocab_size, model_dim, mode,
-        ) else {
-            return Err(QuantizedEmbeddingError::MetalError(
-                MTLError::Generic(format!(
-                    "Unsupported group size {} or bits {:?} for transposed {:?} kernel",
-                    group_size, mode, data_type
-                )),
-            ));
-        };
-
-        let kernel_mm = QuantizedMatmulKernel::new(
+        let kernel = QuantizedMatmulKernel::new(
             mtl_context,
             data_type,
-            &kernel_name_mm,
+            group_size,
+            model_dim,
+            vocab_size,
+            mode,
             QuantizationType::Mlx,
-        )
-        .map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to create kernel: {:?}",
-                e
-            )))
-        })?;
-
-        let kernel_mv = QuantizedMatmulKernel::new(
-            mtl_context,
-            data_type,
-            &kernel_name_mv,
-            QuantizationType::Mlx,
+            weights_transposed,
         )
         .map_err(|e| {
             QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
@@ -483,8 +465,7 @@ impl QuantizedEmbeddingReadoutKernelBlock {
         })?;
 
         Ok(Self {
-            kernel_mm,
-            kernel_mv,
+            kernel,
             weights_buffer,
             scales_buffer,
             biases_buffer,
@@ -527,18 +508,13 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
             scales_buffer: &self.scales_buffer,
             zero_points_or_biases_buffer: &self.biases_buffer,
             output_buffer,
-            m: batch_size as i32,
-            n: self.vocab_size as i32,
-            k: self.model_dim as i32,
+            batch: batch_size as i32,
+            input_dim: self.model_dim as i32,
+            output_dim: self.vocab_size as i32,
             quantization_type: QuantizationType::Mlx,
         };
-        let kernel = if batch_size == 1 {
-            &self.kernel_mv
-        } else {
-            &self.kernel_mm
-        };
 
-        kernel
+        self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
 

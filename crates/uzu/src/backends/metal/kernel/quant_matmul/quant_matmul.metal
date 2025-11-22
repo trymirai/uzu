@@ -78,6 +78,25 @@ inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
 }
 
 template <typename U, int values_per_thread, int bits>
+inline void
+qouter(const thread uint8_t* w, U x, U scale, U bias, thread U* result) {
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+
+  if (bits == 4) {
+    U s[2] = {scale, scale / 16.0f};
+    for (int i = 0; i < (values_per_thread / 2); i++) {
+      result[2 * i] += x * (s[0] * (w[i] & 0x0f) + bias);
+      result[2 * i + 1] += x * (s[1] * (w[i] & 0xf0) + bias);
+    }
+  }
+  else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      result[i] += x * (scale * w[i] + bias);
+    }
+  }
+}
+
+template <typename U, int values_per_thread, int bits>
 inline U qdot(
     const device uint8_t* w,
     const thread U* x_thread,
@@ -196,7 +215,6 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   }
 }
 
-// Specialized vectorized dequantizer for bfloat, N=8 (pack_factor), bits=4
 template <>
 inline void dequantize<bfloat, 8, 4>(const device uint8_t* w, bfloat scale, bfloat bias, threadgroup bfloat* w_local) {
     const device uint32_t* w_ptr = (const device uint32_t*)w;
@@ -227,13 +245,13 @@ inline void dequantize<bfloat, 8, 4>(const device uint8_t* w, bfloat scale, bflo
 template <
     typename T,
     short BROWS,
-    short BCOLS, 
+    short BCOLS,
     short dst_ld,
     short reduction_dim,
     short tgp_size,
     short group_size,
     short bits>
-struct QuantizedBlockLoader {
+struct QuantizedBlockLoaderMlx {
   static_assert(BCOLS <= group_size, "Group size should be larger than columns");
   static_assert(group_size % BCOLS == 0, "Group size should be divisible by columns");
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
@@ -247,7 +265,6 @@ struct QuantizedBlockLoader {
   const int src_ld;
   const int tile_stride;
   short group_step_cnt;
-  int k_base;
   const int group_stride;
 
   const short thread_idx;
@@ -259,7 +276,7 @@ struct QuantizedBlockLoader {
   const device T* scales;
   const device T* biases;
 
-  QuantizedBlockLoader(
+  QuantizedBlockLoaderMlx(
       const device uint8_t* src_,
       const device T* scales_,
       const device T* biases_,
@@ -299,39 +316,9 @@ struct QuantizedBlockLoader {
       return;
     }
 
-    if (reduction_dim == 1) {
-      // N-tail: zero out rows beyond valid outputs
-      if (bi >= src_tile_dim.x) {
-        for (int i = 0; i < n_reads * pack_factor; i++) {
-          dst[i] = T(0);
-        }
-        return;
-      }
-
-      // K-tail: strictly limit to valid packs and zero trailing nibbles
-      int valid_cols = src_tile_dim.y; // 0..BK
-      int valid_packs = (valid_cols + pack_factor - 1) / pack_factor;
-
-      T scale = *scales;
-      T bias = *biases;
-      for (int i = 0; i < n_reads; i++) {
-        int pack_idx = bj + i; // global pack index across the BK packs
-        if (pack_idx < valid_packs) {
-          dequantize<T, pack_factor, bits>(
-              src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
-          if (pack_idx == valid_packs - 1) {
-            int rem = valid_cols - (valid_packs - 1) * pack_factor;
-            if (rem > 0 && rem < pack_factor) {
-              for (int r = rem; r < pack_factor; ++r) {
-                dst[i * pack_factor + r] = T(0);
-              }
-            }
-          }
-        } else {
-          for (int j = 0; j < pack_factor; ++j) {
-            dst[i * pack_factor + j] = T(0);
-          }
-        }
+    if (reduction_dim == 1 && bi >= src_tile_dim.x) {
+      for (int i = 0; i < n_reads * pack_factor; i++) {
+        dst[i] = T(0);
       }
       return;
     }
@@ -347,7 +334,10 @@ struct QuantizedBlockLoader {
     T bias = *biases;
     for (int i = 0; i < n_reads; i++) {
       dequantize<T, pack_factor, bits>(
-          src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
+          (device uint8_t*)(src + i * bytes_per_pack),
+          scale,
+          bias,
+          dst + i * pack_factor);
     }
   }
 
@@ -372,7 +362,6 @@ struct QuantizedBlockLoader {
   }
 };
 
-// Loader that computes bias from packed zero-points (U8) and scales on-GPU
 template <
     typename T,
     short BROWS,
@@ -381,7 +370,8 @@ template <
     short reduction_dim,
     short tgp_size,
     short group_size,
-    short bits>
+    short bits,
+    bool per_output_layout = false>
 struct QuantizedBlockLoaderZp {
   static_assert(BCOLS <= group_size, "Group size should be larger than columns");
   static_assert(group_size % BCOLS == 0, "Group size should be divisible by columns");
@@ -409,6 +399,9 @@ struct QuantizedBlockLoaderZp {
   const device T* scales;
   const device T* scales_row_start;
   const device uint8_t* zps_row_start;
+  const int out_group_base;
+  const int out_groups_total;
+  const int zp_stride_total;
 
   QuantizedBlockLoaderZp(
       const device uint8_t* src_,
@@ -418,7 +411,10 @@ struct QuantizedBlockLoaderZp {
       const int groups_per_row_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]])
+      ushort simd_lane_id [[thread_index_in_simdgroup]],
+      const int out_group_base_ = 0,
+      const int out_groups_total_ = 0,
+      const int zp_stride_total_ = 0)
       : src_ld(src_ld_),
         groups_per_row(groups_per_row_),
         tile_stride(
@@ -436,20 +432,38 @@ struct QuantizedBlockLoaderZp {
         scales_row_start(reduction_dim == 1 ? (scales_ + bi * groups_per_row_) : scales_),
         zps_row_start(reduction_dim == 1 
             ? (zero_points_row_start_ + bi * (bits == 4 ? ((groups_per_row_ + 1) / 2) : groups_per_row_))
-            : zero_points_row_start_) {}
+            : zero_points_row_start_),
+        out_group_base(per_output_layout ? out_group_base_ : 0),
+        out_groups_total(per_output_layout ? out_groups_total_ : 0),
+        zp_stride_total(per_output_layout ? zp_stride_total_ : 0) {}
 
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
-    int g = reduction_dim == 0 ? (k_base / group_size)
-                               : (int)(scales - scales_row_start);
     uint zp_n;
-    if (bits == 4) {
-        const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
-        uint8_t zp_b = *zp_ptr;
-        zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+    T scale_val;
+    if (per_output_layout) {
+      const int row_idx = k_base + bi;
+      const int scale_index = row_idx * groups_per_row + out_group_base;
+      scale_val = scales_row_start[scale_index];
+      if (bits == 4) {
+        const int byte_index = row_idx * zp_stride_total + (out_group_base >> 1);
+        uint8_t zp_b = zps_row_start[byte_index];
+        zp_n = (out_group_base & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+      } else {
+        const int zp_index = row_idx * zp_stride_total + out_group_base;
+        zp_n = zps_row_start[zp_index];
+      }
     } else {
-        zp_n = zps_row_start[g];
+      int g = reduction_dim == 0 ? (k_base / group_size)
+                                 : (int)(scales - scales_row_start);
+      scale_val = reduction_dim == 0 ? scales_row_start[g] : *scales;
+      if (bits == 4) {
+          const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
+          uint8_t zp_b = *zp_ptr;
+          zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+      } else {
+          zp_n = zps_row_start[g];
+      }
     }
-    T scale_val = reduction_dim == 0 ? scales_row_start[g] : *scales;
     out_scale = scale_val;
     out_bias = static_cast<T>(-scale_val * static_cast<T>(zp_n));
   }
@@ -567,38 +581,70 @@ inline void qmm_core(
     threadgroup T* Xs,
     threadgroup T* Ws,
     uint lid [[thread_index_in_threadgroup]]) {
-  (void)lid;
-  const int full_blocks = K / BK;
-  for (int kb = 0; kb < full_blocks; kb++) {
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (num_els < BM) {
-      loader_x.load_safe(short2(BK, num_els));
-    } else {
-      loader_x.load_unsafe();
-    }
-    loader_w.load_unsafe();
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    mma_op.mma(Xs, Ws);
-    loader_x.next();
-    loader_w.next();
-  }
-
-  if (!aligned_K) {
-    const short tail_k = static_cast<short>(K - full_blocks * BK);
-    if (tail_k > 0) {
-      const short rows = (num_els < BM) ? num_els : BM;
-      const short cols = (num_outs < BN) ? num_outs : BN;
+  if (num_els < BM) {
+    if ((K % BK) != 0) {
+      const int k_blocks = K / BK;
+      for (int k = 0; k < k_blocks; k++) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_safe(short2(BK, num_els));
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
+      const short num_k = K - k_blocks * BK;
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      loader_x.load_safe(short2(tail_k, rows));
-      loader_w.load_safe(short2(cols, tail_k));
+      loader_x.load_safe(short2(num_k, num_els));
+      loader_w.load_safe(short2(BN, num_k));
       threadgroup_barrier(mem_flags::mem_threadgroup);
       mma_op.mma(Xs, Ws);
+    } else {
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_safe(short2(BK, num_els));
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
+    }
+  } else {
+    if ((K % BK) != 0) {
+      const int k_blocks = K / BK;
+      for (int k = 0; k < k_blocks; k++) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_unsafe();
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
+      const short num_k = K - k_blocks * BK;
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      loader_x.load_safe(short2(num_k, BM));
+      loader_w.load_safe(short2(BN, num_k));
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      mma_op.mma(Xs, Ws);
+    } else {
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_unsafe();
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
     }
   }
 
+  // Store results to device memory
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (num_els < BM || num_outs < BN) {
-    mma_op.store_result_safe(y, N, short2(num_outs, num_els));
+  if (num_els < BM) {
+    mma_op.store_result_safe(y, N, short2(BN, num_els));
   } else {
     mma_op.store_result(y, N);
   }
@@ -650,28 +696,42 @@ void qmm_impl(
   const int y_col = tid.x * BN;
   x += y_row * static_cast<int64_t>(K);
   wl += y_col * bytes_per_pack / pack_factor;
-  const int groups_per_row = (K + group_size - 1) / group_size;
-  scales += y_col * groups_per_row;
   y += y_row * static_cast<int64_t>(N) + y_col;
+
+  const device T* scales_base = scales;
+  const device T* biases_base = biases;
 
   const short num_els = min(BM, M - y_row);
   const short num_outs = min(BN, N - y_col);
   loader_x_t loader_x(x, K, Xs, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
 
-  // Create appropriate loader based on quantization type
   if (kUseMlxQuant) {
-    // MLX quantization: uses pre-computed biases
-    using loader_w_t = QuantizedBlockLoader<T, BK, BN, BN_padded, 0, WM * WN * 32, group_size, bits>;
-    const device T* biases_row_start = biases + y_col * groups_per_row;
-    loader_w_t loader_w(wl, scales, biases_row_start, N, Ws, simd_gid, simd_lid);
+    using loader_w_t = QuantizedBlockLoaderMlx<T, BK, BN, BN_padded, 0, WM * WN * 32, group_size, bits>;
+    const device T* scales_mlx = scales_base + (y_col / group_size);
+    const device T* biases_mlx = biases_base + (y_col / group_size);
+    loader_w_t loader_w(wl, scales_mlx, biases_mlx, N, Ws, simd_gid, simd_lid);
     qmm_core<loader_w_t, loader_x_t, mma_t, T, aligned_K, BM, BK, BN>(
         loader_x, loader_w, mma_op, num_els, num_outs, K, y, N, Xs, Ws, lid);
   } else {
-    // GroupQuantized: uses zero-points
-    using loader_w_t = QuantizedBlockLoaderZp<T, BK, BN, BN_padded, 0, WM * WN * 32, group_size, bits>;
-    const device uint8_t* zero_points_row_start = zero_points + y_col * (bits == 4 ? ((groups_per_row + 1) / 2) : groups_per_row);
-    loader_w_t loader_w(wl, scales, zero_points_row_start, N, groups_per_row, Ws, simd_gid, simd_lid);
+    const int out_groups_total = (N + group_size - 1) / group_size;
+    const int groups_per_row = out_groups_total;
+    const int out_group = y_col / group_size;
+    const int zp_stride_out =
+        (bits == 4) ? ((out_groups_total + 1) / 2) : out_groups_total;
+    using loader_w_t = QuantizedBlockLoaderZp<T, BK, BN, BN_padded, 0, WM * WN * 32, group_size, bits, true>;
+    loader_w_t loader_w(
+        wl,
+        scales_base,
+        zero_points,
+        N,
+        groups_per_row,
+        Ws,
+        simd_gid,
+        simd_lid,
+        out_group,
+        out_groups_total,
+        zp_stride_out);
     qmm_core<loader_w_t, loader_x_t, mma_t, T, aligned_K, BM, BK, BN>(
         loader_x, loader_w, mma_op, num_els, num_outs, K, y, N, Xs, Ws, lid);
   }
@@ -698,30 +758,54 @@ inline void qmm_transposed_core(
     threadgroup T* Xs,
     threadgroup T* Ws,
     uint lid [[thread_index_in_threadgroup]]) {
-  (void)lid;
-  const int k_blocks = (K + BK - 1) / BK;
-  for (int kb = 0; kb < k_blocks; kb++) {
-    const short k_len = (kb < (K / BK)) ? BK : static_cast<short>(K - (K / BK) * BK);
-    const bool needs_safe_x = (num_els < BM) || (k_len < BK);
-    const bool needs_safe_w = (!aligned_N && num_outs < BN) || (k_len < BK);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (needs_safe_x) {
-      loader_x.load_safe(short2(k_len, num_els));
+  if (num_els < BM) {
+    if (!aligned_N && num_outs < BN) {
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_safe(short2(BK, num_els));
+        loader_w.load_safe(short2(BK, num_outs));
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
     } else {
-      loader_x.load_unsafe();
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_safe(short2(BK, num_els));
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
     }
-    if (needs_safe_w) {
-      loader_w.load_safe(short2(num_outs, k_len));
+  } else {
+    if (!aligned_N && num_outs < BN) {
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_unsafe();
+        loader_w.load_safe(short2(BK, num_outs));
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
     } else {
-      loader_w.load_unsafe();
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    mma_op.mma(Xs, Ws);
-    if (kb + 1 < k_blocks) {
-      loader_x.next();
-      loader_w.next();
+      for (int k = 0; k < K; k += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        loader_x.load_unsafe();
+        loader_w.load_unsafe();
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        mma_op.mma(Xs, Ws);
+        loader_x.next();
+        loader_w.next();
+      }
     }
   }
+
+  // Store results to device memory
   threadgroup_barrier(mem_flags::mem_threadgroup);
   if (num_els < BM || num_outs < BN) {
     mma_op.store_result_safe(y, N, short2(num_outs, num_els));
@@ -775,9 +859,8 @@ void qmm_transposed_impl(
 
   const device T* x_block = x + y_row * static_cast<int64_t>(K);
   const device uint8_t* w_block = wl + y_col * K_w;
-  const device T* scales_row = scales + y_col * K_g;
-  const device T* biases_row = biases + y_col * K_g;
-  const device uint8_t* zero_points_row = zero_points + y_col * (bits == 4 ? ((K_g + 1) / 2) : K_g);
+  scales += y_col * K_g;
+  biases += y_col * K_g;
   device T* y_block = y + y_row * static_cast<int64_t>(N) + y_col;
 
   const short num_els = min(BM, M - y_row);
@@ -786,29 +869,14 @@ void qmm_transposed_impl(
   mma_t mma_op(simd_gid, simd_lid);
 
   if (kUseMlxQuant) {
-    using loader_w_t = QuantizedBlockLoader<
-        T,
-        BN,
-        BK,
-        BK_padded,
-        1,
-        WM * WN * 32,
-        group_size,
-        bits>;
-    loader_w_t loader_w(w_block, scales_row, biases_row, K, Ws, simd_gid, simd_lid);
+    using loader_w_t = QuantizedBlockLoaderMlx< T, BN, BK, BK_padded, 1, WM * WN * 32, group_size, bits>;
+    loader_w_t loader_w(w_block, scales, biases, K, Ws, simd_gid, simd_lid);
     qmm_transposed_core<loader_w_t, loader_x_t, mma_t, T, aligned_N, BM, BK, BN>(
         loader_x, loader_w, mma_op, num_els, num_outs, K, y_block, N, Xs, Ws, lid);
   } else {
-    using loader_w_t = QuantizedBlockLoaderZp<
-        T,
-        BN,
-        BK,
-        BK_padded,
-        1,
-        WM * WN * 32,
-        group_size,
-        bits>;
-    loader_w_t loader_w(w_block, scales_row, zero_points_row, K, K_g, Ws, simd_gid, simd_lid);
+    using loader_w_t = QuantizedBlockLoaderZp<T, BN, BK, BK_padded, 1, WM * WN * 32, group_size, bits>;
+      const device uint8_t* zero_points_row = zero_points + y_col * (bits == 4 ? ((K_g + 1) / 2) : K_g);
+    loader_w_t loader_w(w_block, scales, zero_points_row, K, K_g, Ws, simd_gid, simd_lid);
     qmm_transposed_core<loader_w_t, loader_x_t, mma_t, T, aligned_N, BM, BK, BN>(
         loader_x, loader_w, mma_op, num_els, num_outs, K, y_block, N, Xs, Ws, lid);
   }
@@ -844,7 +912,7 @@ void qmv_impl_dispatch(
 
   const int in_vec_size_w = K * bytes_per_pack / pack_factor;
   const int in_vec_size_g = (K + group_size - 1) / group_size;  // ceil(K / group_size)
-  const device T* scales_base = scales; // remember original base before pointer arithmetic
+  const device T* scales_base = scales; 
   const device uint8_t* zero_points_base = zero_points;
   const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) + simd_gid * results_per_simdgroup;
   const int used_out_row = min(N - results_per_simdgroup, out_row);
@@ -1161,102 +1229,139 @@ void qmv_fast_impl(
   }
 }
 
-template <typename T, int group_size, int bits, bool UseMlx>
-void qvm_impl_dispatch(
-    const device uint32_t* w,
+template <typename T, int group_size, int bits, bool use_zero_points>
+void qvm_impl_core(
+    const device uint32_t* ws,
     const device T* scales,
-    const device uint8_t* zero_points,
     const device T* biases,
+    const device uint8_t* zero_points,
     const device T* x,
     device T* y,
-    const constant int& K, // in_vec_size
-    const constant int& N, // out_vec_size
+    const int in_vec_size,
+    const int out_vec_size,
     uint3 tid [[threadgroup_position_in_grid]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
-
-  typedef float U;
-  constexpr int BN = 64;
-  constexpr int BK = 32;
-  constexpr int WN = 2;
+  constexpr int num_simdgroups = 2;
   constexpr int pack_factor = get_pack_factor<bits, 32>();
   constexpr int bytes_per_pack = get_bytes_per_pack<bits, 32>();
+  constexpr int tn = 32 / pack_factor;
+  constexpr int block_size = 32;
 
-  const int lidy = simd_gid;
-  const int lidx = simd_lid;
-  const int bn = BN / WN;
+  typedef float U;
+  typedef struct {
+    uint8_t wi[tn * bytes_per_pack];
+  } vec_w;
 
-  const int out_col = tid.y * BN + lidy * bn;
-  const int in_row = tid.x;
+  thread vec_w w_local;
+  thread U result[tn * pack_factor] = {0};
 
-  if (out_col >= N) {
+  const int out_vec_size_w = out_vec_size * bytes_per_pack / pack_factor;
+  const int out_vec_size_g = out_vec_size / group_size;
+  const int out_col = pack_factor * tn * (tid.y * num_simdgroups + simd_gid);
+  
+  if (out_col >= out_vec_size) {
     return;
   }
 
-  const device uint8_t* w_row = ((const device uint8_t*)w) + out_col * K * bytes_per_pack / pack_factor;
-  const int in_vec_size_g = (K + group_size - 1) / group_size;
-  const device T* scales_row = scales + out_col * in_vec_size_g;
-  
-  const device T* biases_row = nullptr;
-  int zp_stride = 0;
-  const device uint8_t* zps_row = nullptr;
-  if (UseMlx) {
-    biases_row = biases + out_col * in_vec_size_g;
-  } else {
-    if (bits == 4) {
-        zp_stride = (in_vec_size_g + 1) / 2;
-    } else {
-        zp_stride = in_vec_size_g;
-    }
-    zps_row = zero_points + out_col * zp_stride;
-  }
+  const int out_group = out_col / group_size;
+  const int zp_row_stride = use_zero_points ? ((bits == 4) ? ((out_vec_size_g + 1) / 2) : out_vec_size_g) : 0;
 
-  const device T* x_row = x + in_row * K;
-  device T* y_row = y + in_row * N + out_col;
+  const device uint8_t* ws_ptr =
+      (const device uint8_t*)ws +
+      out_col * bytes_per_pack / pack_factor +
+      simd_lid * out_vec_size_w;
+  const device T* scales_base = scales;
+  const device T* biases_base = biases;
+  x += tid.x * in_vec_size + simd_lid;
+  y += tid.x * out_vec_size + out_col;
 
-  U result[BN / WN] = {0};
-  thread U x_thread[pack_factor];
-
-  for (int k = lidx * pack_factor; k < K; k += BK * pack_factor) {
-    const int k_pack = k / pack_factor;
-    const int remaining = min(pack_factor, K - k);
+  for (int k_base = 0; k_base < in_vec_size; k_base += block_size) {
+    const int k_index = k_base + simd_lid;
+    const bool active = k_index < in_vec_size;
     
-    U x_sum = load_vector_safe<T, U, pack_factor, bits>(
-        x_row + k, x_thread, remaining);
-
-    for (int n = 0; n < min(bn, N - out_col); n++) {
-      const int w_offset = n * K * bytes_per_pack / pack_factor + k_pack * bytes_per_pack;
-      const int group_idx = k / group_size;
-      const int scale_idx = n * in_vec_size_g + group_idx;
-      
-      U scale = static_cast<U>(scales_row[scale_idx]);
-      if (UseMlx) {
-        U bias = static_cast<U>(biases_row[scale_idx]);
-        result[n] += qdot_safe<U, pack_factor, bits>(
-            w_row + w_offset, x_thread, scale, bias, x_sum, remaining);
+    U x_local = active ? static_cast<U>(*x) : U(0);
+    U scale = active ? static_cast<U>(scales_base[k_index * out_vec_size_g + out_group]) : U(0);
+    U bias;
+    
+    if (use_zero_points && active) {
+      U zp;
+      if (bits == 4) {
+        const device uint8_t* row_ptr = zero_points + k_index * zp_row_stride;
+        const device uint8_t* zp_ptr = row_ptr + (out_group >> 1);
+        uint8_t zp_byte = *zp_ptr;
+        bool high_nibble = (out_group & 1) != 0;
+        zp = static_cast<U>(high_nibble ? ((zp_byte >> 4) & 0x0F) : (zp_byte & 0x0F));
       } else {
-        const device uint8_t* zp_row = zps_row + n * zp_stride;
-        U zp;
-        if (bits == 4) {
-            uint8_t zp_b = zp_row[group_idx >> 1];
-            zp = static_cast<U>((group_idx & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F));
-        } else {
-            zp = static_cast<U>(zp_row[group_idx]);
-        }
-        U bias = -scale * zp;
-        
-        result[n] += qdot_safe<U, pack_factor, bits>(
-            w_row + w_offset, x_thread, scale, bias, x_sum, remaining);
+        const device uint8_t* row_ptr = zero_points + k_index * zp_row_stride;
+        const device uint8_t* zp_ptr = row_ptr + out_group;
+        zp = static_cast<U>(*zp_ptr);
       }
+      bias = -scale * zp;
+    } else if (active) {
+      bias = static_cast<U>(biases_base[k_index * out_vec_size_g + out_group]);
+  } else {
+      bias = U(0);
     }
+    
+    if (active) {
+      w_local = *((device vec_w*)ws_ptr);
+    }
+
+      qouter<U, tn * pack_factor, bits>(
+          (thread uint8_t*)&w_local, x_local, scale, bias, result);
+
+      x += block_size;
+      scales += block_size * out_vec_size_g;
+    if (!use_zero_points) {
+      biases += block_size * out_vec_size_g;
+    }
+    ws_ptr += block_size * out_vec_size_w;
   }
 
-  for (int n = 0; n < min(bn, N - out_col); n++) {
-    result[n] = simd_sum(result[n]);
-    if (lidx == 0) {
-      y_row[n] = static_cast<T>(result[n]);
+#pragma clang loop unroll(full)
+  for (int k = 0; k < tn * pack_factor; k++) {
+    result[k] = simd_sum(result[k]);
+  }
+
+  if (simd_lid == 0) {
+#pragma clang loop unroll(full)
+    for (int k = 0; k < tn * pack_factor; k++) {
+      y[k] = static_cast<T>(result[k]);
     }
   }
+}
+
+template <typename T, int group_size, int bits>
+void qvm_impl_mlx(
+    const device uint32_t* ws,
+    const device T* scales,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const int in_vec_size,
+    const int out_vec_size,
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]) {
+  qvm_impl_core<T, group_size, bits, false>(
+      ws, scales, biases, nullptr, x, y, in_vec_size, out_vec_size, tid, simd_gid, simd_lid);
+}
+
+template <typename T, int group_size, int bits>
+void qvm_impl_zeropoint(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* x,
+    device T* y,
+    const int in_vec_size,
+    const int out_vec_size,
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]) {
+  qvm_impl_core<T, group_size, bits, true>(
+      w, scales, nullptr, zero_points, x, y, in_vec_size, out_vec_size, tid, simd_gid, simd_lid);
 }
 
 template <typename T, int group_size, int bits>
@@ -1273,11 +1378,11 @@ void qvm_impl(
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
   if (kUseMlxQuant) {
-    qvm_impl_dispatch<T, group_size, bits, true>(
-        w, scales, zero_points, biases, x, y, K, N, tid, simd_gid, simd_lid);
+    qvm_impl_mlx<T, group_size, bits>(
+        w, scales, biases, x, y, K, N, tid, simd_gid, simd_lid);
   } else {
-    qvm_impl_dispatch<T, group_size, bits, false>(
-        w, scales, zero_points, biases, x, y, K, N, tid, simd_gid, simd_lid);
+    qvm_impl_zeropoint<T, group_size, bits>(
+        w, scales, zero_points, x, y, K, N, tid, simd_gid, simd_lid);
   }
 }
 

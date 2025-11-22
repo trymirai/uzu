@@ -7,7 +7,6 @@ use super::{
     KernelDataType, TensorAddBias,
     quant_matmul::{
         QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
-        quantized_kernel_names,
     },
 };
 use crate::{
@@ -24,9 +23,7 @@ use crate::{
 };
 
 pub struct QuantizedLinearKernelBlock {
-    kernel_mm: QuantizedMatmulKernel,
-    kernel_mv: QuantizedMatmulKernel,
-    kernel_mv_fast: Option<QuantizedMatmulKernel>,
+    kernel: QuantizedMatmulKernel,
     bias_add_kernel: Option<TensorAddBias>,
     biases_buffer: Option<MTLBuffer>,
     weights_buffer: MTLBuffer,
@@ -35,10 +32,6 @@ pub struct QuantizedLinearKernelBlock {
     quantization_type: QuantizationType,
     input_dim: usize,
     output_dim: usize,
-    #[allow(dead_code)]
-    group_size: usize,
-    #[allow(dead_code)]
-    kernel_data_type: DataType,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 }
@@ -87,6 +80,9 @@ impl QuantizedLinearKernelBlock {
 
         let w_shape = weights.shape();
         let s_shape = scales.shape();
+
+        // Determine if weights are transposed by checking shape
+        let weights_transposed = w_shape[0] == output_dim;
 
         // Determine quantization style: prefer MLX (deq_biases), else AWQ (zero_points)
         let (quantization_type, zero_points_or_biases_buffer, scales_buffer) = {
@@ -196,53 +192,22 @@ impl QuantizedLinearKernelBlock {
             };
 
         let g = config.group_size;
-        let Some((kernel_name_mm, kernel_name_mv)) = quantized_kernel_names(
+        let mode = config.weight_quantization_mode;
+
+        let kernel = QuantizedMatmulKernel::new(
+            mtl_context,
             kernel_data_type,
             g,
-            output_dim,
             input_dim,
-            config.weight_quantization_mode,
-        ) else {
-            return Err(MTLError::Generic(format!(
-                "Unsupported group size {} or bits {:?} for transposed {:?} kernel",
-                g, config.weight_quantization_mode, kernel_data_type
-            )));
-        };
-
-        let kernel_mm = QuantizedMatmulKernel::new(
-            mtl_context,
-            kernel_data_type,
-            &kernel_name_mm,
+            output_dim,
+            mode,
             quantization_type,
+            weights_transposed,
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
-        let kernel_mv = QuantizedMatmulKernel::new(
-            mtl_context,
-            kernel_data_type,
-            &kernel_name_mv,
-            quantization_type,
-        )
-        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
-
-        let can_use_fast = output_dim % 8 == 0 && input_dim % 512 == 0;
-        let kernel_mv_fast = if can_use_fast {
-            let fast_name = format!("{}_fast", kernel_name_mv);
-            let result = QuantizedMatmulKernel::new(
-                mtl_context,
-                kernel_data_type,
-                &fast_name,
-                quantization_type,
-            );
-
-            result.ok()
-        } else {
-            None
-        };
 
         Ok(Self {
-            kernel_mm,
-            kernel_mv,
-            kernel_mv_fast,
+            kernel,
             bias_add_kernel,
             biases_buffer,
             weights_buffer,
@@ -251,8 +216,6 @@ impl QuantizedLinearKernelBlock {
             quantization_type,
             input_dim,
             output_dim,
-            group_size: config.group_size,
-            kernel_data_type,
             input_array_id,
             output_array_id,
         })
@@ -282,34 +245,19 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
-        let m = batch_size;
-        let n = self.output_dim;
-        let k = self.input_dim;
-
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
             zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
             output_buffer: output_buffer,
-            m: m as i32,
-            n: n as i32,
-            k: k as i32,
+            batch: batch_size as i32,
+            input_dim: self.input_dim as i32,
+            output_dim: self.output_dim as i32,
             quantization_type: self.quantization_type,
         };
 
-        let use_gemv = batch_size == 1;
-        let kernel = if use_gemv {
-            if let Some(ref fast_kernel) = self.kernel_mv_fast {
-                fast_kernel
-            } else {
-                &self.kernel_mv
-            }
-        } else {
-            &self.kernel_mm
-        };
-
-        kernel
+        self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized matmul kernel");
 
