@@ -1,17 +1,18 @@
 #![cfg(target_os = "macos")]
 
-use std::{cmp::min, mem::size_of};
+use std::mem::size_of;
 
 use metal::MTLResourceOptions;
-use uzu::backends::metal::kernel::ssm::{
-    conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
-    ssd_prefill::SSD_PREFILL_CHUNK,
+use uzu::{
+    backends::metal::{
+        KernelDataType, MTLContext,
+        kernel::ssm::{
+            SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
+            conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
+        },
+    },
+    config::Activation,
 };
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::ssm::{SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode},
-};
-use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::StorageModeShared;
 
@@ -134,8 +135,6 @@ struct SSDPrefillFixture {
     head_dim: usize,
     state_dim: usize,
     group_size: i32,
-    chunk_count: usize,
-    total_pairs: usize,
     total_x: usize,
     total_dt: usize,
     total_cb: usize,
@@ -160,9 +159,6 @@ impl SSDPrefillFixture {
         let head_dim = 64usize;
         let state_dim = 64usize;
         let group_size = 1i32;
-        let chunk_size =
-            uzu::backends::metal::kernel::ssm::ssd_prefill::SSD_PREFILL_CHUNK;
-        let chunk_count = (suffix_len + chunk_size - 1) / chunk_size;
         let group_count = num_heads / (group_size as usize);
         let total_pairs = num_heads * head_dim;
         let total_x = suffix_len * total_pairs;
@@ -196,8 +192,6 @@ impl SSDPrefillFixture {
             head_dim,
             state_dim,
             group_size,
-            chunk_count,
-            total_pairs,
             total_x,
             total_dt,
             total_cb,
@@ -261,61 +255,6 @@ fn run_prefill_kernel_mode(
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
 
-    let chunk_total = fixture.chunk_count * fixture.num_heads;
-    let mut group_count_dbg = 0usize;
-    let mut square_heads_dbg = 0usize;
-    let mut matrix_args = if matches!(mode, SSDPrefillMode::Matrix) {
-        let dt_total = fixture.total_dt;
-        let group_count = fixture.num_heads / (fixture.group_size as usize);
-        group_count_dbg = group_count;
-        let square_heads =
-            fixture.num_heads * fixture.suffix_len * fixture.suffix_len;
-        square_heads_dbg = square_heads;
-        let square_groups =
-            group_count * fixture.suffix_len * fixture.suffix_len;
-        let pack_group = group_count * fixture.suffix_len * fixture.state_dim;
-        let pack_group_t = group_count * fixture.state_dim * fixture.suffix_len;
-        let dtx_total =
-            fixture.num_heads * fixture.suffix_len * fixture.head_dim;
-        let dtx_decay_total =
-            fixture.num_heads * fixture.head_dim * fixture.suffix_len;
-        let b_head_total =
-            fixture.num_heads * fixture.suffix_len * fixture.state_dim;
-        let c_head_total =
-            fixture.num_heads * fixture.state_dim * fixture.suffix_len;
-
-        let make_zero = |len: usize| -> metal::Buffer {
-            let buf = device.new_buffer((len * 4) as u64, STORAGE_MODE);
-            zero_buffer(&buf);
-            buf
-        };
-
-        Some(uzu::backends::metal::kernel::ssm::ssd_prefill::SSDPrefillMatrixArguments {
-            prefix: make_zero(dt_total),
-            chunk_sums: make_zero(chunk_total),
-            chunk_offsets: make_zero(chunk_total),
-            decay_last: make_zero(dt_total),
-            c_packed: make_zero(pack_group),
-            b_packed: make_zero(pack_group_t),
-            cb_groups: make_zero(square_groups),
-            c_head_transposed: make_zero(c_head_total),
-            attn: make_zero(square_heads),
-            dtx: make_zero(dtx_total),
-            y_tmp: make_zero(dtx_total),
-            dtxdecay: make_zero(dtx_decay_total),
-            b_head: make_zero(b_head_total),
-        })
-    } else {
-        None
-    };
-
-    let chunk_sums_debug =
-        matrix_args.as_ref().map(|m| m.chunk_sums.to_owned());
-    let chunk_offsets_debug =
-        matrix_args.as_ref().map(|m| m.chunk_offsets.to_owned());
-    let prefix_debug = matrix_args.as_ref().map(|m| m.prefix.to_owned());
-    let attn_debug = matrix_args.as_ref().map(|m| m.attn.to_owned());
-
     let args = SSDPrefillArguments {
         x: &x_buf,
         dt: &dt_buf,
@@ -334,7 +273,6 @@ fn run_prefill_kernel_mode(
         state_strides: fixture.state_strides,
         channels: fixture.num_heads,
         head_dim: fixture.head_dim,
-        matrix: matrix_args,
     };
 
     let command_buffer = ctx.command_queue.new_command_buffer();
@@ -346,20 +284,7 @@ fn run_prefill_kernel_mode(
 
     let y_vec = read_buffer(&y_buf, fixture.total_x);
     let state_vec = read_buffer(&state_buf, fixture.total_state);
-    let chunk_offsets =
-        chunk_offsets_debug.map(|buf| read_buffer(&buf, chunk_total));
-    let chunk_sums = chunk_sums_debug.map(|buf| read_buffer(&buf, chunk_total));
-    let prefix_vals =
-        prefix_debug.map(|buf| read_buffer(&buf, fixture.total_dt));
-    let attn_vals = attn_debug.map(|buf| read_buffer(&buf, square_heads_dbg));
-    let chunk_debug = match (chunk_sums, chunk_offsets, prefix_vals, attn_vals)
-    {
-        (Some(sums), Some(offsets), Some(prefix), Some(attn)) => {
-            Some((sums, offsets, prefix, attn))
-        },
-        _ => None,
-    };
-    (y_vec, state_vec, chunk_debug)
+    (y_vec, state_vec, None)
 }
 
 fn run_conv_scan_once(
@@ -524,120 +449,8 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         fixture.state_strides,
     );
 
-    let (y_gpu, state_gpu, chunk_debug) =
+    let (y_gpu, state_gpu, _) =
         run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
-
-    if let Some((chunk_sums_gpu, chunk_offsets_gpu, prefix_vals, attn_vals)) =
-        chunk_debug
-    {
-        let num_chunks = fixture.chunk_count;
-        let heads = fixture.num_heads;
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0usize;
-        let mut max_abs = 0.0f32;
-        let mut max_abs_idx = 0usize;
-        for h in 0..heads {
-            let mut running_gpu = 0.0f32;
-            let mut running_cpu = 0.0f32;
-            for c in 0..num_chunks {
-                let idx = c * heads + h;
-                let expected = running_cpu;
-                let got = chunk_offsets_gpu[idx];
-                let abs_val = got.abs();
-                if abs_val > max_abs {
-                    max_abs = abs_val;
-                    max_abs_idx = idx;
-                }
-                let diff = (expected - got).abs();
-                if diff > max_diff {
-                    max_diff = diff;
-                    max_idx = idx;
-                }
-                running_gpu += chunk_sums_gpu[idx];
-                let chunk_start = c * SSD_PREFILL_CHUNK;
-                let chunk_end =
-                    min(chunk_start + SSD_PREFILL_CHUNK, fixture.suffix_len);
-                let mut cpu_sum = 0.0f32;
-                for t_idx in chunk_start..chunk_end {
-                    let dt_idx = t_idx * heads + h;
-                    let dt_raw = fixture.dt_data[dt_idx];
-                    let dt_val = softplus_f32(dt_raw);
-                    let decay_val = (-dt_val).exp().max(1e-6).min(1.0);
-                    cpu_sum += decay_val.ln();
-                }
-                running_cpu += cpu_sum;
-                let drift = (running_cpu - running_gpu).abs();
-                if drift > 1e-4 {
-                    eprintln!(
-                        "chunk sum drift at head {h}, chunk {c}: cpu={}, gpu={}, diff={drift}",
-                        running_cpu, running_gpu
-                    );
-                }
-            }
-        }
-        if max_diff > 1e-5 {
-            eprintln!(
-                "Chunk offsets mismatch at idx {max_idx}: diff={max_diff}"
-            );
-        }
-        if max_abs > 1e3 {
-            eprintln!(
-                "Chunk offsets large magnitude at idx {max_abs_idx}: value={max_abs}"
-            );
-        }
-        let print_count = heads.min(8);
-        eprintln!(
-            "chunk_sums chunk0 head[0..{print_count}]: {:?}",
-            &chunk_sums_gpu[..print_count]
-        );
-        eprintln!(
-            "chunk_offsets chunk0 head[0..{print_count}]: {:?}",
-            &chunk_offsets_gpu[..print_count]
-        );
-        if num_chunks > 1 {
-            let start = heads;
-            let end = start + print_count.min(heads);
-            eprintln!(
-                "chunk_sums chunk1 head[0..{print_count}]: {:?}",
-                &chunk_sums_gpu[start..end]
-            );
-            eprintln!(
-                "chunk_offsets chunk1 head[0..{print_count}]: {:?}",
-                &chunk_offsets_gpu[start..end]
-            );
-        }
-        let prefix_head0: Vec<_> =
-            (0..4).map(|t| prefix_vals[t * heads]).collect();
-        eprintln!("prefix head0 first 4 tokens: {:?}", prefix_head0);
-        let prefix_tail_head0: Vec<_> = (0..4)
-            .map(|t| {
-                let idx = (fixture.suffix_len - 4 + t) * heads;
-                prefix_vals[idx]
-            })
-            .collect();
-        eprintln!("prefix head0 last 4 tokens: {:?}", prefix_tail_head0);
-
-        let mut max_attn = 0.0f32;
-        let mut max_attn_idx = 0usize;
-        for (idx, &val) in attn_vals.iter().enumerate() {
-            let abs_val = val.abs();
-            if abs_val > max_attn {
-                max_attn = abs_val;
-                max_attn_idx = idx;
-            }
-        }
-        let t = fixture.suffix_len;
-        let head_count = fixture.num_heads;
-        let j = max_attn_idx % t;
-        let i = (max_attn_idx / t) % t;
-        let h = max_attn_idx / (t * t);
-        let pref_i = prefix_vals[i * head_count + h];
-        let pref_j = prefix_vals[j * head_count + h];
-        eprintln!(
-            "attn max abs: {max_attn} at head {h}, i {i}, j {j}, pref_i {}, pref_j {}",
-            pref_i, pref_j
-        );
-    }
 
     let tolerance = 5e-5f32;
     let mut max_y_diff = 0.0f32;
@@ -693,16 +506,6 @@ fn ssd_prefill_sequential_matches_cpu_reference() {
 #[test]
 fn ssd_prefill_single_pass_matches_cpu_reference() {
     assert_matches_cpu_reference(SSDPrefillMode::SinglePass);
-}
-
-#[test]
-fn ssd_prefill_matrix_is_deterministic() {
-    assert_deterministic_for_mode(SSDPrefillMode::Matrix);
-}
-
-#[test]
-fn ssd_prefill_matrix_matches_cpu_reference() {
-    assert_matches_cpu_reference(SSDPrefillMode::Matrix);
 }
 
 #[test]

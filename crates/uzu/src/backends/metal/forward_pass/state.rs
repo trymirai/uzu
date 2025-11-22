@@ -411,22 +411,6 @@ impl SharedBuffers {
     }
 }
 
-struct SsmMatrixArrays {
-    ssm_matrix_prefix: ArrayCell,
-    ssm_matrix_chunk_sums: ArrayCell,
-    ssm_matrix_chunk_offsets: ArrayCell,
-    ssm_matrix_decay_last: ArrayCell,
-    ssm_matrix_c_packed: ArrayCell,
-    ssm_matrix_b_packed: ArrayCell,
-    ssm_matrix_cb_groups: ArrayCell,
-    ssm_matrix_c_head: ArrayCell,
-    ssm_matrix_attn: ArrayCell,
-    ssm_matrix_dtx: ArrayCell,
-    ssm_matrix_y_tmp: ArrayCell,
-    ssm_matrix_dtxdecay: ArrayCell,
-    ssm_matrix_b_head: ArrayCell,
-}
-
 struct AuxBuffers {
     suffix_length: usize,
     /// [suffix_length, model_dim]
@@ -457,7 +441,6 @@ struct AuxBuffers {
     ssm_dt: Option<ArrayCell>,
     /// [suffix_length, num_heads, head_dim]
     ssm_z: Option<ArrayCell>,
-    ssm_matrix: Option<SsmMatrixArrays>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -603,110 +586,6 @@ impl AuxBuffers {
                     )),
                     _ => None,
                 },
-                ssm_matrix: scratch.ssm_matrix.as_ref().map(|matrix_bufs| {
-                    let dt_shape = model_shape
-                        .ssm_matrix_dt_shape(suffix_length)
-                        .expect("matrix dt shape missing");
-                    let chunk_shape = model_shape
-                        .ssm_matrix_chunk_shape(suffix_length)
-                        .expect("matrix chunk shape missing");
-                    let head_square_shape = model_shape
-                        .ssm_matrix_head_square_shape(suffix_length)
-                        .expect("matrix head square shape missing");
-                    let decay_last_shape = model_shape
-                        .ssm_matrix_decay_last_shape(suffix_length)
-                        .expect("matrix decay last shape missing");
-                    let group_pack_shape = model_shape
-                        .ssm_matrix_group_pack_shape(suffix_length)
-                        .expect("matrix group pack shape missing");
-                    let group_pack_t_shape = model_shape
-                        .ssm_matrix_group_pack_transposed_shape(suffix_length)
-                        .expect("matrix group pack T shape missing");
-                    let group_square_shape = model_shape
-                        .ssm_matrix_group_square_shape(suffix_length)
-                        .expect("matrix group square shape missing");
-                    let dtx_shape = model_shape
-                        .ssm_matrix_dtx_shape(suffix_length)
-                        .expect("matrix dtx shape missing");
-                    let dtxdecay_shape = model_shape
-                        .ssm_matrix_dtxdecay_shape(suffix_length)
-                        .expect("matrix dtxdecay shape missing");
-                    let b_head_shape = model_shape
-                        .ssm_matrix_b_head_shape(suffix_length)
-                        .expect("matrix b_head shape missing");
-                    let c_transposed_shape = model_shape
-                        .ssm_matrix_c_transposed_shape(suffix_length)
-                        .expect("matrix c transposed shape missing");
-                    SsmMatrixArrays {
-                        ssm_matrix_prefix: RefCell::new(MetalArray::new(
-                            matrix_bufs.prefix.clone(),
-                            &dt_shape,
-                            DataType::F32,
-                        )),
-                        ssm_matrix_chunk_sums: RefCell::new(MetalArray::new(
-                            matrix_bufs.chunk_sums.clone(),
-                            &chunk_shape,
-                            DataType::F32,
-                        )),
-                        ssm_matrix_chunk_offsets: RefCell::new(
-                            MetalArray::new(
-                                matrix_bufs.chunk_offsets.clone(),
-                                &chunk_shape,
-                                DataType::F32,
-                            ),
-                        ),
-                        ssm_matrix_decay_last: RefCell::new(MetalArray::new(
-                            matrix_bufs.decay_last.clone(),
-                            &decay_last_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_c_packed: RefCell::new(MetalArray::new(
-                            matrix_bufs.c_packed.clone(),
-                            &group_pack_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_b_packed: RefCell::new(MetalArray::new(
-                            matrix_bufs.b_packed.clone(),
-                            &group_pack_t_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_cb_groups: RefCell::new(MetalArray::new(
-                            matrix_bufs.cb_groups.clone(),
-                            &group_square_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_c_head: RefCell::new(MetalArray::new(
-                            matrix_bufs.c_head_transposed.clone(),
-                            &c_transposed_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_attn: RefCell::new(MetalArray::new(
-                            matrix_bufs.attn.clone(),
-                            &head_square_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_dtx: RefCell::new(MetalArray::new(
-                            matrix_bufs.dtx.clone(),
-                            &dtx_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_y_tmp: RefCell::new(MetalArray::new(
-                            matrix_bufs.y_tmp.clone(),
-                            &dtx_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_dtxdecay: RefCell::new(MetalArray::new(
-                            matrix_bufs.dtxdecay.clone(),
-                            &dtxdecay_shape,
-                            act_dtype,
-                        )),
-                        ssm_matrix_b_head: RefCell::new(MetalArray::new(
-                            matrix_bufs.b_head.clone(),
-                            &b_head_shape,
-                            act_dtype,
-                        )),
-                    }
-                }),
                 rotated_queries: RefCell::new(MetalArray::new(
                     scratch.rotated_queries.clone(),
                     &model_shape.rotated_queries_shape(suffix_length),
@@ -1332,123 +1211,6 @@ impl ForwardPassState {
                     .expect("SSM z buffer not initialized")
                     .clone()
             },
-            ArrayId::SsmMatrixPrefix(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_prefix
-                    .clone()
-            },
-            ArrayId::SsmMatrixChunkSums(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_chunk_sums
-                    .clone()
-            },
-            ArrayId::SsmMatrixChunkOffsets(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_chunk_offsets
-                    .clone()
-            },
-            ArrayId::SsmMatrixDecayLast(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_decay_last
-                    .clone()
-            },
-            ArrayId::SsmMatrixCPacked(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_c_packed
-                    .clone()
-            },
-            ArrayId::SsmMatrixBPacked(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_b_packed
-                    .clone()
-            },
-            ArrayId::SsmMatrixCBGroups(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_cb_groups
-                    .clone()
-            },
-            ArrayId::SsmMatrixAttn(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_attn
-                    .clone()
-            },
-            ArrayId::SsmMatrixDtx(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_dtx
-                    .clone()
-            },
-            ArrayId::SsmMatrixYTmp(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_y_tmp
-                    .clone()
-            },
-            ArrayId::SsmMatrixDtxDecay(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_dtxdecay
-                    .clone()
-            },
-            ArrayId::SsmMatrixBHead(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_b_head
-                    .clone()
-            },
-            ArrayId::SsmMatrixCHeadTransposed(layer_index) => {
-                let _ = layer_index;
-                self.aux_buffers
-                    .ssm_matrix
-                    .as_ref()
-                    .expect("SSM matrix buffers not initialized")
-                    .ssm_matrix_c_head
-                    .clone()
-            },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
             ArrayId::AttentionPartials => {
@@ -1691,19 +1453,6 @@ pub enum ArrayId {
     SsmC(usize),
     SsmDt(usize),
     SsmZ(usize),
-    SsmMatrixPrefix(usize),
-    SsmMatrixChunkSums(usize),
-    SsmMatrixChunkOffsets(usize),
-    SsmMatrixDecayLast(usize),
-    SsmMatrixCPacked(usize),
-    SsmMatrixBPacked(usize),
-    SsmMatrixCBGroups(usize),
-    SsmMatrixAttn(usize),
-    SsmMatrixDtx(usize),
-    SsmMatrixYTmp(usize),
-    SsmMatrixDtxDecay(usize),
-    SsmMatrixBHead(usize),
-    SsmMatrixCHeadTransposed(usize),
 
     RotatedQueries,
     RotatedKeys,

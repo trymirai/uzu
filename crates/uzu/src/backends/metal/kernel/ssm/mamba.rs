@@ -1,11 +1,10 @@
 use std::{env, rc::Rc};
 
-use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMatrixArguments,
+    SSDPrefillArguments, SSDPrefillKernel,
     SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel, SplitInProjArguments,
     SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
 };
@@ -393,48 +392,6 @@ impl MambaMixerEncodable {
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
-        let matrix_args = if matches!(self.prefill_mode, SSDPrefillMode::Matrix)
-        {
-            let matrix_arrays = state.arrays(&[
-                ArrayId::SsmMatrixPrefix(self.layer_index),
-                ArrayId::SsmMatrixChunkSums(self.layer_index),
-                ArrayId::SsmMatrixChunkOffsets(self.layer_index),
-                ArrayId::SsmMatrixDecayLast(self.layer_index),
-                ArrayId::SsmMatrixCPacked(self.layer_index),
-                ArrayId::SsmMatrixBPacked(self.layer_index),
-                ArrayId::SsmMatrixCBGroups(self.layer_index),
-                ArrayId::SsmMatrixCHeadTransposed(self.layer_index),
-                ArrayId::SsmMatrixAttn(self.layer_index),
-                ArrayId::SsmMatrixDtx(self.layer_index),
-                ArrayId::SsmMatrixYTmp(self.layer_index),
-                ArrayId::SsmMatrixDtxDecay(self.layer_index),
-                ArrayId::SsmMatrixBHead(self.layer_index),
-            ]);
-            let clone_buffer = |idx: usize| -> MTLBuffer {
-                let mut arr = matrix_arrays[idx].borrow_mut();
-                let buf = unsafe { arr.mtl_buffer().to_owned() };
-                drop(arr);
-                buf
-            };
-            Some(SSDPrefillMatrixArguments {
-                prefix: clone_buffer(0),
-                chunk_sums: clone_buffer(1),
-                chunk_offsets: clone_buffer(2),
-                decay_last: clone_buffer(3),
-                c_packed: clone_buffer(4),
-                b_packed: clone_buffer(5),
-                cb_groups: clone_buffer(6),
-                c_head_transposed: clone_buffer(7),
-                attn: clone_buffer(8),
-                dtx: clone_buffer(9),
-                y_tmp: clone_buffer(10),
-                dtxdecay: clone_buffer(11),
-                b_head: clone_buffer(12),
-            })
-        } else {
-            None
-        };
-
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
         self.ssm_prefill
@@ -471,7 +428,6 @@ impl MambaMixerEncodable {
                     ],
                     channels: self.config.num_heads,
                     head_dim: self.config.head_dim,
-                    matrix: matrix_args,
                 },
                 self.prefill_mode,
             )
@@ -567,7 +523,6 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
             "single" | "singlepass" | "single_pass" => {
                 SSDPrefillMode::SinglePass
             },
-            "matrix" | "gemm" => SSDPrefillMode::Matrix,
             _ => SSDPrefillMode::SinglePass,
         },
         Err(_) => SSDPrefillMode::SinglePass,
