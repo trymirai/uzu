@@ -128,6 +128,7 @@ impl DecoderTestContext {
             &token_ids,
             &token_positions,
             token_ids.len(),
+            false,
             &token_seeds,
             false,
             None,

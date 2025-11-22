@@ -206,6 +206,10 @@ impl EncodableWithState for DecoderExecutables {
             layer.encode(state, command_buffer, parameters);
         }
 
+        if state.is_prefilling() {
+            return;
+        }
+
         self.norm.encode(state, command_buffer, parameters);
         if let Some(traces) = state.traces.clone() {
             state

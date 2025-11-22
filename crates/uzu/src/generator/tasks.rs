@@ -17,6 +17,7 @@ pub struct GeneratorRunTask {
     pub token_seeds: Vec<u64>,
     pub expected_number_of_new_tokens: usize,
     pub active_suffix_length: usize,
+    pub is_prefilling: bool,
 }
 
 impl GeneratorRunTask {
@@ -27,6 +28,7 @@ impl GeneratorRunTask {
             token_seeds: self.token_seeds.clone(),
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
             active_suffix_length: self.active_suffix_length,
+            is_prefilling: self.is_prefilling,
         }
     }
 
@@ -55,6 +57,7 @@ impl GeneratorRunTask {
             &self.token_ids,
             &self.token_positions,
             self.active_suffix_length,
+            self.is_prefilling,
             &self.token_seeds,
             false,
             external_bias_fn,

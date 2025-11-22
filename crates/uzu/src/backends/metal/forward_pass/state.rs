@@ -1045,6 +1045,7 @@ pub struct ForwardPassState {
     pub sampling_method: Option<SamplingMethod>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
     active_suffix_length: usize,
+    is_prefilling: bool,
 }
 
 impl ForwardPassState {
@@ -1058,6 +1059,7 @@ impl ForwardPassState {
         token_ids: &[u64],
         token_positions: &[usize],
         active_suffix_length: usize,
+        is_prefilling: bool,
         token_seeds: &[u64],
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
@@ -1215,6 +1217,7 @@ impl ForwardPassState {
             sampling_method: None,
             traces,
             active_suffix_length,
+            is_prefilling,
         }
     }
 
@@ -1614,6 +1617,10 @@ impl ForwardPassState {
 
     pub fn active_suffix_length(&self) -> usize {
         self.active_suffix_length
+    }
+
+    pub fn is_prefilling(&self) -> bool {
+        self.is_prefilling
     }
 
     pub fn mtl_context(&self) -> &Rc<MTLContext> {

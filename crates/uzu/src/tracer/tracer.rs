@@ -314,6 +314,7 @@ impl Tracer {
             &token_ids,
             &token_positions,
             token_ids.len(),
+            false,
             &token_seeds,
             true,
             None,

@@ -145,6 +145,9 @@ impl Generator {
                 .unwrap_or(prefill_step_size);
             let seeds_for_step =
                 &padded_seeds[tokens_start_index..tokens_end_index];
+            let is_last_prefill_step = step == number_of_prefill_steps - 1;
+            let should_sample_after_step =
+                sample_suffix && is_last_prefill_step;
 
             let is_first_prefill = step == 0;
             let should_capture =
@@ -166,6 +169,7 @@ impl Generator {
                 token_seeds: seeds_for_step.to_vec(),
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
+                is_prefilling: !should_sample_after_step,
             };
 
             let (state, run_time) = self.run_model(
@@ -322,6 +326,7 @@ impl Generator {
             token_seeds: padded_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
+            is_prefilling: false,
         };
 
         let (mut state, run_time) = self.run_model(
@@ -392,6 +397,7 @@ impl Generator {
             token_seeds: vec![0; suffix_length],
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
+            is_prefilling: false,
         };
 
         let (_, _) =
@@ -444,11 +450,13 @@ impl Generator {
                 self.context.command_buffer.root_command_buffer().to_owned();
 
             if !warmup {
-                self.context.gpu_sampler.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &EncodingParameters::new(warmup, true, false),
-                );
+                if !task.is_prefilling {
+                    self.context.gpu_sampler.encode(
+                        &mut state,
+                        &self.context.command_buffer,
+                        &EncodingParameters::new(warmup, true, false),
+                    );
+                }
             }
 
             self.context.command_buffer.commit_and_continue();
