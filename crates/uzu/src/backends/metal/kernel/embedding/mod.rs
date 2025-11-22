@@ -33,10 +33,10 @@ pub struct QuantizedEmbeddingLookupKernel {
 #[derive(Debug)]
 pub struct QuantizedEmbeddingLookupArguments<'a> {
     pub token_ids_buffer: &'a MTLBuffer, // [batch_size] as U64
-    pub weights_buffer: &'a MTLBuffer,   // [vocab_size, model_dim/2] as U8
-    pub scales_buffer: &'a MTLBuffer,    // [vocab_size, num_groups]
-    pub biases_buffer: &'a MTLBuffer,    // [vocab_size, num_groups]
-    pub output_buffer: &'a MTLBuffer,    // [batch_size, model_dim]
+    pub weights_buffer: &'a MTLBuffer, // [vocab_size, model_dim/packing_divisor] as U8/I8
+    pub scales_buffer: &'a MTLBuffer,  // [vocab_size, num_groups]
+    pub biases_buffer: &'a MTLBuffer,  // [vocab_size, num_groups]
+    pub output_buffer: &'a MTLBuffer,  // [batch_size, model_dim]
     pub batch_size: u32,
     pub vocab_size: u32,
     pub model_dim: u32,
@@ -47,20 +47,30 @@ impl QuantizedEmbeddingLookupKernel {
     pub fn new(
         mtl_context: &MTLContext,
         data_type: DataType,
+        mode: QuantizationMode,
     ) -> Result<Self, QuantizedEmbeddingError> {
-        let kernel_name = match data_type {
-            DataType::F32 => "quantized_embedding_lookup_f32",
-            DataType::F16 => "quantized_embedding_lookup_f16",
-            DataType::BF16 => "quantized_embedding_lookup_bf16",
+        let dtype_suffix = match data_type {
+            DataType::F32 => "f32",
+            DataType::F16 => "f16",
+            DataType::BF16 => "bf16",
             other => {
                 return Err(QuantizedEmbeddingError::UnsupportedDataType(
                     other,
                 ));
             },
         };
+        let mode_suffix = match mode {
+            QuantizationMode::UInt4 => "uint4",
+            QuantizationMode::Int8 => "int8",
+            QuantizationMode::UInt8 => "uint8",
+        };
+        let kernel_name = format!(
+            "quantized_embedding_lookup_{}_{}",
+            dtype_suffix, mode_suffix
+        );
 
         let (pipeline, _) = mtl_context
-            .compute_pipeline_state_with_reflection(kernel_name, None)
+            .compute_pipeline_state_with_reflection(&kernel_name, None)
             .map_err(QuantizedEmbeddingError::MetalError)?;
 
         Ok(Self {
@@ -139,8 +149,10 @@ impl QuantizedEmbeddingLookupKernelBlock {
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
+        let packing_divisor = mode.packing_divisor();
+
         let kernel =
-            QuantizedEmbeddingLookupKernel::new(mtl_context, data_type)?;
+            QuantizedEmbeddingLookupKernel::new(mtl_context, data_type, mode)?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = match parameter_tree.leaf("weights") {
@@ -176,7 +188,6 @@ impl QuantizedEmbeddingLookupKernelBlock {
 
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
-        let packing_divisor = mode.packing_divisor();
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
             return Err(QuantizedEmbeddingError::MetalError(
                 MTLError::Generic(format!(
