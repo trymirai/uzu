@@ -95,6 +95,11 @@ impl MoeBlockEncodable {
                     "Quantized router with fused router+topk not yet supported"
                 );
             },
+            LinearConfig::MLXQuantized(_) => {
+                unimplemented!(
+                    "MLX quantized router with fused router+topk not yet supported"
+                );
+            },
             LinearConfig::FullPrecision {
                 ..
             } => {
@@ -278,10 +283,13 @@ impl MoeBlockEncodable {
 
     fn gating_code_from_activation(activation: &Activation) -> u32 {
         match activation {
-            Activation::GELU => 3,
-            Activation::SILU {
+            Activation::Gelu => 3,
+            Activation::SiLU {
                 ..
             } => 2,
+            Activation::Identity => {
+                panic!("Identity activation is not supported for MoE kernels")
+            },
         }
     }
 }
@@ -293,7 +301,7 @@ impl EncodableWithState for MoeBlockEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let suffix_length = state.aux_buffers_suffix_length();
+        let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
             ArrayId::Main,
             ArrayId::MoeTopkIds,

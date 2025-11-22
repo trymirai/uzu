@@ -31,6 +31,24 @@ pub enum EmbeddingConfig {
         activation_quantization_mode: Option<QuantizationMode>,
         activation_precision: ConfigDataType,
     },
+    #[serde(rename = "MLXQuantizedTiedEmbeddingConfig")]
+    MLXQuantizedTied {
+        #[serde(flatten)]
+        common: EmbeddingConfigCommon,
+        group_size: usize,
+        embedding_quantization_mode: QuantizationMode,
+        activation_quantization_mode: Option<QuantizationMode>,
+        activation_precision: ConfigDataType,
+    },
+    #[serde(rename = "MLXSemiQuantizedUntiedEmbeddingConfig")]
+    MLXSemiQuantizedUntied {
+        #[serde(flatten)]
+        common: EmbeddingConfigCommon,
+        group_size: usize,
+        embedding_quantization_mode: QuantizationMode,
+        activation_quantization_mode: Option<QuantizationMode>,
+        activation_precision: ConfigDataType,
+    },
 }
 
 impl EmbeddingConfig {
@@ -45,6 +63,14 @@ impl EmbeddingConfig {
                 ..
             } => common,
             EmbeddingConfig::QuantizedTied {
+                common,
+                ..
+            } => common,
+            EmbeddingConfig::MLXQuantizedTied {
+                common,
+                ..
+            } => common,
+            EmbeddingConfig::MLXSemiQuantizedUntied {
                 common,
                 ..
             } => common,
@@ -84,5 +110,31 @@ mod tests {
         let deserialized_config: EmbeddingConfig =
             from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
+
+        let semi_config_str = r#"
+            {
+                "type": "MLXSemiQuantizedUntiedEmbeddingConfig",
+                "input_scale": null,
+                "logit_soft_cap": null,
+                "group_size": 128,
+                "embedding_quantization_mode": "uint4",
+                "activation_quantization_mode": null,
+                "activation_precision": "bfloat16"
+            }
+        "#;
+
+        let semi_config = EmbeddingConfig::MLXSemiQuantizedUntied {
+            common: EmbeddingConfigCommon {
+                input_scale: None,
+                logit_soft_cap: None,
+            },
+            group_size: 128,
+            embedding_quantization_mode: QuantizationMode::UInt4,
+            activation_quantization_mode: None,
+            activation_precision: ConfigDataType::BFloat16,
+        };
+
+        let deserialized: EmbeddingConfig = from_str(semi_config_str).unwrap();
+        assert_eq!(deserialized, semi_config);
     }
 }

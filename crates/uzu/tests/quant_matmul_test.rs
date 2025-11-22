@@ -1,15 +1,16 @@
 use std::time::Instant;
 
-use half::f16;
-use metal::{Device, MTLResourceOptions};
+use half::{bf16, f16};
+use metal::{Buffer, Device, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::metal::{
         MTLContext,
         kernel::quant_matmul::{
-            QuantizedMatmulArguments, QuantizedMatmulKernel,
+            QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
         },
     },
+    config::QuantizationMode,
 };
 
 fn create_test_context() -> Option<MTLContext> {
@@ -18,194 +19,533 @@ fn create_test_context() -> Option<MTLContext> {
     MTLContext::new(device, command_queue).ok()
 }
 
-// Packs 4-bit weights into bytes (4 values per 16-bit word, matching qdot expectations)
 fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity((values.len() + 3) / 4 * 2); // 4 weights per 16-bit word
+    let mut out = Vec::with_capacity((values.len() + 3) / 4 * 2);
     for chunk in values.chunks(4) {
-        let w0 = (*chunk.get(0).unwrap_or(&0) as u16) & 0x0F; // Bits 0-3
-        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) << 4; // Bits 4-7  
-        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) << 8; // Bits 8-11
-        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) << 12; // Bits 12-15
+        let w0 = (*chunk.get(0).unwrap_or(&0) as u16) & 0x0F;
+        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) << 4;
+        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) << 8;
+        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) << 12;
 
         let word: u16 = w0 | w1 | w2 | w3;
-        out.push(word as u8); // Low byte
-        out.push((word >> 8) as u8); // High byte
+        out.push(word as u8);
+        out.push((word >> 8) as u8);
     }
     out
 }
 
-fn cpu_reference(
-    m: usize,
-    n: usize,
-    k: usize,
-    a: &[f32],         // A matrix (M x K)
-    b_quant: &[u8], // B matrix (N x K), quantized and packed, (N * K / 2) in size
-    scales: &[f32], // scales for B (N x ceil(K/group_size))
-    biases: &[f32], // biases for B (N x ceil(K/group_size))
-    transpose_b: bool, // Whether B matrix weights are stored in transposed layout
+fn quantize_value(
+    value: f32,
+    dtype: DataType,
+) -> f32 {
+    match dtype {
+        DataType::F16 => f16::from_f32(value).to_f32(),
+        DataType::BF16 => bf16::from_f32(value).to_f32(),
+        _ => value,
+    }
+}
+
+fn quantize_slice(
+    values: &[f32],
+    dtype: DataType,
 ) -> Vec<f32> {
-    let group_size = 64;
-    let num_groups = (k + group_size - 1) / group_size;
-    let mut y = vec![0.0f32; m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = 0.0f64;
-            for g in 0..num_groups {
-                let scale = scales[j * num_groups + g] as f64;
-                let bias = biases[j * num_groups + g] as f64;
-                let l_start = g * group_size;
-                let l_end = (l_start + group_size).min(k);
-                let mut group_acc = 0.0f64;
-                let mut group_sum = 0.0f64;
-                for l in l_start..l_end {
-                    // Weight indexing based on kernel expectations:
-                    // Non-transposed kernel expects: W[N][K] layout -> w[output_idx * k + input_idx]
-                    // Transposed kernel expects: W[K][N] layout -> w[input_idx * n + output_idx]
-                    let weight_linear_idx = if transpose_b {
-                        l * n + j // W[K][N]: w[k_idx * n + n_idx]
-                    } else {
-                        j * k + l // W[N][K]: w[n_idx * k + k_idx]
-                    };
+    values.iter().map(|&v| quantize_value(v, dtype)).collect()
+}
 
-                    let word_idx = weight_linear_idx / 4; // 4 weights per 16-bit word
-                    let word_offset = weight_linear_idx % 4; // Which nibble in the word
-                    let byte_idx = word_idx * 2; // 2 bytes per word
+struct ExecutionResult {
+    elapsed: f64,
+}
 
-                    let word = if byte_idx + 1 < b_quant.len() {
-                        b_quant[byte_idx] as u16
-                            | ((b_quant[byte_idx + 1] as u16) << 8)
-                    } else {
-                        0
-                    };
+fn create_test_weights(
+    output_dim: usize,
+    input_dim: usize,
+    weights_transposed: bool,
+    bits: usize,
+) -> Vec<u8> {
+    let mut weights_quant: Vec<u8> = Vec::with_capacity(output_dim * input_dim);
 
-                    let val_q = match word_offset {
-                        0 => word & 0x000F,         // Bits 0-3
-                        1 => (word & 0x00F0) >> 4,  // Bits 4-7
-                        2 => (word & 0x0F00) >> 8,  // Bits 8-11
-                        3 => (word & 0xF000) >> 12, // Bits 12-15
-                        _ => 0,
-                    } as f64;
-                    let val_a = a[i * k + l] as f64;
-                    group_acc += val_a * val_q;
-                    group_sum += val_a;
-                }
-                acc += scale * group_acc + bias * group_sum;
+    if weights_transposed {
+        // Weights stored as [output_dim × input_dim]
+        for row in 0..output_dim {
+            for _col in 0..input_dim {
+                let v = if bits == 4 {
+                    (row as u8 + 1) & 0x0F
+                } else {
+                    row as u8 + 1
+                };
+                weights_quant.push(v);
             }
-            y[i * n + j] = acc as f32;
+        }
+    } else {
+        // Weights stored as [input_dim × output_dim]
+        for _row in 0..input_dim {
+            for col in 0..output_dim {
+                let v = if bits == 4 {
+                    (col as u8 + 1) & 0x0F
+                } else {
+                    col as u8 // Allow 0..255 range
+                };
+                weights_quant.push(v);
+            }
+        }
+    }
+
+    weights_quant
+}
+
+fn check_tolerance(
+    exp: f32,
+    got: f32,
+) -> bool {
+    let diff = (exp - got).abs() as f64;
+    // For F16 at boundaries (like 65504), machine epsilon is 32 (approx 0.05% relative error)
+    // We use a conservative relative tolerance of 0.2%
+    let rel_tol = 0.002;
+    let abs_tol = 0.1f64;
+    let tol = abs_tol.max(exp.abs() as f64 * rel_tol);
+    diff > tol
+}
+
+fn get_4bit_value(
+    data: &[u8],
+    index: usize,
+) -> f32 {
+    let word_idx = index / 4;
+    let word_offset = index % 4;
+    let byte_idx = word_idx * 2;
+
+    let word = if byte_idx + 1 < data.len() {
+        data[byte_idx] as u16 | ((data[byte_idx + 1] as u16) << 8)
+    } else {
+        0
+    };
+
+    ((word >> (word_offset * 4)) & 0x0F) as f32
+}
+
+fn get_zp_value(
+    zero_points: &[u8],
+    stride: usize,
+    row_idx: usize,
+    group_idx: usize,
+    bits: usize,
+) -> f32 {
+    if bits == 4 {
+        let byte_index = row_idx * stride + (group_idx >> 1);
+        let byte = zero_points.get(byte_index).copied().unwrap_or(0);
+        if (group_idx & 1) == 0 {
+            (byte & 0x0F) as f32
+        } else {
+            ((byte >> 4) & 0x0F) as f32
+        }
+    } else {
+        zero_points.get(row_idx * stride + group_idx).copied().unwrap_or(0)
+            as f32
+    }
+}
+
+fn cpu_reference(
+    batch: usize,
+    output_dim: usize,
+    input_dim: usize,
+    a: &[f32],
+    b_quant: &[u8],
+    scales: &[f32],
+    biases: &[f32],
+    weights_transposed: bool,
+    group_size: usize,
+    dtype: DataType,
+    bits: usize,
+    quantization_type: QuantizationType,
+    zero_points: &[u8],
+    zero_points_stride: usize,
+) -> Vec<f32> {
+    let num_groups_k = (input_dim + group_size - 1) / group_size;
+    let num_groups_n = (output_dim + group_size - 1) / group_size;
+    let num_groups = if !weights_transposed {
+        num_groups_n
+    } else {
+        num_groups_k
+    };
+
+    let mut y = vec![0.0f32; batch * output_dim];
+    for i in 0..batch {
+        for j in 0..output_dim {
+            let mut acc = 0.0f32;
+            if !weights_transposed {
+                let group_idx = j / group_size;
+                for l in 0..input_dim {
+                    let weight_linear_idx = if weights_transposed {
+                        j * input_dim + l
+                    } else {
+                        l * output_dim + j
+                    };
+
+                    let val_q = if bits == 4 {
+                        get_4bit_value(b_quant, weight_linear_idx)
+                    } else {
+                        b_quant[weight_linear_idx] as f32
+                    };
+
+                    let val_a = a[i * input_dim + l];
+                    let scale = scales[l * num_groups + group_idx];
+                    let bias =
+                        if quantization_type == QuantizationType::ZeroPoint {
+                            let zp_val_qvm = get_zp_value(
+                                zero_points,
+                                zero_points_stride,
+                                l,
+                                group_idx,
+                                bits,
+                            );
+                            -scale * zp_val_qvm
+                        } else {
+                            biases[l * num_groups + group_idx]
+                        };
+                    acc += val_a * (scale * val_q + bias);
+                }
+            } else {
+                for g in 0..num_groups {
+                    let scale = scales[j * num_groups + g];
+                    let bias = match quantization_type {
+                        QuantizationType::ZeroPoint => {
+                            let zp = get_zp_value(
+                                zero_points,
+                                zero_points_stride,
+                                j,
+                                g,
+                                bits,
+                            );
+                            -scale * zp
+                        },
+                        QuantizationType::Mlx => biases[j * num_groups + g],
+                    };
+                    let l_start = g * group_size;
+                    let l_end = (l_start + group_size).min(input_dim);
+                    let mut group_acc = 0.0f32;
+                    let mut group_sum = 0.0f32;
+                    for l in l_start..l_end {
+                        let weight_linear_idx = if weights_transposed {
+                            j * input_dim + l
+                        } else {
+                            l * output_dim + j
+                        };
+
+                        let val_q = if bits == 4 {
+                            get_4bit_value(b_quant, weight_linear_idx)
+                        } else {
+                            b_quant[weight_linear_idx] as f32
+                        };
+
+                        let val_a = a[i * input_dim + l];
+                        group_acc += val_a * val_q;
+                        group_sum += val_a;
+                    }
+                    acc += scale * group_acc + bias * group_sum;
+                }
+            }
+            y[i * output_dim + j] = quantize_value(acc, dtype);
         }
     }
     y
 }
 
-fn execute_quantized_matmul(
-    ctx: &MTLContext,
-    m: usize,
-    n: usize,
-    k: usize,
-    kernel_name: &str,
-    cpu_transpose: bool,
-    iterations: usize,
-    validate: bool,
+struct TestQuantParams {
+    scales: Vec<f32>,
+    scales_quant: Vec<f32>,
+    biases: Vec<f32>,
+    zero_points: Vec<u8>,
+    zero_points_stride: usize,
+}
+
+fn generate_test_quant_params(
+    output_dim: usize,
+    input_dim: usize,
+    group_size: usize,
+    data_type: DataType,
+    bits: usize,
+    quantization_type: QuantizationType,
+    weights_transposed: bool,
     randomize_zp: bool,
-) -> f64 {
-    // Prepare deterministic weights: w(row,k) = row+1
-    // Always create weights in the same layout (test_m × test_k)
-    let mut weights_q4: Vec<u8> = Vec::with_capacity(m * k);
-    for row in 0..m {
-        for _k in 0..k {
-            let v = (row as u8 + 1) & 0x0F;
-            weights_q4.push(v);
-        }
-    }
-    let weights_packed = pack_u4_weights(&weights_q4);
-
-    let num_groups = (k + 63) / 64;
-    let scales: Vec<f16> = vec![f16::from_f32(1.0); m * num_groups];
-    let mut biases: Vec<f16> = vec![f16::from_f32(0.0); m * num_groups];
-
-    // Prepare input data
-    let (x_f32, x_f16) = if n == 1 {
-        // GEMV case: single input vector
-        let x_f32: Vec<f32> = (1..=k).map(|i| i as f32 / k as f32).collect();
-        let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
-        (x_f32, x_f16)
+) -> TestQuantParams {
+    let num_groups_k = (input_dim + group_size - 1) / group_size;
+    let num_groups_n = (output_dim + group_size - 1) / group_size;
+    let num_groups = if !weights_transposed {
+        num_groups_n
     } else {
-        // GEMM case: multiple input vectors (column-major)
-        let mut x_f32: Vec<f32> = Vec::with_capacity(k * n);
-        for _col in 0..n {
-            for i in 0..k {
-                x_f32.push((i + 1) as f32 / k as f32);
-            }
-        }
-        let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
-        (x_f32, x_f16)
+        num_groups_k
+    };
+    let primary_dim = if !weights_transposed {
+        input_dim
+    } else {
+        output_dim
     };
 
-    // Create buffers
+    let len = primary_dim * num_groups;
+    let scales = vec![1.0; len];
+    let scales_quant = quantize_slice(&scales, data_type);
+    let mut biases = vec![0.0; len];
+
+    let zero_points_stride = if bits == 4 {
+        ((num_groups + 1) / 2).max(1)
+    } else {
+        num_groups
+    };
+    let zero_points_len = if !weights_transposed {
+        input_dim * zero_points_stride
+    } else {
+        output_dim * zero_points_stride
+    };
+    let mut zero_points = vec![0u8; zero_points_len];
+
+    if quantization_type == QuantizationType::ZeroPoint && randomize_zp {
+        if !weights_transposed {
+            // GMM/QVM non-transposed: Use [K][N_groups] layout for generation
+            for k in 0..input_dim {
+                for g in 0..num_groups {
+                    let k_eff = k / group_size;
+                    let base_val = ((k_eff * 5 + g * 7) & 0xFF) as u8;
+                    let zp_val_u8 = if bits == 4 {
+                        base_val & 0x0F
+                    } else {
+                        base_val
+                    };
+                    if bits == 4 {
+                        let byte_index = k * zero_points_stride + (g >> 1);
+                        if (g & 1) == 0 {
+                            zero_points[byte_index] = (zero_points[byte_index]
+                                & 0xF0)
+                                | (zp_val_u8 & 0x0F);
+                        } else {
+                            zero_points[byte_index] = (zero_points[byte_index]
+                                & 0x0F)
+                                | ((zp_val_u8 & 0x0F) << 4);
+                        }
+                    } else {
+                        zero_points[k * zero_points_stride + g] = zp_val_u8;
+                    }
+
+                    // Note: scales are [input_dim][num_groups] in this case?
+                    // No, scales are 1.0.
+                    // Biases logic needs to use same indexing!
+                    // But biases is flat buffer.
+                    // Index: k * num_groups + g.
+                    let s = scales_quant[k * num_groups + g];
+                    let zp_val = if bits == 4 {
+                        (zp_val_u8 & 0x0F) as f32
+                    } else {
+                        zp_val_u8 as f32
+                    };
+                    biases[k * num_groups + g] =
+                        quantize_value(-s * zp_val, data_type);
+                }
+            }
+        } else {
+            for j in 0..output_dim {
+                for g in 0..num_groups {
+                    let base_val = if weights_transposed {
+                        j + 3 * g
+                    } else {
+                        3 * g
+                    };
+                    let zp_val: u8 = if bits == 4 {
+                        (base_val as u8) & 0x0F
+                    } else {
+                        base_val as u8
+                    };
+
+                    if bits == 4 {
+                        let byte_index = j * zero_points_stride + (g >> 1);
+                        if (g & 1) == 0 {
+                            zero_points[byte_index] = (zero_points[byte_index]
+                                & 0xF0)
+                                | (zp_val & 0x0F);
+                        } else {
+                            zero_points[byte_index] = (zero_points[byte_index]
+                                & 0x0F)
+                                | ((zp_val & 0x0F) << 4);
+                        }
+                    } else {
+                        let byte_index = j * zero_points_stride + g;
+                        zero_points[byte_index] = zp_val;
+                    }
+
+                    let s = scales_quant[j * num_groups + g];
+                    let b = quantize_value(-s * (zp_val as f32), data_type);
+                    biases[j * num_groups + g] = b;
+                }
+            }
+        }
+    }
+
+    if quantization_type == QuantizationType::Mlx {
+        if !weights_transposed {
+            for k in 0..input_dim {
+                for g in 0..num_groups {
+                    let base_val = g * 3;
+                    let bias_val = (base_val % 19) as f32 * 0.125;
+                    biases[k * num_groups + g] =
+                        quantize_value(bias_val, data_type);
+                }
+            }
+        } else {
+            for j in 0..output_dim {
+                for g in 0..num_groups {
+                    let base_val = if weights_transposed {
+                        j * 7 + g * 3
+                    } else {
+                        g * 3
+                    };
+                    let bias_val = (base_val % 19) as f32 * 0.125;
+                    biases[j * num_groups + g] =
+                        quantize_value(bias_val, data_type);
+                }
+            }
+        }
+    }
+
+    TestQuantParams {
+        scales,
+        scales_quant,
+        biases,
+        zero_points,
+        zero_points_stride,
+    }
+}
+
+fn buffer_from_f32_slice(
+    ctx: &MTLContext,
+    dtype: DataType,
+    values: &[f32],
+) -> Buffer {
+    match dtype {
+        DataType::F16 => {
+            let data: Vec<f16> =
+                values.iter().map(|&v| f16::from_f32(v)).collect();
+            ctx.device.new_buffer_with_data(
+                data.as_ptr() as *const std::ffi::c_void,
+                (data.len() * std::mem::size_of::<f16>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        },
+        DataType::BF16 => {
+            let data: Vec<bf16> =
+                values.iter().map(|&v| bf16::from_f32(v)).collect();
+            ctx.device.new_buffer_with_data(
+                data.as_ptr() as *const std::ffi::c_void,
+                (data.len() * std::mem::size_of::<bf16>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        },
+        DataType::F32 => ctx.device.new_buffer_with_data(
+            values.as_ptr() as *const std::ffi::c_void,
+            (values.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        ),
+        other => {
+            panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
+        },
+    }
+}
+
+fn execute_quantized_matmul(
+    ctx: &MTLContext,
+    batch: usize,
+    input_dim: usize,
+    output_dim: usize,
+    weights_transposed: bool,
+    iterations: usize,
+    validate: bool,
+    quantization_type: QuantizationType,
+    randomize_zp: bool,
+    group_size: usize,
+    data_type: DataType,
+    bits: usize,
+) -> ExecutionResult {
+    let weights_quant =
+        create_test_weights(output_dim, input_dim, weights_transposed, bits);
+    let weights_packed = if bits == 4 {
+        pack_u4_weights(&weights_quant)
+    } else {
+        weights_quant.clone()
+    };
+
+    let params = generate_test_quant_params(
+        output_dim,
+        input_dim,
+        group_size,
+        data_type,
+        bits,
+        quantization_type,
+        weights_transposed,
+        randomize_zp,
+    );
+    // X is batch × input_dim
+    let x_f32: Vec<f32> = if batch == 1 {
+        // Vector case: 1 × input_dim
+        (1..=input_dim).map(|i| i as f32 / input_dim as f32).collect()
+    } else {
+        let mut x_vals: Vec<f32> = Vec::with_capacity(batch * input_dim);
+        for _row in 0..batch {
+            for i in 0..input_dim {
+                x_vals.push((i + 1) as f32 / input_dim as f32);
+            }
+        }
+        x_vals
+    };
+    let x_quant = quantize_slice(&x_f32, data_type);
+
     let w_buf = ctx.device.new_buffer_with_data(
         weights_packed.as_ptr() as *const _,
         (weights_packed.len() * std::mem::size_of::<u8>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let s_buf = ctx.device.new_buffer_with_data(
-        scales.as_ptr() as *const _,
-        (scales.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    // Build zero-points buffer
-    let mut zps_bytes = vec![0u8; m * ((num_groups + 1) / 2)];
-    if randomize_zp {
-        // Randomized U8 zero-points per group and corresponding float biases.
-        // even g -> low nibble, odd g -> high nibble
-        for j in 0..m {
-            for g in 0..num_groups {
-                let zp_val: u8 = ((j + 3 * g) as u8) & 0x0F; // deterministic 0..15
-                let byte_index = j * ((num_groups + 1) / 2) + (g >> 1);
-                if (g & 1) == 0 {
-                    zps_bytes[byte_index] =
-                        (zps_bytes[byte_index] & 0xF0) | (zp_val & 0x0F);
-                } else {
-                    zps_bytes[byte_index] =
-                        (zps_bytes[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
-                }
-                // bias = -scale * zp
-                let s = scales[j * num_groups + g].to_f32();
-                let b = -s * (zp_val as f32);
-                biases[j * num_groups + g] = f16::from_f32(b);
-            }
-        }
-    }
-    let b_buf = ctx.device.new_buffer_with_data(
-        zps_bytes.as_ptr() as *const _,
-        (zps_bytes.len() * std::mem::size_of::<u8>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let x_buf = ctx.device.new_buffer_with_data(
-        x_f16.as_ptr() as *const _,
-        (x_f16.len() * std::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let s_buf = buffer_from_f32_slice(ctx, data_type, &params.scales);
+
+    let b_buf = match quantization_type {
+        QuantizationType::ZeroPoint => ctx.device.new_buffer_with_data(
+            params.zero_points.as_ptr() as *const _,
+            (params.zero_points.len() * std::mem::size_of::<u8>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        ),
+        QuantizationType::Mlx => {
+            buffer_from_f32_slice(ctx, data_type, &params.biases)
+        },
+    };
+    let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx.device.new_buffer(
-        (m * n * std::mem::size_of::<f16>()) as u64,
+        (batch * output_dim * data_type.size_in_bytes()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
 
-    // Create kernel
-    let kernel =
-        QuantizedMatmulKernel::new(&ctx, DataType::F16, kernel_name).unwrap();
+    let kernel = QuantizedMatmulKernel::new(
+        &ctx,
+        data_type,
+        group_size,
+        input_dim,
+        output_dim,
+        match bits {
+            4 => QuantizationMode::UInt4,
+            8 => QuantizationMode::Int8,
+            _ => panic!("Unsupported bits: {}", bits),
+        },
+        quantization_type,
+        weights_transposed,
+    )
+    .unwrap();
 
-    // Warmup (only for benchmarks)
     if iterations > 1 {
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
                 a_buffer: &x_buf,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
-                zero_points_buffer: &b_buf,
+                zero_points_or_biases_buffer: &b_buf,
                 output_buffer: &y_buf,
-                m: n as i32,
-                n: m as i32,
-                k: k as i32,
+                batch: batch as i32,
+                input_dim: input_dim as i32,
+                output_dim: output_dim as i32,
+                quantization_type,
             };
             let cb_ref = ctx.command_queue.new_command_buffer();
             let encoder = cb_ref.new_compute_command_encoder();
@@ -216,18 +556,18 @@ fn execute_quantized_matmul(
         }
     }
 
-    // Execute and time
     let start = Instant::now();
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
             a_buffer: &x_buf,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
-            zero_points_buffer: &b_buf,
+            zero_points_or_biases_buffer: &b_buf,
             output_buffer: &y_buf,
-            m: n as i32,
-            n: m as i32,
-            k: k as i32,
+            batch: batch as i32,
+            input_dim: input_dim as i32,
+            output_dim: output_dim as i32,
+            quantization_type,
         };
         let cb_ref = ctx.command_queue.new_command_buffer();
         let encoder = cb_ref.new_compute_command_encoder();
@@ -238,134 +578,194 @@ fn execute_quantized_matmul(
     }
     let elapsed = start.elapsed();
 
-    // Validate if requested
     if validate {
-        let gpu_m = n; // GPU sees test_n as M
-        let gpu_n = m; // GPU sees test_m as N  
-        let gpu_k = k; // GPU sees test_k as K
-
         let y_expected = cpu_reference(
-            gpu_m,
-            gpu_n,
-            gpu_k,
-            &x_f32,
+            batch,
+            output_dim,
+            input_dim,
+            &x_quant,
             &weights_packed,
-            &scales.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
-            &biases.iter().map(|&v| v.to_f32()).collect::<Vec<_>>(),
-            cpu_transpose,
+            &params.scales_quant,
+            &params.biases,
+            weights_transposed,
+            group_size,
+            data_type,
+            bits,
+            quantization_type,
+            &params.zero_points,
+            params.zero_points_stride,
         );
 
-        let y_ptr = y_buf.contents() as *const f16;
-        let y_out = unsafe { std::slice::from_raw_parts(y_ptr, m * n) };
-        let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
+        let y_out_f32: Vec<f32> = match data_type {
+            DataType::F16 => {
+                let y_ptr = y_buf.contents() as *const f16;
+                let y_out = unsafe {
+                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
+                };
+                y_out.iter().map(|&v| v.to_f32()).collect()
+            },
+            DataType::BF16 => {
+                let y_ptr = y_buf.contents() as *const bf16;
+                let y_out = unsafe {
+                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
+                };
+                y_out.iter().map(|&v| v.to_f32()).collect()
+            },
+            DataType::F32 => {
+                let y_ptr = y_buf.contents() as *const f32;
+                let y_out = unsafe {
+                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
+                };
+                y_out.to_vec()
+            },
+            other => panic!("Unsupported dtype for validation: {:?}", other),
+        };
 
-        let tol = if randomize_zp {
-            2.5
-        } else {
-            1.0
-        };
-        let display_size = if n == 1 {
-            m
-        } else {
-            n
-        };
-        println!(
-            "first {} expected: {:?}",
-            display_size,
-            &y_expected[..display_size]
-        );
-        println!(
-            "first {} got: {:?}",
-            display_size,
-            &y_out_f32[..display_size]
-        );
+        let mut debug_prints = 0;
 
         for (i, (&exp, &got)) in
             y_expected.iter().zip(y_out_f32.iter()).enumerate()
         {
             let diff = (exp - got).abs();
-            assert!(
-                diff <= tol,
-                "M={} N={} K={} idx {} diff {} exp {} got {}",
-                m,
-                n,
-                k,
-                i,
-                diff,
-                exp,
-                got
+
+            if check_tolerance(exp, got) {
+                if debug_prints < 16 {
+                    println!(
+                        "\n  detail idx {} diff {} exp {} got {}",
+                        i, diff, exp, got
+                    );
+                }
+                debug_prints += 1;
+            }
+        }
+
+        if debug_prints > 0 {
+            let first_error = y_expected
+                .iter()
+                .zip(y_out_f32.iter())
+                .enumerate()
+                .find(|&(_, (&e, &g))| check_tolerance(e, g))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            let last_error = y_expected
+                .iter()
+                .zip(y_out_f32.iter())
+                .enumerate()
+                .filter(|&(_, (&e, &g))| check_tolerance(e, g))
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            println!(
+                "\nTotal errors: {} out of {} outputs",
+                debug_prints,
+                batch * output_dim
             );
+            println!("Error range: indices {}-{}", first_error, last_error);
+            println!(
+                "Dims batch={} output_dim={} input_dim={}",
+                batch, output_dim, input_dim
+            );
+            panic!("Validation failed with {} mismatches", debug_prints);
+        }
+
+        ExecutionResult {
+            elapsed: elapsed.as_secs_f64(),
+        }
+    } else {
+        ExecutionResult {
+            elapsed: elapsed.as_secs_f64(),
         }
     }
-
-    elapsed.as_secs_f64()
 }
 
-fn run_gemv_test(
-    ctx: &MTLContext,
-    m: usize,
-    k: usize,
-) {
-    println!("--- Testing GEMV M={}, K={} ---", m, k);
-    // GEMV: weights are in W[N][K] layout, CPU uses them as-is
-    execute_quantized_matmul(
-        ctx,
-        m,
-        1,
-        k,
-        "qmv_f16_g64_b4",
-        false,
-        1,
-        true,
-        true,
-    );
-    println!("✅ GEMV M={}, K={} passed", m, k);
+struct TestConfig {
+    quant_type: QuantizationType,
+    bits: usize,
+    data_type: DataType,
+    group_size: usize,
 }
 
-fn run_qvm_test(
+const QMV_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
+const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
+const QMM_DIMS: &[(usize, usize, usize)] =
+    &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
+
+fn run_kernel_test(
     ctx: &MTLContext,
-    n: usize,
-    k: usize,
-) {
-    println!("--- Testing QVM N={}, K={} ---", n, k);
-    // QVM: weights are in W[N][K] layout, CPU uses them as-is
+    batch: usize,
+    output_dim: usize,
+    input_dim: usize,
+    weights_transposed: bool,
+    config: &TestConfig,
+    validate: bool,
+    iterations: usize,
+) -> ExecutionResult {
+    let randomize_zp = config.quant_type == QuantizationType::ZeroPoint;
+
     execute_quantized_matmul(
         ctx,
-        1,
-        n,
-        k,
-        "qvm_f16_g64_b4",
-        false,
-        1,
-        true,
-        true,
-    );
-    println!("✅ QVM N={}, K={} passed", n, k);
+        batch,
+        input_dim,
+        output_dim,
+        weights_transposed,
+        iterations,
+        validate,
+        config.quant_type,
+        randomize_zp,
+        config.group_size,
+        config.data_type,
+        config.bits,
+    )
 }
 
 #[test]
-fn test_quant_gemv() {
+fn test_quant_gmv() {
     let ctx = match create_test_context() {
         Some(c) => c,
         None => {
-            println!("Metal not available — skipping GEMV test");
+            println!("Metal not available — skipping QMV test");
             return;
         },
     };
 
-    run_gemv_test(&ctx, 3, 64);
-    run_gemv_test(&ctx, 1, 128);
-    run_gemv_test(&ctx, 7, 256);
-    run_gemv_test(&ctx, 13, 512);
-    run_gemv_test(&ctx, 13, 511);
-    run_gemv_test(&ctx, 8, 64);
-    run_gemv_test(&ctx, 9, 64);
-    run_gemv_test(&ctx, 25, 128);
-    run_gemv_test(&ctx, 31, 512);
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+    ];
+
+    for config in &configs {
+        for &(output_dim, input_dim) in QMV_DIMS {
+            run_kernel_test(
+                &ctx, 1, output_dim, input_dim, true, config, true, 1,
+            );
+        }
+    }
 }
 
 #[test]
-fn test_quant_qevm() {
+fn test_quant_qvm() {
     let ctx = match create_test_context() {
         Some(c) => c,
         None => {
@@ -374,222 +774,207 @@ fn test_quant_qevm() {
         },
     };
 
-    run_qvm_test(&ctx, 3, 64);
-    run_qvm_test(&ctx, 1, 128);
-    run_qvm_test(&ctx, 7, 256);
-    run_qvm_test(&ctx, 13, 512);
-    run_qvm_test(&ctx, 13, 511);
-    run_qvm_test(&ctx, 8, 64);
-    run_qvm_test(&ctx, 9, 64);
-    run_qvm_test(&ctx, 25, 128);
-    run_qvm_test(&ctx, 31, 512);
-}
-
-fn run_gemm_test(
-    ctx: &MTLContext,
-    m: usize,
-    n: usize,
-    k: usize,
-) {
-    println!("--- Testing GEMM M={}, N={}, K={} ---", m, n, k);
-    // GEMM: weights are in W[N][K] layout, CPU needs to transpose for correct computation
-    execute_quantized_matmul(
-        ctx,
-        m,
-        n,
-        k,
-        "qmm_f16_g64_b4",
-        true,
-        1,
-        true,
-        false,
-    );
-    println!("✅ GEMM M={}, N={}, K={} passed", m, n, k);
-}
-
-fn run_gemm_transposed_test(
-    ctx: &MTLContext,
-    m: usize,
-    n: usize,
-    k: usize,
-) {
-    println!("--- Testing GEMM Transposed M={}, N={}, K={} ---", m, n, k);
-    // GEMM Transposed: weights are in W[N][K] but kernel expects W[K][N], CPU uses them as-is
-    execute_quantized_matmul(
-        ctx,
-        m,
-        n,
-        k,
-        "qmm_transposed_f16_g64_b4",
-        false,
-        1,
-        true,
-        true,
-    );
-    println!("✅ GEMM Transposed M={}, N={}, K={} passed", m, n, k);
-}
-
-#[test]
-fn test_quant_gemm() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping GEMM test");
-            return;
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
         },
-    };
-
-    run_gemm_test(&ctx, 1, 1, 128);
-    run_gemm_test(&ctx, 8, 16, 256);
-    run_gemm_test(&ctx, 16, 8, 511);
-    run_gemm_test(&ctx, 9, 9, 64);
-    run_gemm_test(&ctx, 25, 17, 128);
-}
-
-#[test]
-fn test_quant_gemm_transposed() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping GEMM transposed test");
-            return;
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
         },
-    };
-
-    run_gemm_transposed_test(&ctx, 1, 1, 128);
-    run_gemm_transposed_test(&ctx, 8, 16, 256);
-    run_gemm_transposed_test(&ctx, 16, 8, 511);
-    run_gemm_transposed_test(&ctx, 9, 9, 64);
-    run_gemm_transposed_test(&ctx, 25, 17, 128);
-}
-
-fn benchmark_quantized_gemv(
-    ctx: &MTLContext,
-    m: usize,
-    k: usize,
-    iterations: usize,
-) -> f64 {
-    execute_quantized_matmul(
-        ctx,
-        m,
-        1,
-        k,
-        "qmv_f16_g64_b4",
-        false,
-        iterations,
-        false,
-        true,
-    )
-}
-
-fn benchmark_quantized_qevm(
-    ctx: &MTLContext,
-    n: usize,
-    k: usize,
-    iterations: usize,
-) -> f64 {
-    execute_quantized_matmul(
-        ctx,
-        1,
-        n,
-        k,
-        "qvm_f16_g64_b4",
-        false,
-        iterations,
-        false,
-        true,
-    )
-}
-
-fn benchmark_quantized_gemm(
-    ctx: &MTLContext,
-    m: usize,
-    n: usize,
-    k: usize,
-    iterations: usize,
-) -> f64 {
-    execute_quantized_matmul(
-        ctx,
-        m,
-        n,
-        k,
-        "qmm_f16_g64_b4",
-        true,
-        iterations,
-        false,
-        true,
-    )
-}
-
-#[ignore]
-#[test]
-fn test_quantized_matmul_performance() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
-            println!("Metal not available — skipping performance test");
-            return;
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
         },
-    };
-
-    println!("\n🚀 QUANTIZED MATMUL PERFORMANCE BENCHMARKS");
-    println!("==========================================");
-
-    // Test different sizes
-    let test_configs = vec![
-        // (M, N, K, iterations, description)
-        (512, 1, 512, 100, "Small GEMV (512×512 × 512×1)"),
-        (1024, 1, 1024, 50, "Medium GEMV (1024×1024 × 1024×1)"),
-        (2048, 1, 2048, 20, "Large GEMV (2048×2048 × 2048×1)"),
-        (4096, 1, 4096, 10, "XLarge GEMV (4096×4096 × 4096×1)"),
-        (1, 512, 512, 100, "Small QVM (1×512 × 512×512)"),
-        (1, 1024, 1024, 50, "Medium QVM (1×1024 × 1024×1024)"),
-        (1, 2048, 2048, 20, "Large QVM (1×2048 × 2048×2048)"),
-        (1, 4096, 4096, 10, "XLarge QVM (1×4096 × 4096×4096)"),
-        (512, 16, 512, 50, "Small GEMM (512×512 × 512×16)"),
-        (1024, 32, 1024, 20, "Medium GEMM (1024×1024 × 1024×32)"),
-        (2048, 64, 2048, 10, "Large GEMM (2048×2048 × 2048×64)"),
-        (4096, 128, 4096, 5, "XLarge GEMM (4096×4096 × 4096×128)"),
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
     ];
 
-    for (m, n, k, iterations, description) in test_configs {
-        let ops = 2.0 * (m as f64) * (n as f64) * (k as f64);
-
-        if n == 1 {
-            // GEMV
-            let time = benchmark_quantized_gemv(&ctx, m, k, iterations);
-            let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12;
-
-            println!("{}", description);
-            println!(
-                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
-                avg_time * 1000.0,
-                throughput
+    for config in &configs {
+        for &(output_dim, input_dim) in QVM_DIMS {
+            run_kernel_test(
+                &ctx, 1, output_dim, input_dim, false, config, true, 1,
             );
-        } else if m == 1 {
-            // QVM
-            let time = benchmark_quantized_qevm(&ctx, n, k, iterations);
-            let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12;
+        }
+    }
+}
 
-            println!("{}", description);
-            println!(
-                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
-                avg_time * 1000.0,
-                throughput
+#[test]
+fn test_quant_gmm() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping QMM test");
+            return;
+        },
+    };
+
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+    ];
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in QMM_DIMS {
+            run_kernel_test(
+                &ctx, batch, output_dim, input_dim, false, config, true, 1,
             );
-        } else {
-            // GEMM
-            let time = benchmark_quantized_gemm(&ctx, m, n, k, iterations);
-            let avg_time = time / (iterations as f64);
-            let throughput = (ops / avg_time) / 1e12;
+        }
+    }
+}
 
-            println!("{}", description);
+#[test]
+fn test_quant_gmm_transposed() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping QMM transposed test");
+            return;
+        },
+    };
+
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 8,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+    ];
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in QMM_DIMS {
+            run_kernel_test(
+                &ctx, batch, output_dim, input_dim, true, config, true, 1,
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_perf() {
+    let ctx = match create_test_context() {
+        Some(c) => c,
+        None => {
+            println!("Metal not available — skipping Perf test");
+            return;
+        },
+    };
+
+    // Llama 3 8B approximate shapes
+    let shapes = vec![
+        // Decoding (M=1)
+        (1, 4096, 4096),
+        (1, 14336, 4096),
+        (1, 4096, 14336),
+        // Prefill (Small batch M=128)
+        (128, 4096, 4096),
+    ];
+
+    let configs = vec![
+        // 4-bit Mlx BF16
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+        // 8-bit Mlx BF16
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 8,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+        // 4-bit ZP F16
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F16,
+            group_size: 64,
+        },
+        // 8-bit ZP F16
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F16,
+            group_size: 64,
+        },
+    ];
+
+    println!(
+        "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:<15}",
+        "Kernel Config", "M x N x K", "Type", "Bits", "Group", "Avg Duration"
+    );
+    println!("{}", "-".repeat(85));
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in &shapes {
+            let result = run_kernel_test(
+                &ctx, batch, output_dim, input_dim, false, config, false, 20,
+            );
+            let avg = result.elapsed / 20.0 * 1000.0; // ms
+
             println!(
-                "  Time: {:.4}ms/iter, Throughput: {:.4} TFLOPS",
-                avg_time * 1000.0,
-                throughput
+                "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4} ms",
+                format!("{:?}", config.quant_type),
+                format!("{}x{}x{}", batch, output_dim, input_dim),
+                format!("{:?}", config.data_type),
+                config.bits,
+                config.group_size,
+                avg
             );
         }
     }

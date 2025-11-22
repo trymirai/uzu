@@ -6,9 +6,7 @@ use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
         KVCacheUpdate, KernelDataType, MTLContext,
-        forward_pass::{
-            KVCacheLayer, KVCacheLayerState, kv_cache::INVALID_POSITION,
-        },
+        forward_pass::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
     },
 };
 

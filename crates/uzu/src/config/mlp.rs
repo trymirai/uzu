@@ -80,7 +80,7 @@ mod tests {
                 lora_rank: 16,
                 lora_scale: 2.0,
             },
-            activation: Activation::SILU {
+            activation: Activation::SiLU {
                 alpha: 1.0,
             },
         });
@@ -140,7 +140,7 @@ mod tests {
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SILU {
+                    activation: Activation::SiLU {
                         alpha: 1.0,
                     },
                     has_up_biases: true,

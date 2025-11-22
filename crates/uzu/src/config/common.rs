@@ -46,6 +46,24 @@ pub enum QuantizationMode {
     UInt8,
 }
 
+impl QuantizationMode {
+    pub fn packing_divisor(&self) -> usize {
+        match self {
+            QuantizationMode::UInt4 => 2,
+            QuantizationMode::Int8 => 1,
+            QuantizationMode::UInt8 => 1,
+        }
+    }
+
+    pub fn storage_type(&self) -> DataType {
+        match self {
+            QuantizationMode::UInt4 => DataType::U8,
+            QuantizationMode::Int8 => DataType::I8,
+            QuantizationMode::UInt8 => DataType::U8,
+        }
+    }
+}
+
 impl Into<DataType> for QuantizationMode {
     fn into(self) -> DataType {
         match self {
@@ -60,12 +78,14 @@ impl Into<DataType> for QuantizationMode {
 #[serde(tag = "type")]
 pub enum Activation {
     #[serde(rename = "SiLU")]
-    SILU {
+    SiLU {
         #[serde(default = "default_silu_alpha")]
         alpha: f32,
     },
     #[serde(rename = "GELU")]
-    GELU,
+    Gelu,
+    #[serde(rename = "Identity")]
+    Identity,
 }
 
 fn default_silu_alpha() -> f32 {
@@ -75,10 +95,11 @@ fn default_silu_alpha() -> f32 {
 impl Activation {
     pub fn alpha(&self) -> f32 {
         match self {
-            Activation::SILU {
+            Activation::SiLU {
                 alpha,
             } => *alpha,
-            Activation::GELU => 1.0,
+            Activation::Gelu => 1.0,
+            Activation::Identity => 1.0,
         }
     }
 }

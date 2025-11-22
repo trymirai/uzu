@@ -588,9 +588,7 @@ impl EncodableWithState for AttentionKernelEncodable {
             num_groups,
             max_sequence_length,
         ) = {
-            let qkv_binding = state.arrays(&[ArrayId::QKV]);
-            let qkv_array = qkv_binding[0].borrow();
-            let suffix_length = qkv_array.shape()[0];
+            let suffix_length = state.active_suffix_length();
 
             let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
             let queries_array = queries_binding[0].borrow();
@@ -615,15 +613,20 @@ impl EncodableWithState for AttentionKernelEncodable {
             )
         };
 
-        let segment_prefix_length = state.kv_cache.borrow().data
-            [self.layer_index]
-            .projected_segment_prefix_length(
-                parameters.projection_step.unwrap_or(0),
-            );
+        let (segment_prefix_length, window_length) = {
+            let cache = state.cache_layers.borrow();
+            let layer = cache.data[self.layer_index]
+                .as_transformer()
+                .expect("Attention kernel expects transformer layer state");
+            (
+                layer.projected_segment_prefix_length(
+                    parameters.projection_step.unwrap_or(0),
+                ),
+                layer.window_length(),
+            )
+        };
 
         let sequence_length = segment_prefix_length + suffix_length;
-        let window_length =
-            state.kv_cache.borrow().data[self.layer_index].window_length();
 
         let gqa_factor = num_heads / num_groups;
         let scale =

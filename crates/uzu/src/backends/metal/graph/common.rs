@@ -50,13 +50,18 @@ pub fn activation(
     data_type: DataType,
 ) -> Retained<Tensor> {
     match config {
-        Activation::SILU {
+        Activation::SiLU {
             ..
         } => {
             let sigmoid_result = graph.sigmoid(input, Some("sigmoid"));
             graph.multiplication(input, &sigmoid_result, Some("silu_output"))
         },
-        Activation::GELU => gelu(graph, input, data_type, true),
+        Activation::Gelu => gelu(graph, input, data_type, true),
+        Activation::Identity => graph.addition(
+            input,
+            &graph.constant_with_scalar(0.0_f64, None, data_type.into()),
+            Some("identity_output"),
+        ),
     }
 }
 

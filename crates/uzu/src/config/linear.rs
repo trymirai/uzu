@@ -19,6 +19,8 @@ pub enum LinearConfig {
     },
     #[serde(rename = "GroupQuantizedLinearConfig")]
     Quantized(QuantizationConfig),
+    #[serde(rename = "MLXQuantizedLinearConfig")]
+    MLXQuantized(QuantizationConfig),
     #[serde(rename = "QLoRALinearConfig")]
     QLoRA {
         #[serde(flatten)]
@@ -35,6 +37,9 @@ impl LinearConfig {
                 precision,
             } => *precision,
             LinearConfig::Quantized(quantization) => {
+                quantization.activation_precision
+            },
+            LinearConfig::MLXQuantized(quantization) => {
                 quantization.activation_precision
             },
             LinearConfig::QLoRA {

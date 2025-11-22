@@ -24,6 +24,10 @@ use crate::{
         },
         kernel::{
             MoeBlockEncodable, QuantizedLinearKernelBlock,
+            embedding::{
+                QuantizedEmbeddingLookupKernelBlock,
+                QuantizedEmbeddingReadoutKernelBlock,
+            },
             mlp::MlpGateActMulEncodable,
         },
     },
@@ -52,6 +56,19 @@ pub fn linear_block<const N: usize>(
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let LinearConfig::Quantized(quant_config) = config {
+        let out_sum: usize = output_dims.iter().sum();
+        return quantized_linear_block_custom(
+            quant_config,
+            input_dim,
+            out_sum,
+            context,
+            parameter_tree,
+            input_array_id,
+            output_array_id,
+        )
+        .unwrap();
+    }
+    if let LinearConfig::MLXQuantized(quant_config) = config {
         let out_sum: usize = output_dims.iter().sum();
         return quantized_linear_block_custom(
             quant_config,
@@ -121,7 +138,7 @@ pub fn quantized_linear_block_custom(
     Box<dyn super::encodable_with_state::EncodableWithState>,
     crate::backends::metal::MTLError,
 > {
-    let block = crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock::new(
+    let block = QuantizedLinearKernelBlock::new(
         context,
         config,
         input_dim,
@@ -142,7 +159,8 @@ pub fn mlp_block(
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     if let crate::config::MLPConfig::Dense(dense) = config {
-        if let crate::config::LinearConfig::Quantized(ref quant_config) =
+        if let crate::config::LinearConfig::Quantized(ref quant_config)
+        | crate::config::LinearConfig::MLXQuantized(ref quant_config) =
             dense.linear_config
         {
             // Quantized MLP path: up (2H) -> act+mul -> down
@@ -263,6 +281,7 @@ pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
     compilation_descriptor: &CompilationDescriptor,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     let graph = Graph::new();
 
@@ -362,14 +381,59 @@ pub fn embed_block(
 
             Box::new(block)
         },
-        EmbeddingConfig::QuantizedTied {
-            embedding_quantization_mode,
+        EmbeddingConfig::MLXSemiQuantizedUntied {
+            activation_precision,
             ..
         } => {
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType =
-                embedding_quantization_mode.into();
+            let weights_data_type: DataType = activation_precision.into();
+            let weights_shaped_type =
+                shaped_type(&weights_shape, weights_data_type);
+            let weights_placeholder =
+                placeholder(&graph, &weights_shape, weights_data_type);
+
+            let output = embeddings_embed_subgraph(
+                &graph,
+                &config.embedding_config,
+                &input_placeholder,
+                &weights_placeholder,
+            )
+            .unwrap();
+
+            let feeds = HashMap::from([
+                (&*input_placeholder, &*input_shaped_type),
+                (&*weights_placeholder, &*weights_shaped_type),
+            ]);
+
+            let executable = graph.compile(
+                &MPSDevice::with_device(&context.device),
+                &feeds,
+                &[&output],
+                None,
+                Some(&compilation_descriptor),
+            );
+
+            let block = MPSGraphBlock::new(
+                executable,
+                make_execution_descriptor(),
+                IOArrays::new(
+                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
+                        .into_boxed_slice(),
+                    vec![ArrayId::Main].into_boxed_slice(),
+                ),
+            );
+
+            Box::new(block)
+        },
+        EmbeddingConfig::QuantizedTied {
+            embedding_quantization_mode: _,
+            ..
+        } => {
+            // Packed U8 weights with shape [vocab_size, model_dim / 2]
+            let weights_shape =
+                [config.vocab_size as isize, (config.model_dim / 2) as isize];
+            let weights_data_type = DataType::U8;
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
@@ -428,6 +492,33 @@ pub fn embed_block(
 
             Box::new(block)
         },
+        EmbeddingConfig::MLXQuantizedTied {
+            group_size,
+            embedding_quantization_mode,
+            ..
+        } => {
+            // Use Metal kernel for MLX quantized embeddings
+            let data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+
+            // Get the embeddings subtree
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+
+            let block = QuantizedEmbeddingLookupKernelBlock::new(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                embedding_quantization_mode,
+                &embeddings_tree,
+            )
+            .expect("Failed to create quantized embedding lookup kernel");
+
+            Box::new(block)
+        },
     }
 }
 
@@ -435,6 +526,7 @@ pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
     compilation_descriptor: &CompilationDescriptor,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn super::encodable_with_state::EncodableWithState> {
     let graph = Graph::new();
 
@@ -537,14 +629,38 @@ pub fn readout_block(
 
             Box::new(block)
         },
-        EmbeddingConfig::QuantizedTied {
+        EmbeddingConfig::MLXSemiQuantizedUntied {
+            group_size,
+            activation_precision,
             embedding_quantization_mode,
             ..
         } => {
+            let data_type: DataType = activation_precision.into();
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+
+            let block = QuantizedEmbeddingReadoutKernelBlock::new(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                embedding_quantization_mode,
+                &embeddings_tree,
+            )
+            .expect("Failed to create quantized embedding readout kernel");
+
+            Box::new(block)
+        },
+        EmbeddingConfig::QuantizedTied {
+            embedding_quantization_mode: _,
+            ..
+        } => {
+            // Packed U8 weights with shape [vocab_size, model_dim / 2]
             let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType =
-                embedding_quantization_mode.into();
+                [config.vocab_size as isize, (config.model_dim / 2) as isize];
+            let weights_data_type = DataType::U8;
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
@@ -599,6 +715,33 @@ pub fn readout_block(
                     vec![ArrayId::Logits].into_boxed_slice(),
                 ),
             );
+
+            Box::new(block)
+        },
+        EmbeddingConfig::MLXQuantizedTied {
+            group_size,
+            embedding_quantization_mode,
+            ..
+        } => {
+            // Use Metal kernel for MLX quantized readout
+            let data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+
+            // Get the embeddings subtree
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+
+            let block = QuantizedEmbeddingReadoutKernelBlock::new(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                embedding_quantization_mode,
+                &embeddings_tree,
+            )
+            .expect("Failed to create quantized embedding readout kernel");
 
             Box::new(block)
         },
