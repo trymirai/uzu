@@ -12,4 +12,4 @@ TOOLS_PATH="$SCRIPTS_PATH/tools"
 
 cd $TOOLS_PATH
 uv sync
-uv run main.py download-model meta-llama/Llama-3.2-1B-Instruct
+uv run main.py download-model Qwen/Qwen3-0.6B
