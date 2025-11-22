@@ -53,13 +53,7 @@ fn run(
     let output = session
         .run(
             input,
-            RunConfig::new(
-                tokens_limit,
-                true,
-                SamplingPolicy::Custom {
-                    value: SamplingMethod::Greedy,
-                },
-            ),
+            RunConfig::new(tokens_limit, true, SamplingPolicy::Default),
             Some(|_: Output| {
                 return true;
             }),
