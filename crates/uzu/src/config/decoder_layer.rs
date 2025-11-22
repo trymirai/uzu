@@ -1,17 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use super::{
-    attention::AttentionConfig, mlp::MLPConfig, normalization::RMSNormConfig,
-};
+use crate::{AttentionConfig, MLPConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DecoderLayerConfig {
-    pub pre_attention_norm_config: RMSNormConfig,
+    pub pre_attention_norm_config: NormalizationConfig,
     pub attention_config: AttentionConfig,
-    pub post_attention_norm_config: Option<RMSNormConfig>,
-    pub pre_mlp_norm_config: RMSNormConfig,
+    pub post_attention_norm_config: Option<NormalizationConfig>,
+    pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
-    pub post_mlp_norm_config: Option<RMSNormConfig>,
+    pub post_mlp_norm_config: Option<NormalizationConfig>,
 }
 
 #[cfg(test)]
@@ -58,6 +56,14 @@ mod tests {
                         "lora_rank": 16,
                         "lora_scale": 2.0
                     },
+                    "query_norm_config": null,
+                    "key_norm_config": null,
+                    "num_heads": 12,
+                    "num_groups": 12,
+                    "head_dim": 64,
+                    "is_causal": true,
+                    "scale": null,
+                    "sliding_window_size": null,
                     "logit_soft_cap": null,
                     "has_sinks": false,
                     "has_qkv_biases": false,
@@ -89,19 +95,21 @@ mod tests {
         "#;
 
         let ground_truth_config = DecoderLayerConfig {
-            pre_attention_norm_config: RMSNormConfig {
+            pre_attention_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
+                subtract_mean: false,
             },
-            pre_mlp_norm_config: RMSNormConfig {
+            pre_mlp_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
+                subtract_mean: false,
             },
             attention_config: AttentionConfig {
                 qkv_projection_config: LinearConfig::QLoRA {
@@ -130,6 +138,12 @@ mod tests {
                 },
                 query_norm_config: None,
                 key_norm_config: None,
+                num_heads: 12,
+                num_groups: 12,
+                head_dim: 64,
+                is_causal: true,
+                scale: None,
+                sliding_window_size: None,
                 logit_soft_cap: None,
                 has_sinks: false,
                 has_qkv_biases: false,
@@ -151,6 +165,11 @@ mod tests {
                 activation: Activation::SILU {
                     alpha: 1.0,
                 },
+                has_up_biases: false,
+                has_down_biases: false,
+                gate_clipping: None,
+                up_clipping: None,
+                activation_to_gate: true,
             }),
             post_attention_norm_config: None,
             post_mlp_norm_config: None,

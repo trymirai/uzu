@@ -636,12 +636,12 @@ impl SamplingKernelEncodable {
 impl EncodableWithState for SamplingKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
         assert!(
-            state.sampling_output.is_some(),
+            state.sampling_output().is_some(),
             "Sampling output buffer must be pre-allocated"
         );
 
@@ -662,9 +662,9 @@ impl EncodableWithState for SamplingKernelEncodable {
         let mut seeds = seeds_binding[0].borrow_mut();
 
         let mut output_buffer_ref =
-            state.sampling_output.as_ref().unwrap().borrow_mut();
+            state.sampling_output().unwrap().borrow_mut();
 
-        let sampling_method = state.sampling_method.unwrap();
+        let sampling_method = state.sampling_method().unwrap();
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();

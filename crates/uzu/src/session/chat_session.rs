@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-pub struct Session {
+pub struct ChatSession {
     pub model_path: PathBuf,
     pub model_metadata: ModelMetadata,
 
@@ -34,7 +34,7 @@ pub struct Session {
     static_context: Option<Context>,
 }
 
-impl Session {
+impl ChatSession {
     pub fn new(
         model_path: PathBuf,
         decoding_config: DecodingConfig,
@@ -64,13 +64,18 @@ impl Session {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        // Extract language model config
+        let language_model_config = model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or(Error::UnableToLoadConfig)?;
+
         let input_processor = InputProcessorDefault::new(
-            model_metadata.model_config.message_processor_config.clone(),
+            language_model_config.message_processor_config.clone(),
         );
 
         let output_parser = OutputParser::new(
-            model_metadata
-                .model_config
+            language_model_config
                 .message_processor_config
                 .output_parser_regex
                 .clone(),
@@ -156,7 +161,7 @@ impl Session {
     }
 }
 
-impl Session {
+impl ChatSession {
     fn extend(
         &mut self,
         input: Input,
@@ -235,19 +240,23 @@ impl Session {
             .map(|&id| id as u64)
             .collect();
 
+        let language_model_config_for_context = self
+            .model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or(Error::UnableToLoadConfig)?;
+
         let context_length = generator
             .decoding_config
             .context_length
-            .resolve(&self.model_metadata.model_config);
+            .resolve(language_model_config_for_context);
         if tokens.len() >= context_length {
             return Err(Error::ContextLengthExceeded);
         }
 
         let prefix_len_before = generator.tokens.len().saturating_sub(1);
 
-        let eos_tokens: Vec<u64> = self
-            .model_metadata
-            .model_config
+        let eos_tokens: Vec<u64> = language_model_config_for_context
             .generation_config
             .stop_token_ids
             .iter()
@@ -290,8 +299,14 @@ impl Session {
             Ok(generated_text)
         };
 
+        let language_model_config_for_sampling = self
+            .model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or(Error::UnableToLoadConfig)?;
+
         let sampling_method =
-            config.sampling_policy.resolve(&self.model_metadata.model_config);
+            config.sampling_policy.resolve(language_model_config_for_sampling);
 
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();
@@ -314,10 +329,16 @@ impl Session {
         let prefill_parsed_text =
             self.output_parser.parse(prefill_generated_text);
 
+        let language_model_config_for_prefill = self
+            .model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or(Error::UnableToLoadConfig)?;
+
         let prefill_suffix_length = generator
             .decoding_config
             .prefill_step_size
-            .resolve(&self.model_metadata.model_config);
+            .resolve(language_model_config_for_prefill);
         let prefill_output = Output {
             text: prefill_parsed_text,
             stats: Self::build_stats(
@@ -421,7 +442,7 @@ impl Session {
     }
 }
 
-impl Session {
+impl ChatSession {
     fn build_stats(
         prefill_result: PrefillResult,
         prefill_duration: f64,
@@ -515,7 +536,7 @@ impl Session {
     }
 }
 
-impl Drop for Session {
+impl Drop for ChatSession {
     fn drop(&mut self) {
         autoreleasepool(|_| {
             self.generator = None;

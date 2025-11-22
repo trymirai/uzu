@@ -1,14 +1,27 @@
 use serde::{Deserialize, Serialize};
 
-use super::{RMSNormConfig, linear::LinearConfig};
+use crate::{LinearConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AttentionConfig {
     pub qkv_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
 
-    pub query_norm_config: Option<RMSNormConfig>,
-    pub key_norm_config: Option<RMSNormConfig>,
+    pub query_norm_config: Option<NormalizationConfig>,
+    pub key_norm_config: Option<NormalizationConfig>,
+
+    #[serde(default)]
+    pub num_heads: usize,
+    #[serde(default)]
+    pub num_groups: usize,
+    #[serde(default)]
+    pub head_dim: usize,
+    #[serde(default)]
+    pub is_causal: bool,
+    #[serde(default)]
+    pub scale: Option<f32>,
+    #[serde(default)]
+    pub sliding_window_size: Option<usize>,
 
     pub logit_soft_cap: Option<f32>,
     #[serde(default)]
@@ -53,6 +66,12 @@ mod tests {
                 },
                 "query_norm_config": null,
                 "key_norm_config": null,
+                "num_heads": 12,
+                "num_groups": 12,
+                "head_dim": 64,
+                "is_causal": false,
+                "scale": null,
+                "sliding_window_size": null,
                 "logit_soft_cap": null,
                 "has_qkv_biases": false,
                 "has_out_biases": false
@@ -82,6 +101,12 @@ mod tests {
             },
             query_norm_config: None,
             key_norm_config: None,
+            num_heads: 12,
+            num_groups: 12,
+            head_dim: 64,
+            is_causal: false,
+            scale: None,
+            sliding_window_size: None,
             logit_soft_cap: None,
             has_sinks: false,
             has_qkv_biases: false,

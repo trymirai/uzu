@@ -3,18 +3,18 @@ use std::{path::PathBuf, sync::Mutex};
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::session::{
-    Session, config::DecodingConfig, parameter::PrefillStepSize,
+    ChatSession, config::DecodingConfig, parameter::PrefillStepSize,
 };
 
-pub struct SessionWrapper(Mutex<Session>);
+pub struct SessionWrapper(Mutex<ChatSession>);
 unsafe impl Send for SessionWrapper {}
 unsafe impl Sync for SessionWrapper {}
 impl SessionWrapper {
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: ChatSession) -> Self {
         Self(Mutex::new(session))
     }
 
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, ChatSession> {
         self.0.lock().unwrap()
     }
 }
@@ -30,7 +30,7 @@ unsafe impl Sync for SessionState {}
 pub fn load_session(
     model_path: String,
     prefill_step_size: Option<usize>,
-) -> Session {
+) -> ChatSession {
     let style_bold = Style::new().bold();
 
     let model_path_buf = PathBuf::from(model_path);
@@ -58,7 +58,7 @@ pub fn load_session(
 
     let decoding_config = DecodingConfig::default()
         .with_prefill_step_size(prefill_step_size_config);
-    let session = Session::new(model_path_buf, decoding_config)
+    let session = ChatSession::new(model_path_buf, decoding_config)
         .expect("Failed to create session");
 
     progress_bar.set_style(

@@ -5,6 +5,7 @@ pub mod kv_cache;
 mod model_shape;
 mod mpsgraph_block;
 mod state;
+mod state_trait;
 pub mod traces;
 pub mod transformer_layer;
 
@@ -14,5 +15,7 @@ pub use kv_cache::{KVCache, KVCacheLayer, KVCacheLayerState};
 pub use model_shape::ModelShape;
 pub use mpsgraph_block::MPSGraphBlock;
 pub use state::{
-    ArrayId, ForwardPassState, HashMapId, RopeType, SharedBuffers,
+    ArrayId, EmbeddingsBuffers, HashMapId, LLMForwardPassState, RopeType,
+    SharedBuffers,
 };
+pub use state_trait::ForwardPassState;

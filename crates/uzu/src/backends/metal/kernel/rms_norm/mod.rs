@@ -15,7 +15,7 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
-    config::{RMSNormConfig, UpcastMode},
+    config::{NormalizationConfig, UpcastMode},
     parameters::ParameterTree,
 };
 
@@ -357,7 +357,7 @@ impl RMSNormKernel {
 
 pub struct RMSNormKernelEncodable {
     kernel: RMSNormKernel,
-    config: RMSNormConfig,
+    config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     scales_buffer: MTLBuffer,
@@ -367,7 +367,7 @@ impl RMSNormKernelEncodable {
     pub fn new(
         context: &MTLContext,
         intermediate_data_type: DataType,
-        config: RMSNormConfig,
+        config: NormalizationConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
@@ -428,7 +428,7 @@ impl RMSNormKernelEncodable {
 impl EncodableWithState for RMSNormKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -480,8 +480,8 @@ impl EncodableWithState for RMSNormKernelEncodable {
 pub struct QKNormKernelEncodable {
     query_kernel: Option<RMSNormKernel>,
     key_kernel: Option<RMSNormKernel>,
-    query_config: Option<RMSNormConfig>,
-    key_config: Option<RMSNormConfig>,
+    query_config: Option<NormalizationConfig>,
+    key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
     query_scales_buffer: Option<MTLBuffer>,
     key_scales_buffer: Option<MTLBuffer>,
@@ -494,8 +494,8 @@ impl QKNormKernelEncodable {
     pub fn new(
         context: &MTLContext,
         intermediate_data_type: DataType,
-        query_config: Option<RMSNormConfig>,
-        key_config: Option<RMSNormConfig>,
+        query_config: Option<NormalizationConfig>,
+        key_config: Option<NormalizationConfig>,
         qkv_array_id: ArrayId,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
         num_q_heads: usize,
@@ -619,7 +619,7 @@ impl QKNormKernelEncodable {
 impl EncodableWithState for QKNormKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

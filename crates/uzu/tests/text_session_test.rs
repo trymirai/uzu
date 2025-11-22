@@ -2,7 +2,7 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::session::{
-    Session,
+    ChatSession,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
         ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
@@ -48,7 +48,7 @@ fn run(
     tokens_limit: u64,
 ) {
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        ChatSession::new(build_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(
@@ -82,7 +82,7 @@ fn run_scenario(
     user_prompts: Vec<String>,
 ) {
     let mut session =
-        Session::new(build_model_path(), build_decoding_config()).unwrap();
+        ChatSession::new(build_model_path(), build_decoding_config()).unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {

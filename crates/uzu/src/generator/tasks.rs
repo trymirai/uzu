@@ -1,8 +1,9 @@
 use super::context::GeneratorContext;
 use crate::backends::metal::{
-    ForwardPassState,
-    forward_pass::encodable_with_state::{
-        EncodableWithState, EncodingParameters,
+    LLMForwardPassState,
+    forward_pass::{
+        ForwardPassState,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
 
@@ -42,8 +43,8 @@ impl GeneratorRunTask {
         &self,
         context: &mut GeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-    ) -> ForwardPassState {
-        let state = ForwardPassState::new(
+    ) -> LLMForwardPassState {
+        let state = LLMForwardPassState::new(
             context.mtl_context.clone(),
             &context.model_config.decoder_config,
             &context.model_shape,
@@ -63,7 +64,7 @@ impl GeneratorRunTask {
     pub fn build_encoded_task(
         &self,
         context: &GeneratorContext,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         parameters: &EncodingParameters,
         key: String,
     ) -> GeneratorEncodedTask {

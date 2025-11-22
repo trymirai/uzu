@@ -204,7 +204,7 @@ impl QuantizedLinearKernelBlock {
 impl EncodableWithState for QuantizedLinearKernelBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         _parameters: &EncodingParameters,
     ) {

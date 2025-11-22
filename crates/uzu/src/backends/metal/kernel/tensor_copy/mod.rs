@@ -11,9 +11,12 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::forward_pass::{
-        ArrayId, ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
+    backends::metal::{
+        error::MTLError,
+        forward_pass::{
+            ArrayId, ForwardPassState,
+            encodable_with_state::{EncodableWithState, EncodingParameters},
+        },
     },
 };
 
@@ -27,7 +30,7 @@ impl TensorCopy {
         context: &MTLContext,
         data_type: KernelDataType,
         argument_arrays: Box<[ArrayId]>,
-    ) -> Result<Self, crate::backends::metal::error::MTLError> {
+    ) -> Result<Self, MTLError> {
         let function_name =
             format!("tensorCopy_{}", data_type.function_name_suffix());
 
@@ -66,7 +69,7 @@ impl TensorCopy {
 impl EncodableWithState for TensorCopy {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
