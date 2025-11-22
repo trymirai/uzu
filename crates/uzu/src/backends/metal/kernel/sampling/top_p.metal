@@ -2,8 +2,7 @@
 #include "../definitions.metal"
 
 #define BLOCK_SIZE 1024
-#define MAX_ITERS 20
-#define ATOL 1e-6
+#define MAX_ITERS 16
 
 template <typename T>
 void batched_topp(
@@ -20,6 +19,7 @@ void batched_topp(
     // Find min (for binary search) and max (for binary search and softmax)
     float local_max = -INFINITY;
     float local_min = INFINITY;
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
         local_max = fmax(local_max, logit_value);
@@ -30,6 +30,7 @@ void batched_topp(
 
     // Find denominator for softmax
     float local_sum = 0.0f;
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
         local_sum += exp(logit_value - max_logit);
@@ -47,11 +48,10 @@ void batched_topp(
     for (uint iter = 0; iter < MAX_ITERS; iter++) {
         // Find the mass above threshold
         float local_sum_above_threshold = 0.0f;
+        #pragma unroll(4)
         for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
             float logit_value = float(logits_data[batch_start + i]);
-            if (logit_value >= threshold) {
-                local_sum_above_threshold += exp(logit_value - max_logit);
-            }
+            local_sum_above_threshold += select(0.0, exp(logit_value - max_logit), logit_value >= threshold);
         }
         float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sum_above_threshold, shared_reduce_buffer, thread_idx);
 
@@ -62,17 +62,15 @@ void batched_topp(
             high = threshold;
         }
         threshold = (low + high) / 2.0;
-
-        // Exit early if we found it
-        if (high - low < ATOL) break;
     }
 
     T t_threshold = T(low);
 
     // We know the threshold, just mask everything below it
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         T logit_value = logits_data[batch_start + i];
-        processed_logits[batch_start + i] = (logit_value >= t_threshold) ? logit_value : T(-INFINITY);
+        processed_logits[batch_start + i] = select(T(-INFINITY), logit_value, logit_value >= t_threshold);
     }
 }
 
