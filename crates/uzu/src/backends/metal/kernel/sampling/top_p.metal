@@ -3,7 +3,7 @@
 
 #define BLOCK_SIZE 1024
 #define MAX_ITERS 16
-#define BRANCHING_FACTOR 16
+#define BRANCHING_FACTOR 32
 
 template <typename T>
 void batched_topp(
@@ -45,7 +45,9 @@ void batched_topp(
     float low = min_logit;
     float high = max_logit;
 
-    for (uint iter = 0; iter < MAX_ITERS; iter++) {
+    bool early_exit = false;
+
+    for (uint iter = 0; iter < MAX_ITERS && !early_exit; iter++) {
         float thresholds[BRANCHING_FACTOR-1];
         float local_sums_above_threshold[BRANCHING_FACTOR-1];
         float local_mins_above_threshold[BRANCHING_FACTOR-1];
@@ -76,18 +78,16 @@ void batched_topp(
             float threshold = thresholds[branch];
             if (sum_above_threshold >= target_mass) {
                 low = threshold;
+                if (sum_above_threshold - min_above_threshold < target_mass) {
+                    early_exit = true;
+                    break;
+                }
             } else {
                 high = threshold;
                 break;
             }
         }
-
-        // Early exit
-        if (sum_above_threshold >= target_mass && sum_above_threshold - min_above_threshold < target_mass) {
-            break;
-        }
     }
-
     T t_threshold = T(low);
 
     // We know the threshold, just mask everything below it
