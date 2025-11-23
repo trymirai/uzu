@@ -1,10 +1,12 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
+#define MAX_VOCAB_SIZE 256000
 #define BLOCK_SIZE 1024
-#define MAX_ITERS 8
-#define BRANCHING_FACTOR 8
-#define MAX_SAMPLES_PER_BLOCK (256000 / BLOCK_SIZE)
+#define BRANCHING_FACTOR 4
+#define MAX_ITERS 20
+#define MAX_SAMPLES_PER_BLOCK (MAX_VOCAB_SIZE / BLOCK_SIZE)
+#define ATOL 1e-4
 
 template <typename T>
 void batched_topp(
@@ -22,8 +24,21 @@ void batched_topp(
     float local_probas[MAX_SAMPLES_PER_BLOCK];
 
     float local_norm = 0.0f;
+
+    float local_max_logit = -INFINITY;
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-        const float logit_value = float(logits_data[batch_start + i]);
+        local_max_logit = max(float(logits_data[batch_start + i]), local_max_logit);
+    }
+    const float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
+        local_max_logit,
+        shared_float_reduce_buffer,
+        thread_idx
+    );
+
+    #pragma unroll(4)
+    for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
+        const float logit_value = float(logits_data[batch_start + i]) - max_logit;
         const float local_proba = exp(logit_value);
         local_probas[i / BLOCK_SIZE] = local_proba;
         local_norm += local_proba;
@@ -33,22 +48,30 @@ void batched_topp(
         shared_float_reduce_buffer,
         thread_idx
     );
+
+    #pragma unroll(4)
     for (uint i = 0; i < num_samples_per_block; ++i) {
         local_probas[i] /= global_norm;
     }
 
     float low = 0.0f;
-    float high = top_p;
+    float high = 1.0f;
 
     for (uint iter = 0; iter < MAX_ITERS; ++iter) {
         const float step_size = (high - low) / BRANCHING_FACTOR;
         uint search_size;
         uint num_tokens_above_prev_threshold = vocab_size;
+
+
+        const float prev_low = low;
+        #pragma unroll(BRANCHING_FACTOR - 1)
         for (uint branch = 0; branch < BRANCHING_FACTOR - 1; ++branch) {
-            const float threshold = low + step_size * (branch + 1);
+            const float threshold = prev_low + step_size * (branch + 1);
 
             float local_sum_above_threshold = 0.0f;
             uint local_num_tokens_above_threshold = 0;
+
+            #pragma unroll(4)
             for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
                 const float proba = local_probas[i / BLOCK_SIZE];
                 if (proba >= threshold) {
@@ -77,14 +100,16 @@ void batched_topp(
             num_tokens_above_prev_threshold = num_tokens_above_threshold;
         }
 
-        if (search_size == 0) break;
+        if (search_size <= 1 || high - low < ATOL) break;
     }
 
-    // We know the threshold, just mask everything below it
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         const float proba = local_probas[i / BLOCK_SIZE];
         if (proba < low) {
             processed_logits[batch_start + i] = T(-INFINITY);
+        } else {
+            processed_logits[batch_start + i] = logits_data[batch_start + i];
         }
     }
 }

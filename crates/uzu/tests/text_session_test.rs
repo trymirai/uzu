@@ -5,8 +5,8 @@ use uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
-        ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
-        SamplingPolicy, SamplingSeed,
+        ContextLength, ContextMode, PrefillStepSize, SamplingPolicy,
+        SamplingSeed,
     },
     types::{Input, Message, Output},
 };
