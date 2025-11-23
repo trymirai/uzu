@@ -288,6 +288,7 @@ impl Session {
         let prefill_output = Output {
             text: prefill_parsed_text,
             stats: Self::build_stats(
+                &self.model_metadata,
                 prefill_result.clone(),
                 prefill_duration,
                 prefill_suffix_length,
@@ -336,6 +337,7 @@ impl Session {
             let generate_output = Output {
                 text: generate_parsed_text,
                 stats: Self::build_stats(
+                    &self.model_metadata,
                     prefill_result.clone(),
                     prefill_duration,
                     prefill_suffix_length,
@@ -465,6 +467,7 @@ impl Session {
 
 impl Session {
     fn build_stats(
+        model_metadata: &ModelMetadata,
         prefill_result: PrefillResult,
         prefill_duration: f64,
         prefill_suffix_length: usize,
@@ -479,11 +482,18 @@ impl Session {
             let tokens_count = prefill_result.tokens.len();
             let tokens_per_second = tokens_count as f64 / prefill_duration;
 
-            let number_of_prefill_steps = (tokens_count_input as f32
-                / prefill_suffix_length as f32)
-                .ceil() as usize;
-            let processed_tokens =
-                prefill_suffix_length * number_of_prefill_steps + tokens_count;
+            // TODO: Unify after removing MPS blocks
+            let processed_tokens = if model_metadata.quantization.is_some() {
+                let result = tokens_count_input + tokens_count;
+                result
+            } else {
+                let number_of_prefill_steps =
+                    (tokens_count_input as f32 / prefill_suffix_length as f32)
+                        .ceil() as usize;
+                let result = prefill_suffix_length * number_of_prefill_steps
+                    + tokens_count;
+                result
+            };
             let processed_tokens_per_second =
                 processed_tokens as f64 / prefill_duration;
 
