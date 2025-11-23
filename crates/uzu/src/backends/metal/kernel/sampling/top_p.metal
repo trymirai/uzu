@@ -1,12 +1,13 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-#define MAX_VOCAB_SIZE 256000
+#define MAX_VOCAB_SIZE 262144
 #define BLOCK_SIZE 1024
-#define BRANCHING_FACTOR 4
-#define MAX_ITERS 10
-#define MAX_SAMPLES_PER_BLOCK (MAX_VOCAB_SIZE / BLOCK_SIZE)
+#define MAX_ITERS 64
+#define MAX_SAMPLES_PER_BLOCK ((MAX_VOCAB_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
 #define ATOL 1e-4
+
+#define SEARCH_TYPE_INTERPOLATION
 
 template <typename T>
 void batched_topp(
@@ -20,7 +21,7 @@ void batched_topp(
     uint thread_idx
 ) {
     const uint batch_start = batch_idx * vocab_size;
-    const uint num_samples_per_block = (vocab_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    const uint num_local_samples = (thread_idx < vocab_size) ? ((vocab_size - thread_idx + BLOCK_SIZE - 1) / BLOCK_SIZE) : 0;
     float local_probas[MAX_SAMPLES_PER_BLOCK];
 
     float local_norm = 0.0f;
@@ -39,7 +40,7 @@ void batched_topp(
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         const float logit_value = float(logits_data[batch_start + i]) - max_logit;
-        const float local_proba = exp(logit_value);
+        const float local_proba = fast::exp(logit_value);
         local_probas[i / BLOCK_SIZE] = local_proba;
         local_norm += local_proba;
     }
@@ -50,66 +51,85 @@ void batched_topp(
     );
 
     #pragma unroll(4)
-    for (uint i = 0; i < num_samples_per_block; ++i) {
+    for (uint i = 0; i < num_local_samples; ++i) {
         local_probas[i] /= global_norm;
     }
 
     float low = 0.0f;
     float high = 1.0f;
+    float local_mass_above_high = 0.0f;
+
+    float mass_above_high = 0.0f;
+    float mass_above_low = 1.0f;
+
+    uint local_block_start = 0;
+    uint local_block_end = num_local_samples;
 
     for (uint iter = 0; iter < MAX_ITERS; ++iter) {
-        const float step_size = (high - low) / BRANCHING_FACTOR;
-        uint search_size;
-        uint num_tokens_above_prev_threshold = vocab_size;
+        const float slope = (mass_above_high - mass_above_low) / (high - low);
 
+#if defined(SEARCH_TYPE_INTERPOLATION)
+        const float threshold = (mass_above_high - top_p) / slope + low;
+#elif defined(SEARCH_TYPE_BINARY_SEARCH)
+        const float threshold = (high + low) / 2.0f;
+#else
+#error "Unsupported search type"
+#endif
 
-        const float prev_low = low;
-        #pragma unroll(BRANCHING_FACTOR - 1)
-        for (uint branch = 0; branch < BRANCHING_FACTOR - 1; ++branch) {
-            const float threshold = prev_low + step_size * (branch + 1);
+        float local_mass_above_threshold = local_mass_above_high;
+        uint partition_left = local_block_start;
+        uint partition_right = local_block_end;
 
-            float local_sum_above_threshold = 0.0f;
-            uint local_num_tokens_above_threshold = 0;
+        while (partition_left < partition_right) {
+            const float proba = local_probas[partition_left];
+            if (proba >= threshold) {
+                local_mass_above_threshold += proba;
 
-            #pragma unroll(4)
-            for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-                const float proba = local_probas[i / BLOCK_SIZE];
-                if (proba >= threshold) {
-                    local_sum_above_threshold += proba;
-                    ++local_num_tokens_above_threshold;
-                }
-            }
-            const float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-                local_sum_above_threshold,
-                shared_float_reduce_buffer,
-                thread_idx
-            );
-            const uint num_tokens_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-                local_num_tokens_above_threshold,
-                shared_uint_reduce_buffer,
-                thread_idx
-            );
-            if (sum_above_threshold >= top_p) {
-                low = threshold;
+                --partition_right;
+                const float tmp = local_probas[partition_right];
+                local_probas[partition_right] = proba;
+                local_probas[partition_left] = tmp;
             } else {
-                high = threshold;
-                search_size = num_tokens_above_prev_threshold - num_tokens_above_threshold;
-                break;
+                ++partition_left;
             }
-            search_size = num_tokens_above_prev_threshold - num_tokens_above_threshold;
-            num_tokens_above_prev_threshold = num_tokens_above_threshold;
         }
 
-        if (search_size <= 1 || high - low < ATOL) break;
+        const uint local_search_size = partition_right - partition_left;
+        const uint global_search_size = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
+            local_search_size,
+            shared_uint_reduce_buffer,
+            thread_idx
+        );
+        const float mass_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
+            local_mass_above_threshold,
+            shared_float_reduce_buffer,
+            thread_idx
+        );
+
+        if (mass_above_threshold >= top_p) {
+            low = threshold;
+            mass_above_low = mass_above_threshold;
+
+            local_block_start = partition_left;
+        } else {
+            high = threshold;
+            local_mass_above_high = local_mass_above_threshold;
+            mass_above_high = mass_above_threshold;
+
+            local_block_end = partition_right;
+        }
+
+        if (global_search_size <= 1 || high - low < ATOL) break;
     }
 
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-        const float proba = local_probas[i / BLOCK_SIZE];
+        const T logit_value = logits_data[batch_start + i];
+        const float proba = fast::exp(float(logit_value) - max_logit) / global_norm;
         if (proba < low) {
             processed_logits[batch_start + i] = T(-INFINITY);
         } else {
-            processed_logits[batch_start + i] = logits_data[batch_start + i];
+            processed_logits[batch_start + i] = logit_value;
         }
     }
 }
