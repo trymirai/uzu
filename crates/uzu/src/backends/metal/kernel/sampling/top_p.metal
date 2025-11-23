@@ -69,8 +69,13 @@ void batched_topp(
         const float slope = (mass_above_high - mass_above_low) / (high - low);
 
 #if defined(SEARCH_TYPE_INTERPOLATION)
-        const float threshold = (mass_above_high - top_p) / slope + low;
-#elif defined(SEARCH_TYPE_BINARY_SEARCH)
+        float threshold;
+        if (fabs(slope) > 1e-5) {
+            threshold = low + (top_p - mass_above_high) / slope;
+        } else {
+            threshold = (low + high) / 2.0f;
+        }
+#elif defined(SEARCH_TYPE_BINARY)
         const float threshold = (high + low) / 2.0f;
 #else
 #error "Unsupported search type"
@@ -94,12 +99,6 @@ void batched_topp(
             }
         }
 
-        const uint local_search_size = partition_right - partition_left;
-        const uint global_search_size = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-            local_search_size,
-            shared_uint_reduce_buffer,
-            thread_idx
-        );
         const float mass_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
             local_mass_above_threshold,
             shared_float_reduce_buffer,
@@ -118,6 +117,13 @@ void batched_topp(
 
             local_block_end = partition_right;
         }
+
+        const uint local_search_size = local_block_start - local_block_end;
+        const uint global_search_size = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
+            local_search_size,
+            shared_uint_reduce_buffer,
+            thread_idx
+        );
 
         if (global_search_size <= 1 || high - low < ATOL) break;
     }
