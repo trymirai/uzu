@@ -17,6 +17,7 @@ void batched_temperature(
     uint base_idx = batch_idx * vocab_size + group_idx * BLOCK_SIZE * GRAIN_SIZE + thread_idx;
     uint batch_end = batch_idx * vocab_size + vocab_size;
 
+    #pragma unroll(4)
     for (uint i = 0; i < GRAIN_SIZE; i++) {
         uint global_idx = base_idx + i * BLOCK_SIZE;
         if (global_idx < batch_end) {
