@@ -28,8 +28,8 @@ fn build_decoding_config() -> DecodingConfig {
 
 #[test]
 fn test_text_session_base() {
-    let text = String::from("Tell about London");
-    run(text, build_decoding_config(), 128);
+    let text = String::from("Write a long story about London");
+    run(text, build_decoding_config(), 8192);
 }
 
 #[test]
