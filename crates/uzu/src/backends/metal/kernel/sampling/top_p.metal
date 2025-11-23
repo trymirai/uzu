@@ -3,7 +3,7 @@
 
 #define BLOCK_SIZE 1024
 #define MAX_ITERS 16
-#define BRANCHING_FACTOR 4
+#define BRANCHING_FACTOR 16
 
 template <typename T>
 void batched_topp(
@@ -45,6 +45,8 @@ void batched_topp(
     float low = min_logit;
     float high = max_logit;
 
+    float last_threshold = low;
+
     for (uint iter = 0; iter < MAX_ITERS; iter++) {
         float thresholds[BRANCHING_FACTOR-1];
         float local_sums_above_threshold[BRANCHING_FACTOR-1];
@@ -73,10 +75,11 @@ void batched_topp(
             sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sums_above_threshold[branch], shared_reduce_buffer, thread_idx);
             min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_mins_above_threshold[branch], shared_reduce_buffer, thread_idx);
 
+            last_threshold = thresholds[branch];
             if (sum_above_threshold >= target_mass) {
-                low = thresholds[branch];
+                low = last_threshold;
             } else {
-                high = thresholds[branch];
+                high = last_threshold;
                 break;
             }
         }
@@ -87,7 +90,7 @@ void batched_topp(
         }
     }
 
-    T t_threshold = T((high + low) / 2);
+    T t_threshold = T(last_threshold);
 
     // We know the threshold, just mask everything below it
     #pragma unroll(4)
