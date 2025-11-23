@@ -4,7 +4,8 @@ use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 
 use crate::{
-    config::ModelMetadata,
+    backends::metal::forward_pass::cache_layers::CacheLayer,
+    config::{ModelMetadata, decoder_layer::MixerConfig},
     generator::{
         generator::Generator,
         result::{GenerateResult, PrefillResult},
@@ -53,9 +54,35 @@ impl Session {
         }
         let config_file =
             File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|_| Error::UnableToLoadConfig)?;
+        let model_metadata: ModelMetadata = serde_json::from_reader(
+            BufReader::new(config_file),
+        )
+        .map_err(|err| {
+            eprintln!("Failed to parse config.json: {err}");
+            Error::UnableToLoadConfig
+        })?;
+
+        let is_ssm = model_metadata
+            .clone()
+            .model_config
+            .decoder_config
+            .layer_configs
+            .unwrap_or(Box::new([]))
+            .iter()
+            .any(|layer| matches!(layer.mixer_config, MixerConfig::Mamba(_)));
+        if is_ssm {
+            match decoding_config.context_mode {
+                ContextMode::None => {},
+                ContextMode::Static {
+                    ..
+                } => {
+                    return Err(Error::UnsupportedContextModeForModel);
+                },
+                ContextMode::Dynamic => {
+                    return Err(Error::UnsupportedContextModeForModel);
+                },
+            }
+        }
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
@@ -173,44 +200,6 @@ impl Session {
         Ok((output, new_context))
     }
 
-    fn reconfigure_generator(
-        &mut self,
-        context: Option<&Context>,
-    ) -> Result<(), Error> {
-        let generator =
-            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
-        if let Some(ctx) = context {
-            let mut generator_cache = generator.context.kv_cache.borrow_mut();
-            for (ctx_layer, gen_layer) in
-                ctx.kv_cache.data.iter().zip(generator_cache.data.iter_mut())
-            {
-                let copy_rows = ctx_layer.prefix_segment_length();
-                if copy_rows > 0 {
-                    gen_layer.keys.borrow_mut().copy_slice(
-                        &ctx_layer.keys.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                    gen_layer.values.borrow_mut().copy_slice(
-                        &ctx_layer.values.borrow(),
-                        1,
-                        0..copy_rows,
-                        0,
-                    );
-                }
-                gen_layer.state = ctx_layer.state.clone();
-                gen_layer.prefix_token_positions =
-                    ctx_layer.prefix_token_positions.clone();
-            }
-            drop(generator_cache);
-
-            generator.tokens = ctx.tokens.clone();
-        }
-        Ok(())
-    }
-
     fn run_internal<F>(
         &mut self,
         input: Input,
@@ -321,6 +310,7 @@ impl Session {
         let prefill_output = Output {
             text: prefill_parsed_text,
             stats: Self::build_stats(
+                &self.model_metadata,
                 prefill_result.clone(),
                 prefill_duration,
                 prefill_suffix_length,
@@ -369,6 +359,7 @@ impl Session {
             let generate_output = Output {
                 text: generate_parsed_text,
                 stats: Self::build_stats(
+                    &self.model_metadata,
                     prefill_result.clone(),
                     prefill_duration,
                     prefill_suffix_length,
@@ -404,17 +395,92 @@ impl Session {
             .clone_with_duration(run_start.elapsed().as_secs_f64()))
     }
 
+    fn reconfigure_generator(
+        &mut self,
+        context: Option<&Context>,
+    ) -> Result<(), Error> {
+        let generator =
+            self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+        generator.reset_state();
+        if let Some(ctx) = context {
+            let mut generator_state =
+                generator.context.cache_layers.borrow_mut();
+            for (ctx_layer, gen_layer) in ctx
+                .cache_layers
+                .data
+                .iter()
+                .zip(generator_state.data.iter_mut())
+            {
+                match (ctx_layer, gen_layer) {
+                    (
+                        CacheLayer::Transformer(src),
+                        CacheLayer::Transformer(dst),
+                    ) => {
+                        let copy_rows = src.prefix_segment_length();
+                        if copy_rows > 0 {
+                            {
+                                let mut dst_keys = dst.keys.borrow_mut();
+                                let src_keys = src.keys.borrow();
+                                dst_keys.copy_slice(
+                                    &src_keys,
+                                    1,
+                                    0..copy_rows,
+                                    0,
+                                );
+                            }
+                            {
+                                let mut dst_values = dst.values.borrow_mut();
+                                let src_values = src.values.borrow();
+                                dst_values.copy_slice(
+                                    &src_values,
+                                    1,
+                                    0..copy_rows,
+                                    0,
+                                );
+                            }
+                        }
+                        dst.state = src.state.clone();
+                        dst.prefix_token_positions =
+                            src.prefix_token_positions.clone();
+                    },
+                    (
+                        CacheLayer::StateSpace(src),
+                        CacheLayer::StateSpace(dst),
+                    ) => {
+                        {
+                            let mut dst_conv = dst.conv_state.borrow_mut();
+                            let src_conv = src.conv_state.borrow();
+                            dst_conv.copy_from_array(&src_conv);
+                        }
+                        {
+                            let mut dst_ssm = dst.ssm_state.borrow_mut();
+                            let src_ssm = src.ssm_state.borrow();
+                            dst_ssm.copy_from_array(&src_ssm);
+                        }
+                    },
+                    _ => panic!(
+                        "Layer type mismatch when reconfiguring generator cache"
+                    ),
+                }
+            }
+            drop(generator_state);
+
+            generator.tokens = ctx.tokens.clone();
+        }
+        Ok(())
+    }
+
     fn build_context_from_generator(&self) -> Result<Context, Error> {
         let generator =
             self.generator.as_ref().ok_or(Error::GeneratorNotLoaded)?;
-        let kv_cache = generator
+        let cache_layers = generator
             .context
-            .kv_cache
+            .cache_layers
             .borrow()
             .clone(&generator.context.mtl_context);
         let context = Context::new(
             generator.tokens.clone(),
-            kv_cache,
+            cache_layers,
             generator.decoding_config.clone(),
         );
         Ok(context)
@@ -423,6 +489,7 @@ impl Session {
 
 impl Session {
     fn build_stats(
+        model_metadata: &ModelMetadata,
         prefill_result: PrefillResult,
         prefill_duration: f64,
         prefill_suffix_length: usize,
@@ -436,7 +503,19 @@ impl Session {
         let prefill_stats = {
             let tokens_count = prefill_result.tokens.len();
             let tokens_per_second = tokens_count as f64 / prefill_duration;
-            let processed_tokens = tokens_count_input + tokens_count;
+
+            // TODO: Unify after removing MPS blocks
+            let processed_tokens = if model_metadata.quantization.is_some() {
+                let result = tokens_count_input + tokens_count;
+                result
+            } else {
+                let number_of_prefill_steps =
+                    (tokens_count_input as f32 / prefill_suffix_length as f32)
+                        .ceil() as usize;
+                let result = prefill_suffix_length * number_of_prefill_steps
+                    + tokens_count;
+                result
+            };
             let processed_tokens_per_second =
                 processed_tokens as f64 / prefill_duration;
 

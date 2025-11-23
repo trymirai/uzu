@@ -10,8 +10,14 @@ pub struct AttentionConfig {
     pub query_norm_config: Option<RMSNormConfig>,
     pub key_norm_config: Option<RMSNormConfig>,
 
+    pub num_heads: Option<usize>,
+    pub num_groups: Option<usize>,
+    pub head_dim: Option<usize>,
+    pub is_causal: Option<bool>,
+    pub scale: Option<f32>,
+    pub sliding_window_size: Option<usize>,
+
     pub logit_soft_cap: Option<f32>,
-    #[serde(default)]
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
@@ -82,6 +88,12 @@ mod tests {
             },
             query_norm_config: None,
             key_norm_config: None,
+            num_heads: None,
+            num_groups: None,
+            head_dim: None,
+            is_causal: None,
+            scale: None,
+            sliding_window_size: None,
             logit_soft_cap: None,
             has_sinks: false,
             has_qkv_biases: false,

@@ -9,10 +9,6 @@ use crate::{
     config::{DecoderConfig, MLPConfig},
 };
 
-/// Holds one shared Metal buffer for every temporary tensor that can appear during a forward pass.
-/// Each buffer is large enough for the worst-case shape: `max_suffix_len` / `max_prefix_len`.
-///
-/// Per-iteration code merely *wraps* the buffer into a `MetalArray` with the runtime shape.
 #[derive(Debug)]
 pub struct ForwardPassBuffers {
     // 1-D
@@ -30,6 +26,14 @@ pub struct ForwardPassBuffers {
     pub attention_output: MTLBuffer,
     pub mlp_fused_up: MTLBuffer,
     pub mlp_hidden: MTLBuffer,
+    pub ssm_inproj: Option<MTLBuffer>,
+    pub ssm_packed: Option<MTLBuffer>,
+    pub ssm_conv_padded: Option<MTLBuffer>,
+    pub ssm_x: Option<MTLBuffer>,
+    pub ssm_b: Option<MTLBuffer>,
+    pub ssm_c: Option<MTLBuffer>,
+    pub ssm_dt: Option<MTLBuffer>,
+    pub ssm_z: Option<MTLBuffer>,
 
     // 3-D
     pub rotated_queries: MTLBuffer,
@@ -122,7 +126,30 @@ impl ForwardPassBuffers {
                 &model_shape.mlp_hidden_shape(max_suffix_len),
                 act_ty,
             ),
-
+            ssm_inproj: model_shape
+                .ssm_inproj_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_packed: model_shape
+                .ssm_packed_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_conv_padded: model_shape
+                .ssm_conv_padded_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_x: model_shape
+                .ssm_x_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_b: model_shape
+                .ssm_bc_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_c: model_shape
+                .ssm_bc_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_dt: model_shape
+                .ssm_dt_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            ssm_z: model_shape
+                .ssm_z_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
             // 3-D
             rotated_queries: alloc(
                 &model_shape.rotated_queries_shape(max_suffix_len),

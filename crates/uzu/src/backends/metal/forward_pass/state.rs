@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     super::{MTLContext, MetalArray},
     buffers::ForwardPassBuffers,
-    kv_cache::KVCache,
+    cache_layers::CacheLayers,
     model_shape::ModelShape,
 };
 use crate::{
@@ -37,6 +37,16 @@ pub enum EmbeddingsBuffers {
         weights: ArrayCell,
         /// [vocab_size]
         scales: ArrayCell,
+    },
+    MLXSemiQuantizedUntied {
+        /// [vocab_size, model_dim]
+        input_weights: ArrayCell,
+        /// [vocab_size, model_dim]
+        packed_output_weights: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_scales: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_biases: ArrayCell,
     },
 }
 
@@ -73,15 +83,92 @@ impl EmbeddingsBuffers {
                 EmbeddingConfig::QuantizedTied {
                     embedding_quantization_mode,
                     ..
-                } => Self::QuantizedTied {
-                    weights: RefCell::new(context.array_uninitialized(
-                        &model_shape.quantized_embeddings_weights_shape(),
-                        (*embedding_quantization_mode).into(),
-                    )),
-                    scales: RefCell::new(context.array_uninitialized(
-                        &model_shape.quantized_embeddings_scales_shape(),
-                        model_shape.activation_data_type(),
-                    )),
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    Self::QuantizedTied {
+                        weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[
+                                    vocab_size,
+                                    model_dim
+                                        / embedding_quantization_mode
+                                            .packing_divisor(),
+                                ],
+                                embedding_quantization_mode.storage_type(),
+                            ),
+                        ),
+                        scales: RefCell::new(context.array_uninitialized(
+                            &model_shape.quantized_embeddings_scales_shape(),
+                            model_shape.activation_data_type(),
+                        )),
+                    }
+                },
+                EmbeddingConfig::MLXQuantizedTied {
+                    group_size,
+                    embedding_quantization_mode,
+                    ..
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    let num_groups = model_dim / group_size;
+                    Self::QuantizedTied {
+                        weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[
+                                    vocab_size,
+                                    model_dim
+                                        / embedding_quantization_mode
+                                            .packing_divisor(),
+                                ],
+                                embedding_quantization_mode.storage_type(),
+                            ),
+                        ),
+                        scales: RefCell::new(context.array_uninitialized(
+                            &[vocab_size, num_groups],
+                            model_shape.activation_data_type(),
+                        )),
+                    }
+                },
+                EmbeddingConfig::MLXSemiQuantizedUntied {
+                    group_size,
+                    embedding_quantization_mode,
+                    ..
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    let num_groups = model_dim / group_size;
+                    Self::MLXSemiQuantizedUntied {
+                        input_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &model_shape.embeddings_input_shape(),
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        packed_output_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[
+                                    vocab_size,
+                                    model_dim
+                                        / embedding_quantization_mode
+                                            .packing_divisor(),
+                                ],
+                                embedding_quantization_mode.storage_type(),
+                            ),
+                        ),
+                        output_scales: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        output_biases: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                    }
                 },
             }
         }
@@ -117,6 +204,23 @@ impl EmbeddingsBuffers {
                 scales,
             } => {
                 let mapping = vec![("weights", weights), ("scales", scales)];
+                for (name, buffer) in mapping {
+                    let view = embeddings_tree.leaf(name).unwrap();
+                    buffer.borrow_mut().copy_from_array(&view);
+                }
+            },
+            EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                input_weights,
+                packed_output_weights,
+                output_scales,
+                output_biases,
+            } => {
+                let mapping = vec![
+                    ("input_weights", input_weights),
+                    ("output_weights", packed_output_weights),
+                    ("output_scales", output_scales),
+                    ("output_biases", output_biases),
+                ];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
                     buffer.borrow_mut().copy_from_array(&view);
@@ -161,7 +265,9 @@ impl RopeBuffers {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
         rope_name: String,
     ) {
-        let rope_tree = parameter_tree.subtree(rope_name.as_str()).unwrap();
+        let Ok(rope_tree) = parameter_tree.subtree(rope_name.as_str()) else {
+            return;
+        };
 
         let cosines_view = rope_tree.leaf("cosines").unwrap();
         self.cosines.borrow_mut().copy_from_array(&cosines_view);
@@ -173,7 +279,7 @@ impl RopeBuffers {
 
 pub struct SharedBuffers {
     pub embeddings: EmbeddingsBuffers,
-    pub global_rope: RopeBuffers,
+    pub global_rope: Option<RopeBuffers>,
     pub local_rope: Option<RopeBuffers>,
     pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
     pub attention_sinks: Option<Vec<ArrayCell>>,
@@ -197,7 +303,11 @@ impl SharedBuffers {
             model_shape,
         );
 
-        let global_rope = RopeBuffers::new(context, model_shape);
+        let global_rope = if decoder_config.global_rope_config.is_some() {
+            Some(RopeBuffers::new(context, model_shape))
+        } else {
+            None
+        };
 
         let local_rope = if decoder_config.local_rope_config.is_some() {
             Some(RopeBuffers::new(context, model_shape))
@@ -214,8 +324,10 @@ impl SharedBuffers {
             None
         };
 
-        let attention_sinks =
-            if decoder_config.layer_config.attention_config.has_sinks {
+        let attention_sinks = if let Some(attention_config) =
+            decoder_config.layer_config.attention_config()
+        {
+            if attention_config.has_sinks {
                 let num_heads = decoder_config.num_heads;
                 Some(
                     (0..decoder_config.num_layers)
@@ -229,7 +341,10 @@ impl SharedBuffers {
                 )
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         Self {
             embeddings,
@@ -245,8 +360,10 @@ impl SharedBuffers {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) {
         self.embeddings.update_data(parameter_tree);
-        self.global_rope
-            .update_data(parameter_tree, String::from("global_rope"));
+        if let Some(global_rope) = &mut self.global_rope {
+            global_rope
+                .update_data(parameter_tree, String::from("global_rope"));
+        }
         if let Some(local_rope) = &mut self.local_rope {
             local_rope.update_data(parameter_tree, String::from("local_rope"));
         }
@@ -256,7 +373,7 @@ impl SharedBuffers {
                 let layer_tree = parameter_tree
                     .subtree(&format!("layers.{}", layer_idx))
                     .unwrap();
-                let attn_tree = layer_tree.subtree("attention").unwrap();
+                let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf("sinks").unwrap();
                 let mut dst = sink_cell.borrow_mut();
                 let dst_slice = dst.as_slice_mut::<f32>().unwrap();
@@ -308,6 +425,22 @@ struct AuxBuffers {
     mlp_fused_up: ArrayCell,
     /// [suffix_length, hidden_dim]
     mlp_hidden: ArrayCell,
+    /// [suffix_length, max_mamba_inproj_dim]
+    ssm_inproj: Option<ArrayCell>,
+    /// [suffix_length, max_conv_dim]
+    ssm_packed: Option<ArrayCell>,
+    /// [suffix_length + kernel_size - 1, max_conv_dim]
+    ssm_conv_padded: Option<ArrayCell>,
+    /// [suffix_length, num_heads, head_dim]
+    ssm_x: Option<ArrayCell>,
+    /// [suffix_length, num_groups, state_dim]
+    ssm_b: Option<ArrayCell>,
+    /// [suffix_length, num_groups, state_dim]
+    ssm_c: Option<ArrayCell>,
+    /// [suffix_length, num_heads]
+    ssm_dt: Option<ArrayCell>,
+    /// [suffix_length, num_heads, head_dim]
+    ssm_z: Option<ArrayCell>,
     /// [num_heads, max_suffix_length, head_dim]
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
@@ -381,6 +514,78 @@ impl AuxBuffers {
                     &model_shape.mlp_hidden_shape(suffix_length),
                     act_dtype,
                 )),
+                ssm_inproj: match (
+                    scratch.ssm_inproj.as_ref(),
+                    model_shape.ssm_inproj_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_packed: match (
+                    scratch.ssm_packed.as_ref(),
+                    model_shape.ssm_packed_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_conv_padded: match (
+                    scratch.ssm_conv_padded.as_ref(),
+                    model_shape.ssm_conv_padded_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_x: match (
+                    scratch.ssm_x.as_ref(),
+                    model_shape.ssm_x_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_b: match (
+                    scratch.ssm_b.as_ref(),
+                    model_shape.ssm_bc_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_c: match (
+                    scratch.ssm_c.as_ref(),
+                    model_shape.ssm_bc_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_dt: match (
+                    scratch.ssm_dt.as_ref(),
+                    model_shape.ssm_dt_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                ssm_z: match (
+                    scratch.ssm_z.as_ref(),
+                    model_shape.ssm_z_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
                 rotated_queries: RefCell::new(MetalArray::new(
                     scratch.rotated_queries.clone(),
                     &model_shape.rotated_queries_shape(suffix_length),
@@ -696,10 +901,6 @@ impl AuxBuffers {
             }
         }
     }
-
-    fn suffix_length(&self) -> usize {
-        self.suffix_length
-    }
 }
 
 pub struct ForwardPassState {
@@ -714,7 +915,7 @@ pub struct ForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     /// [suffix_length, vocabulary_size]
     logits: ArrayCell,
-    pub kv_cache: Rc<RefCell<KVCache>>,
+    pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     aux_buffers: AuxBuffers,
     /// [suffix_length] - u32 sampling output buffer
@@ -722,6 +923,8 @@ pub struct ForwardPassState {
     /// Current sampling configuration for this forward pass
     pub sampling_method: Option<SamplingMethod>,
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
+    active_suffix_length: usize,
+    is_prefilling: bool,
 }
 
 impl ForwardPassState {
@@ -730,10 +933,12 @@ impl ForwardPassState {
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ForwardPassBuffers,
-        kv_cache: Rc<RefCell<KVCache>>,
+        cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
+        active_suffix_length: usize,
+        is_prefilling: bool,
         token_seeds: &[u64],
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
@@ -747,10 +952,14 @@ impl ForwardPassState {
             token_positions.len()
         );
         assert!(
-            suffix_length <= kv_cache.borrow().max_suffix_length(),
+            suffix_length <= cache_layers.borrow().max_suffix_length(),
             "KV cache size can only accomodate a suffix of length up to {}, but tried to use a suffix of length {}",
-            kv_cache.borrow().max_suffix_length(),
+            cache_layers.borrow().max_suffix_length(),
             suffix_length
+        );
+        assert!(
+            active_suffix_length <= suffix_length,
+            "Active suffix length ({active_suffix_length}) must be <= suffix length ({suffix_length})"
         );
         let aux_buffers = AuxBuffers::new(
             scratch,
@@ -815,7 +1024,7 @@ impl ForwardPassState {
                 .iter()
                 .map(|(window_size, buffer)| {
                     let prefix_length = window_size
-                        .unwrap_or(kv_cache.borrow().max_prefix_length());
+                        .unwrap_or(cache_layers.borrow().max_prefix_length());
                     let attention_bias_shape =
                         [suffix_length, suffix_length + prefix_length];
 
@@ -830,7 +1039,7 @@ impl ForwardPassState {
                 })
                 .collect();
 
-        kv_cache.borrow().fill_attention_bias(
+        cache_layers.borrow().fill_attention_bias(
             &mut attention_bias_map,
             token_positions,
             suffix_length,
@@ -880,12 +1089,14 @@ impl ForwardPassState {
             token_seeds: token_seeds_refcell,
             attention_bias,
             logits,
-            kv_cache,
+            cache_layers,
             shared_buffers,
             aux_buffers,
             sampling_output: Some(sampling_output),
             sampling_method: None,
             traces,
+            active_suffix_length,
+            is_prefilling,
         }
     }
 
@@ -906,11 +1117,99 @@ impl ForwardPassState {
             },
             ArrayId::MlpFusedUp => self.aux_buffers.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.aux_buffers.mlp_hidden.clone(),
+            ArrayId::SsmInProj => self
+                .aux_buffers
+                .ssm_inproj
+                .as_ref()
+                .expect("SSM in-projection buffer requested but not initialized")
+                .clone(),
             ArrayId::Keys(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].keys.clone()
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_transformer() {
+                    Some(layer) => layer.keys.clone(),
+                    None => panic!(
+                        "Requested transformer keys for non-transformer layer {}",
+                        layer_index
+                    ),
+                }
             },
             ArrayId::Values(layer_index) => {
-                self.kv_cache.borrow().data[layer_index].values.clone()
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_transformer() {
+                    Some(layer) => layer.values.clone(),
+                    None => panic!(
+                        "Requested transformer values for non-transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmConvState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.conv_state.clone(),
+                    None => panic!(
+                        "Requested SSM conv state for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                match cache.data[layer_index].as_state_space() {
+                    Some(layer) => layer.ssm_state.clone(),
+                    None => panic!(
+                        "Requested SSM state for transformer layer {}",
+                        layer_index
+                    ),
+                }
+            },
+            ArrayId::SsmPacked(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_packed
+                    .as_ref()
+                    .expect("SSM packed buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmX(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_x
+                    .as_ref()
+                    .expect("SSM x buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmB(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_b
+                    .as_ref()
+                    .expect("SSM b buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmC(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_c
+                    .as_ref()
+                    .expect("SSM c buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmDt(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_dt
+                    .as_ref()
+                    .expect("SSM dt buffer not initialized")
+                    .clone()
+            },
+            ArrayId::SsmZ(layer_index) => {
+                let _ = layer_index;
+                self.aux_buffers
+                    .ssm_z
+                    .as_ref()
+                    .expect("SSM z buffer not initialized")
+                    .clone()
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
@@ -933,6 +1232,10 @@ impl ForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        input_weights,
+                        ..
+                    } => input_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsOutputWeights => {
@@ -948,6 +1251,10 @@ impl ForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        packed_output_weights,
+                        ..
+                    } => packed_output_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsScales => {
@@ -956,12 +1263,24 @@ impl ForwardPassState {
                         scales,
                         ..
                     } => scales.clone(),
-                    _ => panic!("Expected EmbeddingsBuffers::QuantizedTied"),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        output_scales,
+                        ..
+                    } => output_scales.clone(),
+                    _ => panic!(
+                        "Expected EmbeddingsBuffers::QuantizedTied or MLXSemiQuantizedUntied"
+                    ),
                 }
             },
             ArrayId::RopeCosines(rope_type) => match rope_type {
                 RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.cosines.clone()
+                    let shared_buffers = self.shared_buffers.borrow();
+                    shared_buffers
+                        .global_rope
+                        .as_ref()
+                        .expect("Global rope requested but not initialized")
+                        .cosines
+                        .clone()
                 },
                 RopeType::Local => self
                     .shared_buffers
@@ -974,7 +1293,13 @@ impl ForwardPassState {
             },
             ArrayId::RopeSines(rope_type) => match rope_type {
                 RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.sines.clone()
+                    let shared_buffers = self.shared_buffers.borrow();
+                    shared_buffers
+                        .global_rope
+                        .as_ref()
+                        .expect("Global rope requested but not initialized")
+                        .sines
+                        .clone()
                 },
                 RopeType::Local => self
                     .shared_buffers
@@ -1049,11 +1374,23 @@ impl ForwardPassState {
     }
 
     pub fn aux_buffers_suffix_length(&self) -> usize {
-        self.aux_buffers.suffix_length()
+        self.aux_buffers.suffix_length
+    }
+
+    pub fn active_suffix_length(&self) -> usize {
+        self.active_suffix_length
+    }
+
+    pub fn is_prefilling(&self) -> bool {
+        self.is_prefilling
     }
 
     pub fn mtl_context(&self) -> &Rc<MTLContext> {
         &self.context
+    }
+
+    pub fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+        self.aux_buffers.ssm_conv_padded.as_ref().map(|buf| buf.clone())
     }
 }
 
@@ -1104,9 +1441,18 @@ pub enum ArrayId {
     AttentionOutput,
     MlpFusedUp,
     MlpHidden,
+    SsmInProj,
 
     Keys(usize),
     Values(usize),
+    SsmConvState(usize),
+    SsmState(usize),
+    SsmPacked(usize),
+    SsmX(usize),
+    SsmB(usize),
+    SsmC(usize),
+    SsmDt(usize),
+    SsmZ(usize),
 
     RotatedQueries,
     RotatedKeys,

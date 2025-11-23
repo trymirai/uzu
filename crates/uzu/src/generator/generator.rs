@@ -11,9 +11,8 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ForwardPassState,
+        ForwardPassState, INVALID_POSITION,
         encodable_with_state::{EncodableWithState, EncodingParameters},
-        kv_cache::INVALID_POSITION,
     },
     linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
@@ -140,8 +139,15 @@ impl Generator {
                 &padded_tokens[tokens_start_index..tokens_end_index];
             let positions_for_step =
                 &padded_positions[tokens_start_index..tokens_end_index];
+            let active_suffix_length = positions_for_step
+                .iter()
+                .position(|&pos| pos == INVALID_POSITION)
+                .unwrap_or(prefill_step_size);
             let seeds_for_step =
                 &padded_seeds[tokens_start_index..tokens_end_index];
+            let is_last_prefill_step = step == number_of_prefill_steps - 1;
+            let should_sample_after_step =
+                sample_suffix && is_last_prefill_step;
 
             let is_first_prefill = step == 0;
             let should_capture =
@@ -162,6 +168,8 @@ impl Generator {
                 token_positions: positions_for_step.to_vec(),
                 token_seeds: seeds_for_step.to_vec(),
                 expected_number_of_new_tokens: prefill_step_size,
+                active_suffix_length,
+                is_prefilling: !should_sample_after_step,
             };
 
             let (state, run_time) = self.run_model(
@@ -196,7 +204,7 @@ impl Generator {
                     let accept_indices_for_step: Vec<usize> =
                         (0..positions_for_step.len()).collect();
                     if !accept_indices_for_step.is_empty() {
-                        self.update_kv_cache(
+                        self.update_cache_layers(
                             &accept_indices_for_step,
                             None,
                             true,
@@ -204,7 +212,7 @@ impl Generator {
                     }
 
                     self.context
-                        .kv_cache
+                        .cache_layers
                         .borrow_mut()
                         .register_accepted_tokens(&positions_for_step);
 
@@ -256,7 +264,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(
+        self.update_cache_layers(
             &accepted_token_indices,
             Some(last_suffix_start),
             false,
@@ -310,12 +318,15 @@ impl Generator {
                 std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
             )
             .collect();
+        let active_suffix_length = speculated_suffix.tokens.len();
 
         let task = GeneratorRunTask {
             token_ids: padded_tokens,
             token_positions: padded_positions,
             token_seeds: padded_seeds,
             expected_number_of_new_tokens: 1,
+            active_suffix_length,
+            is_prefilling: false,
         };
 
         let (mut state, run_time) = self.run_model(
@@ -347,7 +358,7 @@ impl Generator {
             }
         }
 
-        self.update_kv_cache(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -365,7 +376,7 @@ impl Generator {
     }
 
     pub fn reset_state(&mut self) {
-        self.context.kv_cache.borrow_mut().clear();
+        self.context.cache_layers.borrow_mut().clear();
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
@@ -385,6 +396,8 @@ impl Generator {
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
             token_seeds: vec![0; suffix_length],
             expected_number_of_new_tokens: suffix_length,
+            active_suffix_length: suffix_length,
+            is_prefilling: false,
         };
 
         let (_, _) =
@@ -437,11 +450,13 @@ impl Generator {
                 self.context.command_buffer.root_command_buffer().to_owned();
 
             if !warmup {
-                self.context.gpu_sampler.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &EncodingParameters::new(warmup, true, false),
-                );
+                if !task.is_prefilling {
+                    self.context.gpu_sampler.encode(
+                        &mut state,
+                        &self.context.command_buffer,
+                        &EncodingParameters::new(warmup, true, false),
+                    );
+                }
             }
 
             self.context.command_buffer.commit_and_continue();
@@ -494,7 +509,7 @@ impl Generator {
         Ok(result)
     }
 
-    fn update_kv_cache(
+    fn update_cache_layers(
         &mut self,
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
@@ -507,8 +522,8 @@ impl Generator {
             command_buffer.root_command_buffer().to_owned();
 
         {
-            let mut kv_cache = self.context.kv_cache.borrow_mut();
-            kv_cache.update_after_acceptance(
+            let mut cache_layers = self.context.cache_layers.borrow_mut();
+            cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
                 &root_command_buffer,
@@ -543,7 +558,7 @@ impl Generator {
                 (self.registered_prefix_len..desired_prefix_len).collect();
             if !positions.is_empty() {
                 self.context
-                    .kv_cache
+                    .cache_layers
                     .borrow_mut()
                     .register_accepted_tokens(&positions);
             }

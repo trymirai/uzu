@@ -5,7 +5,9 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     KernelDataType, TensorAddBias,
-    quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulKernel},
+    quant_matmul::{
+        QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+    },
 };
 use crate::{
     Array, DataType,
@@ -21,19 +23,15 @@ use crate::{
 };
 
 pub struct QuantizedLinearKernelBlock {
-    kernel_mm: QuantizedMatmulKernel,
-    kernel_mv: QuantizedMatmulKernel,
+    kernel: QuantizedMatmulKernel,
     bias_add_kernel: Option<TensorAddBias>,
     biases_buffer: Option<MTLBuffer>,
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
-    zero_points_buffer: MTLBuffer,
+    zero_points_or_biases_buffer: MTLBuffer,
+    quantization_type: QuantizationType,
     input_dim: usize,
     output_dim: usize,
-    #[allow(dead_code)]
-    group_size: usize,
-    #[allow(dead_code)]
-    kernel_data_type: DataType,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 }
@@ -50,7 +48,10 @@ impl QuantizedLinearKernelBlock {
     ) -> Result<Self, MTLError> {
         let kernel_data_type: DataType = config.activation_precision.into();
 
-        if !matches!(kernel_data_type, DataType::F16 | DataType::BF16) {
+        if !matches!(
+            kernel_data_type,
+            DataType::F16 | DataType::BF16 | DataType::F32
+        ) {
             return Err(MTLError::Generic(format!(
                 "Unsupported data type for quantized kernel: {:?}",
                 kernel_data_type
@@ -61,9 +62,13 @@ impl QuantizedLinearKernelBlock {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
-        if weights.data_type() != DataType::U8 {
+        let packing_divisor = config.weight_quantization_mode.packing_divisor();
+        let storage_type = config.weight_quantization_mode.storage_type();
+
+        if weights.data_type() != storage_type {
             return Err(MTLError::Generic(format!(
-                "Expected packed U8 weights, got {:?}",
+                "Expected weights of type {:?}, got {:?}",
+                storage_type,
                 weights.data_type()
             )));
         }
@@ -71,32 +76,16 @@ impl QuantizedLinearKernelBlock {
         let mut scales = parameter_tree.leaf("scales").map_err(|e| {
             MTLError::Generic(format!("Failed to load scales: {:?}", e))
         })?;
-
-        let mut zero_points =
-            parameter_tree.leaf("zero_points").map_err(|e| {
-                MTLError::Generic(format!(
-                    "Failed to load zero_points: {:?}",
-                    e
-                ))
-            })?;
-
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
 
         let w_shape = weights.shape();
         let s_shape = scales.shape();
-        let zp_shape = zero_points.shape();
 
-        if !(w_shape == [output_dim, input_dim / 2]
-            && s_shape == [output_dim, k_g]
-            && zp_shape == [output_dim, (k_g + 1) / 2])
-        {
-            return Err(MTLError::Generic(format!(
-                "Unexpected shapes. weights={:?}, scales={:?}, zero_points={:?}; expected [N,K/2],[N,K_g],[N,(K_g+1)/2]",
-                w_shape, s_shape, zp_shape,
-            )));
-        }
+        // Determine if weights are transposed by checking shape
+        let weights_transposed = w_shape[0] == output_dim;
 
-        let (scales_buffer, zero_points_buffer) = {
+        // Determine quantization style: prefer MLX (deq_biases), else AWQ (zero_points)
+        let (quantization_type, zero_points_or_biases_buffer, scales_buffer) = {
             if scales.data_type() != kernel_data_type {
                 return Err(MTLError::Generic(format!(
                     "Scales dtype mismatch: got {:?}, expected {:?}",
@@ -104,10 +93,70 @@ impl QuantizedLinearKernelBlock {
                     kernel_data_type
                 )));
             }
-            let scales_buffer = unsafe { scales.mtl_buffer() }.to_owned();
-            let zero_points_buffer =
-                unsafe { zero_points.mtl_buffer() }.to_owned();
-            (scales_buffer, zero_points_buffer)
+            match parameter_tree.leaf("deq_biases") {
+                Ok(mut deq_biases) => {
+                    let db_shape = deq_biases.shape();
+                    if !(w_shape == [output_dim, input_dim / packing_divisor]
+                        && s_shape == [output_dim, k_g]
+                        && db_shape == [output_dim, k_g])
+                    {
+                        return Err(MTLError::Generic(format!(
+                            "Unexpected MLX shapes. weights={:?}, scales={:?}, deq_biases={:?}; expected [N,K/{}],[N,K_g],[N,K_g]",
+                            w_shape, s_shape, db_shape, packing_divisor
+                        )));
+                    }
+                    if deq_biases.data_type() != kernel_data_type {
+                        return Err(MTLError::Generic(format!(
+                            "deq_biases dtype mismatch: got {:?}, expected {:?}",
+                            deq_biases.data_type(),
+                            kernel_data_type
+                        )));
+                    }
+                    let scales_buffer =
+                        unsafe { scales.mtl_buffer() }.to_owned();
+                    let biases_buf =
+                        unsafe { deq_biases.mtl_buffer() }.to_owned();
+                    (QuantizationType::Mlx, biases_buf, scales_buffer)
+                },
+                Err(_) => {
+                    let mut zero_points =
+                        parameter_tree.leaf("zero_points").map_err(|e| {
+                            MTLError::Generic(format!(
+                                "Failed to load zero_points: {:?}",
+                                e
+                            ))
+                        })?;
+                    let zp_shape = zero_points.shape();
+                    let expected_zp_entries =
+                        (k_g + packing_divisor - 1) / packing_divisor;
+                    if !(w_shape == [output_dim, input_dim / packing_divisor]
+                        && s_shape == [output_dim, k_g]
+                        && zp_shape == [output_dim, expected_zp_entries])
+                    {
+                        return Err(MTLError::Generic(format!(
+                            "Unexpected AWQ shapes. weights={:?}, scales={:?}, zero_points={:?}; expected [N,K/{}],[N,K_g],[N,(K_g+{})/{}]",
+                            w_shape,
+                            s_shape,
+                            zp_shape,
+                            packing_divisor,
+                            packing_divisor - 1,
+                            packing_divisor
+                        )));
+                    }
+                    if zero_points.data_type() != storage_type {
+                        return Err(MTLError::Generic(format!(
+                            "Zero-points dtype mismatch: got {:?}, expected {:?}",
+                            zero_points.data_type(),
+                            storage_type
+                        )));
+                    }
+                    let scales_buffer =
+                        unsafe { scales.mtl_buffer() }.to_owned();
+                    let zps_buf =
+                        unsafe { zero_points.mtl_buffer() }.to_owned();
+                    (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
+                },
+            }
         };
 
         let weights_buffer: MTLBuffer =
@@ -143,58 +192,30 @@ impl QuantizedLinearKernelBlock {
             };
 
         let g = config.group_size;
-        let (kernel_name_mm, kernel_name_mv) = match (kernel_data_type, g) {
-            (DataType::F16, 32) => {
-                ("qmm_transposed_f16_g32_b4", "qmv_f16_g32_b4")
-            },
-            (DataType::F16, 64) => {
-                ("qmm_transposed_f16_g64_b4", "qmv_f16_g64_b4")
-            },
-            (DataType::F16, 128) => {
-                ("qmm_transposed_f16_g128_b4", "qmv_f16_g128_b4")
-            },
-            (DataType::BF16, 32) => {
-                ("qmm_transposed_bf16_g32_b4", "qmv_bf16_g32_b4")
-            },
-            (DataType::BF16, 64) => {
-                ("qmm_transposed_bf16_g64_b4", "qmv_bf16_g64_b4")
-            },
-            (DataType::BF16, 128) => {
-                ("qmm_transposed_bf16_g128_b4", "qmv_bf16_g128_b4")
-            },
-            (dtype, other) => {
-                return Err(MTLError::Generic(format!(
-                    "Unsupported group size {} for transposed {:?} kernel",
-                    other, dtype
-                )));
-            },
-        };
+        let mode = config.weight_quantization_mode;
 
-        let kernel_mm = QuantizedMatmulKernel::new(
+        let kernel = QuantizedMatmulKernel::new(
             mtl_context,
             kernel_data_type,
-            kernel_name_mm,
-        )
-        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
-        let kernel_mv = QuantizedMatmulKernel::new(
-            mtl_context,
-            kernel_data_type,
-            kernel_name_mv,
+            g,
+            input_dim,
+            output_dim,
+            mode,
+            quantization_type,
+            weights_transposed,
         )
         .map_err(|e| MTLError::Generic(format!("{:?}", e)))?;
 
         Ok(Self {
-            kernel_mm,
-            kernel_mv,
+            kernel,
             bias_add_kernel,
             biases_buffer,
             weights_buffer,
             scales_buffer,
-            zero_points_buffer,
+            zero_points_or_biases_buffer,
+            quantization_type,
             input_dim,
             output_dim,
-            group_size: config.group_size,
-            kernel_data_type,
             input_array_id,
             output_array_id,
         })
@@ -206,14 +227,10 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
-        _parameters: &EncodingParameters,
+        parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let input_array = arrays[0].borrow();
-
-        let batch_size = input_array.shape()[0];
-
-        drop(input_array);
+        let batch_size = state.active_suffix_length();
 
         let mut input_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
@@ -224,29 +241,19 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
-        let m = batch_size;
-        let n = self.output_dim;
-        let k = self.input_dim;
-
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
-            zero_points_buffer: &self.zero_points_buffer,
+            zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
             output_buffer: output_buffer,
-            m: m as i32,
-            n: n as i32,
-            k: k as i32,
+            batch: batch_size as i32,
+            input_dim: self.input_dim as i32,
+            output_dim: self.output_dim as i32,
+            quantization_type: self.quantization_type,
         };
 
-        let use_gemv = batch_size == 1;
-        let kernel = if use_gemv {
-            &self.kernel_mv
-        } else {
-            &self.kernel_mm
-        };
-
-        kernel
+        self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized matmul kernel");
 
@@ -265,6 +272,13 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 total_len,
                 &retained_cb,
             );
+        }
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
         }
     }
 }

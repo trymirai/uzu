@@ -14,6 +14,8 @@ pub mod mlp;
 pub use mlp::*;
 pub mod normalization;
 pub use normalization::*;
+pub mod mamba;
+pub use mamba::*;
 pub mod rope;
 pub use rope::*;
 pub mod metadata;

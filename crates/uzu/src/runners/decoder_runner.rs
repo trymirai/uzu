@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::metal::{
-        DecoderExecutables, ForwardPassState, KVCache, MTLContext, ModelShape,
+        CacheLayers, DecoderExecutables, ForwardPassState, MTLContext,
+        ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ForwardPassBuffers, SharedBuffers,
@@ -91,7 +92,7 @@ impl DecoderTestContext {
             .map_err(|e| format!("Failed to create ParameterLoader: {}", e))?;
         let root_loader_view = loader.tree();
 
-        let kv_cache = Rc::new(RefCell::new(KVCache::new(
+        let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             &mtl_context,
             &model_shape,
             max_prefix_length,
@@ -122,10 +123,12 @@ impl DecoderTestContext {
             &decoder_config,
             &model_shape,
             &scratch_buffers,
-            kv_cache.clone(),
+            cache_layers.clone(),
             shared_buffers.clone(),
             &token_ids,
             &token_positions,
+            token_ids.len(),
+            false,
             &token_seeds,
             false,
             None,

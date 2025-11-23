@@ -12,6 +12,8 @@ pub enum Error {
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
     NotEnoughMemory,
+    #[error("Unsupported context mode for model")]
+    UnsupportedContextModeForModel,
     #[error("Generator not loaded")]
     GeneratorNotLoaded,
     #[error("Unable to load prompt template")]
