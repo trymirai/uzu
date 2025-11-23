@@ -36,7 +36,19 @@ uint3 thread_idx [[ thread_position_in_threadgroup ]])
 
 #define innerArguments (logits_data, processed_logits, vocab_size, temperature, threadgroup_idx.x, threadgroup_idx.y, thread_idx.x)
 
-generateKernels(batched_temperature)
+#define generateTemperatureKernel(functionName, scalarType, outerArgs, innerArgs) \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
+    functionName innerArgs; \
+}
+
+#define generateTemperatureKernels(functionName) \
+generateTemperatureKernel(functionName, float, outerArguments(float), innerArguments); \
+generateTemperatureKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
+generateTemperatureKernel(functionName, half, outerArguments(half), innerArguments);
+
+generateTemperatureKernels(batched_temperature)
 
 #undef outerArguments
 #undef innerArguments
+#undef generateTemperatureKernel
+#undef generateTemperatureKernels

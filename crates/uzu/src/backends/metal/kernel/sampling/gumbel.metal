@@ -48,7 +48,19 @@ uint3 thread_idx [[ thread_position_in_threadgroup ]])
 
 #define innerArguments (logits_data, batch_seeds, processed_logits, vocab_size, threadgroup_idx.x, threadgroup_idx.y, thread_idx.x)
 
-generateKernels(batched_gumbel)
+#define generateGumbelKernel(functionName, scalarType, outerArgs, innerArgs) \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
+    functionName innerArgs; \
+}
+
+#define generateGumbelKernels(functionName) \
+generateGumbelKernel(functionName, float, outerArguments(float), innerArguments); \
+generateGumbelKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
+generateGumbelKernel(functionName, half, outerArguments(half), innerArguments);
+
+generateGumbelKernels(batched_gumbel)
 
 #undef outerArguments
 #undef innerArguments
+#undef generateGumbelKernel
+#undef generateGumbelKernels

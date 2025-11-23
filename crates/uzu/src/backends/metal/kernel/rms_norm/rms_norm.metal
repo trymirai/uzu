@@ -207,7 +207,7 @@ void rms_norm_core(
 
 // Generate RMS norm kernels
 #define DEFINE_RMS_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF) \
-kernel void rms_norm_##SUF( \
+[[max_total_threads_per_threadgroup(1024)]] kernel void rms_norm_##SUF( \
     const device IN*    input         [[buffer(0)]], \
     const device SC*    scales        [[buffer(1)]], \
     device       OUT*   output        [[buffer(2)]], \
@@ -241,7 +241,7 @@ FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
 
 // Generate QK norm kernels
 #define DEFINE_QK_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF) \
-kernel void qk_norm_##SUF( \
+[[max_total_threads_per_threadgroup(1024)]] kernel void qk_norm_##SUF( \
     const device IN*    qkv_input     [[buffer(0)]], \
     const device SC*    scales        [[buffer(1)]], \
     device       OUT*   qkv_output    [[buffer(2)]], \
