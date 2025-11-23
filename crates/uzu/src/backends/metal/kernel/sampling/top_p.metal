@@ -1,146 +1,99 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-#define MAX_VOCAB_SIZE 262144
 #define BLOCK_SIZE 1024
-#define MAX_ITERS 10
-#define MAX_SAMPLES_PER_BLOCK ((MAX_VOCAB_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
-#define ATOL 1e-3
-
-#define SEARCH_TYPE_INTERPOLATION
+#define MAX_ITERS 16
+#define BRANCHING_FACTOR 4
 
 template <typename T>
 void batched_topp(
     device const T* logits_data,
     device T* processed_logits,
-    threadgroup float shared_float_reduce_buffer[BLOCK_SIZE],
-    threadgroup uint shared_uint_reduce_buffer[BLOCK_SIZE],
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE],
     constant uint& vocab_size,
     constant float& top_p,
     uint batch_idx,
     uint thread_idx
 ) {
-    const uint batch_start = batch_idx * vocab_size;
-    const uint num_local_samples = (thread_idx < vocab_size) ? ((vocab_size - thread_idx + BLOCK_SIZE - 1) / BLOCK_SIZE) : 0;
-    float local_probas[MAX_SAMPLES_PER_BLOCK];
+    uint batch_start = batch_idx * vocab_size;
 
-    float local_norm = 0.0f;
-
-    float local_max_logit = -INFINITY;
+    // Find min (for binary search) and max (for binary search and softmax)
+    float local_max = -INFINITY;
+    float local_min = INFINITY;
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-        local_max_logit = max(float(logits_data[batch_start + i]), local_max_logit);
+        float logit_value = float(logits_data[batch_start + i]);
+        local_max = fmax(local_max, logit_value);
+        local_min = fmin(local_min, logit_value);
     }
-    const float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
-        local_max_logit,
-        shared_float_reduce_buffer,
-        thread_idx
-    );
+    float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(local_max, shared_reduce_buffer, thread_idx);
+    float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_min, shared_reduce_buffer, thread_idx);
 
+    // Find denominator for softmax
+    float local_sum = 0.0f;
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-        const float logit_value = float(logits_data[batch_start + i]) - max_logit;
-        const float local_proba = fast::exp(logit_value);
-        local_probas[i / BLOCK_SIZE] = local_proba;
-        local_norm += local_proba;
+        float logit_value = float(logits_data[batch_start + i]);
+        local_sum += fast::exp(logit_value - max_logit);
     }
-    const float global_norm = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-        local_norm,
-        shared_float_reduce_buffer,
-        thread_idx
-    );
+    float total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sum, shared_reduce_buffer, thread_idx);
 
-    #pragma unroll(4)
-    for (uint i = 0; i < num_local_samples; ++i) {
-        local_probas[i] /= global_norm;
-    }
 
-    float low = 0.0f;
-    float high = 1.0f;
-    float local_mass_above_high = 0.0f;
+    // Do the binary search on the threshold
+    float target_mass = top_p * total_sum;
 
-    float mass_above_high = 0.0f;
-    float mass_above_low = 1.0f;
-    float mass_above_prev_threshold = 0.0f;
+    float low = min_logit;
+    float high = max_logit;
 
-    uint local_block_start = 0;
-    uint local_block_end = num_local_samples;
-
-    for (uint iter = 0; iter < MAX_ITERS; ++iter) {
-        const float slope = (mass_above_high - mass_above_low) / (high - low);
-
-#if defined(SEARCH_TYPE_INTERPOLATION)
-        float threshold;
-        if (fabs(slope) > 1e-5) {
-            threshold = low + (top_p - mass_above_high) / slope;
-        } else {
-            threshold = (low + high) / 2.0f;
+    for (uint iter = 0; iter < MAX_ITERS; iter++) {
+        float thresholds[BRANCHING_FACTOR-1];
+        float local_sums_above_threshold[BRANCHING_FACTOR-1];
+        float local_mins_above_threshold[BRANCHING_FACTOR-1];
+        for (uint branch = 0; branch < BRANCHING_FACTOR-1; ++branch) {
+            thresholds[branch] = low + (high - low) * (branch + 1) / BRANCHING_FACTOR;
+            local_sums_above_threshold[branch] = 0.0f;
+            local_mins_above_threshold[branch] = INFINITY;
         }
-#elif defined(SEARCH_TYPE_BINARY)
-        const float threshold = (high + low) / 2.0f;
-#else
-#error "Unsupported search type"
-#endif
-
-        float local_mass_above_threshold = local_mass_above_high;
-        uint partition_left = local_block_start;
-        uint partition_right = local_block_end;
-
-        while (partition_left < partition_right) {
-            const float proba = local_probas[partition_left];
-            if (proba >= threshold) {
-                local_mass_above_threshold += proba;
-
-                --partition_right;
-                const float tmp = local_probas[partition_right];
-                local_probas[partition_right] = proba;
-                local_probas[partition_left] = tmp;
-            } else {
-                ++partition_left;
+        #pragma unroll(4)
+        for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
+            float logit_value = float(logits_data[batch_start + i]);
+            float logit_mass = fast::exp(logit_value - max_logit);
+            #pragma unroll(BRANCHING_FACTOR-1)
+            for (uint branch = 0; branch < BRANCHING_FACTOR-1; ++branch) {
+                local_sums_above_threshold[branch] += select(0.0, logit_mass, logit_value >= thresholds[branch]);
+                local_mins_above_threshold[branch] = fmin(local_mins_above_threshold[branch], select(INFINITY, logit_mass, logit_value >= thresholds[branch]));
             }
         }
 
-        const float mass_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-            local_mass_above_threshold,
-            shared_float_reduce_buffer,
-            thread_idx
-        );
+        float sum_above_threshold;
+        float min_above_threshold;
 
-        if (mass_above_threshold >= top_p) {
-            low = threshold;
-            mass_above_low = mass_above_threshold;
+        #pragma unroll(BRANCHING_FACTOR-1)
+        for (uint branch = 0; branch < BRANCHING_FACTOR-1; ++branch) {
+            sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sums_above_threshold[branch], shared_reduce_buffer, thread_idx);
+            min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_mins_above_threshold[branch], shared_reduce_buffer, thread_idx);
 
-            local_block_start = partition_left;
-        } else {
-            high = threshold;
-            local_mass_above_high = local_mass_above_threshold;
-            mass_above_high = mass_above_threshold;
-
-            local_block_end = partition_right;
+            if (sum_above_threshold >= target_mass) {
+                low = thresholds[branch];
+            } else {
+                high = thresholds[branch];
+                break;
+            }
         }
 
-        const uint local_search_size = local_block_start - local_block_end;
-        const uint global_search_size = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-            local_search_size,
-            shared_uint_reduce_buffer,
-            thread_idx
-        );
-
-        if (global_search_size <= 1 || fabs(mass_above_prev_threshold - mass_above_threshold) < ATOL) {
+        // Early exit
+        if (sum_above_threshold >= target_mass && sum_above_threshold - min_above_threshold < target_mass) {
             break;
         }
-        mass_above_prev_threshold = mass_above_threshold;
     }
 
+    T t_threshold = T((high + low) / 2);
+
+    // We know the threshold, just mask everything below it
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
-        const T logit_value = logits_data[batch_start + i];
-        const float proba = fast::exp(float(logit_value) - max_logit) / global_norm;
-        if (proba < low) {
-            processed_logits[batch_start + i] = T(-INFINITY);
-        } else {
-            processed_logits[batch_start + i] = logit_value;
-        }
+        T logit_value = logits_data[batch_start + i];
+        processed_logits[batch_start + i] = select(T(-INFINITY), logit_value, logit_value >= t_threshold);
     }
 }
 
@@ -152,12 +105,11 @@ constant float& top_p [[ buffer(3) ]], \
 uint3 threadgroup_idx [[ threadgroup_position_in_grid ]], \
 uint3 thread_idx [[ thread_position_in_threadgroup ]])
 
-#define innerArguments (logits_data, processed_logits, shared_float_reduce_buffer, shared_uint_reduce_buffer, vocab_size, top_p, threadgroup_idx.x, thread_idx.x)
+#define innerArguments (logits_data, processed_logits, shared_reduce_buffer, vocab_size, top_p, threadgroup_idx.x, thread_idx.x)
 
 #define generateToppKernel(functionName, scalarType, outerArgs, innerArgs) \
 kernel void functionName##_##scalarType outerArgs {                        \
-    threadgroup float shared_float_reduce_buffer[BLOCK_SIZE];              \
-    threadgroup uint shared_uint_reduce_buffer[BLOCK_SIZE];                \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE];                    \
     functionName innerArgs;                                                \
 }
 
