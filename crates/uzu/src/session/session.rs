@@ -5,7 +5,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
-    config::ModelMetadata,
+    config::{ModelMetadata, decoder_layer::MixerConfig},
     generator::{
         generator::Generator,
         result::{GenerateResult, PrefillResult},
@@ -61,6 +61,28 @@ impl Session {
             eprintln!("Failed to parse config.json: {err}");
             Error::UnableToLoadConfig
         })?;
+
+        let is_ssm = model_metadata
+            .clone()
+            .model_config
+            .decoder_config
+            .layer_configs
+            .unwrap_or(Box::new([]))
+            .iter()
+            .any(|layer| matches!(layer.mixer_config, MixerConfig::Mamba(_)));
+        if is_ssm {
+            match decoding_config.context_mode {
+                ContextMode::None => {},
+                ContextMode::Static {
+                    ..
+                } => {
+                    return Err(Error::UnsupportedContextModeForModel);
+                },
+                ContextMode::Dynamic => {
+                    return Err(Error::UnsupportedContextModeForModel);
+                },
+            }
+        }
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
