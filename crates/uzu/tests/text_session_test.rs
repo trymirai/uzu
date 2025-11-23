@@ -3,11 +3,8 @@ use std::path::PathBuf;
 
 use uzu::session::{
     Session,
-    config::{DecodingConfig, RunConfig, SpeculatorConfig},
-    parameter::{
-        ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
-        SamplingPolicy, SamplingSeed,
-    },
+    config::{DecodingConfig, RunConfig},
+    parameter::SamplingSeed,
     types::{Input, Message, Output},
 };
 
@@ -16,14 +13,7 @@ fn build_model_path() -> PathBuf {
 }
 
 fn build_decoding_config() -> DecodingConfig {
-    DecodingConfig::new(
-        ContextMode::default(),
-        ContextLength::default(),
-        PrefillStepSize::default(),
-        SpeculatorConfig::default(),
-        SamplingSeed::Custom(42),
-        true,
-    )
+    DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))
 }
 
 #[test]
@@ -53,23 +43,25 @@ fn run(
     let output = session
         .run(
             input,
-            RunConfig::new(
-                tokens_limit,
-                true,
-                SamplingPolicy::Custom {
-                    value: SamplingMethod::Greedy,
-                },
-            ),
+            RunConfig::default().tokens_limit(tokens_limit),
             Some(|_: Output| {
                 return true;
             }),
         )
         .unwrap();
 
+    let empty_response = String::from("None");
+
     println!("-------------------------");
-    println!("{:#?}", output.text.parsed.chain_of_thought);
+    println!(
+        "{}",
+        output.text.parsed.chain_of_thought.unwrap_or(empty_response.clone())
+    );
     println!("-------------------------");
-    println!("{:#?}", output.text.parsed.response);
+    println!(
+        "{}",
+        output.text.parsed.response.unwrap_or(empty_response.clone())
+    );
     println!("-------------------------");
     println!("{:#?}", output.stats);
     println!("-------------------------");
