@@ -45,8 +45,6 @@ void batched_topp(
     float low = min_logit;
     float high = max_logit;
 
-    float last_threshold = low;
-
     for (uint iter = 0; iter < MAX_ITERS; iter++) {
         float thresholds[BRANCHING_FACTOR-1];
         float local_sums_above_threshold[BRANCHING_FACTOR-1];
@@ -62,7 +60,7 @@ void batched_topp(
             float logit_mass = fast::exp(logit_value - max_logit);
             #pragma unroll(BRANCHING_FACTOR-1)
             for (uint branch = 0; branch < BRANCHING_FACTOR-1; ++branch) {
-                local_sums_above_threshold[branch] += select(0.0, logit_mass, logit_value >= thresholds[branch]);
+                local_sums_above_threshold[branch] += select(0.0f, logit_mass, logit_value >= thresholds[branch]);
                 local_mins_above_threshold[branch] = fmin(local_mins_above_threshold[branch], select(INFINITY, logit_mass, logit_value >= thresholds[branch]));
             }
         }
@@ -75,11 +73,11 @@ void batched_topp(
             sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sums_above_threshold[branch], shared_reduce_buffer, thread_idx);
             min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_mins_above_threshold[branch], shared_reduce_buffer, thread_idx);
 
-            last_threshold = thresholds[branch];
+            float threshold = thresholds[branch];
             if (sum_above_threshold >= target_mass) {
-                low = last_threshold;
+                low = threshold;
             } else {
-                high = last_threshold;
+                high = threshold;
                 break;
             }
         }
@@ -90,7 +88,7 @@ void batched_topp(
         }
     }
 
-    T t_threshold = T(last_threshold);
+    T t_threshold = T(low);
 
     // We know the threshold, just mask everything below it
     #pragma unroll(4)
