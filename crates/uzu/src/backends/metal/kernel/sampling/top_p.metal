@@ -3,9 +3,9 @@
 
 #define MAX_VOCAB_SIZE 262144
 #define BLOCK_SIZE 1024
-#define MAX_ITERS 64
+#define MAX_ITERS 10
 #define MAX_SAMPLES_PER_BLOCK ((MAX_VOCAB_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
-#define ATOL 1e-4
+#define ATOL 1e-3
 
 #define SEARCH_TYPE_INTERPOLATION
 
@@ -61,6 +61,7 @@ void batched_topp(
 
     float mass_above_high = 0.0f;
     float mass_above_low = 1.0f;
+    float mass_above_prev_threshold = 0.0f;
 
     uint local_block_start = 0;
     uint local_block_end = num_local_samples;
@@ -125,7 +126,10 @@ void batched_topp(
             thread_idx
         );
 
-        if (global_search_size <= 1 || high - low < ATOL) break;
+        if (global_search_size <= 1 || fabs(mass_above_prev_threshold - mass_above_threshold) < ATOL) {
+            break;
+        }
+        mass_above_prev_threshold = mass_above_threshold;
     }
 
     #pragma unroll(4)
