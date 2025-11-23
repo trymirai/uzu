@@ -24,7 +24,7 @@ void batched_topp(
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
         local_max = fmax(local_max, logit_value);
-        local_min = fmin(local_min, logit_value);
+        local_min = (logit_value > -INFINITY) ? fmin(local_min, logit_value) : local_min;
     }
     float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(local_max, shared_reduce_buffer, thread_idx);
     float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_min, shared_reduce_buffer, thread_idx);
@@ -67,13 +67,10 @@ void batched_topp(
             }
         }
 
-        float sum_above_threshold;
-        float min_above_threshold;
-
         #pragma unroll(BRANCHING_FACTOR-1)
         for (uint branch = 0; branch < BRANCHING_FACTOR-1; ++branch) {
-            sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sums_above_threshold[branch], shared_reduce_buffer, thread_idx);
-            min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_mins_above_threshold[branch], shared_reduce_buffer, thread_idx);
+            float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sums_above_threshold[branch], shared_reduce_buffer, thread_idx);
+            float min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_mins_above_threshold[branch], shared_reduce_buffer, thread_idx);
 
             float threshold = thresholds[branch];
             if (sum_above_threshold >= target_mass) {
