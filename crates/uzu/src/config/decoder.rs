@@ -6,7 +6,7 @@ use serde::{
 use super::{
     decoder_layer::{DecoderLayerConfig, MixerConfig},
     embedding::EmbeddingConfig,
-    normalization::RMSNormConfig,
+    normalization::NormalizationConfig,
     rope::RoPEConfig,
 };
 
@@ -32,7 +32,7 @@ pub struct DecoderConfig {
     pub local_rope_config: Option<RoPEConfig>,
     pub layer_config: DecoderLayerConfig,
     pub layer_configs: Option<Box<[DecoderLayerConfig]>>,
-    pub output_norm_config: RMSNormConfig,
+    pub output_norm_config: NormalizationConfig,
 
     pub vocab_size: usize,
     pub model_dim: usize,
@@ -181,7 +181,7 @@ struct RawDecoderConfig {
     layer_config: Option<DecoderLayerConfig>,
     #[serde(default)]
     layer_configs: Option<Vec<DecoderLayerConfig>>,
-    output_norm_config: RMSNormConfig,
+    output_norm_config: NormalizationConfig,
     vocab_size: usize,
     model_dim: usize,
     hidden_dim: usize,
@@ -421,10 +421,10 @@ mod tests {
                     },
                     query_norm_config: None,
                     key_norm_config: None,
-                    num_heads: None,
-                    num_groups: None,
-                    head_dim: None,
-                    is_causal: None,
+                    num_heads: Some(12),
+                    num_groups: Some(12),
+                    head_dim: Some(64),
+                    is_causal: Some(true),
                     scale: None,
                     sliding_window_size: None,
                     logit_soft_cap: None,

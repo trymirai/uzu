@@ -1,10 +1,7 @@
 use super::context::GeneratorContext;
-use crate::backends::metal::{
-    LLMForwardPassState,
-    forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
-    },
+use crate::backends::metal::forward_pass::{
+    ForwardPassState, LLMForwardPassState,
+    encodable_with_state::{EncodableWithState, EncodingParameters},
 };
 
 pub struct GeneratorEncodedTask {

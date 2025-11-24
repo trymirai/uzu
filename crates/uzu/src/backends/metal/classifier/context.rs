@@ -12,7 +12,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        KVCache, KernelDataType, MTLContext, ModelShape,
+        KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ArrayId, ForwardPassBuffers, IOArrays, MPSGraphBlock, RopeType,
@@ -35,7 +35,6 @@ pub struct ClassifierContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
-    pub kv_cache: Rc<RefCell<KVCache>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ForwardPassBuffers,
 
@@ -110,9 +109,12 @@ impl ClassifierContext {
             shared_bufs.embeddings.update_data(&root_loader_view);
             let transformer_tree =
                 root_loader_view.subtree("transformer").unwrap();
-            shared_bufs
-                .global_rope
-                .update_data(&transformer_tree, String::from("global_rope"));
+            if let Some(global_rope) = &mut shared_bufs.global_rope {
+                global_rope.update_data(
+                    &transformer_tree,
+                    String::from("global_rope"),
+                );
+            }
             if let Some(local_rope) = &mut shared_bufs.local_rope {
                 local_rope
                     .update_data(&transformer_tree, String::from("local_rope"));
@@ -121,7 +123,9 @@ impl ClassifierContext {
 
         let data_type = decoder_config
             .layer_config
-            .attention_config
+            .mixer_config
+            .as_attention()
+            .expect("Classifier only supports Attention layers")
             .qkv_projection_config
             .activation_precision()
             .into();
@@ -133,6 +137,7 @@ impl ClassifierContext {
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
+            &root_loader_view,
         );
 
         let global_rope =
@@ -158,13 +163,14 @@ impl ClassifierContext {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let mut rope = global_rope.clone();
-                if layer_config.attention_config.sliding_window_size.is_some() {
+                let attn = &layer_config.attention_config;
+
+                if attn.sliding_window_size.is_some() {
                     if let Some(local_rope_block) = local_rope.clone() {
                         rope = local_rope_block;
                     }
                 }
 
-                let attn = &layer_config.attention_config;
                 ClassifierLayerExecutable::new(
                     &mtl_context,
                     layer_config,
@@ -175,9 +181,9 @@ impl ClassifierContext {
                         .model_config
                         .transformer_config
                         .hidden_dim,
-                    attn.num_heads,
-                    attn.head_dim,
-                    attn.num_groups,
+                    attn.num_heads.unwrap_or(12), // Default or unwrap
+                    attn.head_dim.unwrap_or(64),
+                    attn.num_groups.unwrap_or(12),
                     attn.scale,
                     &transformer_loader
                         .subtree(&format!("layers.{}", layer_index))
@@ -211,13 +217,6 @@ impl ClassifierContext {
             context_length,
             context_length,
         );
-
-        let kv_cache = Rc::new(RefCell::new(KVCache::new(
-            &mtl_context,
-            &model_shape,
-            0,
-            context_length,
-        )));
 
         let embedding_norm = NormalizationEncodable::new(
             &mtl_context,
@@ -343,7 +342,6 @@ impl ClassifierContext {
         Ok(Self {
             mtl_context,
             command_buffer,
-            kv_cache,
             shared_buffers,
             scratch_buffers,
             model_config: classifier_model_config.clone(),

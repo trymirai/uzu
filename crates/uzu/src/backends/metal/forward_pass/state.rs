@@ -1438,8 +1438,20 @@ impl super::state_trait::ForwardPassState for LLMForwardPassState {
         &self.shared_buffers
     }
 
-    fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
-        Some(&self.kv_cache)
+    fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
+        Some(&self.cache_layers)
+    }
+
+    fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+        self.conv_padded_buffer()
+    }
+
+    fn active_suffix_length(&self) -> usize {
+        self.active_suffix_length()
+    }
+
+    fn is_prefilling(&self) -> bool {
+        self.is_prefilling()
     }
 
     fn sampling_output(&self) -> Option<&ArrayCell> {

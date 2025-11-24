@@ -148,10 +148,10 @@ mod tests {
                 },
                 query_norm_config: None,
                 key_norm_config: None,
-                num_heads: 12,
-                num_groups: 12,
-                head_dim: 64,
-                is_causal: false,
+                num_heads: Some(12),
+                num_groups: Some(12),
+                head_dim: Some(64),
+                is_causal: Some(false),
                 scale: None,
                 sliding_window_size: None,
                 logit_soft_cap: None,
@@ -172,7 +172,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SILU {
+                activation: Activation::SiLU {
                     alpha: 1.0,
                 },
                 has_up_biases: false,

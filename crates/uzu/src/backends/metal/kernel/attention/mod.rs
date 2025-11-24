@@ -622,7 +622,7 @@ impl EncodableWithState for AttentionKernelEncodable {
             let keys_array = keys_binding[0].borrow();
             let num_groups = Array::shape(&*keys_array)[0];
 
-            let max_sequence_length = if let Some(_kv) = state.kv_cache() {
+            let max_sequence_length = if let Some(_kv) = state.cache_layers() {
                 let key_cache_binding =
                     state.arrays(&[ArrayId::Keys(self.layer_index)]);
                 let key_cache_array = key_cache_binding[0].borrow();
@@ -642,7 +642,10 @@ impl EncodableWithState for AttentionKernelEncodable {
         };
 
         let (segment_prefix_length, window_length) = {
-            let cache = state.cache_layers.borrow();
+            let cache = state
+                .cache_layers()
+                .expect("Cache layers required for attention")
+                .borrow();
             let layer = cache.data[self.layer_index]
                 .as_transformer()
                 .expect("Attention kernel expects transformer layer state");
@@ -696,7 +699,7 @@ impl EncodableWithState for AttentionKernelEncodable {
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
-        let has_kv_cache = state.kv_cache().is_some();
+        let has_kv_cache = state.cache_layers().is_some();
         let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
             let key_cache_binding =
                 state.arrays(&[ArrayId::Keys(self.layer_index)]);

@@ -7,18 +7,16 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DecoderConfig,
     backends::metal::{
-        CacheLayers, DecoderExecutables, ForwardPassState, MTLContext,
-        ModelShape,
+        CacheLayers, DecoderExecutables, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ForwardPassBuffers, SharedBuffers,
+            ForwardPassBuffers, LLMForwardPassState, SharedBuffers,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         utils::{CaptureOptions, StdoutCapture},
     },
-    config::ModelMetadata,
+    config::{DecoderConfig, ModelMetadata},
     parameters::ParameterLoader,
 };
 #[derive(Debug, Clone, Serialize, Deserialize)]

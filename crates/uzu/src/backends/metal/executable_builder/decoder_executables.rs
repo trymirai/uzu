@@ -15,7 +15,7 @@ use crate::{
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
     },
-    config::{DecoderLayerType, decoder_layer::MixerConfig},
+    config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
 };
 

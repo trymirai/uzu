@@ -23,7 +23,7 @@ fn run_bert_trace_validation() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("models/bert");
+        .join("models/modern_bert");
 
     // Check if traces.safetensors exists
     let traces_path = model_path.join("traces.safetensors");

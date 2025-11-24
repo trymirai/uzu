@@ -5,7 +5,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
-    config::{ModelMetadata, decoder_layer::MixerConfig},
+    config::{MixerConfig, ModelMetadata},
     generator::{
         generator::Generator,
         result::{GenerateResult, PrefillResult},
@@ -63,13 +63,15 @@ impl ChatSession {
         })?;
 
         let is_ssm = model_metadata
-            .clone()
             .model_config
-            .decoder_config
-            .layer_configs
-            .unwrap_or(Box::new([]))
-            .iter()
-            .any(|layer| matches!(layer.mixer_config, MixerConfig::Mamba(_)));
+            .as_language_model()
+            .and_then(|lm| lm.decoder_config.layer_configs.as_ref())
+            .map(|layers| {
+                layers.iter().any(|layer| {
+                    matches!(layer.mixer_config, MixerConfig::Mamba(_))
+                })
+            })
+            .unwrap_or(false);
         if is_ssm {
             match decoding_config.context_mode {
                 ContextMode::None => {},

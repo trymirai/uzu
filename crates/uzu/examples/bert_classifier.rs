@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = if let Some(arg) = env::args().nth(1) {
         PathBuf::from(arg)
     } else {
-        PathBuf::from("models/bert")
+        PathBuf::from("models/modern_bert")
     };
 
     if !model_path.exists() {

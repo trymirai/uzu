@@ -10,7 +10,7 @@ fn test_layer_norm_vs_lalamo() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("models/bert");
+        .join("models/modern_bert");
 
     if !model_path.exists() {
         println!("Skipping test: BERT model not found");

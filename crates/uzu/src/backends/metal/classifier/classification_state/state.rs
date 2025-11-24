@@ -9,8 +9,8 @@ use crate::{
         MTLContext, MetalArray,
         forward_pass::{
             ArrayId, EmbeddingsBuffers, ForwardPassBuffers, ForwardPassState,
-            HashMapId, KVCache, ModelShape, RopeType, SharedBuffers,
-            traces::DecoderActivationTrace,
+            HashMapId, ModelShape, RopeType, SharedBuffers,
+            cache_layers::CacheLayers, traces::DecoderActivationTrace,
         },
     },
 };
@@ -185,6 +185,10 @@ impl ClassificationForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        input_weights,
+                        ..
+                    } => input_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsOutputWeights => {
@@ -200,6 +204,10 @@ impl ClassificationForwardPassState {
                         weights,
                         ..
                     } => weights.clone(),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        packed_output_weights,
+                        ..
+                    } => packed_output_weights.clone(),
                 }
             },
             ArrayId::EmbeddingsScales => {
@@ -208,13 +216,24 @@ impl ClassificationForwardPassState {
                         scales,
                         ..
                     } => scales.clone(),
-                    _ => panic!("Expected EmbeddingsBuffers::QuantizedTied"),
+                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        output_scales,
+                        ..
+                    } => output_scales.clone(),
+                    _ => panic!(
+                        "Expected EmbeddingsBuffers::QuantizedTied or MLXSemiQuantizedUntied"
+                    ),
                 }
             },
             ArrayId::RopeCosines(rope_type) => match rope_type {
-                RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.cosines.clone()
-                },
+                RopeType::Global => self
+                    .shared_buffers
+                    .borrow()
+                    .global_rope
+                    .as_ref()
+                    .expect("Global rope requested but not initialized")
+                    .cosines
+                    .clone(),
                 RopeType::Local => self
                     .shared_buffers
                     .borrow()
@@ -225,9 +244,14 @@ impl ClassificationForwardPassState {
                     .clone(),
             },
             ArrayId::RopeSines(rope_type) => match rope_type {
-                RopeType::Global => {
-                    self.shared_buffers.borrow().global_rope.sines.clone()
-                },
+                RopeType::Global => self
+                    .shared_buffers
+                    .borrow()
+                    .global_rope
+                    .as_ref()
+                    .expect("Global rope requested but not initialized")
+                    .sines
+                    .clone(),
                 RopeType::Local => self
                     .shared_buffers
                     .borrow()
@@ -277,6 +301,9 @@ impl ForwardPassState for ClassificationForwardPassState {
     ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
         ids.iter().map(|id| self.hashmap_cell(id).clone()).collect()
     }
+    fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+        None
+    }
     fn aux_buffers_suffix_length(&self) -> usize {
         self.aux_buffers.suffix_length()
     }
@@ -286,7 +313,7 @@ impl ForwardPassState for ClassificationForwardPassState {
     fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
         &self.shared_buffers
     }
-    fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>> {
+    fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
         None
     }
     fn sampling_output(&self) -> Option<&ArrayCell> {
@@ -294,6 +321,12 @@ impl ForwardPassState for ClassificationForwardPassState {
     }
     fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
         None
+    }
+    fn active_suffix_length(&self) -> usize {
+        self.aux_buffers.suffix_length()
+    }
+    fn is_prefilling(&self) -> bool {
+        true
     }
     fn as_any(&self) -> &dyn Any {
         self

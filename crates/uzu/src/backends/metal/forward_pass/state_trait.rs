@@ -3,7 +3,7 @@ use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
-    kv_cache::KVCache,
+    cache_layers::CacheLayers,
     state::{ArrayId, HashMapId, SharedBuffers},
     traces::DecoderActivationTrace,
 };
@@ -39,14 +39,23 @@ pub trait ForwardPassState {
     /// Get the suffix length (number of tokens in current batch).
     fn aux_buffers_suffix_length(&self) -> usize;
 
+    /// Get the active suffix length (number of tokens to process).
+    fn active_suffix_length(&self) -> usize;
+
+    /// Check if the current pass is a prefill pass.
+    fn is_prefilling(&self) -> bool;
+
+    /// Get cache layers (LLM only - returns None for classifiers).
+    fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>>;
+
+    /// Get conv padded buffer (Mamba only - returns None if not available).
+    fn conv_padded_buffer(&self) -> Option<ArrayCell>;
+
     /// Get the Metal context for device operations.
     fn mtl_context(&self) -> &Rc<MTLContext>;
 
     /// Get shared buffers (embeddings, RoPE) used across all layers.
     fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>>;
-
-    /// Get KV cache (LLM only - returns None for classifiers).
-    fn kv_cache(&self) -> Option<&Rc<RefCell<KVCache>>>;
 
     /// Get sampling output buffer (LLM only - returns None for classifiers).
     fn sampling_output(&self) -> Option<&ArrayCell>;

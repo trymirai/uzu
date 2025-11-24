@@ -2,7 +2,7 @@ mod common;
 use std::path::PathBuf;
 
 use uzu::session::{
-    ChatSession, Session,
+    ChatSession,
     config::{DecodingConfig, RunConfig},
     parameter::SamplingSeed,
     types::{Input, Message, Output},

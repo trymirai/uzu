@@ -48,7 +48,9 @@ impl ClassifierConfig {
                         // If first layer has no pre-attention norm (like ModernBERT), use a default
                         self.transformer_config.output_norm_config.clone()
                     }),
-                attention_config: first_layer.attention_config.clone(),
+                mixer_config: crate::MixerConfig::Attention(
+                    first_layer.attention_config.clone(),
+                ),
                 post_attention_norm_config: first_layer
                     .post_attention_norm_config
                     .clone(),
@@ -71,10 +73,9 @@ impl ClassifierConfig {
 
         DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: self
-                .transformer_config
-                .global_rope_config
-                .clone(),
+            global_rope_config: Some(
+                self.transformer_config.global_rope_config.clone(),
+            ),
             local_rope_config: self
                 .transformer_config
                 .local_rope_config
@@ -87,9 +88,11 @@ impl ClassifierConfig {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             hidden_dim: self.transformer_config.hidden_dim,
-            num_heads: self.num_heads.unwrap_or(heads.num_heads),
-            num_groups: self.num_groups.unwrap_or(heads.num_groups),
-            head_dim: self.head_dim.unwrap_or(heads.head_dim),
+            num_heads: self.num_heads.unwrap_or(heads.num_heads.unwrap_or(12)), // Default or unwrap
+            num_groups: self
+                .num_groups
+                .unwrap_or(heads.num_groups.unwrap_or(12)),
+            head_dim: self.head_dim.unwrap_or(heads.head_dim.unwrap_or(64)),
             attention_scale: self.attention_scale,
             num_layers: self.num_layers,
             sliding_window_sizes: {
@@ -109,6 +112,8 @@ impl ClassifierConfig {
                 }
             },
             context_length: self.context_length,
+            layer_configs: None, // Classifier doesn't use heterogeneous layers usually
+            layer_types: None,
         }
     }
 }

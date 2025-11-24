@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use uzu::session::{ClassificationSession, types::Input};
 
 fn build_model_path() -> PathBuf {
-    PathBuf::from("models/bert")
+    PathBuf::from("models/modern_bert")
 }
 
 #[test]

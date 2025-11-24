@@ -11,7 +11,7 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ForwardPassState, INVALID_POSITION,
+        ForwardPassState, INVALID_POSITION, LLMForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
     linearizer::trie::{TokenTrie, TrieCreationConfig},

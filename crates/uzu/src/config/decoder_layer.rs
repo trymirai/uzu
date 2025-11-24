@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     attention::AttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
-    normalization::RMSNormConfig,
+    normalization::NormalizationConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -68,16 +68,16 @@ impl MixerConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DecoderLayerConfig {
     #[serde(alias = "pre_mixer_norm_config")]
-    pub pre_attention_norm_config: RMSNormConfig,
+    pub pre_attention_norm_config: NormalizationConfig,
     #[serde(alias = "mixer_config")]
     pub mixer_config: MixerConfig,
     #[serde(alias = "post_mixer_norm_config")]
-    pub post_attention_norm_config: Option<RMSNormConfig>,
+    pub post_attention_norm_config: Option<NormalizationConfig>,
     #[serde(alias = "pre_mlp_norm_config")]
-    pub pre_mlp_norm_config: RMSNormConfig,
+    pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     #[serde(alias = "post_mlp_norm_config")]
-    pub post_mlp_norm_config: Option<RMSNormConfig>,
+    pub post_mlp_norm_config: Option<NormalizationConfig>,
 }
 
 impl DecoderLayerConfig {
@@ -213,22 +213,16 @@ mod tests {
                 },
                 query_norm_config: None,
                 key_norm_config: None,
-                num_heads: 12,
-                num_groups: 12,
-                head_dim: 64,
-                is_causal: true,
+                num_heads: Some(12),
+                num_groups: Some(12),
+                head_dim: Some(64),
+                is_causal: Some(true),
                 scale: None,
                 sliding_window_size: None,
                 logit_soft_cap: None,
                 has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
-                num_heads: None,
-                num_groups: None,
-                head_dim: None,
-                is_causal: None,
-                scale: None,
-                sliding_window_size: None,
             }),
             mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
                 linear_config: LinearConfig::QLoRA {
