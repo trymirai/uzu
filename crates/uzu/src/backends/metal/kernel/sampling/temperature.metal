@@ -21,7 +21,7 @@ void batched_temperature(
     for (uint i = 0; i < GRAIN_SIZE; i++) {
         uint global_idx = base_idx + i * BLOCK_SIZE;
         if (global_idx < batch_end) {
-            processed_logits[global_idx] = logits_data[global_idx] / T(temperature);
+            processed_logits[global_idx] = T(float(logits_data[global_idx]) / temperature);
         }
     }
 }

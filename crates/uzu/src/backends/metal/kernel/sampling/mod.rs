@@ -112,11 +112,10 @@ impl SamplingKernel {
         let max_elements = max_batch_size * max_vocab_size;
 
         let temperature_pipeline = context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state(
                 &format!("batched_temperature_{}", data_suffix),
                 None,
             )
-            .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
         let partial_temperature_buffer = context.device.new_buffer(
@@ -126,11 +125,10 @@ impl SamplingKernel {
         );
 
         let topk_pipeline = context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state(
                 &format!("batched_topk_{}", data_suffix),
                 None,
             )
-            .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
         let partial_topk_buffer = context.device.new_buffer(
@@ -140,11 +138,10 @@ impl SamplingKernel {
         );
 
         let topp_pipeline = context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state(
                 &format!("batched_topp_{}", data_suffix),
                 None,
             )
-            .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
         let partial_topp_buffer = context.device.new_buffer(
@@ -154,11 +151,10 @@ impl SamplingKernel {
         );
 
         let gumbel_pipeline = context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state(
                 &format!("batched_gumbel_{}", data_suffix),
                 None,
             )
-            .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
         let partial_gumbel_buffer = context.device.new_buffer(
@@ -170,11 +166,10 @@ impl SamplingKernel {
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
                 let pipeline = context
-                    .compute_pipeline_state_with_reflection(
+                    .compute_pipeline_state(
                         &format!("batched_argmax_single_{}", data_suffix),
                         None,
                     )
-                    .map(|(pipeline, _)| pipeline)
                     .map_err(SamplingError::MetalError)?;
 
                 ArgmaxImplementation::SinglePass {
@@ -183,19 +178,17 @@ impl SamplingKernel {
             },
             ArgmaxStrategy::TwoPass => {
                 let main_pipeline = context
-                    .compute_pipeline_state_with_reflection(
+                    .compute_pipeline_state(
                         &format!("batched_argmax_main_{}", data_suffix),
                         None,
                     )
-                    .map(|(pipeline, _)| pipeline)
                     .map_err(SamplingError::MetalError)?;
 
                 let final_pipeline = context
-                    .compute_pipeline_state_with_reflection(
+                    .compute_pipeline_state(
                         &format!("batched_argmax_final_{}", data_suffix),
                         None,
                     )
-                    .map(|(pipeline, _)| pipeline)
                     .map_err(SamplingError::MetalError)?;
 
                 let elements_per_group = BLOCK_SIZE * TWOPASS_ARGMAX_GRAIN_SIZE;

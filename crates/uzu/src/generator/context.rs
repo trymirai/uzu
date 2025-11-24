@@ -45,6 +45,7 @@ impl GeneratorContext {
     ) -> Result<Self, Error> {
         let mtl_device = metal::Device::system_default()
             .ok_or(Error::UnableToCreateMetalContext)?;
+
         let mtl_command_queue =
             mtl_device.new_command_queue_with_max_command_buffer_count(1024);
 
