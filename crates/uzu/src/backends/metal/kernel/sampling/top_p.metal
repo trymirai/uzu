@@ -95,13 +95,13 @@ uint3 thread_idx [[ thread_position_in_threadgroup ]])
 #define innerArguments (logits_data, processed_logits, shared_reduce_buffer, vocab_size, top_p, threadgroup_idx.x, thread_idx.x)
 
 #define generateToppKernel(functionName, scalarType, outerArgs, innerArgs) \
-kernel void functionName##_##scalarType outerArgs {                        \
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS];           \
-    functionName innerArgs;                                                \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS]; \
+    functionName innerArgs; \
 }
 
-#define generateToppKernels(functionName)                                        \
-generateToppKernel(functionName, float, outerArguments(float), innerArguments);  \
+#define generateToppKernels(functionName) \
+generateToppKernel(functionName, float, outerArguments(float), innerArguments); \
 generateToppKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
 generateToppKernel(functionName, half, outerArguments(half), innerArguments);
 

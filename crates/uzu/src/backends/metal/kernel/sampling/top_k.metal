@@ -76,13 +76,13 @@ uint3 thread_idx [[ thread_position_in_threadgroup ]])
 #define innerArguments (logits_data, processed_logits, shared_reduce_buffer, vocab_size, top_k, threadgroup_idx.x, thread_idx.x)
 
 #define generateTopkKernel(functionName, scalarType, outerArgs, innerArgs) \
-kernel void functionName##_##scalarType outerArgs {                        \
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE];                    \
-    functionName innerArgs;                                                \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE]; \
+    functionName innerArgs; \
 }
 
-#define generateTopkKernels(functionName)                                        \
-generateTopkKernel(functionName, float, outerArguments(float), innerArguments);  \
+#define generateTopkKernels(functionName) \
+generateTopkKernel(functionName, float, outerArguments(float), innerArguments); \
 generateTopkKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
 generateTopkKernel(functionName, half, outerArguments(half), innerArguments);
 

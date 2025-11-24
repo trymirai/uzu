@@ -510,7 +510,7 @@ void attention_2pass_2(
 
 // Generate single-pass kernels for different head dimensions
 #define GENERATE_SINGLE_PASS_KERNELS(head_dim_value) \
-kernel void attention_single_pass_half_##head_dim_value outerArguments(half) { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void attention_single_pass_half_##head_dim_value outerArguments(half) { \
     constexpr int sequence_block_size = 32; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -518,7 +518,7 @@ kernel void attention_single_pass_half_##head_dim_value outerArguments(half) { \
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
     attention_single_pass<half, head_dim_value> innerArguments; \
 } \
-kernel void attention_single_pass_bfloat_##head_dim_value outerArguments(bfloat) { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void attention_single_pass_bfloat_##head_dim_value outerArguments(bfloat) { \
     constexpr int sequence_block_size = 32; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -526,7 +526,7 @@ kernel void attention_single_pass_bfloat_##head_dim_value outerArguments(bfloat)
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
     attention_single_pass<bfloat, head_dim_value> innerArguments; \
 } \
-kernel void attention_single_pass_float_##head_dim_value outerArguments(float) { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void attention_single_pass_float_##head_dim_value outerArguments(float) { \
     constexpr int sequence_block_size = 32; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -575,7 +575,7 @@ GENERATE_SINGLE_PASS_KERNELS(256)
 
 // Generate 2-pass Pass 1 kernels for different head dimensions
 #define GENERATE_2PASS_1_KERNELS(head_dim_value) \
-kernel void attention_2pass_1_half_##head_dim_value outerArguments(half) { \
+[[max_total_threads_per_threadgroup(256)]] kernel void attention_2pass_1_half_##head_dim_value outerArguments(half) { \
     constexpr int sequence_block_size = 8; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -583,7 +583,7 @@ kernel void attention_2pass_1_half_##head_dim_value outerArguments(half) { \
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
     attention_2pass_1<half, head_dim_value> innerArguments; \
 } \
-kernel void attention_2pass_1_bfloat_##head_dim_value outerArguments(bfloat) { \
+[[max_total_threads_per_threadgroup(256)]] kernel void attention_2pass_1_bfloat_##head_dim_value outerArguments(bfloat) { \
     constexpr int sequence_block_size = 8; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -591,7 +591,7 @@ kernel void attention_2pass_1_bfloat_##head_dim_value outerArguments(bfloat) { \
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
     attention_2pass_1<bfloat, head_dim_value> innerArguments; \
 } \
-kernel void attention_2pass_1_float_##head_dim_value outerArguments(float) { \
+[[max_total_threads_per_threadgroup(256)]] kernel void attention_2pass_1_float_##head_dim_value outerArguments(float) { \
     constexpr int sequence_block_size = 8; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_max_scores[sequence_block_size]; \
@@ -622,13 +622,13 @@ GENERATE_2PASS_1_KERNELS(256)
 
 // Generate 2-pass Pass 2 kernels for different head dimensions
 #define GENERATE_2PASS_2_KERNELS(head_dim_value) \
-kernel void attention_2pass_2_half_##head_dim_value outerArguments(half) { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void attention_2pass_2_half_##head_dim_value outerArguments(half) { \
     constexpr int sequence_block_size = 32; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
     attention_2pass_2<half, head_dim_value> innerArguments; \
 } \
-kernel void attention_2pass_2_float_##head_dim_value outerArguments(float) { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void attention_2pass_2_float_##head_dim_value outerArguments(float) { \
     constexpr int sequence_block_size = 32; \
     constexpr int head_block_size = 32; \
     threadgroup float shared_outputs[sequence_block_size * head_block_size]; \
