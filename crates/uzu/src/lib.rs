@@ -3,6 +3,7 @@ pub mod config;
 pub mod generator;
 pub mod linearizer;
 pub mod parameters;
+pub mod prelude;
 pub mod session;
 pub mod speculators;
 pub mod tracer;
