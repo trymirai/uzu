@@ -67,6 +67,7 @@ mod tests {
                 "scale": null,
                 "sliding_window_size": null,
                 "logit_soft_cap": null,
+                "has_sinks": false,
                 "has_qkv_biases": false,
                 "has_out_biases": false
             }
