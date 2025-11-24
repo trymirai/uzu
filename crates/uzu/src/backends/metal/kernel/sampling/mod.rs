@@ -653,7 +653,7 @@ impl EncodableWithState for SamplingKernelEncodable {
             use crate::Array;
             logits.shape()
         };
-        let batch_size = logits_shape[0];
+        let batch_size = state.active_suffix_length();
         let vocab_size = logits_shape[1];
 
         let seeds_binding = state.arrays(&[

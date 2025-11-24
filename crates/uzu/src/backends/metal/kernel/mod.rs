@@ -1,5 +1,6 @@
 pub mod attention;
 mod data_type;
+pub mod embedding;
 pub mod kv_cache_update;
 pub mod layer_norm;
 pub mod linear;
@@ -13,6 +14,7 @@ pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
 pub mod sigmoid;
+pub mod ssm;
 mod tensor_add_bias;
 mod tensor_add_swap;
 mod tensor_copy;
@@ -42,6 +44,13 @@ pub use rms_norm::{
 pub use rope::{RopeKernel, RopeKernelEncodable};
 pub use sampling::{SamplingKernel, SamplingKernelEncodable};
 pub use sigmoid::SigmoidKernel;
+pub(crate) use ssm::MambaMixerEncodable;
+pub use ssm::{
+    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    SplitInProjArguments, SplitInProjKernel,
+};
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;

@@ -205,7 +205,7 @@ uint2 local_position [[ thread_position_in_threadgroup ]])
 (logits_data, partial_results, batch_size, vocab_size, shared, group_position.x, group_position.y, (ushort)local_position.x)
 
 #define generateArgmaxMainKernel(functionName, T, outerArgs, innerArgs) \
-kernel void functionName##_##T outerArgs { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##T outerArgs { \
     threadgroup ArgmaxPair shared[BLOCK_SIZE]; \
     batched_argmax_main_impl<T> innerArgs; \
 }
@@ -231,7 +231,7 @@ uint local_id [[ thread_position_in_threadgroup ]])
 (partial_results, final_tokens, batch_size, vocab_size, shared, batch_idx, (ushort)local_id)
 
 #define generateArgmaxFinalKernel(functionName, T, outerArgs, innerArgs) \
-kernel void functionName##_##T outerArgs { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##T outerArgs { \
     threadgroup ArgmaxPair shared[BLOCK_SIZE]; \
     batched_argmax_final_impl innerArgs; \
 }
@@ -290,7 +290,7 @@ uint local_id [[ thread_position_in_threadgroup ]])
 (logits_data, final_tokens, batch_size, vocab_size, shared, batch_idx, (ushort)local_id)
 
 #define generateArgmaxSingleKernel(functionName, T, outerArgs, innerArgs) \
-kernel void functionName##_##T outerArgs { \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##T outerArgs { \
     threadgroup ArgmaxPair shared[BLOCK_SIZE]; \
     batched_argmax_single_impl<T> innerArgs; \
 }

@@ -2,7 +2,7 @@
 #include "../definitions.metal"
 
 #define BLOCK_SIZE 1024
-#define MAX_ITERS 20
+#define MAX_ITERS 16
 
 template <typename T>
 void batched_topk(
@@ -19,6 +19,7 @@ void batched_topk(
     // Find min and max logit for binary search
     float local_max = -INFINITY;
     float local_min = INFINITY;
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
         local_max = fmax(local_max, logit_value);
@@ -36,11 +37,10 @@ void batched_topk(
     for (uint iter = 0; iter < MAX_ITERS; iter++) {
         // Find the mass above threshold
         uint local_num_above_threshold = 0;
+        #pragma unroll(4)
         for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
             float logit_value = float(logits_data[batch_start + i]);
-            if (logit_value >= threshold) {
-                local_num_above_threshold += 1;
-            }
+            local_num_above_threshold += select(0, 1, logit_value >= threshold);
         }
         uint num_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_num_above_threshold, (threadgroup uint*)shared_reduce_buffer, thread_idx);
 
@@ -58,9 +58,10 @@ void batched_topk(
     T t_threshold = T(threshold);
 
     // We know the threshold, just mask everything below it
+    #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         T logit_value = logits_data[batch_start + i];
-        processed_logits[batch_start + i] = (logit_value >= t_threshold) ? logit_value : T(-INFINITY);
+        processed_logits[batch_start + i] = select(T(-INFINITY), logit_value, logit_value >= t_threshold);
     }
 }
 
@@ -75,13 +76,13 @@ uint3 thread_idx [[ thread_position_in_threadgroup ]])
 #define innerArguments (logits_data, processed_logits, shared_reduce_buffer, vocab_size, top_k, threadgroup_idx.x, thread_idx.x)
 
 #define generateTopkKernel(functionName, scalarType, outerArgs, innerArgs) \
-kernel void functionName##_##scalarType outerArgs {                        \
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE];                    \
-    functionName innerArgs;                                                \
+[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE]; \
+    functionName innerArgs; \
 }
 
-#define generateTopkKernels(functionName)                                        \
-generateTopkKernel(functionName, float, outerArguments(float), innerArguments);  \
+#define generateTopkKernels(functionName) \
+generateTopkKernel(functionName, float, outerArguments(float), innerArguments); \
 generateTopkKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
 generateTopkKernel(functionName, half, outerArguments(half), innerArguments);
 

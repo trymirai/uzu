@@ -19,7 +19,7 @@ pub use buffer_allocator::BufferAllocator;
 pub use context::MTLContext;
 pub use error::MTLError;
 pub use executable_builder::DecoderExecutables;
-pub use forward_pass::{KVCache, LLMForwardPassState, ModelShape};
+pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,

@@ -60,7 +60,7 @@ impl TokenTrie {
 
         if include_last_prefix_token {
             current_node = current_node
-                .get_or_insert_next(*prefix.last().unwrap(), seed.current());
+                .get_or_insert_next(*prefix.last().unwrap(), seed.next());
             trie_size += 1;
         }
 

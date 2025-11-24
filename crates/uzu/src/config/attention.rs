@@ -10,17 +10,11 @@ pub struct AttentionConfig {
     pub query_norm_config: Option<NormalizationConfig>,
     pub key_norm_config: Option<NormalizationConfig>,
 
-    #[serde(default)]
-    pub num_heads: usize,
-    #[serde(default)]
-    pub num_groups: usize,
-    #[serde(default)]
-    pub head_dim: usize,
-    #[serde(default)]
-    pub is_causal: bool,
-    #[serde(default)]
+    pub num_heads: Option<usize>,
+    pub num_groups: Option<usize>,
+    pub head_dim: Option<usize>,
+    pub is_causal: Option<bool>,
     pub scale: Option<f32>,
-    #[serde(default)]
     pub sliding_window_size: Option<usize>,
 
     pub logit_soft_cap: Option<f32>,
@@ -101,10 +95,10 @@ mod tests {
             },
             query_norm_config: None,
             key_norm_config: None,
-            num_heads: 12,
-            num_groups: 12,
-            head_dim: 64,
-            is_causal: false,
+            num_heads: None,
+            num_groups: None,
+            head_dim: None,
+            is_causal: None,
             scale: None,
             sliding_window_size: None,
             logit_soft_cap: None,

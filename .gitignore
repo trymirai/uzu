@@ -21,6 +21,9 @@ target/
 #.idea/
 *.DS_Store
 
+# Metal traces
+*.gputrace
+
 # Models
 models/
 .github/copilot-instructions.md
