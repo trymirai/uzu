@@ -219,6 +219,7 @@ fn compile_metal_files(
         let mut cmd = Command::new("xcrun");
         cmd.args(&["-sdk", sdk, "metal", metal_opt_flag]);
         cmd.arg(format!("-std={}", "metal3.1")); // target Metal 3.1 shading language
+        cmd.arg("-fmetal-enable-logging"); // Enable Metal logging support
         for flag in &platform_flags {
             cmd.arg(flag);
         }

@@ -2,6 +2,7 @@
 #define rng_metal
 
 #include <metal_stdlib>
+#include <metal_logging>
 using namespace metal;
 
 /* ───────────── Philox4x32-10 RNG ───────────── */

@@ -17,6 +17,7 @@
 // - We guard tails; K/N can be non-multiples.
 
 #include <metal_stdlib>
+#include <metal_logging>
 #include <metal_simdgroup>
 #include <metal_simdgroup_matrix>
 #include "../quant_matmul/mma.h" 

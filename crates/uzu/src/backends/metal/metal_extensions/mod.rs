@@ -6,7 +6,9 @@ mod compute_pipeline_state_extensions_device;
 mod compute_pipeline_state_extensions_threads;
 mod device_extensions_features;
 mod library_extensions_pipeline;
+pub mod log_state;
 
 pub mod command_buffer_extensions;
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;
+pub use log_state::{initialize_metal_logging, CommandQueueLoggingExt, LogLevel};

@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_logging>
 using namespace metal;
 
 template<typename T, uint PACKING_DIVISOR, bool SIGNED_STORAGE>

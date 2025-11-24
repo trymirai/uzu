@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_logging>
 #include "../definitions.metal"
 using namespace metal;
 

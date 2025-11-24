@@ -10,7 +10,7 @@ use metal::{
 };
 
 use super::{
-    MetalArray, error::MTLError, metal_extensions::{initialize_metal_logging, LibraryPipelineExtensions},
+    MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
 };
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
 
@@ -25,9 +25,6 @@ impl MTLContext {
         device: MTLDevice,
         command_queue: MTLCommandQueue,
     ) -> Result<Self, MTLError> {
-        // Initialize Metal logging if UZU_METAL_LOGGING environment variable is set
-        initialize_metal_logging(&device);
-
         let library = match device.new_library_with_data(METAL_LIBRARY_DATA) {
             Ok(lib) => lib,
             Err(e) => {

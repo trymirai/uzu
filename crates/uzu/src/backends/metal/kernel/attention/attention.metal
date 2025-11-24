@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include <metal_logging>
 #include "../definitions.metal"
 
 using namespace metal;
@@ -56,11 +57,11 @@ void attention_single_pass_impl(
     const int kv_head_idx = head_idx / gqa_factor;
     const int o_offset = q_seq_idx * tpg.x + head_idx;
     const int q_offset = query_transposed ? tpg.x * q_seq_idx + head_idx : head_idx * tpg.y + q_seq_idx;
-    
+
     queries += q_offset * head_dim + simd_lid * qk_elements_per_thread;
     keys += kv_head_idx * k_head_stride + simd_gid * k_seq_stride + simd_lid * qk_elements_per_thread;
     values += kv_head_idx * v_head_stride + simd_gid * v_seq_stride + simd_lid * value_elements_per_thread;
-    
+
     if (bool_mask) {
         bmask += head_idx * mask_head_stride + simd_gid * mask_kv_seq_stride + q_seq_idx * mask_q_seq_stride;
     }
@@ -95,7 +96,7 @@ void attention_single_pass_impl(
         } else if (bool_mask) {
             use_key = bmask[0];
         }
-        
+
         if (use_key) {
             // Read the key
             for (int j = 0; j < qk_elements_per_thread; j++) {
@@ -218,7 +219,7 @@ void attention_2pass_1_impl(
     keys += kv_head_idx * k_head_stride + (block_idx * sequence_block_size + simd_gid) * k_seq_stride + simd_lid * qk_elements_per_thread;
     values += kv_head_idx * v_head_stride + (block_idx * sequence_block_size + simd_gid) * v_seq_stride + simd_lid * value_elements_per_thread;
     out += o_offset * total_blocks_count * value_dim + block_idx * value_dim + simd_lid * value_elements_per_thread;
-    
+
     if (bool_mask) {
         bmask += head_idx * mask_head_stride + (block_idx * sequence_block_size + simd_gid) * mask_kv_seq_stride + q_seq_idx * mask_q_seq_stride;
     }
@@ -253,7 +254,7 @@ void attention_2pass_1_impl(
         } else if (bool_mask) {
             use_key = bmask[0];
         }
-        
+
         if (use_key) {
             // Read the key
             for (int j = 0; j < qk_elements_per_thread; j++) {
@@ -355,7 +356,7 @@ void attention_2pass_2_impl(
     const int q_seq_idx = tid.y;
     const int o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
     const int q_offset = query_transposed ? tpg.x * q_seq_idx + head_idx : head_idx * tpg.y + q_seq_idx; // Consistent with single-pass
-    
+
     partials += o_offset * total_blocks_count * head_dim + simd_gid * head_dim + simd_lid * elements_per_thread;
     sums += o_offset * total_blocks_count;
     maxs += o_offset * total_blocks_count;
@@ -659,26 +660,26 @@ void update_kv_cache(
     const uint groupIndex = position.x;
     const uint tokenIndex = position.y;
     const uint dimIndex = position.z;
-    
+
     if (groupIndex >= num_groups || tokenIndex >= suffix_length || dimIndex >= head_dim) {
         return;
     }
-    
+
     TensorView3D<const T> rotatedKeysTensorView = TensorView3D<const T>(rotated_keys, num_groups, suffix_length, head_dim);
     TensorView3D<T> keyCacheTensorView = TensorView3D<T>(key_cache, num_groups, max_sequence_length, head_dim);
     TensorView3D<T> valueCacheTensorView = TensorView3D<T>(value_cache, num_groups, max_sequence_length, head_dim);
-    
+
     // Copy rotated key to cache
     keyCacheTensorView(groupIndex, prefix_segment_length + tokenIndex, dimIndex) = rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
-    
+
     // Update value cache (only first thread in each token processes values to avoid redundant work)
     if (dimIndex == 0) {
         const uint totalQueryDim = num_heads * head_dim;
         const uint totalKeyValueDim = num_groups * head_dim;
-        
+
         const int qkvStride = totalQueryDim + 2 * totalKeyValueDim;
         TensorView2D<const T> qkvTensorView = TensorView2D<const T>(qkv, suffix_length, qkvStride);
-        
+
         // Extract values from QKV tensor
         // Values start at offset: total_query_dim + total_key_value_dim
         for (uint d = 0; d < head_dim; d++) {

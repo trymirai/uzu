@@ -2,6 +2,7 @@
 #define definitions_metal
 
 #include <metal_stdlib>
+#include <metal_logging>
 
 using namespace metal;
 

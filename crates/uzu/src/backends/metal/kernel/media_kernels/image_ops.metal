@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_logging>
 using namespace metal;
 
 constexpr sampler bicubicSampler(filter::linear, address::clamp_to_edge);

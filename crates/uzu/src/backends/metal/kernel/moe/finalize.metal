@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_logging>
 using namespace metal;
 
 // Defaults must match Rust launcher

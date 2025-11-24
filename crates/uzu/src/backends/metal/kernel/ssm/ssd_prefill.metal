@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_logging>
 #include <metal_simdgroup>
 #include "../definitions.metal"
 
