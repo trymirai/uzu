@@ -7,7 +7,11 @@ use uzu::session::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = PathBuf::from("MODEL_PATH");
+    let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../models")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("Llama-3.2-1B-Instruct");
+    // let model_path = PathBuf::from("MODEL_PATH");
     let mut session = Session::new(model_path, DecodingConfig::default())?;
 
     let input = Input::Text(String::from("Tell about London"));

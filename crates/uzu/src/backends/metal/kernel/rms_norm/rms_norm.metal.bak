@@ -4,8 +4,6 @@
 
 using namespace metal;
 
-
-
 #define BLOCK_SIZE 1024
 #define SIMD_SIZE 32
 #define GRAIN_SIZE 4
@@ -23,22 +21,17 @@ void rms_norm_core(
     uint thread_in_row,
     bool full_layer
 ) {
-    // Test logging - only log from first thread to avoid spam
-    if (thread_in_row == 0) {
-        os_log_default.log("rms_norm: elements=%u epsilon=%f full_layer=%d", element_count, epsilon, full_layer);
-    }
-
     AccumT partial_sum = static_cast<AccumT>(0.0f);
 
     // Compute thread local partial sum
     for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count; base_i += BLOCK_SIZE * GRAIN_SIZE) {
         AccumT vals[GRAIN_SIZE];
-
+        
         for (uint j = 0; j < GRAIN_SIZE; ++j) {
             uint i = base_i + j;
             vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
         }
-
+        
         for (uint j = 0; j < GRAIN_SIZE; ++j) {
             partial_sum += vals[j] * vals[j];
         }
@@ -55,13 +48,13 @@ void rms_norm_core(
     for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count; base_i += BLOCK_SIZE * GRAIN_SIZE) {
         AccumT vals[GRAIN_SIZE];
         AccumT scaled_vals[GRAIN_SIZE];
-
+        
         // Load GRAIN_SIZE input elements
         for (uint j = 0; j < GRAIN_SIZE; ++j) {
             uint i = base_i + j;
             vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
         }
-
+        
         // Process GRAIN_SIZE elements: normalize and scale
         for (uint j = 0; j < GRAIN_SIZE; ++j) {
             uint i = base_i + j;
@@ -81,7 +74,7 @@ void rms_norm_core(
                 scaled_vals[j] = static_cast<AccumT>(product_low);
             }
         }
-
+        
         // Store GRAIN_SIZE output elements
         for (uint j = 0; j < GRAIN_SIZE; ++j) {
             uint i = base_i + j;
@@ -303,4 +296,4 @@ FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
 }
 
 FOREACH_RMS_COMBO(DEFINE_QK_KERNEL)
-#undef DEFINE_QK_KERNEL
+#undef DEFINE_QK_KERNEL 

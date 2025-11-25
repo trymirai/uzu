@@ -11,4 +11,7 @@ pub mod log_state;
 pub mod command_buffer_extensions;
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;
-pub use log_state::{initialize_metal_logging, CommandQueueLoggingExt, LogLevel};
+pub use log_state::{
+    CommandQueueLoggingExt, LogLevel, initialize_metal_logging,
+    new_mps_command_buffer_with_logging,
+};

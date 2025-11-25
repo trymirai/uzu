@@ -20,6 +20,11 @@ kernel void moe_counts_offsets_fused(
     constant uint& K [[buffer(6)]],
     uint lid [[thread_index_in_threadgroup]])
 {
+    // Log from first thread only
+    if (lid == 0) {
+        os_log_default.log("moe_counts_offsets_fused: T=%u, E=%u, K=%u", T, E, K);
+    }
+
     if (E == 0) {
         if (lid == 0) {
             offsets[0] = 0u;
@@ -100,5 +105,6 @@ kernel void moe_counts_offsets_fused(
     if (lid == 0) {
         offsets[E] = carry;
         sum_k_out[0] = carry;
+        os_log_default.log("moe_counts_offsets_fused: completed, total_count=%u", carry);
     }
 }

@@ -13,19 +13,19 @@ struct TensorView2D {
     device T* data;
     uint dim0, dim1;
     uint stride0, stride1;
-    
+
     TensorView2D(device T* ptr) : data(ptr) {}
-    
-    TensorView2D(device T* ptr, int d0, int d1) 
+
+    TensorView2D(device T* ptr, int d0, int d1)
         : data(ptr), dim0(d0), dim1(d1) {
         stride0 = d1;
         stride1 = 1;
     }
-    
+
     // Custom stride constructor
     TensorView2D(device T* ptr, int d0, int d1, int s0, int s1)
         : data(ptr), dim0(d0), dim1(d1), stride0(s0), stride1(s1) {}
-    
+
     thread TensorView2D& shaped(int d0, int d1) {
         dim0 = d0;
         dim1 = d1;
@@ -33,11 +33,11 @@ struct TensorView2D {
         stride1 = 1;
         return *this;
     }
-    
+
     device T& at(uint i, uint j) const {
         return data[i * stride0 + j * stride1];
     }
-    
+
     device T& operator()(uint i, uint j) const {
         return at(i, j);
     }
@@ -48,20 +48,20 @@ struct TensorView3D {
     device T* data;
     uint dim0, dim1, dim2;
     uint stride0, stride1, stride2;
-    
+
     TensorView3D(device T* ptr) : data(ptr) {}
-    
-    TensorView3D(device T* ptr, int d0, int d1, int d2) 
+
+    TensorView3D(device T* ptr, int d0, int d1, int d2)
         : data(ptr), dim0(d0), dim1(d1), dim2(d2) {
         stride0 = d1 * d2;
         stride1 = d2;
         stride2 = 1;
     }
-    
+
     // Custom stride constructor
     TensorView3D(device T* ptr, int d0, int d1, int d2, int s0, int s1, int s2)
         : data(ptr), dim0(d0), dim1(d1), dim2(d2), stride0(s0), stride1(s1), stride2(s2) {}
-    
+
     thread TensorView3D& shaped(int d0, int d1, int d2) {
         dim0 = d0;
         dim1 = d1;
@@ -71,11 +71,11 @@ struct TensorView3D {
         stride2 = 1;
         return *this;
     }
-    
+
     device T& at(uint i, uint j, uint k) const {
         return data[i * stride0 + j * stride1 + k * stride2];
     }
-    
+
     device T& operator()(uint i, uint j, uint k) const {
         return at(i, j, k);
     }
@@ -86,9 +86,9 @@ struct TensorView4D {
     device T* data;
     uint dim0, dim1, dim2, dim3;
     uint stride0, stride1, stride2, stride3;
-    
+
     TensorView4D(device T* ptr) : data(ptr) {}
-    
+
     TensorView4D(device T* ptr, int d0, int d1, int d2, int d3)
         : data(ptr), dim0(d0), dim1(d1), dim2(d2), dim3(d3) {
         stride0 = d1 * d2 * d3;
@@ -96,11 +96,11 @@ struct TensorView4D {
         stride2 = d3;
         stride3 = 1;
     }
-    
+
     // Custom stride constructor
     TensorView4D(device T* ptr, int d0, int d1, int d2, int d3, int s0, int s1, int s2, int s3)
         : data(ptr), dim0(d0), dim1(d1), dim2(d2), dim3(d3), stride0(s0), stride1(s1), stride2(s2), stride3(s3) {}
-    
+
     thread TensorView4D& shaped(int d0, int d1, int d2, int d3) {
         dim0 = d0;
         dim1 = d1;
@@ -112,11 +112,11 @@ struct TensorView4D {
         stride3 = 1;
         return *this;
     }
-    
+
     device T& at(uint i, uint j, uint k, uint l) const {
         return data[i * stride0 + j * stride1 + k * stride2 + l * stride3];
     }
-    
+
     device T& operator()(uint i, uint j, uint k, uint l) const {
         return at(i, j, k, l);
     }
@@ -208,15 +208,15 @@ threadgroup_raking_prefix_exclusive_sum(T value, threadgroup T* shared, const us
             shared[i] = shared[i - 1];
         }
         shared[first_index] = 0;
-        
+
         //  scan the partial sums
         T prefix = simd_prefix_exclusive_sum(partial_sum);
-        
+
         // add back the prefix
         for (short i = first_index; i < first_index + values_per_thread; i++){
             shared[i] += prefix;
         }
-        
+
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -236,15 +236,15 @@ threadgroup_raking_reduce_sum(T value, threadgroup T* shared, const ushort lid) 
         //  reduce by thread in shared mem
         const short values_per_thread = BLOCK_SIZE / 32;
         const short first_index = lid * values_per_thread;
-        
+
         T thread_sum = shared[first_index];
         for (short i = first_index + 1; i < first_index + values_per_thread; i++){
             thread_sum += shared[i];
         }
-        
+
         //  reduce the partial sums using SIMD
         T total_sum = simd_sum(thread_sum);
-        
+
         // broadcast result back to shared memory
         if (lid == 0) {
             shared[0] = total_sum;
@@ -257,7 +257,7 @@ threadgroup_raking_reduce_sum(T value, threadgroup T* shared, const ushort lid) 
 }
 
 //------------------------------------------------------------------------------------------------//
-//  Raking threadgroup max reduction  
+//  Raking threadgroup max reduction
 template<ushort BLOCK_SIZE, typename T> static T
 threadgroup_raking_reduce_max(T value, threadgroup T* shared, const ushort lid) {
     // load values into shared memory
@@ -269,15 +269,15 @@ threadgroup_raking_reduce_max(T value, threadgroup T* shared, const ushort lid) 
         //  reduce by thread in shared mem
         const short values_per_thread = BLOCK_SIZE / 32;
         const short first_index = lid * values_per_thread;
-        
+
         T thread_max = shared[first_index];
         for (short i = first_index + 1; i < first_index + values_per_thread; i++){
             thread_max = max(thread_max, shared[i]);
         }
-        
+
         //  reduce the partial maxes using SIMD
         T total_max = simd_max(thread_max);
-        
+
         // broadcast result back to shared memory
         if (lid == 0) {
             shared[0] = total_max;
@@ -290,7 +290,7 @@ threadgroup_raking_reduce_max(T value, threadgroup T* shared, const ushort lid) 
 }
 
 //------------------------------------------------------------------------------------------------//
-//  Raking threadgroup min reduction  
+//  Raking threadgroup min reduction
 template<ushort BLOCK_SIZE, typename T> static T
 threadgroup_raking_reduce_min(T value, threadgroup T* shared, const ushort lid) {
     // load values into shared memory
@@ -302,15 +302,15 @@ threadgroup_raking_reduce_min(T value, threadgroup T* shared, const ushort lid) 
         //  reduce by thread in shared mem
         const short values_per_thread = BLOCK_SIZE / 32;
         const short first_index = lid * values_per_thread;
-        
+
         T thread_min = shared[first_index];
         for (short i = first_index + 1; i < first_index + values_per_thread; i++){
             thread_min = min(thread_min, shared[i]);
         }
-        
+
         //  reduce the partial mins using SIMD
         T total_min = simd_min(thread_min);
-        
+
         // broadcast result back to shared memory
         if (lid == 0) {
             shared[0] = total_min;
@@ -327,18 +327,18 @@ template<ushort BLOCK_SIZE, typename T> static T
 threadgroup_cooperative_reduce_sum(T value, threadgroup T* shared, const ushort lid) {
     const ushort simd_group_id = lid / 32;
     const ushort simd_lane_id = lid % 32;
-    
+
     // Reduce within simdgroup
     T local_sum = simd_sum(value);
-    
+
     // First thread in each simdgroup writes to shared memory
     if (simd_lane_id == 0) {
         shared[simd_group_id] = local_sum;
     }
-    
+
     // Synchronize across the threadgroup
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     // Reduce across simdgroups
     T total_sum = T(0);
     const ushort num_simd_groups = (BLOCK_SIZE + 31) / 32;
@@ -346,13 +346,13 @@ threadgroup_cooperative_reduce_sum(T value, threadgroup T* shared, const ushort 
         total_sum = shared[lid];
     }
     total_sum = simd_sum(total_sum);
-    
+
     // Broadcast the result to all threads
     if (lid == 0) {
         shared[0] = total_sum;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     return shared[0];
 }
 
@@ -362,28 +362,28 @@ template<ushort BLOCK_SIZE, typename T> static T
 threadgroup_cooperative_reduce_max(T value, threadgroup T* shared, const ushort lid) {
     const ushort simd_group_id = lid / 32;
     const ushort simd_lane_id = lid % 32;
-    
+
     // Reduce within simdgroup
     T local_max = simd_max(value);
-    
+
     // First thread in each simdgroup writes to shared memory
     if (simd_lane_id == 0) {
         shared[simd_group_id] = local_max;
     }
-    
+
     // Synchronize across the threadgroup
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     // Reduce across simdgroups
     T total_max = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(-INFINITY);
     total_max = simd_max(total_max);
-    
+
     // Broadcast the result to all threads
     if (lid == 0) {
         shared[0] = total_max;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     return shared[0];
 }
 
@@ -393,28 +393,28 @@ template<ushort BLOCK_SIZE, typename T> static T
 threadgroup_cooperative_reduce_min(T value, threadgroup T* shared, const ushort lid) {
     const ushort simd_group_id = lid / 32;
     const ushort simd_lane_id = lid % 32;
-    
+
     // Reduce within simdgroup
     T local_min = simd_min(value);
-    
+
     // First thread in each simdgroup writes to shared memory
     if (simd_lane_id == 0) {
         shared[simd_group_id] = local_min;
     }
-    
+
     // Synchronize across the threadgroup
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     // Reduce across simdgroups
     T total_min = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(INFINITY);
     total_min = simd_min(total_min);
-    
+
     // Broadcast the result to all threads
     if (lid == 0) {
         shared[0] = total_min;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
+
     return shared[0];
 }
 

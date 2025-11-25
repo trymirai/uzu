@@ -30,13 +30,18 @@ kernel void scalePadNormalizeImage(
         return;
     }
 
+    // Log from first thread only to avoid spam
+    if (gid.x == 0 && gid.y == 0) {
+        os_log_default.log("scalePadNormalizeImage: Starting with outputDims=(%u,%u)", outputDims.x, outputDims.y);
+    }
+
     float inputAspectRatio = float(params.inputDimensions.x) / float(params.inputDimensions.y);
     float outputAspectRatio = float(outputDims.x) / float(outputDims.y);
 
     float scaleFactor;
-    if (inputAspectRatio > outputAspectRatio) { 
+    if (inputAspectRatio > outputAspectRatio) {
         scaleFactor = float(outputDims.x) / float(params.inputDimensions.x);
-    } else { 
+    } else {
         scaleFactor = float(outputDims.y) / float(params.inputDimensions.y);
     }
 
@@ -53,17 +58,17 @@ kernel void scalePadNormalizeImage(
 
     if (targetXInScaledArea >= 0.0f && targetXInScaledArea < scaledInputWidth &&
         targetYInScaledArea >= 0.0f && targetYInScaledArea < scaledInputHeight) {
-        
+
         float uNorm = targetXInScaledArea / scaledInputWidth;
         float vNorm = targetYInScaledArea / scaledInputHeight;
-        
+
         pixelColor = inputTexture.sample(bicubicSampler, float2(uNorm, vNorm));
     } else {
         pixelColor = float4(params.paddingValueRgb, params.paddingValueRgb, params.paddingValueRgb, 1.0f);
     }
 
     float3 normalizedRgb;
-    float epsilon = 1e-6f; 
+    float epsilon = 1e-6f;
     normalizedRgb.r = (pixelColor.r - params.imageMean.r) / (params.imageStd.r + epsilon);
     normalizedRgb.g = (pixelColor.g - params.imageMean.g) / (params.imageStd.g + epsilon);
     normalizedRgb.b = (pixelColor.b - params.imageMean.b) / (params.imageStd.b + epsilon);
@@ -81,9 +86,15 @@ kernel void extractImagePatches(
         return;
     }
 
+    // Log from first thread only to avoid spam
+    if (gid.x == 0 && gid.y == 0) {
+        os_log_default.log("extractImagePatches: patchSize=%u, numChannels=%u, temporalSlices=%u",
+                          params.patchSize, params.numChannels, params.temporalSlices);
+    }
+
     uint numPatchesX = params.paddedDimensions.x / params.patchSize;
 
-    uint patchCol = gid.x / params.patchSize; 
+    uint patchCol = gid.x / params.patchSize;
     uint patchRow = gid.y / params.patchSize;
 
     uint spatialPatchIdxFlat = patchRow * numPatchesX + patchCol;
@@ -97,7 +108,7 @@ kernel void extractImagePatches(
     uint singlePatchChannelTemporalSliceSize = params.patchSize * params.patchSize;
     uint singlePatchChannelSize = params.temporalSlices * singlePatchChannelTemporalSliceSize;
     uint singlePatchSize = params.numChannels * singlePatchChannelSize;
-    
+
     uint outputPatchBaseIdx = spatialPatchIdxFlat * singlePatchSize;
 
     for (uint c = 0; c < params.numChannels; ++c) {
@@ -105,10 +116,10 @@ kernel void extractImagePatches(
         for (uint t = 0; t < params.temporalSlices; ++t) {
             uint channelBlockOffset = c * singlePatchChannelSize;
             uint temporalBlockOffset = t * singlePatchChannelTemporalSliceSize;
-            
+
             uint outputBufferIdx = outputPatchBaseIdx + channelBlockOffset + temporalBlockOffset + patchPixelFlatIdx;
-            
+
             outputBuffer[outputBufferIdx] = valueToStore;
         }
     }
-} 
+}

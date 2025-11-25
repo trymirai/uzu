@@ -11,6 +11,7 @@ use crate::{
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
         kernel::SamplingKernelEncodable,
+        metal_extensions::new_mps_command_buffer_with_logging,
     },
     config::{LanguageModelConfig, ModelMetadata},
     generator::rng::DerivableSeed,
@@ -49,7 +50,7 @@ impl GeneratorContext {
             mtl_device.new_command_queue_with_max_command_buffer_count(1024);
 
         let command_buffer =
-            MPSCommandBuffer::from_command_queue(&mtl_command_queue);
+            new_mps_command_buffer_with_logging(&mtl_command_queue);
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -161,7 +162,7 @@ impl GeneratorContext {
 
     pub fn reset_command_buffer(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
-            self.command_buffer = MPSCommandBuffer::from_command_queue(
+            self.command_buffer = new_mps_command_buffer_with_logging(
                 &self.mtl_context.command_queue,
             );
         });

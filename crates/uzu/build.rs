@@ -195,11 +195,11 @@ fn compile_metal_files(
         _ => "-O2", // treat levels 2,3,s,z as O2 for metal
     };
 
-    // Platform-specific min version flags (Metal 3.1 requires macOS 14 / iOS 17)
+    // Platform-specific min version flags (Metal 3.2 requires macOS 15.0 / iOS 18.0)
     let platform_flags = if sdk == "macosx" || sdk == "maccatalyst" {
-        vec!["-mmacosx-version-min=14.0"]
+        vec!["-mmacosx-version-min=15.0"]
     } else {
-        vec!["-mios-version-min=17.0"]
+        vec!["-mios-version-min=18.0"]
     };
 
     // Compile each .metal source to an intermediate .air file
@@ -218,8 +218,7 @@ fn compile_metal_files(
         // Invoke Metal compiler
         let mut cmd = Command::new("xcrun");
         cmd.args(&["-sdk", sdk, "metal", metal_opt_flag]);
-        cmd.arg(format!("-std={}", "metal3.1")); // target Metal 3.1 shading language
-        cmd.arg("-fmetal-enable-logging"); // Enable Metal logging support
+        cmd.arg(format!("-std={}", "metal3.2")); // target Metal 3.2 shading language
         for flag in &platform_flags {
             cmd.arg(flag);
         }
