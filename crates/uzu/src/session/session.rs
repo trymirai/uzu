@@ -82,6 +82,11 @@ impl Session {
                     return Err(Error::UnsupportedContextModeForModel);
                 },
             }
+
+            if decoding_config.speculator_config.number_of_speculated_tokens > 0
+            {
+                return Err(Error::UnsupportedSpeculatorConfigForModel);
+            }
         }
 
         let tokenizer_path = model_path.join("tokenizer.json");

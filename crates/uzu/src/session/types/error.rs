@@ -14,6 +14,8 @@ pub enum Error {
     NotEnoughMemory,
     #[error("Unsupported context mode for model")]
     UnsupportedContextModeForModel,
+    #[error("Unsupported speculator config for model")]
+    UnsupportedSpeculatorConfigForModel,
     #[error("Generator not loaded")]
     GeneratorNotLoaded,
     #[error("Unable to load prompt template")]
