@@ -138,7 +138,28 @@ pub fn quantized_linear_block_custom(
     Box<dyn super::encodable_with_state::EncodableWithState>,
     crate::backends::metal::MTLError,
 > {
-    let block = QuantizedLinearKernelBlock::new(
+    let block = quantized_linear_block_concrete(
+        config,
+        input_dim,
+        output_dim,
+        context,
+        parameter_tree,
+        input_array_id,
+        output_array_id,
+    )?;
+    Ok(Box::new(block))
+}
+
+pub fn quantized_linear_block_concrete(
+    config: &QuantizationConfig,
+    input_dim: usize,
+    output_dim: usize,
+    context: &MTLContext,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    input_array_id: ArrayId,
+    output_array_id: ArrayId,
+) -> Result<QuantizedLinearKernelBlock, crate::backends::metal::MTLError> {
+    QuantizedLinearKernelBlock::new(
         context,
         config,
         input_dim,
@@ -146,8 +167,7 @@ pub fn quantized_linear_block_custom(
         parameter_tree,
         input_array_id,
         output_array_id,
-    )?;
-    Ok(Box::new(block))
+    )
 }
 
 pub fn mlp_block(

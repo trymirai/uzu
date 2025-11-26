@@ -104,14 +104,25 @@ impl Conv1dScanKernel {
         let decode_name =
             format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
         let function_constants = make_function_constants(activation);
+        let activation_id = activation_to_int(activation);
+        let cache_key = format!("{}_act_{}", fn_name, activation_id);
         let pipeline = context
-            .compute_pipeline_state(&fn_name, Some(&function_constants))
+            .compute_pipeline_state_cached(
+                &cache_key,
+                &fn_name,
+                Some(&function_constants),
+            )
             .map_err(SSMKernelError::MetalError)?;
         let pack_pipeline = context
             .compute_pipeline_state(&pack_name, None)
             .map_err(SSMKernelError::MetalError)?;
+        let decode_cache_key = format!("{}_act_{}", decode_name, activation_id);
         let decode_pipeline = context
-            .compute_pipeline_state(&decode_name, Some(&function_constants))
+            .compute_pipeline_state_cached(
+                &decode_cache_key,
+                &decode_name,
+                Some(&function_constants),
+            )
             .map_err(SSMKernelError::MetalError)?;
         Ok(Self {
             pipeline,

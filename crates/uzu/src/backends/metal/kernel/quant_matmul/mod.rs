@@ -124,8 +124,10 @@ impl QuantizedMatmulKernel {
             mode,
         )?;
 
+        let cache_key_mv = format!("{}_mlx_{}", kernel_name_mv, use_mlx_quant);
         let (pipeline_mv, _) = mtl_context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state_with_reflection_cached(
+                &cache_key_mv,
                 &kernel_name_mv,
                 Some(&function_constants),
             )
@@ -141,8 +143,10 @@ impl QuantizedMatmulKernel {
             mode,
         )?;
 
+        let cache_key_mm = format!("{}_mlx_{}", kernel_name_mm, use_mlx_quant);
         let (pipeline_mm, _) = mtl_context
-            .compute_pipeline_state_with_reflection(
+            .compute_pipeline_state_with_reflection_cached(
+                &cache_key_mm,
                 &kernel_name_mm,
                 Some(&function_constants),
             )
