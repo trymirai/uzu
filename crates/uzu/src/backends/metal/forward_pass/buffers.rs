@@ -66,7 +66,6 @@ pub struct ForwardPassBuffers {
 }
 
 impl ForwardPassBuffers {
-    // TODO: use device arrays instead of MTLBuffers
     /// Allocate the buffers with `StorageModeShared` so that they are CPU-accessible as well.
     pub fn new(
         context: &MTLContext,
@@ -75,11 +74,11 @@ impl ForwardPassBuffers {
         max_prefix_len: usize,
         max_suffix_len: usize,
     ) -> Self {
-        // Helper closure for allocation
+        // Helper closure for allocation using context's allocator
         let alloc = |shape: &[usize], dtype: DataType| -> MTLBuffer {
             let bytes = array_size_in_bytes(shape, dtype);
-            context.device.new_buffer(
-                bytes as u64,
+            context.allocate_buffer(
+                bytes,
                 metal::MTLResourceOptions::StorageModeShared,
             )
         };
@@ -305,8 +304,8 @@ impl ForwardPassBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
+                    let bytes = entries * std::mem::size_of::<u32>();
+                    Some(context.allocate_buffer(
                         bytes,
                         metal::MTLResourceOptions::StorageModeShared,
                     ))
@@ -321,8 +320,8 @@ impl ForwardPassBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
+                    let bytes = entries * std::mem::size_of::<u32>();
+                    Some(context.allocate_buffer(
                         bytes,
                         metal::MTLResourceOptions::StorageModeShared,
                     ))
@@ -334,8 +333,8 @@ impl ForwardPassBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
+                    let bytes = entries * std::mem::size_of::<u32>();
+                    Some(context.allocate_buffer(
                         bytes,
                         metal::MTLResourceOptions::StorageModeShared,
                     ))

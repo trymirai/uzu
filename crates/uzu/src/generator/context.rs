@@ -74,13 +74,20 @@ impl GeneratorContext {
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
+        // Calculate heap size: weights file size + generous buffer for scratch/cache
+        let weights_path = model_path.join("model.safetensors");
+        let weights_size = std::fs::metadata(&weights_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        // Heap size = weights + 1GB for scratch/cache buffers (logits can be 500MB+)
+        let heap_size = weights_size + 1024 * 1024 * 1024;
+
         let mtl_context = Rc::new(
-            MTLContext::new(mtl_device, mtl_command_queue)
+            MTLContext::new_with_heap(mtl_device, mtl_command_queue, Some(heap_size))
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let compilation_config = Rc::new(CompilationConfig::default());
-        let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
         }
