@@ -37,7 +37,7 @@ pub(crate) use ssm::MambaMixerEncodable;
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
-    SSDUpdateKernel, SSMKernelError, SSMUpdateArguments, SSMUpdateKernel,
+    SSDUpdateKernel, SSMKernelError,
     SplitInProjArguments, SplitInProjKernel,
 };
 pub use tensor_add_bias::TensorAddBias;
