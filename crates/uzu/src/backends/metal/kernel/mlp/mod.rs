@@ -171,12 +171,24 @@ impl EncodableWithState for MlpBlockEncodable {
         let m = fused.shape()[0] as i32;
         let root = command_buffer.root_command_buffer();
         let encoder = root.new_compute_command_encoder();
+
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
         self.gate
             .encode(encoder, fused_buf, hidden_buf, m)
             .expect("Failed to encode MLP activation/mul kernel");
+
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        state.fence_registry.set_current(fence);
+
         drop(fused);
         drop(hidden);
         // Down

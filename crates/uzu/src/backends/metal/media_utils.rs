@@ -272,10 +272,9 @@ fn data_to_mtl_tensor<T: Copy>(
     data_type: DataType,
 ) -> Result<MetalArray, MTLError> {
     let size = mem::size_of::<T>() as u64;
-    let buffer = device.new_buffer_with_data(
-        data as *const _ as *const c_void,
-        size,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let options = MTLResourceOptions::StorageModeShared
+        | MTLResourceOptions::HazardTrackingModeUntracked;
+    let buffer =
+        device.new_buffer_with_data(data as *const _ as *const c_void, size, options);
     unsafe { Ok(MetalArray::new(buffer, &shape, data_type)) }
 }

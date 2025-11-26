@@ -533,8 +533,19 @@ impl EncodableWithState for MambaMixerEncodable {
     ) {
         let cmd = command_buffer.root_command_buffer().to_owned();
         let encoder = cmd.new_compute_command_encoder();
+
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         self.encode_pipeline_with_encoder(state, encoder, parameters);
+
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

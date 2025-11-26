@@ -200,25 +200,97 @@ impl EncodableWithState for DecoderExecutables {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        self.embed.encode(state, command_buffer, parameters);
+        // Detect encoder requirements based on component support
+        let embed_shared = self.embed.supports_shared_encoder();
+        let readout_shared = self.readout.supports_shared_encoder();
 
+        // All quantized models: 1 encoder for entire forward pass
+        // Mixed models: break at MPSGraph boundaries
+        self.encode_adaptive(
+            state,
+            command_buffer,
+            parameters,
+            embed_shared,
+            readout_shared,
+        );
+    }
+}
+
+impl DecoderExecutables {
+    fn encode_adaptive(
+        &self,
+        state: &mut ForwardPassState,
+        command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+        embed_shared: bool,
+        readout_shared: bool,
+    ) {
+        let cmd = command_buffer.root_command_buffer();
+
+        // Phase 1: Embed
+        if !embed_shared {
+            // MPSGraph embed creates its own encoders
+            self.embed.encode(state, command_buffer, parameters);
+        }
+
+        // Phase 2: Main encoder (embed if shared + layers + norm + readout if shared)
+        let encoder = cmd.new_compute_command_encoder();
+
+        // Wait on previous fence
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
+        // Embed (if shared encoder)
+        if embed_shared {
+            self.embed.encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        // All layers
         for layer in self.layers.iter() {
-            layer.encode(state, command_buffer, parameters);
+            layer.encode_with_shared_encoder(state, encoder, parameters);
         }
 
-        if state.is_prefilling() {
-            return;
+        // Norm + Readout (if not prefilling)
+        if !state.is_prefilling() {
+            self.norm.encode_with_shared_encoder(state, encoder, parameters);
+
+            if let Some(traces) = state.traces.clone() {
+                state.copy_array(
+                    ArrayId::Main,
+                    traces.borrow().output_norm.clone(),
+                );
+            }
+
+            if readout_shared {
+                self.readout
+                    .encode_with_shared_encoder(state, encoder, parameters);
+
+                if let Some(traces) = state.traces.clone() {
+                    state.copy_array(
+                        ArrayId::Logits,
+                        traces.borrow().logits.clone(),
+                    );
+                }
+            }
         }
 
-        self.norm.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
-            state
-                .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
-        }
+        // Signal fence and end encoder
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
+        encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
-        self.readout.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
-            state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
+        // Phase 3: Readout (if MPSGraph)
+        if !state.is_prefilling() && !readout_shared {
+            self.readout.encode(state, command_buffer, parameters);
+
+            if let Some(traces) = state.traces.clone() {
+                state.copy_array(
+                    ArrayId::Logits,
+                    traces.borrow().logits.clone(),
+                );
+            }
         }
     }
 }

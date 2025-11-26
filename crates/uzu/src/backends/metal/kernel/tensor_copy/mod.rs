@@ -90,13 +90,20 @@ impl EncodableWithState for TensorCopy {
 
         let retained_mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
+        let encoder = retained_mtl_command_buffer.new_compute_command_encoder();
 
-        self.encode_into_command_buffer(
-            &source_mtl_buffer,
-            &destination_mtl_buffer,
-            length,
-            &retained_mtl_command_buffer,
-        );
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
+        self.encode_with_encoder_raw(&source_mtl_buffer, &destination_mtl_buffer, length, encoder);
+
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
+        encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

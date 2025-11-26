@@ -14,6 +14,7 @@ use super::{
     MetalArray,
     buffer_allocator::{BufferAllocator, FallbackHeapAllocator},
     error::MTLError,
+    fence::FenceRegistry,
     metal_extensions::LibraryPipelineExtensions,
 };
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
@@ -24,6 +25,7 @@ pub struct MTLContext {
     library: MTLLibrary,
     pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
     heap_allocator: Option<FallbackHeapAllocator>,
+    fence_registry: Rc<FenceRegistry>,
 }
 
 impl MTLContext {
@@ -57,13 +59,21 @@ impl MTLContext {
             )
         });
 
+        let fence_registry = Rc::new(FenceRegistry::new(device.clone()));
+
         Ok(Self {
             device,
             command_queue,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             heap_allocator,
+            fence_registry,
         })
+    }
+
+    /// Get the fence registry for manual synchronization with untracked buffers
+    pub fn fence_registry(&self) -> Rc<FenceRegistry> {
+        self.fence_registry.clone()
     }
 
     pub fn allocate_buffer(
@@ -74,7 +84,10 @@ impl MTLContext {
         if let Some(ref allocator) = self.heap_allocator {
             allocator.allocate_buffer(size_bytes, options)
         } else {
-            self.device.new_buffer(size_bytes as u64, options)
+            // Even without heap, use untracked mode for consistency
+            let untracked_options =
+                options | MTLResourceOptions::HazardTrackingModeUntracked;
+            self.device.new_buffer(size_bytes as u64, untracked_options)
         }
     }
 

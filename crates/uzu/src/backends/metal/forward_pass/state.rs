@@ -925,6 +925,7 @@ pub struct ForwardPassState {
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
     active_suffix_length: usize,
     is_prefilling: bool,
+    pub fence_registry: Rc<crate::backends::metal::fence::FenceRegistry>,
 }
 
 impl ForwardPassState {
@@ -1083,7 +1084,7 @@ impl ForwardPassState {
         };
 
         Self {
-            context,
+            context: context.clone(),
             token_ids: token_ids_refcell,
             token_positions: token_positions_refcell,
             token_seeds: token_seeds_refcell,
@@ -1097,6 +1098,7 @@ impl ForwardPassState {
             traces,
             active_suffix_length,
             is_prefilling,
+            fence_registry: context.fence_registry(),
         }
     }
 

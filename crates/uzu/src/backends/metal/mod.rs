@@ -4,6 +4,7 @@ pub mod compilation_parameters;
 mod context;
 pub mod error;
 mod executable_builder;
+mod fence;
 pub mod forward_pass;
 pub mod graph;
 pub mod image;
@@ -17,6 +18,7 @@ pub use buffer_allocator::BufferAllocator;
 pub use context::MTLContext;
 pub use error::MTLError;
 pub use executable_builder::DecoderExecutables;
+pub use fence::FenceRegistry;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 // pub use kernel::{

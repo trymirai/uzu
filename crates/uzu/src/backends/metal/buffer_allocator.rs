@@ -1,8 +1,8 @@
 use std::cell::Cell;
 
 use metal::{
-    Buffer, Device, Heap, HeapDescriptor, MTLCPUCacheMode, MTLResourceOptions,
-    MTLStorageMode,
+    Buffer, Device, Heap, HeapDescriptor, MTLCPUCacheMode,
+    MTLHazardTrackingMode, MTLResourceOptions, MTLStorageMode,
 };
 
 pub trait BufferAllocator {
@@ -51,10 +51,13 @@ impl HeapAllocator {
         descriptor.set_size(size_bytes);
         descriptor.set_storage_mode(storage_mode);
         descriptor.set_cpu_cache_mode(MTLCPUCacheMode::DefaultCache);
+        // Disable automatic hazard tracking - we manage dependencies manually
+        // This avoids false dependencies and reduces CPU tracking overhead
+        descriptor.set_hazard_tracking_mode(MTLHazardTrackingMode::Untracked);
 
         let heap = device.new_heap(&descriptor);
         eprintln!(
-            "[HeapAllocator] Created heap: size={}MB, storage_mode={:?}",
+            "[HeapAllocator] Created heap: size={}MB, storage_mode={:?}, hazard_tracking=Untracked",
             size_bytes / (1024 * 1024),
             storage_mode
         );
@@ -71,7 +74,10 @@ impl HeapAllocator {
         size_bytes: u64,
         options: MTLResourceOptions,
     ) -> Option<Buffer> {
-        let buffer = self.heap.new_buffer(size_bytes, options)?;
+        // Add HazardTrackingModeUntracked to match the heap's mode
+        let untracked_options =
+            options | MTLResourceOptions::HazardTrackingModeUntracked;
+        let buffer = self.heap.new_buffer(size_bytes, untracked_options)?;
         let new_total =
             self.allocated_bytes.get() + self.heap.current_allocated_size();
         self.allocated_bytes.set(new_total);
@@ -143,17 +149,18 @@ impl BufferAllocator for FallbackHeapAllocator {
     ) -> Buffer {
         if let Some(buffer) = self.heap.allocate(size_in_bytes as u64, options)
         {
-            self.heap_alloc_count
-                .set(self.heap_alloc_count.get() + 1);
+            self.heap_alloc_count.set(self.heap_alloc_count.get() + 1);
             buffer
         } else {
             eprintln!(
                 "[FallbackHeapAllocator] Heap full, falling back to device allocation: {}KB",
                 size_in_bytes / 1024
             );
-            self.device_alloc_count
-                .set(self.device_alloc_count.get() + 1);
-            self.device.new_buffer(size_in_bytes as u64, options)
+            self.device_alloc_count.set(self.device_alloc_count.get() + 1);
+            // Must also use untracked mode for device fallback to match heap behavior
+            let untracked_options =
+                options | MTLResourceOptions::HazardTrackingModeUntracked;
+            self.device.new_buffer(size_in_bytes as u64, untracked_options)
         }
     }
 }

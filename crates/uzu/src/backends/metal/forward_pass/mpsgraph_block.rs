@@ -91,12 +91,28 @@ impl EncodableWithState for MPSGraphBlock {
 
             let root_command_buffer =
                 command_buffer.root_command_buffer().to_owned();
+
+            // // GPU fence: wait on previous encoder before MPSGraph runs
+            // if let Some(prev_fence) = state.fence_registry.take_previous() {
+            //     let blit = root_command_buffer.new_blit_command_encoder();
+            //     blit.wait_for_fence(&prev_fence);
+            //     blit.end_encoding();
+            // }
+
             let _ = self.executable.encode_to_command_buffer(
                 command_buffer,
                 inputs_slice,
                 maybe_outputs_slice,
                 Some(&execution_descriptor),
             );
+
+            // // GPU fence: signal for next encoder after MPSGraph
+            // let fence = state.fence_registry.new_fence();
+            // let blit = root_command_buffer.new_blit_command_encoder();
+            // blit.update_fence(&fence);
+            // blit.end_encoding();
+            // state.fence_registry.set_current(fence);
+
             if parameters.wait_until_completed {
                 command_buffer.commit_and_continue();
                 root_command_buffer.wait_until_completed();

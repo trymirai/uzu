@@ -141,10 +141,13 @@ impl MetalArray {
             let slice_ptr =
                 unsafe { base_ptr.add(offset_bytes) } as *mut std::ffi::c_void;
 
+            // Use untracked mode to match heap-allocated buffers
+            let options = MTLResourceOptions::StorageModeShared
+                | MTLResourceOptions::HazardTrackingModeUntracked;
             let child_buffer = device.new_buffer_with_bytes_no_copy(
                 slice_ptr,
                 required_len as u64,
-                MTLResourceOptions::StorageModeShared,
+                options,
                 None,
             );
 

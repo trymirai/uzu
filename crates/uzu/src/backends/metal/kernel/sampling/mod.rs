@@ -664,17 +664,30 @@ impl EncodableWithState for SamplingKernelEncodable {
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();
-        if let Err(e) = self.kernel.encode(
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        // GPU fence: wait on previous (readout)
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
+        if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,
             vocab_size,
-            &root_command_buffer,
+            &encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
+
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
+        encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

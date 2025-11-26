@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, rc::Rc};
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
@@ -8,7 +8,7 @@ use metal::{
 use super::{
     KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
 };
-use crate::backends::metal::error::MTLError;
+use crate::backends::metal::{FenceRegistry, error::MTLError};
 
 #[derive(Debug)]
 pub struct TensorAddBias {
@@ -37,10 +37,22 @@ impl TensorAddBias {
         num_cols: usize,
         total_len: usize,
         command_buffer: &MTLCommandBuffer,
+        fence_registry: &Rc<FenceRegistry>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
+
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         self.encode_with_encoder(input, bias, output, num_cols, total_len, encoder);
+
+        // GPU fence: signal for next
+        let fence = fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        fence_registry.set_current(fence);
     }
 
     pub fn encode_with_encoder(

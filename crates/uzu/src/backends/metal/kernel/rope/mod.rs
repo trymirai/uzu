@@ -161,9 +161,18 @@ impl EncodableWithState for RopeKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            compute_encoder.wait_for_fence(&prev_fence);
+        }
+
         self.encode_with_encoder_impl(state, compute_encoder);
 
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        compute_encoder.update_fence(&fence);
         compute_encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();

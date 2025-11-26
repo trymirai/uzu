@@ -292,6 +292,11 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         let args = QuantizedEmbeddingLookupArguments {
             token_ids_buffer,
             weights_buffer: &self.weights_buffer,
@@ -308,7 +313,11 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding lookup kernel");
 
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             let mtl_command_buffer =
@@ -316,6 +325,41 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
         }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
+        let batch_size = state.active_suffix_length();
+        let mut token_ids_array_mut = arrays[0].borrow_mut();
+        let mut output_array_mut = arrays[1].borrow_mut();
+
+        let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
+        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+
+        let args = QuantizedEmbeddingLookupArguments {
+            token_ids_buffer,
+            weights_buffer: &self.weights_buffer,
+            scales_buffer: &self.scales_buffer,
+            biases_buffer: &self.biases_buffer,
+            output_buffer,
+            batch_size: batch_size as u32,
+            vocab_size: self.vocab_size,
+            model_dim: self.model_dim,
+            group_size: self.group_size,
+        };
+
+        self.kernel
+            .encode(encoder, args)
+            .expect("Failed to encode quantized embedding lookup kernel");
     }
 }
 
@@ -493,6 +537,11 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         // For transposed matmul: input @ weights.T
         // where weights is [vocab_size, model_dim]
         use super::super::kernel::quant_matmul::{
@@ -515,7 +564,11 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
 
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if parameters.wait_until_completed {
             let mtl_command_buffer =
@@ -523,5 +576,44 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
         }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
+        let batch_size = state.active_suffix_length();
+        let mut input_array_mut = arrays[0].borrow_mut();
+        let mut output_array_mut = arrays[1].borrow_mut();
+
+        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
+        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+
+        use super::super::kernel::quant_matmul::{
+            QuantizationType, QuantizedMatmulArguments,
+        };
+
+        let args = QuantizedMatmulArguments {
+            a_buffer: input_buffer,
+            b_buffer: &self.weights_buffer,
+            scales_buffer: &self.scales_buffer,
+            zero_points_or_biases_buffer: &self.biases_buffer,
+            output_buffer,
+            batch: batch_size as i32,
+            input_dim: self.model_dim as i32,
+            output_dim: self.vocab_size as i32,
+            quantization_type: QuantizationType::Mlx,
+        };
+
+        self.kernel
+            .encode(encoder, args)
+            .expect("Failed to encode quantized embedding readout kernel");
     }
 }

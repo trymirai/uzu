@@ -94,7 +94,7 @@ impl DecoderTestContext {
                 mtl_command_queue.clone(),
                 Some(heap_size),
             )
-            .map_err(|e| format!("Failed to create MetalContext: {}", e))?,
+                .map_err(|e| format!("Failed to create MetalContext: {}", e))?,
         );
 
         let weights_file = File::open(&weights_path)

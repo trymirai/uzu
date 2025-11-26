@@ -241,6 +241,11 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
+        // GPU fence: wait on previous
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
             b_buffer: &self.weights_buffer,
@@ -257,7 +262,11 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
             .encode(encoder, args)
             .expect("Failed to encode quantized matmul kernel");
 
+        // GPU fence: signal for next
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
         encoder.end_encoding();
+        state.fence_registry.set_current(fence);
 
         if let (Some(bias_add), Some(bias_buf)) =
             (&self.bias_add_kernel, &self.biases_buffer)
@@ -271,6 +280,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 self.output_dim,
                 total_len,
                 &retained_cb,
+                &state.fence_registry,
             );
         }
 
