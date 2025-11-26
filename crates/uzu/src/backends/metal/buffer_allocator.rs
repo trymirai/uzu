@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use metal::{
-    Buffer, Device, Heap, HeapDescriptor, MTLCPUCacheMode,
+    Buffer, Device, Heap, HeapDescriptor, HeapRef, MTLCPUCacheMode,
     MTLHazardTrackingMode, MTLResourceOptions, MTLStorageMode,
 };
 
@@ -96,6 +96,10 @@ impl HeapAllocator {
     pub fn available_bytes(&self) -> u64 {
         self.heap.max_available_size_with_alignment(16)
     }
+
+    pub fn heap(&self) -> &HeapRef {
+        &self.heap
+    }
 }
 
 impl BufferAllocator for HeapAllocator {
@@ -138,6 +142,10 @@ impl FallbackHeapAllocator {
             self.heap.used_bytes(),
             self.heap.total_bytes(),
         )
+    }
+
+    pub fn heap(&self) -> &HeapRef {
+        self.heap.heap()
     }
 }
 

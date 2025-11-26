@@ -15,7 +15,10 @@ use super::{
     buffer_allocator::{BufferAllocator, FallbackHeapAllocator},
     error::MTLError,
     fence::FenceRegistry,
-    metal_extensions::LibraryPipelineExtensions,
+    metal_extensions::{
+        CommandQueueResidencyExt, LibraryPipelineExtensions, ResidencySet,
+        ResidencySetDescriptor,
+    },
 };
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
 
@@ -26,6 +29,7 @@ pub struct MTLContext {
     pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
     heap_allocator: Option<FallbackHeapAllocator>,
     fence_registry: Rc<FenceRegistry>,
+    residency_set: Option<ResidencySet>,
 }
 
 impl MTLContext {
@@ -61,6 +65,35 @@ impl MTLContext {
 
         let fence_registry = Rc::new(FenceRegistry::new(device.clone()));
 
+        // Create residency set for the heap (macOS 15+/iOS 18+)
+        // This makes all heap resources resident for the command queue's lifetime
+        let residency_set = if let Some(ref allocator) = heap_allocator {
+            let descriptor = ResidencySetDescriptor::new();
+            descriptor.set_label("uzu_heap_residency");
+            descriptor.set_initial_capacity(1);
+
+            match ResidencySet::new(&device, &descriptor) {
+                Some(set) => {
+                    set.add_allocation(allocator.heap());
+                    set.commit();
+                    set.request_residency();
+                    command_queue.add_residency_set(&set);
+                    eprintln!(
+                        "[MTLContext] ResidencySet attached to command queue"
+                    );
+                    Some(set)
+                },
+                None => {
+                    eprintln!(
+                        "[MTLContext] ResidencySet not available (requires macOS 15+)"
+                    );
+                    None
+                },
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             device,
             command_queue,
@@ -68,12 +101,18 @@ impl MTLContext {
             pipeline_cache: RefCell::new(HashMap::new()),
             heap_allocator,
             fence_registry,
+            residency_set,
         })
     }
 
     /// Get the fence registry for manual synchronization with untracked buffers
     pub fn fence_registry(&self) -> Rc<FenceRegistry> {
         self.fence_registry.clone()
+    }
+
+    /// Get heap reference for use_heap calls (residency)
+    pub fn heap(&self) -> Option<&metal::HeapRef> {
+        self.heap_allocator.as_ref().map(|a| a.heap())
     }
 
     pub fn allocate_buffer(
