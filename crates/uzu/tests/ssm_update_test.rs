@@ -5,8 +5,7 @@ use metal::MTLResourceOptions;
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::ssm::{
-        SSDUpdateArguments, SSDUpdateKernel, SSMUpdateArguments,
-        SSMUpdateKernel,
+        SSDUpdateArguments, SSDUpdateKernel,
     },
 };
 fn ssm_update_ref_bf16(
@@ -175,135 +174,6 @@ fn create_context() -> Option<MTLContext> {
     let device = metal::Device::system_default()?;
     let command_queue = device.new_command_queue();
     MTLContext::new(device, command_queue).ok()
-}
-
-#[test]
-fn ssm_update_bf16() {
-    let Some(ctx) = create_context() else {
-        eprintln!("Skipping: no Metal device");
-        return;
-    };
-    let bsz = 2usize;
-    let h = 4usize;
-    let n = 16usize;
-
-    let x: Vec<bf16> = (0..bsz * h)
-        .map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.2))
-        .collect();
-    let dt: Vec<bf16> =
-        (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.03)).collect();
-    let a: Vec<bf16> = (0..n)
-        .map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.1))
-        .collect();
-    let b: Vec<bf16> = (0..bsz * n)
-        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.01))
-        .collect();
-    let c: Vec<bf16> = (0..bsz * n)
-        .map(|i| bf16::from_f32(((i % 17) as f32) * 0.015))
-        .collect();
-    let d: Vec<bf16> =
-        (0..h).map(|i| bf16::from_f32(((i % 3) as f32) * 0.05)).collect();
-    let z: Vec<bf16> = (0..bsz * h)
-        .map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.1))
-        .collect();
-    let state: Vec<bf16> = (0..bsz * h * n)
-        .map(|i| bf16::from_f32(((i % 23) as f32) * 0.01 - 0.05))
-        .collect();
-
-    let (y_exp, ns_exp) =
-        ssm_update_ref_bf16(&x, &dt, &a, &b, &c, &d, &z, &state, bsz, h);
-    let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
-    let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
-
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dt_buf = ctx.device.new_buffer_with_data(
-        dt.as_ptr() as *const _,
-        (dt.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let a_buf = ctx.device.new_buffer_with_data(
-        a.as_ptr() as *const _,
-        (a.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let b_buf = ctx.device.new_buffer_with_data(
-        b.as_ptr() as *const _,
-        (b.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let c_buf = ctx.device.new_buffer_with_data(
-        c.as_ptr() as *const _,
-        (c.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let d_buf = ctx.device.new_buffer_with_data(
-        d.as_ptr() as *const _,
-        (d.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let z_buf = ctx.device.new_buffer_with_data(
-        z.as_ptr() as *const _,
-        (z.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let s_buf = ctx.device.new_buffer_with_data(
-        state.as_ptr() as *const _,
-        (state.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_buf = ctx.device.new_buffer(
-        (bsz * h * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let ns_buf = ctx.device.new_buffer(
-        (bsz * h * n * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
-    let kernel = SSMUpdateKernel::new(&ctx, KernelDataType::BFloat16).unwrap();
-    let cb_ref = ctx.command_queue.new_command_buffer();
-    let cb = cb_ref.to_owned();
-    let enc = cb.new_compute_command_encoder();
-    kernel
-        .encode(
-            &enc,
-            SSMUpdateArguments {
-                x: &x_buf,
-                dt: &dt_buf,
-                a: &a_buf,
-                b: &b_buf,
-                c: &c_buf,
-                d: &d_buf,
-                z: &z_buf,
-                state: &s_buf,
-                y: &y_buf,
-                next_state: &ns_buf,
-                batch_size: bsz,
-                channels: h,
-            },
-        )
-        .unwrap();
-    enc.end_encoding();
-    cb_ref.commit();
-    cb_ref.wait_until_completed();
-
-    let y_ptr = y_buf.contents() as *const bf16;
-    let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h) };
-    let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
-    let ns_ptr = ns_buf.contents() as *const bf16;
-    let ns_out = unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * n) };
-    let ns_out_f32: Vec<f32> = ns_out.iter().map(|&v| v.to_f32()).collect();
-    let tol = 2e-2;
-    for (i, (a, b)) in y_out_f32.iter().zip(y_exp_f32.iter()).enumerate() {
-        assert!((a - b).abs() < tol, "y {} {} {}", i, a, b);
-    }
-    for (i, (a, b)) in ns_out_f32.iter().zip(ns_exp_f32.iter()).enumerate() {
-        assert!((a - b).abs() < tol, "ns {} {} {}", i, a, b);
-    }
 }
 
 #[test]

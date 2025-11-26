@@ -1189,21 +1189,45 @@ void qmv_fast_impl(
   for (int k = 0; k < in_vec_size; k += block_size) {
     U sum = load_vector<T, U, values_per_thread, bits>(x, x_thread);
 
-    for (int row = 0; row < results_per_simdgroup; row++) {
-      auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
-      const device T* sl = scales + row * in_vec_size_g;
-      U s = sl[0];
-      
+    {
+      auto wl0 = (const device uint8_t*)(ws);
+      auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
+      auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
+      auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+
+      U s0 = static_cast<U>(scales[0]);
+      U s1 = static_cast<U>(scales[in_vec_size_g]);
+      U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
+      U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
+
       if (kUseMlxQuant) {
-        const device T* bl = biases + row * in_vec_size_g;
-        U b = bl[0];
-        result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
+        U b0 = static_cast<U>(biases[0]);
+        U b1 = static_cast<U>(biases[in_vec_size_g]);
+        U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
+        U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
+        result[0] += qdot<U, values_per_thread, bits>(wl0, x_thread, s0, b0, sum);
+        result[1] += qdot<U, values_per_thread, bits>(wl1, x_thread, s1, b1, sum);
+        result[2] += qdot<U, values_per_thread, bits>(wl2, x_thread, s2, b2, sum);
+        result[3] += qdot<U, values_per_thread, bits>(wl3, x_thread, s3, b3, sum);
       } else {
-        const device uint8_t* zl = zps + row * zp_stride;
-        uint8_t zp_byte = *zl;
-        U zp = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte >> 4) : (zp_byte & 0x0F));
-        if (bits == 8) zp = static_cast<U>(zp_byte);
-        result[row] += qdot_zero_point<U, values_per_thread, bits>(wl, x_thread, s, zp);
+        uint8_t zp_byte0 = zps[0];
+        uint8_t zp_byte1 = zps[zp_stride];
+        uint8_t zp_byte2 = zps[2 * zp_stride];
+        uint8_t zp_byte3 = zps[3 * zp_stride];
+        U zp0 = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F));
+        U zp1 = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F));
+        U zp2 = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F));
+        U zp3 = static_cast<U>((bits == 4 && high_nibble) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F));
+        if (bits == 8) {
+          zp0 = static_cast<U>(zp_byte0);
+          zp1 = static_cast<U>(zp_byte1);
+          zp2 = static_cast<U>(zp_byte2);
+          zp3 = static_cast<U>(zp_byte3);
+        }
+        result[0] += qdot_zero_point<U, values_per_thread, bits>(wl0, x_thread, s0, zp0);
+        result[1] += qdot_zero_point<U, values_per_thread, bits>(wl1, x_thread, s1, zp1);
+        result[2] += qdot_zero_point<U, values_per_thread, bits>(wl2, x_thread, s2, zp2);
+        result[3] += qdot_zero_point<U, values_per_thread, bits>(wl3, x_thread, s3, zp3);
       }
     }
 
