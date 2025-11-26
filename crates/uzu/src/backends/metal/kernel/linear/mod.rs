@@ -14,7 +14,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -335,6 +335,59 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 &output_buffer,
                 bias_buf,
                 &output_buffer,
+                self.output_dim,
+                total_len,
+                encoder,
+            );
+        }
+    }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        if self.input_array_id == self.output_array_id {
+            vec![self.input_array_id.clone()]
+        } else {
+            vec![self.input_array_id.clone(), self.output_array_id.clone()]
+        }
+    }
+
+    fn supports_parallel_encode(&self) -> bool {
+        true
+    }
+
+    fn encode_parallel(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        _parameters: &EncodingParameters,
+    ) {
+        let input_buffer = frozen.buffer(&self.input_array_id);
+        let output_buffer = frozen.buffer(&self.output_array_id);
+        let batch_size = frozen.active_suffix_length;
+
+        let args = QuantizedMatmulArguments {
+            a_buffer: input_buffer,
+            b_buffer: &self.weights_buffer,
+            scales_buffer: &self.scales_buffer,
+            zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
+            output_buffer: output_buffer,
+            batch: batch_size as i32,
+            input_dim: self.input_dim as i32,
+            output_dim: self.output_dim as i32,
+            quantization_type: self.quantization_type,
+        };
+
+        self.kernel
+            .encode(encoder, args)
+            .expect("Failed to encode quantized matmul kernel (parallel)");
+
+        if let (Some(bias_add), Some(bias_buf)) =
+            (&self.bias_add_kernel, &self.biases_buffer)
+        {
+            let total_len = batch_size * self.output_dim;
+            bias_add.encode_with_encoder(
+                output_buffer,
+                bias_buf,
+                output_buffer,
                 self.output_dim,
                 total_len,
                 encoder,

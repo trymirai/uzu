@@ -45,7 +45,7 @@ impl Default for DecodingConfig {
             prefill_step_size: PrefillStepSize::default(),
             speculator_config: SpeculatorConfig::default(),
             sampling_seed: SamplingSeed::default(),
-            allow_pre_encode: true,
+            allow_pre_encode: false,
         }
     }
 }

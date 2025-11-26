@@ -15,7 +15,7 @@ use crate::{
         KernelDataType, MTLContext, MetalArray,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::quantized_linear_block_concrete,
         },
@@ -564,6 +564,256 @@ impl EncodableWithState for MambaMixerEncodable {
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
+    }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        vec![
+            ArrayId::Main,
+            ArrayId::SsmInProj,
+            ArrayId::SsmPacked(self.layer_index),
+            ArrayId::SsmZ(self.layer_index),
+            ArrayId::SsmDt(self.layer_index),
+            ArrayId::SsmConvState(self.layer_index),
+            ArrayId::SsmX(self.layer_index),
+            ArrayId::SsmState(self.layer_index),
+            ArrayId::SsmB(self.layer_index),
+            ArrayId::SsmC(self.layer_index),
+            ArrayId::AttentionOutput,
+            ArrayId::SsmConvPadded,
+        ]
+    }
+
+    fn supports_parallel_encode(&self) -> bool {
+        true
+    }
+
+    fn encode_parallel(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        parameters: &EncodingParameters,
+    ) {
+        let suffix_length = frozen.active_suffix_length;
+        if suffix_length == 0 {
+            return;
+        }
+
+        // In-projection
+        self.in_projection.encode_parallel(encoder, frozen, parameters);
+
+        // Split in-proj
+        {
+            let input_buf = frozen.buffer(&ArrayId::SsmInProj);
+            let conv_buf = frozen.buffer(&ArrayId::SsmPacked(self.layer_index));
+            let gate_buf = frozen.buffer(&ArrayId::SsmZ(self.layer_index));
+            let dt_buf = frozen.buffer(&ArrayId::SsmDt(self.layer_index));
+            let mut gate_bias = self.gate_bias.clone();
+            let bias_buf = unsafe { gate_bias.mtl_buffer().to_owned() };
+
+            let conv_dim = self.config.conv_dim();
+            let inner_dim = self.config.inner_dim();
+            let num_heads = self.config.num_heads;
+            let total_dim = conv_dim + inner_dim + num_heads;
+
+            self.split_inproj
+                .encode(
+                    encoder,
+                    SplitInProjArguments {
+                        input: input_buf,
+                        conv_out: conv_buf,
+                        z_out: gate_buf,
+                        dt_out: dt_buf,
+                        z_bias: &bias_buf,
+                        total_dim,
+                        conv_dim,
+                        inner_dim,
+                        num_heads,
+                        suffix_length,
+                    },
+                )
+                .expect(
+                    "Failed to encode split in-projection kernel (parallel)",
+                );
+        }
+
+        // Conv scan
+        {
+            let input_buf =
+                frozen.buffer(&ArrayId::SsmPacked(self.layer_index));
+            let state_buf =
+                frozen.buffer(&ArrayId::SsmConvState(self.layer_index));
+            let x_buf = frozen.buffer(&ArrayId::SsmX(self.layer_index));
+            let b_buf = frozen.buffer(&ArrayId::SsmB(self.layer_index));
+            let c_buf = frozen.buffer(&ArrayId::SsmC(self.layer_index));
+
+            let mut weight_storage = self.conv_weight.clone();
+            let weight_buf = unsafe { weight_storage.mtl_buffer().to_owned() };
+            let bias_buf = self.conv_bias.as_ref().map(|arr| {
+                let mut storage = arr.clone();
+                unsafe { storage.mtl_buffer().to_owned() }
+            });
+
+            let conv_dim = self.config.conv_dim();
+            let inner_dim = self.config.inner_dim();
+            let proj_dim = self.config.num_groups * self.config.state_dim;
+            let state_stride = self.config.kernel_size.saturating_sub(1);
+
+            if suffix_length == 1 {
+                // Decode path
+                self.conv_scan
+                    .encode_decode(
+                        encoder,
+                        Conv1dDecodeArguments {
+                            x: input_buf,
+                            w: &weight_buf,
+                            b: bias_buf.as_ref(),
+                            state: state_buf,
+                            x_out: x_buf,
+                            b_out: b_buf,
+                            c_out: c_buf,
+                            next_state: state_buf,
+                            suffix_len: suffix_length,
+                            kernel_size: self.config.kernel_size as i32,
+                            row_stride: conv_dim,
+                            state_stride,
+                            channels: conv_dim,
+                            inner_dim,
+                            proj_dim,
+                        },
+                    )
+                    .expect("Failed to encode conv decode kernel (parallel)");
+            } else {
+                // Prefill path
+                let padded_buf = if state_stride > 0 {
+                    let buf = frozen.buffer(&ArrayId::SsmConvPadded);
+                    self.conv_scan
+                        .encode_pack(
+                            encoder,
+                            Conv1dPackArguments {
+                                state_in: state_buf,
+                                x: input_buf,
+                                padded: buf,
+                                state_stride,
+                                row_stride: conv_dim,
+                                suffix_len: suffix_length,
+                                channels: conv_dim,
+                            },
+                        )
+                        .expect("Failed to encode conv pack kernel (parallel)");
+                    Some(buf)
+                } else {
+                    None
+                };
+
+                let conv_source = padded_buf.unwrap_or(input_buf);
+
+                self.conv_scan
+                    .encode(
+                        encoder,
+                        Conv1dScanArguments {
+                            padded: conv_source,
+                            w: &weight_buf,
+                            b: bias_buf.as_ref(),
+                            x_out: x_buf,
+                            b_out: b_buf,
+                            c_out: c_buf,
+                            state_out: state_buf,
+                            suffix_len: suffix_length,
+                            kernel_size: self.config.kernel_size as i32,
+                            row_stride: conv_dim,
+                            state_stride,
+                            channels: conv_dim,
+                            inner_dim,
+                            proj_dim,
+                        },
+                    )
+                    .expect("Failed to encode conv scan kernel (parallel)");
+            }
+        }
+
+        // SSM (decode or prefill)
+        {
+            let x_buf = frozen.buffer(&ArrayId::SsmX(self.layer_index));
+            let b_buf = frozen.buffer(&ArrayId::SsmB(self.layer_index));
+            let c_buf = frozen.buffer(&ArrayId::SsmC(self.layer_index));
+            let dt_buf = frozen.buffer(&ArrayId::SsmDt(self.layer_index));
+            let z_buf = frozen.buffer(&ArrayId::SsmZ(self.layer_index));
+            let state_buf = frozen.buffer(&ArrayId::SsmState(self.layer_index));
+            let out_buf = frozen.buffer(&ArrayId::AttentionOutput);
+            let mut skip_weights = self.skip_connection_weight.clone();
+            let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
+
+            let h = self.config.num_heads;
+            let g = self.config.num_groups;
+            let dh = self.config.head_dim;
+            let n = self.config.state_dim;
+
+            if suffix_length == 1 {
+                // Decode
+                let x_strides = [h * dh, dh, 1usize];
+                let dt_strides = [h, 1usize];
+                let cb_strides = [g * n, n, 1usize];
+                let state_strides = [h * dh * n, dh * n, n, 1usize];
+                let group_size = (h / g) as i32;
+                let state_size = n as i32;
+
+                self.ssd_update
+                    .encode(
+                        encoder,
+                        SSDUpdateArguments {
+                            x: x_buf,
+                            dt: dt_buf,
+                            b: b_buf,
+                            c: c_buf,
+                            d: &skip,
+                            z: z_buf,
+                            state: state_buf,
+                            y: out_buf,
+                            next_state: state_buf,
+                            group_size,
+                            state_size,
+                            x_strides,
+                            dt_strides,
+                            cb_strides,
+                            state_strides,
+                            b_size: suffix_length,
+                            h_size: h,
+                            dh_size: dh,
+                        },
+                    )
+                    .expect("Failed to encode SSD decode kernel (parallel)");
+            } else {
+                // Prefill
+                self.ssm_prefill
+                    .encode(
+                        encoder,
+                        SSDPrefillArguments {
+                            x: x_buf,
+                            dt: dt_buf,
+                            b: b_buf,
+                            c: c_buf,
+                            d: &skip,
+                            z: z_buf,
+                            state: state_buf,
+                            y: out_buf,
+                            suffix_len: suffix_length,
+                            group_size: (h / g) as i32,
+                            state_size: n as i32,
+                            x_strides: [h * dh, dh, 1],
+                            dt_strides: [h, 1],
+                            cb_strides: [g * n, n, 1],
+                            state_strides: [dh * n, n, 1],
+                            channels: h,
+                            head_dim: dh,
+                        },
+                        self.prefill_mode,
+                    )
+                    .expect("Failed to encode SSD prefill kernel (parallel)");
+            }
+        }
+
+        // Out-projection
+        self.out_projection.encode_parallel(encoder, frozen, parameters);
     }
 }
 

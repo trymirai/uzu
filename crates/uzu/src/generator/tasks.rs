@@ -73,9 +73,13 @@ impl GeneratorRunTask {
         parameters: &EncodingParameters,
         key: String,
     ) -> GeneratorEncodedTask {
-        context.executables.encode(state, &context.command_buffer, parameters);
-        GeneratorEncodedTask {
-            key,
-        }
+        context.executables.encode_into_orchestrator(
+            state,
+            &context.orchestrator,
+            &context.command_buffer,
+            parameters,
+            Some(&context.gpu_sampler),
+        );
+        GeneratorEncodedTask { key }
     }
 }

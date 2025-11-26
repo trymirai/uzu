@@ -629,6 +629,51 @@ impl SamplingKernelEncodable {
     }
 }
 
+impl SamplingKernelEncodable {
+    pub fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
+        if state.sampling_output.is_none() {
+            return;
+        }
+
+        let logits_binding = state
+            .arrays(&[crate::backends::metal::forward_pass::ArrayId::Logits]);
+        let mut logits = logits_binding[0].borrow_mut();
+
+        let logits_shape = {
+            use crate::Array;
+            logits.shape()
+        };
+        let batch_size = state.active_suffix_length();
+        let vocab_size = logits_shape[1];
+
+        let seeds_binding = state.arrays(&[
+            crate::backends::metal::forward_pass::ArrayId::TokenSeeds,
+        ]);
+        let mut seeds = seeds_binding[0].borrow_mut();
+
+        let mut output_buffer_ref =
+            state.sampling_output.as_ref().unwrap().borrow_mut();
+
+        let sampling_method = state.sampling_method.unwrap();
+
+        if let Err(e) = self.kernel.encode_with_encoder(
+            unsafe { &logits.mtl_buffer() },
+            unsafe { Some(&seeds.mtl_buffer()) },
+            unsafe { &output_buffer_ref.mtl_buffer() },
+            sampling_method,
+            batch_size,
+            vocab_size,
+            encoder,
+        ) {
+            panic!("Sampling encoding failed: {:?}", e);
+        }
+    }
+}
+
 impl EncodableWithState for SamplingKernelEncodable {
     fn encode(
         &self,

@@ -10,7 +10,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::QuantizedLinearKernelBlock,
@@ -213,6 +213,35 @@ impl EncodableWithState for MlpBlockEncodable {
         parameters: &EncodingParameters,
     ) {
         self.encode_with_encoder_impl(state, encoder, parameters);
+    }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        vec![ArrayId::Main, ArrayId::MlpFusedUp, ArrayId::MlpHidden]
+    }
+
+    fn supports_parallel_encode(&self) -> bool {
+        true
+    }
+
+    fn encode_parallel(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        parameters: &EncodingParameters,
+    ) {
+        // Up (QuantizedLinear supports parallel)
+        self.up.encode_parallel(encoder, frozen, parameters);
+
+        // Gate act+mul
+        let fused_buf = frozen.buffer(&ArrayId::MlpFusedUp);
+        let hidden_buf = frozen.buffer(&ArrayId::MlpHidden);
+        let m = frozen.active_suffix_length as i32;
+        self.gate
+            .encode(encoder, fused_buf, hidden_buf, m)
+            .expect("Failed to encode MLP activation/mul kernel (parallel)");
+
+        // Down (QuantizedLinear supports parallel)
+        self.down.encode_parallel(encoder, frozen, parameters);
     }
 }
 

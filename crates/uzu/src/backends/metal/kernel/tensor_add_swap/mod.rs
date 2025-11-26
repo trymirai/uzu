@@ -14,7 +14,7 @@ use crate::{
     backends::metal::{
         error::MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -141,5 +141,26 @@ impl EncodableWithState for TensorAddSwap {
             length,
             encoder,
         );
+    }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        self.argument_arrays.to_vec()
+    }
+
+    fn supports_parallel_encode(&self) -> bool {
+        true
+    }
+
+    fn encode_parallel(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        _parameters: &EncodingParameters,
+    ) {
+        let skip = frozen.buffer(&self.argument_arrays[0]);
+        let main = frozen.buffer(&self.argument_arrays[1]);
+        let length = frozen.num_elements(&self.argument_arrays[0]);
+        
+        self.encode_with_encoder_raw(skip, main, length, encoder);
     }
 }

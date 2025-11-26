@@ -1213,6 +1213,13 @@ impl ForwardPassState {
                     .expect("SSM z buffer not initialized")
                     .clone()
             },
+            ArrayId::SsmConvPadded => {
+                self.aux_buffers
+                    .ssm_conv_padded
+                    .as_ref()
+                    .expect("SSM conv padded buffer not initialized")
+                    .clone()
+            },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
             ArrayId::AttentionPartials => {
@@ -1394,6 +1401,98 @@ impl ForwardPassState {
     pub fn conv_padded_buffer(&self) -> Option<ArrayCell> {
         self.aux_buffers.ssm_conv_padded.as_ref().map(|buf| buf.clone())
     }
+
+    /// Try to get an array cell, returning None if not available
+    fn try_array_cell(
+        &self,
+        id: ArrayId,
+    ) -> Option<RefCell<MetalArray>> {
+        match id {
+            ArrayId::Keys(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                cache.data[layer_index].as_transformer().map(|l| l.keys.clone())
+            },
+            ArrayId::Values(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_transformer()
+                    .map(|l| l.values.clone())
+            },
+            ArrayId::SsmConvState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_state_space()
+                    .map(|l| l.conv_state.clone())
+            },
+            ArrayId::SsmState(layer_index) => {
+                let cache = self.cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_state_space()
+                    .map(|l| l.ssm_state.clone())
+            },
+            ArrayId::SsmConvPadded => self.aux_buffers.ssm_conv_padded.clone(),
+            ArrayId::SsmInProj => self.aux_buffers.ssm_inproj.clone(),
+            ArrayId::SsmPacked(_) => self.aux_buffers.ssm_packed.clone(),
+            ArrayId::SsmX(_) => self.aux_buffers.ssm_x.clone(),
+            ArrayId::SsmB(_) => self.aux_buffers.ssm_b.clone(),
+            ArrayId::SsmC(_) => self.aux_buffers.ssm_c.clone(),
+            ArrayId::SsmDt(_) => self.aux_buffers.ssm_dt.clone(),
+            ArrayId::SsmZ(_) => self.aux_buffers.ssm_z.clone(),
+            // For other arrays, fall back to regular access
+            _ => Some(self.array_cell(id)),
+        }
+    }
+
+    /// Create a zero-copy frozen snapshot for parallel encoding.
+    /// Only extracts buffer pointers (O(1) per buffer) - no data copying.
+    /// Skips arrays that don't exist for this model type.
+    pub fn freeze(
+        &self,
+        array_ids: &[ArrayId],
+    ) -> super::frozen_state::FrozenState {
+        use std::collections::HashMap;
+
+        use crate::Array;
+
+        let mut buffers = HashMap::with_capacity(array_ids.len());
+
+        for id in array_ids {
+            // Skip arrays that don't exist for this model
+            let Some(cell) = self.try_array_cell(id.clone()) else {
+                continue;
+            };
+
+            let arr = cell.borrow();
+            let num_elements = arr.num_elements();
+            let shape = arr.shape().to_vec();
+            drop(arr);
+
+            // Get the Metal buffer pointer (just a pointer, no copy)
+            let mut arr = cell.borrow_mut();
+            let mtl_buffer = unsafe { arr.mtl_buffer().to_owned() };
+
+            buffers.insert(
+                id.clone(),
+                super::frozen_state::FrozenBuffer::new(
+                    mtl_buffer,
+                    num_elements,
+                    shape,
+                ),
+            );
+        }
+
+        let cache = self.cache_layers.borrow();
+        let max_seq_len = cache.max_suffix_length() + cache.max_prefix_length();
+        let prefix_len = cache.max_prefix_length();
+
+        super::frozen_state::FrozenState::new(
+            buffers,
+            self.active_suffix_length,
+            prefix_len,
+            self.is_prefilling,
+            max_seq_len,
+        )
+    }
 }
 
 impl Drop for ForwardPassState {
@@ -1455,6 +1554,7 @@ pub enum ArrayId {
     SsmC(usize),
     SsmDt(usize),
     SsmZ(usize),
+    SsmConvPadded,
 
     RotatedQueries,
     RotatedKeys,

@@ -624,6 +624,25 @@ impl EncodableWithState for AttentionKernelEncodable {
     ) {
         self.encode_with_encoder_impl(state, encoder, parameters);
     }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        vec![
+            ArrayId::QKV,
+            ArrayId::RotatedQueries,
+            ArrayId::RotatedKeys,
+            ArrayId::Keys(self.layer_index),
+            ArrayId::Values(self.layer_index),
+            ArrayId::AttentionOutput,
+            ArrayId::AttentionPartials,
+            ArrayId::AttentionSums,
+            ArrayId::AttentionMaxs,
+        ]
+    }
+
+    // Attention has complex KV cache interactions - not yet parallel
+    fn supports_parallel_encode(&self) -> bool {
+        false
+    }
 }
 
 impl AttentionKernelEncodable {

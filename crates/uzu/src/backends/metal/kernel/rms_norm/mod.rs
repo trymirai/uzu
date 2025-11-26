@@ -11,7 +11,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
     },
@@ -466,6 +466,47 @@ impl EncodableWithState for RMSNormKernelEncodable {
         _parameters: &EncodingParameters,
     ) {
         self.encode_with_encoder_impl(state, encoder);
+    }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        if self.input_array_id == self.output_array_id {
+            vec![self.input_array_id.clone()]
+        } else {
+            vec![self.input_array_id.clone(), self.output_array_id.clone()]
+        }
+    }
+
+    fn supports_parallel_encode(&self) -> bool {
+        true
+    }
+
+    fn encode_parallel(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        _parameters: &EncodingParameters,
+    ) {
+        let input_buffer = frozen.buffer(&self.input_array_id);
+        let output_buffer = frozen.buffer(&self.output_array_id);
+        let input_shape = frozen.shape(&self.input_array_id);
+
+        let batch_size = input_shape[0] as i32;
+        let model_dim = input_shape[1] as i32;
+
+        if let Err(e) = self.kernel.encode(
+            encoder,
+            RMSNormArguments {
+                input_buffer,
+                scales_buffer: &self.scales_buffer,
+                output_buffer,
+                batch_size,
+                model_dim,
+                epsilon: self.config.epsilon,
+                scale_offset: self.config.scale_offset.unwrap_or(0.0),
+            },
+        ) {
+            eprintln!("Failed to encode RMS norm kernel (parallel): {:?}", e);
+        }
     }
 }
 

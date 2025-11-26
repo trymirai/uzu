@@ -1,6 +1,7 @@
 mod buffers;
 pub mod cache_layers;
 pub mod encodable_with_state;
+pub mod frozen_state;
 mod io_arrays;
 pub mod kv_cache_layer;
 mod model_shape;
@@ -12,6 +13,7 @@ pub mod transformer_layer;
 
 pub use buffers::ForwardPassBuffers;
 pub use cache_layers::{CacheLayer, CacheLayers};
+pub use frozen_state::FrozenState;
 pub use io_arrays::IOArrays;
 pub use kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState};
 pub use model_shape::ModelShape;

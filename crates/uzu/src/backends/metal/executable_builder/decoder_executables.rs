@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -6,14 +6,17 @@ use super::layer_executables::LayerExecutables;
 use crate::{
     DataType,
     backends::metal::{
-        KernelDataType, MTLContext, ModelShape,
+        ExecutionOrchestrator, KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
             ArrayId, ForwardPassState, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer::{embed_block, readout_block},
         },
-        kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
+        kernel::{
+            RMSNormKernelEncodable, RopeKernelEncodable,
+            SamplingKernelEncodable,
+        },
     },
     config::{DecoderConfig, DecoderLayerType, decoder_layer::MixerConfig},
     parameters::ParameterTree,
@@ -217,6 +220,174 @@ impl EncodableWithState for DecoderExecutables {
 }
 
 impl DecoderExecutables {
+    /// Parallel encoding into orchestrator - encodes all work, caller commits/waits
+    pub fn encode_into_orchestrator(
+        &self,
+        state: &mut ForwardPassState,
+        orchestrator: &ExecutionOrchestrator,
+        mps_command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+        sampler: Option<&SamplingKernelEncodable>,
+    ) {
+        let embed_shared = self.embed.supports_shared_encoder();
+        let readout_shared = self.readout.supports_shared_encoder();
+
+        // Track MPS CB for waiting
+        orchestrator.set_mps_command_buffer(mps_command_buffer);
+
+        // Phase 1: Embed
+        let embed_fence = state.fence_registry.new_fence();
+
+        if !embed_shared {
+            // MPS embed - encode and commit immediately (MPS manages its own CB)
+            self.embed.encode(state, mps_command_buffer, parameters);
+            mps_command_buffer.commit_and_continue();
+
+            // Signal fence after MPS on our queue
+            let fence_cb = orchestrator.new_command_buffer();
+            fence_cb.set_label("embed-fence");
+            let encoder = fence_cb.new_compute_command_encoder();
+            encoder.update_fence(&embed_fence);
+            encoder.end_encoding();
+            orchestrator.add_pending(fence_cb);
+        } else {
+            // Shared encoder on our queue
+            let embed_cb = orchestrator.new_command_buffer();
+            embed_cb.set_label("embed");
+            let encoder = embed_cb.new_compute_command_encoder();
+            if let Some(prev_fence) = state.fence_registry.take_previous() {
+                encoder.wait_for_fence(&prev_fence);
+            }
+            self.embed.encode_with_shared_encoder(state, encoder, parameters);
+            encoder.update_fence(&embed_fence);
+            encoder.end_encoding();
+            orchestrator.add_pending(embed_cb);
+        }
+
+        // Freeze state
+        let required_ids = self.collect_required_buffers();
+        let frozen = Arc::new(state.freeze(&required_ids));
+
+        // Phase 2: Layers in PARALLEL
+        let layer_fences: Vec<_> = (0..self.layers.len())
+            .map(|_| state.fence_registry.new_fence())
+            .collect();
+
+        let layer_cbs: Vec<_> = (0..self.layers.len())
+            .map(|i| {
+                let cb = orchestrator.new_command_buffer();
+                cb.set_label(&format!("layer-{}", i));
+                cb
+            })
+            .collect();
+
+        let layer_encoders: Vec<_> = self
+            .layers
+            .iter()
+            .map(|layer| layer.create_parallel_encoder())
+            .collect();
+
+        // Parallel encode (CPU parallel, GPU sequential via fences)
+        rayon::scope(|s| {
+            for (i, (layer_encoder, cb)) in
+                layer_encoders.iter().zip(layer_cbs.iter()).enumerate()
+            {
+                let frozen = &frozen;
+                let fences = &layer_fences;
+                let params = parameters.clone();
+                let ef = &embed_fence;
+
+                s.spawn(move |_| {
+                    let encoder = cb.new_compute_command_encoder();
+                    if i == 0 {
+                        encoder.wait_for_fence(ef);
+                    } else {
+                        encoder.wait_for_fence(&fences[i - 1]);
+                    }
+                    layer_encoder.encode(encoder, frozen, &params);
+                    encoder.update_fence(&fences[i]);
+                    encoder.end_encoding();
+                });
+            }
+        });
+
+        // Add layer CBs to orchestrator (order matters for commit)
+        for cb in layer_cbs {
+            orchestrator.add_pending(cb);
+        }
+
+        // Phase 3: Norm + Readout + Sampler (if not prefilling)
+        if !state.is_prefilling() {
+            let final_cb = orchestrator.new_command_buffer();
+            final_cb.set_label("norm-readout-sample");
+            let encoder = final_cb.new_compute_command_encoder();
+
+            // Wait on last layer
+            if let Some(last_fence) = layer_fences.last() {
+                encoder.wait_for_fence(last_fence);
+            }
+
+            // Norm
+            self.norm.encode_with_shared_encoder(state, encoder, parameters);
+
+            // Readout (shared encoder path)
+            if readout_shared {
+                self.readout
+                    .encode_with_shared_encoder(state, encoder, parameters);
+            } else {
+                // MPS readout - signal fence, end encoder, commit CB, then MPS
+                let readout_fence = state.fence_registry.new_fence();
+                encoder.update_fence(&readout_fence);
+                encoder.end_encoding();
+                orchestrator.add_pending(final_cb);
+
+                self.readout.encode(state, mps_command_buffer, parameters);
+                mps_command_buffer.commit_and_continue();
+
+                state.fence_registry.set_current(readout_fence);
+
+                // Sampler needs separate CB after MPS readout
+                if let Some(sampler) = sampler {
+                    if !parameters.warmup {
+                        let sample_cb = orchestrator.new_command_buffer();
+                        sample_cb.set_label("sample");
+                        let sample_encoder =
+                            sample_cb.new_compute_command_encoder();
+                        if let Some(prev) = state.fence_registry.take_previous()
+                        {
+                            sample_encoder.wait_for_fence(&prev);
+                        }
+                        sampler
+                            .encode_with_shared_encoder(state, sample_encoder);
+                        let sample_fence = state.fence_registry.new_fence();
+                        sample_encoder.update_fence(&sample_fence);
+                        sample_encoder.end_encoding();
+                        orchestrator.add_pending(sample_cb);
+                        state.fence_registry.set_current(sample_fence);
+                    }
+                }
+                return;
+            }
+
+            // Sampler (on same encoder as norm+readout)
+            if let Some(sampler) = sampler {
+                if !parameters.warmup {
+                    sampler.encode_with_shared_encoder(state, encoder);
+                }
+            }
+
+            // Final fence
+            let final_fence = state.fence_registry.new_fence();
+            encoder.update_fence(&final_fence);
+            encoder.end_encoding();
+            orchestrator.add_pending(final_cb);
+            state.fence_registry.set_current(final_fence);
+        }
+        // Caller calls orchestrator.commit() and orchestrator.wait()
+    }
+}
+
+impl DecoderExecutables {
     fn encode_adaptive(
         &self,
         state: &mut ForwardPassState,
@@ -291,6 +462,118 @@ impl DecoderExecutables {
                     traces.borrow().logits.clone(),
                 );
             }
+        }
+    }
+
+    /// Collect all ArrayIds needed by all layers for parallel encoding
+    pub fn collect_required_buffers(&self) -> Vec<ArrayId> {
+        let mut ids = Vec::new();
+
+        // Core buffers used by all layers
+        ids.push(ArrayId::Main);
+        ids.push(ArrayId::Shortcut);
+        ids.push(ArrayId::QKV);
+        ids.push(ArrayId::AttentionOutput);
+        ids.push(ArrayId::MlpFusedUp);
+        ids.push(ArrayId::MlpHidden);
+        ids.push(ArrayId::RotatedQueries);
+        ids.push(ArrayId::RotatedKeys);
+        ids.push(ArrayId::AttentionPartials);
+        ids.push(ArrayId::AttentionSums);
+        ids.push(ArrayId::AttentionMaxs);
+
+        // Per-layer KV cache
+        for i in 0..self.layers.len() {
+            ids.push(ArrayId::Keys(i));
+            ids.push(ArrayId::Values(i));
+        }
+
+        // SSM buffers (if any layers use SSM)
+        ids.push(ArrayId::SsmInProj);
+        ids.push(ArrayId::SsmConvPadded);
+        for i in 0..self.layers.len() {
+            ids.push(ArrayId::SsmConvState(i));
+            ids.push(ArrayId::SsmState(i));
+            ids.push(ArrayId::SsmPacked(i));
+            ids.push(ArrayId::SsmX(i));
+            ids.push(ArrayId::SsmB(i));
+            ids.push(ArrayId::SsmC(i));
+            ids.push(ArrayId::SsmDt(i));
+            ids.push(ArrayId::SsmZ(i));
+        }
+
+        ids
+    }
+
+    /// Test method: encode layers using frozen state + encode_parallel
+    /// This validates the FrozenState path works correctly
+    pub fn encode_with_frozen_state_test(
+        &self,
+        state: &mut ForwardPassState,
+        command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+    ) {
+        let embed_shared = self.embed.supports_shared_encoder();
+        let readout_shared = self.readout.supports_shared_encoder();
+
+        // Phase 1: Embed (if not shared, encode separately)
+        if !embed_shared {
+            self.embed.encode(state, command_buffer, parameters);
+        }
+
+        // Collect required buffers for all layers
+        let required_ids = self.collect_required_buffers();
+
+        // Create frozen state snapshot
+        let frozen = state.freeze(&required_ids);
+
+        // Phase 2: Main compute pass with frozen state
+        let cmd = command_buffer.root_command_buffer();
+        let encoder = cmd.new_compute_command_encoder();
+
+        // Wait on previous fence
+        if let Some(prev_fence) = state.fence_registry.take_previous() {
+            encoder.wait_for_fence(&prev_fence);
+        }
+
+        // Embed (if shared)
+        if embed_shared {
+            self.embed.encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        // Encode all layers using encode_parallel
+        for layer in self.layers.iter() {
+            if layer.supports_parallel_encode() {
+                layer.encode_parallel_direct(encoder, &frozen, parameters);
+            } else {
+                layer.encode_with_shared_encoder(state, encoder, parameters);
+            }
+        }
+
+        // Norm + Readout (if not prefilling)
+        if !state.is_prefilling() {
+            self.norm.encode_with_shared_encoder(state, encoder, parameters);
+
+            if readout_shared {
+                self.readout
+                    .encode_with_shared_encoder(state, encoder, parameters);
+            }
+        }
+
+        // Signal fence and end encoder
+        let fence = state.fence_registry.new_fence();
+        encoder.update_fence(&fence);
+        encoder.end_encoding();
+        state.fence_registry.set_current(fence);
+
+        // Phase 3: Readout (if MPSGraph)
+        if !state.is_prefilling() && !readout_shared {
+            self.readout.encode(state, command_buffer, parameters);
+        }
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            cmd.wait_until_completed();
         }
     }
 }

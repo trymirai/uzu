@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
@@ -10,7 +10,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, ForwardPassState, FrozenState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -461,5 +461,162 @@ impl EncodableWithState for LayerExecutables {
         parameters: &EncodingParameters,
     ) {
         self.encode_with_shared_encoder_impl(state, encoder, parameters);
+    }
+}
+
+impl LayerExecutables {
+    /// Check if this layer supports parallel encoding
+    pub fn supports_parallel_encode(&self) -> bool {
+        // Check if all sub-components support parallel encoding
+        let mixer_supports = match &self.mixer {
+            MixerExecutables::Attention {
+                ..
+            } => false, // Not yet implemented
+            MixerExecutables::StateSpace {
+                mixer,
+            } => mixer.supports_parallel_encode(),
+        };
+
+        self.copy_main_to_shortcut.supports_parallel_encode()
+            && self.pre_attention_norm.supports_parallel_encode()
+            && mixer_supports
+            && self.main_shortcut_add_swap.supports_parallel_encode()
+            && self.pre_mlp_norm.supports_parallel_encode()
+            && self.mlp.supports_parallel_encode()
+    }
+
+    /// Encode directly using FrozenState (for testing/validation)
+    pub fn encode_parallel_direct(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        parameters: &EncodingParameters,
+    ) {
+        // Copy main to shortcut
+        self.copy_main_to_shortcut.encode_parallel(encoder, frozen, parameters);
+
+        // Pre-attention norm
+        self.pre_attention_norm.encode_parallel(encoder, frozen, parameters);
+
+        // Mixer
+        match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                // Attention components - all must support parallel encode
+                assert!(
+                    qkv_projection.supports_parallel_encode(),
+                    "qkv_projection must support parallel encode"
+                );
+                qkv_projection.encode_parallel(encoder, frozen, parameters);
+
+                if let Some(norm) = qk_norm {
+                    assert!(
+                        norm.supports_parallel_encode(),
+                        "qk_norm must support parallel encode"
+                    );
+                    norm.encode_parallel(encoder, frozen, parameters);
+                }
+
+                assert!(
+                    rope.supports_parallel_encode(),
+                    "rope must support parallel encode"
+                );
+                rope.encode_parallel(encoder, frozen, parameters);
+
+                assert!(
+                    attention.supports_parallel_encode(),
+                    "attention must support parallel encode"
+                );
+                attention.encode_parallel(encoder, frozen, parameters);
+
+                assert!(
+                    out_projection.supports_parallel_encode(),
+                    "out_projection must support parallel encode"
+                );
+                out_projection.encode_parallel(encoder, frozen, parameters);
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                mixer.encode_parallel(encoder, frozen, parameters);
+            },
+        }
+
+        // Post-attention norm (if present)
+        if let Some(post_attention_norm) = &self.post_attention_norm {
+            if post_attention_norm.supports_parallel_encode() {
+                post_attention_norm
+                    .encode_parallel(encoder, frozen, parameters);
+            }
+        }
+
+        // Add-swap (first)
+        self.main_shortcut_add_swap
+            .encode_parallel(encoder, frozen, parameters);
+
+        // Pre-MLP norm
+        self.pre_mlp_norm.encode_parallel(encoder, frozen, parameters);
+
+        // MLP
+        self.mlp.encode_parallel(encoder, frozen, parameters);
+
+        // Post-MLP norm (if present)
+        if let Some(post_mlp_norm) = &self.post_mlp_norm {
+            if post_mlp_norm.supports_parallel_encode() {
+                post_mlp_norm.encode_parallel(encoder, frozen, parameters);
+            }
+        }
+
+        // Add-swap (second)
+        self.main_shortcut_add_swap
+            .encode_parallel(encoder, frozen, parameters);
+    }
+
+    /// Create a thread-safe encoder that can be sent to another thread
+    pub fn create_parallel_encoder(&self) -> ParallelLayerEncoder {
+        ParallelLayerEncoder::new(self)
+    }
+}
+
+/// Thread-safe layer encoder that can be sent to worker threads.
+/// Captures raw pointers to Metal pipeline states (which are thread-safe).
+pub struct ParallelLayerEncoder {
+    layer_index: usize,
+    // Store raw pointers to the layer's sub-components
+    // SAFETY: Metal pipeline states are thread-safe GPU objects
+    layer_ptr: *const LayerExecutables,
+}
+
+// SAFETY: Metal pipelines are thread-safe GPU objects.
+// The layer pointer is valid for the lifetime of the encoding operation.
+unsafe impl Send for ParallelLayerEncoder {}
+unsafe impl Sync for ParallelLayerEncoder {}
+
+impl ParallelLayerEncoder {
+    fn new(layer: &LayerExecutables) -> Self {
+        Self {
+            layer_index: layer.layer_index,
+            layer_ptr: layer as *const LayerExecutables,
+        }
+    }
+
+    /// Encode the layer using frozen state
+    pub fn encode(
+        &self,
+        encoder: &ComputeCommandEncoderRef,
+        frozen: &FrozenState,
+        parameters: &EncodingParameters,
+    ) {
+        // SAFETY: The layer pointer is valid because:
+        // 1. ParallelEncodingContext::encode_and_commit runs in a rayon scope
+        // 2. The scope blocks until all tasks complete
+        // 3. The layers (in DecoderExecutables) outlive the encoding operation
+        let layer = unsafe { &*self.layer_ptr };
+        layer.encode_parallel_direct(encoder, frozen, parameters);
     }
 }

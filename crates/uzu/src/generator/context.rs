@@ -6,7 +6,7 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
+        CacheLayers, DecoderExecutables, ExecutionOrchestrator, KVCacheUpdate, KernelDataType,
         MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
@@ -36,6 +36,7 @@ pub struct GeneratorContext {
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: SamplingKernelEncodable,
     pub next_seed: DerivableSeed,
+    pub orchestrator: ExecutionOrchestrator,
 }
 
 impl GeneratorContext {
@@ -149,6 +150,8 @@ impl GeneratorContext {
         let base_seed = decoding_config.sampling_seed.resolve();
         let next_seed = DerivableSeed::new(base_seed);
 
+        let orchestrator = ExecutionOrchestrator::new(mtl_context.command_queue.clone());
+
         let context = Self {
             mtl_context,
             command_buffer,
@@ -161,6 +164,7 @@ impl GeneratorContext {
             kv_cache_update,
             gpu_sampler,
             next_seed,
+            orchestrator,
         };
 
         return Ok(context);

@@ -192,6 +192,22 @@ impl EncodableWithState for RopeKernelEncodable {
     ) {
         self.encode_with_encoder_impl(state, encoder);
     }
+
+    fn required_buffers(&self) -> Vec<ArrayId> {
+        vec![
+            ArrayId::QKV,
+            ArrayId::RotatedQueries,
+            ArrayId::RotatedKeys,
+            ArrayId::TokenPositions,
+            ArrayId::RopeCosines(self.rope_type),
+            ArrayId::RopeSines(self.rope_type),
+        ]
+    }
+
+    // Rope has complex position dependencies - not yet parallel
+    fn supports_parallel_encode(&self) -> bool {
+        false
+    }
 }
 
 impl RopeKernelEncodable {

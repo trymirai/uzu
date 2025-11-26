@@ -433,12 +433,14 @@ impl Generator {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
 
-            if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                // Nothing
-            } else {
-                self.context.reset_command_buffer();
+            let is_pre_encoded = self.encoded_tasks.remove(&encoded_task_key).is_some();
 
-                _ = task.build_encoded_task(
+            if !is_pre_encoded {
+                // Fresh encode
+                self.context.reset_command_buffer();
+                self.context.orchestrator.clear();
+
+                task.build_encoded_task(
                     &self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, true, false),
@@ -446,22 +448,11 @@ impl Generator {
                 );
             }
 
-            let root_command_buffer =
-                self.context.command_buffer.root_command_buffer().to_owned();
+            // Commit current work
+            self.context.orchestrator.commit();
 
-            if !warmup {
-                if !task.is_prefilling {
-                    self.context.gpu_sampler.encode(
-                        &mut state,
-                        &self.context.command_buffer,
-                        &EncodingParameters::new(warmup, true, false),
-                    );
-                }
-            }
-
-            self.context.command_buffer.commit_and_continue();
-
-            if allow_pre_encode {
+            // Pre-encode next (if not already pre-encoded)
+            if allow_pre_encode && !is_pre_encoded {
                 let next_task_key: String =
                     task.encoded_task_key(self.tokens.len() + 1);
 
@@ -477,7 +468,9 @@ impl Generator {
                     .insert(next_task_key.clone(), next_encoded_task);
             }
 
-            root_command_buffer.wait_until_completed();
+            // Wait for GPU
+            self.context.orchestrator.wait();
+
             let run_time = run_start.elapsed().as_secs_f64();
 
             if should_capture {
