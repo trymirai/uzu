@@ -1,8 +1,8 @@
 use std::cell::Cell;
 
 use metal::{
-    Buffer, Device, Heap, HeapDescriptor, MTLCPUCacheMode, MTLResourceOptions,
-    MTLStorageMode,
+    Buffer, Device, Heap, HeapDescriptor, MTLCPUCacheMode,
+    MTLHazardTrackingMode, MTLResourceOptions, MTLStorageMode,
 };
 
 pub trait BufferAllocator {
@@ -50,6 +50,7 @@ impl HeapAllocator {
         let descriptor = HeapDescriptor::new();
         descriptor.set_size(size_bytes);
         descriptor.set_storage_mode(storage_mode);
+        descriptor.set_hazard_tracking_mode(MTLHazardTrackingMode::Tracked);
         descriptor.set_cpu_cache_mode(MTLCPUCacheMode::DefaultCache);
 
         let heap = device.new_heap(&descriptor);
