@@ -1,10 +1,11 @@
-use crate::session::parameter::SamplingPolicy;
+use crate::session::{config::GrammarConfig, parameter::SamplingPolicy};
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     pub tokens_limit: u64,
     pub enable_thinking: bool,
     pub sampling_policy: SamplingPolicy,
+    pub grammar_config: Option<GrammarConfig>,
 }
 
 impl RunConfig {
@@ -17,6 +18,7 @@ impl RunConfig {
             tokens_limit,
             enable_thinking,
             sampling_policy,
+            grammar_config: None,
         }
     }
 
@@ -41,6 +43,14 @@ impl RunConfig {
         sampling_policy: SamplingPolicy,
     ) -> Self {
         self.sampling_policy = sampling_policy;
+        self
+    }
+
+    pub fn grammar_config(
+        mut self,
+        grammar_config: GrammarConfig,
+    ) -> Self {
+        self.grammar_config = Some(grammar_config);
         self
     }
 }

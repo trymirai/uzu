@@ -126,10 +126,11 @@ impl DecoderTestContext {
             cache_layers.clone(),
             shared_buffers.clone(),
             &token_ids,
+            None,
+            &token_seeds,
             &token_positions,
             token_ids.len(),
             false,
-            &token_seeds,
             false,
             None,
         );

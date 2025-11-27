@@ -14,6 +14,7 @@ use crate::{
         ForwardPassState, INVALID_POSITION,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
+    generator::grammar::CompiledGrammar,
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
@@ -64,6 +65,7 @@ impl Generator {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -87,6 +89,7 @@ impl Generator {
         let suffix_root = TrieNode::from_speculator(
             &tokens,
             &mut self.context.next_seed,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
             suffix_length + 1,
@@ -101,6 +104,24 @@ impl Generator {
             .chain(flat_trie.token_ids())
             .chain(repeat_n(0, suffix_length - active_suffix_length))
             .collect::<Vec<u64>>();
+
+        let token_bitmask = if compiled_grammar.is_some() {
+            Some(
+                repeat_n(
+                    vec![0; self.context.model_shape.bitmask_shape(1)[1]],
+                    tokens_length - 1,
+                )
+                .chain(flat_trie.token_masks().unwrap().map(|x| x.to_vec()))
+                .chain(repeat_n(
+                    vec![0; self.context.model_shape.bitmask_shape(1)[1]],
+                    suffix_length - active_suffix_length,
+                ))
+                .collect::<Vec<Vec<u32>>>()
+                .concat(),
+            )
+        } else {
+            None
+        };
 
         let token_positions = (prefix_offset
             ..prefix_offset + tokens_length - 1)
@@ -133,6 +154,13 @@ impl Generator {
                 .iter()
                 .position(|&pos| pos == INVALID_POSITION)
                 .unwrap_or(prefill_step_size);
+            let bitmask_for_step = token_bitmask.as_ref().map(|x| {
+                x[tokens_start_index
+                    * self.context.model_shape.bitmask_shape(1)[1]
+                    ..tokens_end_index
+                        * self.context.model_shape.bitmask_shape(1)[1]]
+                    .to_vec()
+            });
             let seeds_for_step =
                 &token_seeds[tokens_start_index..tokens_end_index];
             let is_last_prefill_step = step == prefill_steps - 1;
@@ -156,6 +184,7 @@ impl Generator {
             let task = GeneratorRunTask {
                 token_ids: tokens_for_step.to_vec(),
                 token_positions: positions_for_step.to_vec(),
+                token_bitmask: bitmask_for_step,
                 token_seeds: seeds_for_step.to_vec(),
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
@@ -231,6 +260,9 @@ impl Generator {
 
         let mut accepted_token_indices = vec![suffix_root_index];
         let mut accepted_tokens = vec![sampled_tokens[suffix_root_index]];
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            compiled_grammar.accept_token(sampled_tokens[suffix_root_index]);
+        }
         let mut current_token = &suffix_root;
 
         while let Some(next_token) =
@@ -241,6 +273,9 @@ impl Generator {
 
             accepted_tokens.push(sampled_tokens[next_token_index]);
             accepted_token_indices.push(next_token_index);
+            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+                compiled_grammar.accept_token(sampled_tokens[next_token_index]);
+            }
 
             current_token = next_token;
         }
@@ -263,6 +298,7 @@ impl Generator {
 
     pub fn generate(
         &mut self,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
@@ -271,6 +307,7 @@ impl Generator {
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &mut self.context.next_seed,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
             suffix_length,
@@ -283,6 +320,23 @@ impl Generator {
             .token_ids()
             .chain(repeat_n(0, suffix_length - active_suffix_length))
             .collect();
+
+        let token_bitmask = if compiled_grammar.is_some() {
+            Some(
+                flat_trie
+                    .token_masks()
+                    .unwrap()
+                    .map(|x| x.to_vec())
+                    .chain(repeat_n(
+                        vec![0; self.context.model_shape.bitmask_shape(1)[1]],
+                        suffix_length - active_suffix_length,
+                    ))
+                    .collect::<Vec<Vec<u32>>>()
+                    .concat(),
+            )
+        } else {
+            None
+        };
 
         let start_position = self.tokens.len() - 1;
         let token_positions = flat_trie
@@ -302,6 +356,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids,
             token_positions,
+            token_bitmask,
             token_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
@@ -326,6 +381,9 @@ impl Generator {
 
             accepted_token_indices.push(current_token_index);
             accepted_tokens.push(current_token_id);
+            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+                compiled_grammar.accept_token(current_token_id);
+            }
 
             let Some(next_token) = current_token.get(current_token_id) else {
                 break;
@@ -370,6 +428,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: vec![0; suffix_length],
             token_positions: (0..suffix_length).collect::<Vec<usize>>(),
+            token_bitmask: None,
             token_seeds: vec![0; suffix_length],
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,

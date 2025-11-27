@@ -312,10 +312,11 @@ impl Tracer {
             self.generator_context.cache_layers.clone(),
             self.generator_context.shared_buffers.clone(),
             &token_ids,
+            None,
+            &token_seeds,
             &token_positions,
             token_ids.len(),
             false,
-            &token_seeds,
             true,
             None,
         );

@@ -35,9 +35,9 @@ fn verify_sprout(
 
     assert_eq!(flat_trie.len(), 1);
     assert_eq!(flat_trie.index(&trie_root), Some(0));
-    assert_eq!(flat_trie.index(&TrieNode::new(1, 0)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 1)), None);
-    assert_eq!(flat_trie.index(&TrieNode::new(0, 0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(1, None, 0)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, None, 1)), None);
+    assert_eq!(flat_trie.index(&TrieNode::new(0, None, 0)), None);
     assert_eq!(flat_trie.token_ids().collect::<Vec<u64>>(), vec![0]);
     assert_eq!(flat_trie.token_positions().collect::<Vec<usize>>(), vec![0]);
     assert_eq!(
@@ -48,7 +48,7 @@ fn verify_sprout(
 
 #[test]
 fn test_trie_manual_sprout() {
-    let trie_root = TrieNode::new(0, 0);
+    let trie_root = TrieNode::new(0, None, 0);
 
     verify_sprout(&trie_root, 0);
 }
@@ -63,6 +63,7 @@ fn test_trie_from_speculator_sprout() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &mut trie_rng,
+        None,
         &speculator,
         &TrieCreationConfig {
             width: 5,
@@ -110,11 +111,11 @@ fn verify_stick(
 
 #[test]
 fn test_trie_manual_stick() {
-    let mut trie_root = TrieNode::new(0, 0);
+    let mut trie_root = TrieNode::new(0, None, 0);
 
     let mut trie_leaf = &mut trie_root;
     for (token, seed) in std::iter::zip(1..10, 1..10) {
-        trie_leaf.add(TrieNode::new(token, seed)).unwrap();
+        trie_leaf.add(TrieNode::new(token, None, seed)).unwrap();
         trie_leaf = trie_leaf.get_mut(token).unwrap();
     }
 
@@ -138,6 +139,7 @@ fn test_trie_from_speculator_stick() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &mut trie_rng,
+        None,
         &speculator,
         &TrieCreationConfig {
             width: 1,
@@ -186,14 +188,14 @@ fn verify_bush(
 
 #[test]
 fn test_trie_manual_bush() {
-    let mut trie_root = TrieNode::new(0, 0);
+    let mut trie_root = TrieNode::new(0, None, 0);
 
-    assert!(trie_root.add(TrieNode::new(1, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, 1)).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, 10)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, 2)).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, 3)).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, None, 2)).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, None, 3)).is_ok());
 
     verify_bush(&trie_root, (0..4).into_iter().collect());
 }
@@ -215,6 +217,7 @@ fn test_trie_from_speculator_bush() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &mut trie_rng,
+        None,
         &speculator,
         &TrieCreationConfig {
             width: 3,
@@ -265,21 +268,21 @@ fn verify_tree(trie_root: &TrieNode) {
 
 #[test]
 fn test_trie_manual_tree() {
-    let mut trie_root = TrieNode::new(0, 0);
+    let mut trie_root = TrieNode::new(0, None, 0);
 
-    assert!(trie_root.add(TrieNode::new(1, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, 1)).is_err());
-    assert!(trie_root.add(TrieNode::new(1, 10)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, 10)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, 2)).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, None, 1)).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, None, 2)).is_ok());
 
     let mid_b = trie_root.get_mut(2).unwrap();
-    assert!(mid_b.add(TrieNode::new(10, 15)).is_ok());
+    assert!(mid_b.add(TrieNode::new(10, None, 15)).is_ok());
 
     let mid_c = trie_root.get_mut(3).unwrap();
-    assert!(mid_c.add(TrieNode::new(20, 25)).is_ok());
-    assert!(mid_c.add(TrieNode::new(21, 26)).is_ok());
+    assert!(mid_c.add(TrieNode::new(20, None, 25)).is_ok());
+    assert!(mid_c.add(TrieNode::new(21, None, 26)).is_ok());
 
     verify_tree(&trie_root)
 }

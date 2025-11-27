@@ -14,6 +14,7 @@ pub struct GeneratorEncodedTask {
 pub struct GeneratorRunTask {
     pub token_ids: Vec<u64>,
     pub token_positions: Vec<usize>,
+    pub token_bitmask: Option<Vec<u32>>,
     pub token_seeds: Vec<u64>,
     pub expected_number_of_new_tokens: usize,
     pub active_suffix_length: usize,
@@ -25,6 +26,7 @@ impl GeneratorRunTask {
         GeneratorRunTask {
             token_ids: self.token_ids.clone(),
             token_positions: self.token_positions.clone(),
+            token_bitmask: self.token_bitmask.clone(),
             token_seeds: self.token_seeds.clone(),
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
             active_suffix_length: self.active_suffix_length,
@@ -55,10 +57,11 @@ impl GeneratorRunTask {
             context.cache_layers.clone(),
             context.shared_buffers.clone(),
             &self.token_ids,
+            self.token_bitmask.as_ref().map(|x| x.as_slice()),
+            &self.token_seeds,
             &self.token_positions,
             self.active_suffix_length,
             self.is_prefilling,
-            &self.token_seeds,
             false,
             external_bias_fn,
         );

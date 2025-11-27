@@ -909,6 +909,8 @@ pub struct ForwardPassState {
     token_ids: ArrayCell,
     /// [suffix_length] - i32
     token_positions: ArrayCell,
+    /// [suffix_length, vocabulary_size] - bitmask packed in u32 (0 = disallowed, 1 = allowed)
+    token_bitmask: Option<ArrayCell>,
     /// [suffix_length] - u64
     token_seeds: ArrayCell,
     /// [suffix_length, suffix_length + prefix_length]
@@ -936,10 +938,11 @@ impl ForwardPassState {
         cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
+        token_bitmask: Option<&[u32]>,
+        token_seeds: &[u64],
         token_positions: &[usize],
         active_suffix_length: usize,
         is_prefilling: bool,
-        token_seeds: &[u64],
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> Self {
@@ -1011,6 +1014,24 @@ impl ForwardPassState {
         };
         context.copy_from_view(&mut token_seeds_array, token_seeds.into());
         let token_seeds_refcell = RefCell::new(token_seeds_array);
+
+        // --------------------
+        // Token Bitmask
+        // --------------------
+        let token_bitmask_refcell = if let Some(token_bitmask) = token_bitmask {
+            let mut token_bitmask_array = unsafe {
+                MetalArray::new(
+                    scratch.token_bitmask.clone(),
+                    &model_shape.bitmask_shape(suffix_length),
+                    DataType::U32,
+                )
+            };
+            context
+                .copy_from_view(&mut token_bitmask_array, token_bitmask.into());
+            Some(RefCell::new(token_bitmask_array))
+        } else {
+            None
+        };
 
         // --------------------
         // Attention Bias
@@ -1086,6 +1107,7 @@ impl ForwardPassState {
             context,
             token_ids: token_ids_refcell,
             token_positions: token_positions_refcell,
+            token_bitmask: token_bitmask_refcell,
             token_seeds: token_seeds_refcell,
             attention_bias,
             logits,
@@ -1100,6 +1122,10 @@ impl ForwardPassState {
         }
     }
 
+    pub fn has_bitmask(&self) -> bool {
+        self.token_bitmask.is_some()
+    }
+
     fn array_cell(
         &self,
         id: ArrayId,
@@ -1107,6 +1133,7 @@ impl ForwardPassState {
         match id {
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
+            ArrayId::TokenBitmask => self.token_bitmask.as_ref().unwrap().clone(),
             ArrayId::TokenSeeds => self.token_seeds.clone(),
             ArrayId::Logits => self.logits.clone(),
             ArrayId::Main => self.aux_buffers.main.clone(),
@@ -1432,8 +1459,9 @@ pub enum RopeType {
 pub enum ArrayId {
     TokenIds,
     TokenPositions,
-    Logits,
+    TokenBitmask,
     TokenSeeds,
+    Logits,
 
     Main,
     Shortcut,

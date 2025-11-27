@@ -170,6 +170,13 @@ impl ModelShape {
         [suffix_length, self.vocabulary_size]
     }
 
+    pub fn bitmask_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        [suffix_length, self.vocabulary_size.div_ceil(32)]
+    }
+
     pub fn embeddings_input_shape(&self) -> [usize; 2] {
         [self.vocabulary_size, self.model_dim]
     }
