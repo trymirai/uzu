@@ -367,11 +367,14 @@ impl Session {
             generator.context.prepare_async_seeds(tokens_to_generate);
             let last_callback_time = Arc::new(Mutex::new(Instant::now()));
 
-            for i in 0..tokens_to_generate {
+            // +N async: keep N passes in flight ahead
+            let lookahead = 4; // Configurable: 1=minimal, higher=more overlap
+            let initial_submit = std::cmp::min(lookahead, tokens_to_generate);
+
+            // Submit initial batch
+            for idx in 0..initial_submit {
                 let tx_clone = tx.clone();
                 let last_time = last_callback_time.clone();
-                let idx = i;
-
                 generator.async_generate(
                     idx,
                     sampling_method,
@@ -386,18 +389,63 @@ impl Session {
                     },
                 )?;
             }
-            drop(tx);
 
-            let mut results: Vec<(usize, u64, f64)> = rx.iter().collect();
-            results.sort_by_key(|(idx, _, _)| *idx);
+            let mut finish_reason = FinishReason::Length;
+            let mut next_to_submit = initial_submit;
+            let mut in_flight = initial_submit;
 
-            for (_, token, duration) in results.iter() {
-                generator.tokens.push(*token);
+            for i in 0..tokens_to_generate {
+                // Submit next pass to maintain lookahead
+                if next_to_submit < tokens_to_generate {
+                    let tx_clone = tx.clone();
+                    let last_time = last_callback_time.clone();
+                    let idx = next_to_submit;
+                    generator.async_generate(
+                        idx,
+                        sampling_method,
+                        move |token| {
+                            let callback_time = Instant::now();
+                            let mut last = last_time.lock().unwrap();
+                            let duration = callback_time
+                                .duration_since(*last)
+                                .as_secs_f64();
+                            *last = callback_time;
+                            drop(last);
+                            let _ = tx_clone.send((idx, token, duration));
+                        },
+                    )?;
+                    next_to_submit += 1;
+                    in_flight += 1;
+                }
+
+                let (_, token, duration) =
+                    rx.recv().map_err(|_| Error::SamplingFailed)?;
+                in_flight -= 1;
+
+                generator.tokens.push(token);
                 generate_results.push(GenerateResult {
-                    tokens: vec![*token],
-                    forwardpass_duration: *duration,
+                    tokens: vec![token],
+                    forwardpass_duration: duration,
                 });
-                generate_durations.push(*duration);
+                generate_durations.push(duration);
+
+                // Check EOS
+                if eos_tokens.contains(&token) {
+                    finish_reason = FinishReason::Stop;
+                    // Drain remaining in-flight passes
+                    while in_flight > 0 {
+                        let (_, extra_token, extra_duration) =
+                            rx.recv().map_err(|_| Error::SamplingFailed)?;
+                        generator.tokens.push(extra_token);
+                        generate_results.push(GenerateResult {
+                            tokens: vec![extra_token],
+                            forwardpass_duration: extra_duration,
+                        });
+                        generate_durations.push(extra_duration);
+                        in_flight -= 1;
+                    }
+                    break;
+                }
             }
 
             let generated_text =
@@ -416,9 +464,9 @@ impl Session {
                     generator.decoding_config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
-                    tokens_to_generate,
+                    generate_results.len(),
                 ),
-                finish_reason: Some(FinishReason::Length),
+                finish_reason: Some(finish_reason),
             }
         } else {
             loop {
