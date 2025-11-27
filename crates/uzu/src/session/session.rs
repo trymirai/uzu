@@ -2,12 +2,14 @@ use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
+use xgrammar::TokenizerInfo;
 
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
     config::{ModelMetadata, decoder_layer::MixerConfig},
     generator::{
         generator::Generator,
+        grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -29,6 +31,7 @@ pub struct Session {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
+    tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     generator: Option<Generator>,
@@ -96,6 +99,9 @@ impl Session {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        let tokenizer_info =
+            TokenizerInfo::from_huggingface(&tokenizer, None, None);
+
         let input_processor = InputProcessorDefault::new(
             model_metadata.model_config.message_processor_config.clone(),
         );
@@ -115,6 +121,7 @@ impl Session {
             model_path,
             model_metadata,
             tokenizer,
+            tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
             generator: Some(generator),
@@ -217,6 +224,16 @@ impl Session {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
 
+        let mut compiled_grammar: Option<CompiledGrammar> =
+            if let Some(ref grammar_config) = config.grammar_config {
+                Some(CompiledGrammar::from_config(
+                    grammar_config,
+                    &self.tokenizer_info,
+                )?)
+            } else {
+                None
+            };
+
         let run_start = Instant::now();
         let text =
             self.input_processor.process(&input, config.enable_thinking)?;
@@ -293,6 +310,7 @@ impl Session {
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = generator.prefill(
             tokens.clone(),
+            compiled_grammar.as_mut(),
             sampling_method,
             prefix_offset,
             sample_suffix,
@@ -348,7 +366,8 @@ impl Session {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_method)?;
+            let generate_result = generator
+                .generate(compiled_grammar.as_mut(), sampling_method)?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
