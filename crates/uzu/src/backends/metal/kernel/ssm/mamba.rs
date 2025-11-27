@@ -1,12 +1,15 @@
 use std::{env, rc::Rc};
 
+use metal::{
+    Buffer as MTLBuffer, MTLCompareFunction, foreign_types::ForeignType,
+};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    SSDPrefillArguments, SSDPrefillKernel,
-    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel, SplitInProjArguments,
-    SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SplitInProjArguments, SplitInProjKernel,
+    conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -18,6 +21,7 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
+        metal_extensions::ComputeEncoderConditional,
     },
     config::{DecoderLayerType, mamba::Mamba2Config},
     parameters::ParameterTree,
@@ -156,13 +160,33 @@ impl MambaMixerEncodable {
         }
 
         self.in_projection.encode(state, command_buffer, parameters);
-        self.split_inproj(state, command_buffer, active_suffix_length);
-        self.run_conv_scan(state, command_buffer, active_suffix_length);
+        self.split_inproj(
+            state,
+            command_buffer,
+            active_suffix_length,
+            parameters.predicate,
+        );
+        self.run_conv_scan(
+            state,
+            command_buffer,
+            active_suffix_length,
+            parameters.predicate,
+        );
 
         if suffix_length == 1 {
-            self.run_decode_ssm(state, command_buffer, active_suffix_length);
+            self.run_decode_ssm(
+                state,
+                command_buffer,
+                active_suffix_length,
+                parameters.predicate,
+            );
         } else {
-            self.run_prefill_ssm(state, command_buffer, active_suffix_length);
+            self.run_prefill_ssm(
+                state,
+                command_buffer,
+                active_suffix_length,
+                parameters.predicate,
+            );
         }
 
         self.out_projection.encode(state, command_buffer, parameters);
@@ -180,6 +204,7 @@ impl MambaMixerEncodable {
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
+        predicate: Option<&MTLBuffer>,
     ) {
         let arrays = state.arrays(&[
             ArrayId::SsmInProj,
@@ -207,6 +232,18 @@ impl MambaMixerEncodable {
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         let compute = mtl_command_buffer.new_compute_command_encoder();
+
+        if let Some(p) = predicate {
+            unsafe {
+                compute.encode_start_if(
+                    &p.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         self.split_inproj
             .encode(
                 &compute,
@@ -224,6 +261,13 @@ impl MambaMixerEncodable {
                 },
             )
             .expect("Failed to encode split in-projection kernel");
+
+        if let Some(_) = predicate {
+            unsafe {
+                compute.encode_end_if();
+            }
+        }
+
         compute.end_encoding();
     }
 
@@ -232,6 +276,7 @@ impl MambaMixerEncodable {
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
+        predicate: Option<&MTLBuffer>,
     ) {
         let arrays = state.arrays(&[
             ArrayId::SsmPacked(self.layer_index),
@@ -268,6 +313,18 @@ impl MambaMixerEncodable {
 
         if suffix_length == 1 {
             let compute = cmd.new_compute_command_encoder();
+
+            if let Some(p) = predicate {
+                unsafe {
+                    compute.encode_start_if(
+                        &p.as_ref(),
+                        0,
+                        MTLCompareFunction::NotEqual,
+                        0,
+                    );
+                }
+            }
+
             self.conv_scan
                 .encode_decode(
                     &compute,
@@ -290,6 +347,13 @@ impl MambaMixerEncodable {
                     },
                 )
                 .expect("Failed to encode conv decode kernel");
+
+            if let Some(_) = predicate {
+                unsafe {
+                    compute.encode_end_if();
+                }
+            }
+
             compute.end_encoding();
         } else {
             let padded_buf = if state_stride > 0 {
@@ -302,6 +366,18 @@ impl MambaMixerEncodable {
 
                 {
                     let pack_encoder = cmd.new_compute_command_encoder();
+
+                    if let Some(p) = predicate {
+                        unsafe {
+                            pack_encoder.encode_start_if(
+                                &p.as_ref(),
+                                0,
+                                MTLCompareFunction::NotEqual,
+                                0,
+                            );
+                        }
+                    }
+
                     self.conv_scan
                         .encode_pack(
                             &pack_encoder,
@@ -316,6 +392,13 @@ impl MambaMixerEncodable {
                             },
                         )
                         .expect("Failed to encode conv pack kernel");
+
+                    if let Some(_) = predicate {
+                        unsafe {
+                            pack_encoder.encode_end_if();
+                        }
+                    }
+
                     pack_encoder.end_encoding();
                 }
 
@@ -327,6 +410,18 @@ impl MambaMixerEncodable {
             let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
 
             let compute = cmd.new_compute_command_encoder();
+
+            if let Some(p) = predicate {
+                unsafe {
+                    compute.encode_start_if(
+                        &p.as_ref(),
+                        0,
+                        MTLCompareFunction::NotEqual,
+                        0,
+                    );
+                }
+            }
+
             self.conv_scan
                 .encode(
                     &compute,
@@ -348,6 +443,13 @@ impl MambaMixerEncodable {
                     },
                 )
                 .expect("Failed to encode conv scan kernel");
+
+            if let Some(_) = predicate {
+                unsafe {
+                    compute.encode_end_if();
+                }
+            }
+
             compute.end_encoding();
         }
     }
@@ -357,6 +459,7 @@ impl MambaMixerEncodable {
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
+        predicate: Option<&MTLBuffer>,
     ) {
         let base_arrays = state.arrays(&[
             ArrayId::SsmX(self.layer_index),
@@ -394,6 +497,18 @@ impl MambaMixerEncodable {
 
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
+
+        if let Some(p) = predicate {
+            unsafe {
+                compute.encode_start_if(
+                    &p.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         self.ssm_prefill
             .encode(
                 &compute,
@@ -432,6 +547,13 @@ impl MambaMixerEncodable {
                 self.prefill_mode,
             )
             .expect("Failed to encode SSD prefill kernel");
+
+        if let Some(_) = predicate {
+            unsafe {
+                compute.encode_end_if();
+            }
+        }
+
         compute.end_encoding();
     }
 
@@ -440,6 +562,7 @@ impl MambaMixerEncodable {
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
+        predicate: Option<&MTLBuffer>,
     ) {
         let arrays = state.arrays(&[
             ArrayId::SsmX(self.layer_index),
@@ -487,6 +610,18 @@ impl MambaMixerEncodable {
 
         let cmd = command_buffer.root_command_buffer().to_owned();
         let compute = cmd.new_compute_command_encoder();
+
+        if let Some(p) = predicate {
+            unsafe {
+                compute.encode_start_if(
+                    &p.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         self.ssd_update
             .encode(
                 &compute,
@@ -512,6 +647,13 @@ impl MambaMixerEncodable {
                 },
             )
             .expect("Failed to encode SSD decode kernel");
+
+        if let Some(_) = predicate {
+            unsafe {
+                compute.encode_end_if();
+            }
+        }
+
         compute.end_encoding();
     }
 }

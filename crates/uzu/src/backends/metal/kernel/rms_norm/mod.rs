@@ -2,7 +2,8 @@ use std::{mem::size_of, rc::Rc};
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+    ComputePipelineState as MTLComputePipelineState, MTLCompareFunction,
+    MTLSize, foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -14,6 +15,7 @@ use crate::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
     config::{RMSNormConfig, UpcastMode},
     parameters::ParameterTree,
@@ -453,6 +455,17 @@ impl EncodableWithState for RMSNormKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         if let Err(e) = self.kernel.encode(
             &compute_encoder,
             RMSNormArguments {
@@ -466,6 +479,12 @@ impl EncodableWithState for RMSNormKernelEncodable {
             },
         ) {
             eprintln!("Failed to encode RMS norm kernel: {:?}", e);
+        }
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_end_if();
+            }
         }
 
         compute_encoder.end_encoding();
@@ -639,6 +658,17 @@ impl EncodableWithState for QKNormKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         // Process query normalization if configured
         if let (
             Some(query_kernel),
@@ -691,6 +721,12 @@ impl EncodableWithState for QKNormKernelEncodable {
                 },
             ) {
                 eprintln!("Failed to encode key normalization kernel: {:?}", e);
+            }
+        }
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_end_if();
             }
         }
 

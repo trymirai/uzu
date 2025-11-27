@@ -2,11 +2,13 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputePipelineState as MTLComputePipelineState,
+    ComputePipelineState as MTLComputePipelineState, MTLCompareFunction,
+    foreign_types::ForeignType,
 };
 
 use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
+    KernelDataType, MTLContext,
+    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 use crate::backends::metal::error::MTLError;
 
@@ -37,8 +39,21 @@ impl TensorAddBias {
         num_cols: usize,
         total_len: usize,
         command_buffer: &MTLCommandBuffer,
+        predicate: Option<&MTLBuffer>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
+
+        if let Some(p) = predicate {
+            unsafe {
+                encoder.encode_start_if(
+                    &p.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         encoder.set_label("Tensor Add Bias");
         encoder.set_compute_pipeline_state(&self.pipeline_state);
         encoder.set_buffer(0, Some(input), 0);
@@ -55,6 +70,13 @@ impl TensorAddBias {
             &(total_len as i32) as *const _ as *const _,
         );
         encoder.dispatch_1d_exactly(&self.pipeline_state, total_len, None);
+
+        if let Some(_) = predicate {
+            unsafe {
+                encoder.encode_end_if();
+            }
+        }
+
         encoder.end_encoding();
     }
 }

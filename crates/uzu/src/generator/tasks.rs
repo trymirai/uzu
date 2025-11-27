@@ -1,3 +1,7 @@
+use std::mem::size_of;
+
+use metal::{Buffer, MTLResourceOptions};
+
 use super::context::GeneratorContext;
 use crate::backends::metal::{
     ForwardPassState,
@@ -8,6 +12,27 @@ use crate::backends::metal::{
 
 pub struct GeneratorEncodedTask {
     pub key: String,
+    predicate_buffer: Buffer,
+}
+
+impl GeneratorEncodedTask {
+    pub fn predicate_buffer(&self) -> &Buffer {
+        &self.predicate_buffer
+    }
+
+    pub fn set_predicate_enabled(
+        &self,
+        enabled: bool,
+    ) {
+        unsafe {
+            let ptr = self.predicate_buffer.contents() as *mut u32;
+            *ptr = u32::from(enabled);
+            self.predicate_buffer.did_modify_range(metal::NSRange::new(
+                0,
+                size_of::<u32>() as u64,
+            ));
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,9 +98,33 @@ impl GeneratorRunTask {
         parameters: &EncodingParameters,
         key: String,
     ) -> GeneratorEncodedTask {
-        context.executables.encode(state, &context.command_buffer, parameters);
-        GeneratorEncodedTask {
+        // TODO: Re-enable predicate buffer when we can ensure consistent visibility
+        // and MPSGraph support. For now, we rely on reset_command_buffer.
+        // let enabled_value: u32 = 1;
+        // let predicate_buffer = context.mtl_context.device.new_buffer_with_data(
+        //     &enabled_value as *const u32 as *const _,
+        //     size_of::<u32>() as u64,
+        //     MTLResourceOptions::StorageModeShared,
+        // );
+
+        // let parameters_with_predicate =
+        //     parameters.clone().with_predicate(&predicate_buffer);
+        context.executables.encode(
+            state,
+            &context.command_buffer,
+            parameters, // Pass original parameters (predicate=None)
+        );
+
+        let encoded_task = GeneratorEncodedTask {
             key,
-        }
+            // Create a dummy buffer or handle Option in GeneratorEncodedTask?
+            // GeneratorEncodedTask expects a buffer. I'll create a dummy one but not use it for encoding.
+            predicate_buffer: context.mtl_context.device.new_buffer(
+                size_of::<u32>() as u64,
+                MTLResourceOptions::StorageModeShared,
+            ),
+        };
+        // encoded_task.set_predicate_enabled(true);
+        encoded_task
     }
 }

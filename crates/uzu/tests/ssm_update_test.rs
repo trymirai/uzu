@@ -4,9 +4,7 @@ use half::bf16;
 use metal::MTLResourceOptions;
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
-    kernel::ssm::{
-        SSDUpdateArguments, SSDUpdateKernel,
-    },
+    kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
 };
 fn ssm_update_ref_bf16(
     x: &[bf16],

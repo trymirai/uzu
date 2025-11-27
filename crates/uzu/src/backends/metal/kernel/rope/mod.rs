@@ -2,7 +2,8 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+    ComputePipelineState as MTLComputePipelineState, MTLCompareFunction,
+    MTLSize, foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
@@ -15,6 +16,7 @@ use crate::{
             ArrayId, ForwardPassState, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
 };
 
@@ -204,6 +206,17 @@ impl EncodableWithState for RopeKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         self.kernel.encode(
             &compute_encoder,
             RopeKernelArguments {
@@ -224,6 +237,12 @@ impl EncodableWithState for RopeKernelEncodable {
                 max_sequence_length: rope_max_seq_len,
             },
         );
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_end_if();
+            }
+        }
 
         compute_encoder.end_encoding();
 

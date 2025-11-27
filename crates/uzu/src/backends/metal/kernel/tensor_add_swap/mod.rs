@@ -2,12 +2,14 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputePipelineState as MTLComputePipelineState,
+    ComputePipelineState as MTLComputePipelineState, MTLCompareFunction,
+    foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
+    KernelDataType, MTLContext,
+    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 use crate::{
     Array,
@@ -50,8 +52,20 @@ impl TensorAddSwap {
         main_buffer: &MTLBuffer,
         length: usize,
         command_buffer: &MTLCommandBuffer,
+        predicate: Option<&MTLBuffer>,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder();
+
+        if let Some(p) = predicate {
+            unsafe {
+                compute_encoder.encode_start_if(
+                    &p.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
 
         compute_encoder.set_label("Tensor Add-Swap");
 
@@ -65,6 +79,12 @@ impl TensorAddSwap {
         );
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
+
+        if let Some(_) = predicate {
+            unsafe {
+                compute_encoder.encode_end_if();
+            }
+        }
 
         compute_encoder.end_encoding();
     }
@@ -95,6 +115,7 @@ impl EncodableWithState for TensorAddSwap {
             &main_mtl_buffer,
             length,
             &retained_mtl_command_buffer,
+            parameters.predicate,
         );
 
         if parameters.wait_until_completed {

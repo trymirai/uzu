@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
+use metal::{
+    Buffer as MTLBuffer, ComputeCommandEncoderRef, MTLCompareFunction,
+    foreign_types::ForeignType,
+};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -17,6 +20,7 @@ use crate::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
     config::QuantizationConfig,
     parameters::ParameterTree,
@@ -271,6 +275,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 self.output_dim,
                 total_len,
                 &retained_cb,
+                parameters.predicate,
             );
         }
 

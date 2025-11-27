@@ -3,7 +3,7 @@ use std::{collections::HashMap, mem::size_of};
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
+    MTLCompareFunction, MTLDataType, MTLSize, foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
@@ -16,6 +16,7 @@ use crate::{
             ArrayId, ForwardPassState, HashMapId,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
 };
 
@@ -713,6 +714,17 @@ impl EncodableWithState for AttentionKernelEncodable {
 
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         if let Err(e) = self.kernel.encode_kv_cache_update(
             &compute_encoder,
             KVCacheUpdateArguments {
@@ -729,6 +741,11 @@ impl EncodableWithState for AttentionKernelEncodable {
             },
         ) {
             eprintln!("Failed to encode KV cache update: {:?}", e);
+            if let Some(_) = parameters.predicate {
+                unsafe {
+                    compute_encoder.encode_end_if();
+                }
+            }
             compute_encoder.end_encoding();
             return;
         }
@@ -801,6 +818,12 @@ impl EncodableWithState for AttentionKernelEncodable {
                     eprintln!("Failed to encode two-pass attention: {:?}", e);
                 }
             },
+        }
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                compute_encoder.encode_end_if();
+            }
         }
 
         compute_encoder.end_encoding();

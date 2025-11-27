@@ -2,7 +2,8 @@ use std::{mem::size_of, rc::Rc};
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+    ComputePipelineState as MTLComputePipelineState, MTLCompareFunction,
+    MTLSize, foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer;
 
@@ -12,6 +13,7 @@ use super::super::{
         ArrayId, ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
+    metal_extensions::ComputeEncoderConditional,
 };
 use crate::{
     Array, DataType, backends::metal::MTLError, config::QuantizationMode,
@@ -296,6 +298,17 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         let args = QuantizedEmbeddingLookupArguments {
             token_ids_buffer,
             weights_buffer: &self.weights_buffer,
@@ -311,6 +324,12 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding lookup kernel");
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                encoder.encode_end_if();
+            }
+        }
 
         encoder.end_encoding();
 
@@ -501,6 +520,17 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
+        if let Some(predicate) = parameters.predicate {
+            unsafe {
+                encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         // For transposed matmul: input @ weights.T
         // where weights is [vocab_size, model_dim]
         use super::super::kernel::quant_matmul::{
@@ -522,6 +552,12 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
+
+        if let Some(_) = parameters.predicate {
+            unsafe {
+                encoder.encode_end_if();
+            }
+        }
 
         encoder.end_encoding();
 

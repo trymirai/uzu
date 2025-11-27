@@ -1,6 +1,6 @@
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLSize,
+    MTLCompareFunction, MTLSize, foreign_types::ForeignType,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -14,6 +14,7 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::QuantizedLinearKernelBlock,
+        metal_extensions::ComputeEncoderConditional,
     },
     config::Activation,
 };
@@ -169,13 +170,33 @@ impl EncodableWithState for MlpBlockEncodable {
         let mut fused = arrays[0].borrow_mut();
         let mut hidden = arrays[1].borrow_mut();
         let m = fused.shape()[0] as i32;
-        let root = command_buffer.root_command_buffer();
-        let encoder = root.new_compute_command_encoder();
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let encoder = mtl_command_buffer.new_compute_command_encoder();
+
+        if let Some(predicate) = params.predicate {
+            unsafe {
+                encoder.encode_start_if(
+                    &predicate.as_ref(),
+                    0,
+                    MTLCompareFunction::NotEqual,
+                    0,
+                );
+            }
+        }
+
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
         self.gate
             .encode(encoder, fused_buf, hidden_buf, m)
             .expect("Failed to encode MLP activation/mul kernel");
+
+        if let Some(_) = params.predicate {
+            unsafe {
+                encoder.encode_end_if();
+            }
+        }
+
         encoder.end_encoding();
         drop(fused);
         drop(hidden);

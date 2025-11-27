@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use metal::MTLCompareFunction;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::layer_executables::LayerExecutables;
@@ -14,6 +15,7 @@ use crate::{
             transformer_layer::{embed_block, readout_block},
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
+        metal_extensions::ComputeEncoderConditional,
     },
     config::{DecoderConfig, DecoderLayerType, decoder_layer::MixerConfig},
     parameters::ParameterTree,
