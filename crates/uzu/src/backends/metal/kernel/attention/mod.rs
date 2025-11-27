@@ -199,10 +199,14 @@ impl AttentionKernel {
                 }
 
                 if !two_pass_2.contains_key(&head_dim) {
-                    let two_pass_2_name =
-                        format!("attention_2pass_2_{}_{}", data_suffix, head_dim);
-                    let two_pass_2_key =
-                        format!("{}_sinks_{}", two_pass_2_name, has_sinks_value);
+                    let two_pass_2_name = format!(
+                        "attention_2pass_2_{}_{}",
+                        data_suffix, head_dim
+                    );
+                    let two_pass_2_key = format!(
+                        "{}_sinks_{}",
+                        two_pass_2_name, has_sinks_value
+                    );
                     if let Ok((pipeline, _)) = context
                         .compute_pipeline_state_with_reflection_cached(
                             &two_pass_2_key,

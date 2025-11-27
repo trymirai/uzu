@@ -156,7 +156,6 @@ impl EncodableWithState for TensorCopy {
         let source = frozen.buffer(&self.argument_arrays[0]);
         let destination = frozen.buffer(&self.argument_arrays[1]);
         let length = frozen.num_elements(&self.argument_arrays[0]);
-        
         self.encode_with_encoder_raw(source, destination, length, encoder);
     }
 }

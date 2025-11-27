@@ -229,6 +229,15 @@ impl DecoderConfig {
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
     }
+
+    pub fn has_ssm_layers(&self) -> bool {
+        // Check layer_types if present
+        if let Some(types) = &self.layer_types {
+            return types.iter().any(|t| matches!(t, DecoderLayerType::StateSpace { .. }));
+        }
+        // Check default layer config
+        matches!(self.layer_config.mixer_config, MixerConfig::Mamba(_))
+    }
 }
 
 #[cfg(test)]

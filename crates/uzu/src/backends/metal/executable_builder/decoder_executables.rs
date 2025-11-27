@@ -220,30 +220,33 @@ impl EncodableWithState for DecoderExecutables {
 }
 
 impl DecoderExecutables {
-    /// Parallel encoding into orchestrator - encodes all work, caller commits/waits
-    pub fn encode_into_orchestrator(
+    /// Encode embed and signal the given fence (or create new one if None)
+    pub fn encode_embed_only(
         &self,
         state: &mut ForwardPassState,
         orchestrator: &ExecutionOrchestrator,
-        mps_command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
-        sampler: Option<&SamplingKernelEncodable>,
-    ) {
+        fence_to_signal: Option<&metal::Fence>,
+    ) -> metal::Fence {
         let embed_shared = self.embed.supports_shared_encoder();
-        let readout_shared = self.readout.supports_shared_encoder();
 
-        // Track MPS CB for waiting
-        orchestrator.set_mps_command_buffer(mps_command_buffer);
+        // Create fresh MPS CB for embed
+        let mps_command_buffer = orchestrator.new_mps_command_buffer();
+        // Track MPS CB; needs_commit=true if we didn't commit (pre-encode case)
+        orchestrator.set_pending_mps(&mps_command_buffer, !parameters.enable_commit);
 
-        // Phase 1: Embed
-        let embed_fence = state.fence_registry.new_fence();
+        // Use provided fence or create new one
+        let embed_fence = fence_to_signal
+            .cloned()
+            .unwrap_or_else(|| state.fence_registry.new_fence());
 
         if !embed_shared {
-            // MPS embed - encode and commit immediately (MPS manages its own CB)
-            self.embed.encode(state, mps_command_buffer, parameters);
-            mps_command_buffer.commit_and_continue();
+            // MPS embed - only commit if enable_commit is true
+            self.embed.encode(state, &mps_command_buffer, parameters);
+            if parameters.enable_commit {
+                mps_command_buffer.commit_and_continue();
+            }
 
-            // Signal fence after MPS on our queue
             let fence_cb = orchestrator.new_command_buffer();
             fence_cb.set_label("embed-fence");
             let encoder = fence_cb.new_compute_command_encoder();
@@ -251,7 +254,6 @@ impl DecoderExecutables {
             encoder.end_encoding();
             orchestrator.add_pending(fence_cb);
         } else {
-            // Shared encoder on our queue
             let embed_cb = orchestrator.new_command_buffer();
             embed_cb.set_label("embed");
             let encoder = embed_cb.new_compute_command_encoder();
@@ -263,6 +265,71 @@ impl DecoderExecutables {
             encoder.end_encoding();
             orchestrator.add_pending(embed_cb);
         }
+
+        state.fence_registry.set_current(embed_fence.clone());
+        embed_fence
+    }
+
+    /// Encode layers + norm + readout + sampler (for pre-encode, skipping embed)
+    /// Returns the embed_fence that layer 0 will wait on
+    pub fn encode_layers_only(
+        &self,
+        state: &mut ForwardPassState,
+        orchestrator: &ExecutionOrchestrator,
+        parameters: &EncodingParameters,
+        sampler: Option<&SamplingKernelEncodable>,
+    ) -> metal::Fence {
+        let readout_shared = self.readout.supports_shared_encoder();
+
+        // Create embed fence that layers will wait on
+        let embed_fence = state.fence_registry.new_fence();
+
+        // Encode layers + rest (reuse existing logic)
+        self.encode_layers_and_rest(
+            state,
+            orchestrator,
+            parameters,
+            sampler,
+            &embed_fence,
+            readout_shared,
+        );
+
+        embed_fence
+    }
+
+    /// Parallel encoding into orchestrator - encodes all work, caller commits/waits
+    pub fn encode_into_orchestrator(
+        &self,
+        state: &mut ForwardPassState,
+        orchestrator: &ExecutionOrchestrator,
+        parameters: &EncodingParameters,
+        sampler: Option<&SamplingKernelEncodable>,
+    ) {
+        let readout_shared = self.readout.supports_shared_encoder();
+
+        // Phase 1: Embed (always fresh)
+        let embed_fence = self.encode_embed_only(state, orchestrator, parameters, None);
+
+        // Phase 2+: Layers + norm + readout + sampler
+        self.encode_layers_and_rest(
+            state,
+            orchestrator,
+            parameters,
+            sampler,
+            &embed_fence,
+            readout_shared,
+        );
+    }
+
+    fn encode_layers_and_rest(
+        &self,
+        state: &mut ForwardPassState,
+        orchestrator: &ExecutionOrchestrator,
+        parameters: &EncodingParameters,
+        sampler: Option<&SamplingKernelEncodable>,
+        embed_fence: &metal::Fence,
+        readout_shared: bool,
+    ) {
 
         // Freeze state
         let required_ids = self.collect_required_buffers();
@@ -341,8 +408,13 @@ impl DecoderExecutables {
                 encoder.end_encoding();
                 orchestrator.add_pending(final_cb);
 
-                self.readout.encode(state, mps_command_buffer, parameters);
-                mps_command_buffer.commit_and_continue();
+                // Fresh MPS CB for readout - only commit if enable_commit
+                let readout_mps = orchestrator.new_mps_command_buffer();
+                self.readout.encode(state, &readout_mps, parameters);
+                if parameters.enable_commit {
+                    readout_mps.commit_and_continue();
+                }
+                orchestrator.set_pending_mps(&readout_mps, !parameters.enable_commit);
 
                 state.fence_registry.set_current(readout_fence);
 

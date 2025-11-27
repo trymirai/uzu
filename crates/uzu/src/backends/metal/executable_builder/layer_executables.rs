@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;

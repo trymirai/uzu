@@ -1,13 +1,12 @@
 use super::context::GeneratorContext;
 use crate::backends::metal::{
     ForwardPassState,
-    forward_pass::encodable_with_state::{
-        EncodableWithState, EncodingParameters,
-    },
+    forward_pass::encodable_with_state::EncodingParameters,
 };
 
 pub struct GeneratorEncodedTask {
     pub key: String,
+    pub embed_fence: Option<metal::Fence>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,10 +34,11 @@ impl GeneratorRunTask {
     pub fn encoded_task_key(
         &self,
         tokens_count: usize,
+        suffix_length: usize,
     ) -> String {
         format!(
             "tokens:{}_suffix:{}",
-            tokens_count, self.expected_number_of_new_tokens
+            tokens_count, suffix_length
         )
     }
 
@@ -66,6 +66,7 @@ impl GeneratorRunTask {
         return state;
     }
 
+    /// Encode everything into orchestrator
     pub fn build_encoded_task(
         &self,
         context: &GeneratorContext,
@@ -76,10 +77,27 @@ impl GeneratorRunTask {
         context.executables.encode_into_orchestrator(
             state,
             &context.orchestrator,
-            &context.command_buffer,
             parameters,
             Some(&context.gpu_sampler),
         );
-        GeneratorEncodedTask { key }
+        GeneratorEncodedTask { key, embed_fence: None }
+    }
+    
+    /// Pre-encode only layers (not embed) - used when embed is MPSGraph-based
+    /// Returns the embed_fence that must be signaled when fresh-encoding embed
+    pub fn pre_encode_layers_only(
+        &self,
+        context: &GeneratorContext,
+        state: &mut ForwardPassState,
+        parameters: &EncodingParameters,
+        key: String,
+    ) -> GeneratorEncodedTask {
+        let embed_fence = context.executables.encode_layers_only(
+            state,
+            &context.orchestrator,
+            parameters,
+            Some(&context.gpu_sampler),
+        );
+        GeneratorEncodedTask { key, embed_fence: Some(embed_fence) }
     }
 }

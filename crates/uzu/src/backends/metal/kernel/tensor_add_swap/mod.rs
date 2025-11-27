@@ -160,7 +160,6 @@ impl EncodableWithState for TensorAddSwap {
         let skip = frozen.buffer(&self.argument_arrays[0]);
         let main = frozen.buffer(&self.argument_arrays[1]);
         let length = frozen.num_elements(&self.argument_arrays[0]);
-        
         self.encode_with_encoder_raw(skip, main, length, encoder);
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     Array,
     backends::metal::forward_pass::{
         ForwardPassState, INVALID_POSITION,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
+        encodable_with_state::EncodingParameters,
     },
     linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
@@ -172,10 +172,18 @@ impl Generator {
                 is_prefilling: !should_sample_after_step,
             };
 
+            // Next suffix: if last prefill step → decode (1), otherwise next prefill chunk
+            let next_suffix = if is_last_prefill_step {
+                1
+            } else {
+                prefill_step_size
+            };
+
             let (state, run_time) = self.run_model(
                 task,
                 false,
                 self.allow_pre_encode(),
+                next_suffix,
                 sampling_method,
             );
 
@@ -333,6 +341,7 @@ impl Generator {
             task,
             false,
             self.allow_pre_encode(),
+            1, // decode → decode: next suffix is always 1
             sampling_method,
         );
 
@@ -372,6 +381,7 @@ impl Generator {
     pub fn clear_cache(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
             self.encoded_tasks.clear();
+            self.context.orchestrator.clear_stashed();
         });
     }
 
@@ -380,6 +390,7 @@ impl Generator {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
+        self.context.orchestrator.clear_stashed();
         self.gpu_capture.reset();
     }
 
@@ -401,7 +412,7 @@ impl Generator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default());
+            self.run_model(task, true, false, 1, SamplingMethod::default());
     }
 
     fn run_model(
@@ -409,6 +420,7 @@ impl Generator {
         task: GeneratorRunTask,
         warmup: bool,
         allow_pre_encode: bool,
+        next_suffix_length: usize,
         sampling_method: SamplingMethod,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
@@ -427,19 +439,31 @@ impl Generator {
                     .start_capture(&self.context.mtl_context, "decode");
             }
 
-            let encoded_task_key = task.encoded_task_key(self.tokens.len());
+            let current_suffix = task.active_suffix_length;
+            let encoded_task_key =
+                task.encoded_task_key(self.tokens.len(), current_suffix);
 
             if should_capture {
                 self.encoded_tasks.remove(&encoded_task_key);
             }
 
-            let is_pre_encoded = self.encoded_tasks.remove(&encoded_task_key).is_some();
+            // Check if we have pre-encoded task
+            let pre_encoded = self.encoded_tasks.remove(&encoded_task_key);
 
-            if !is_pre_encoded {
-                // Fresh encode
-                self.context.reset_command_buffer();
-                self.context.orchestrator.clear();
+            self.context.orchestrator.clear();
 
+            if let Some(ref pre_task) = pre_encoded {
+                // Fresh encode embed, signaling the stored fence
+                self.context.executables.encode_embed_only(
+                    &mut state,
+                    &self.context.orchestrator,
+                    &EncodingParameters::new(warmup, true, false),
+                    pre_task.embed_fence.as_ref(),
+                );
+                // Restore pre-encoded layers (which wait on the embed fence)
+                self.context.orchestrator.restore_stashed();
+            } else {
+                // Fresh encode everything
                 task.build_encoded_task(
                     &self.context,
                     &mut state,
@@ -448,27 +472,29 @@ impl Generator {
                 );
             }
 
-            // Commit current work
             self.context.orchestrator.commit();
 
-            // Pre-encode next (if not already pre-encoded)
-            if allow_pre_encode && !is_pre_encoded {
-                let next_task_key: String =
-                    task.encoded_task_key(self.tokens.len() + 1);
+            // Pre-encode next iteration (layers only - embed is MPSGraph and can't be pre-encoded)
+            // Key includes suffix, so suffix mismatches auto-invalidate (prefill→decode handled)
+            if allow_pre_encode {
+                let next_task_key = task.encoded_task_key(
+                    self.tokens.len() + next_suffix_length,
+                    next_suffix_length,
+                );
 
-                let next_encoded_task = task.build_encoded_task(
+                let next_encoded_task = task.pre_encode_layers_only(
                     &self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, false, false)
-                        .with_projection(1),
+                        .with_projection(next_suffix_length),
                     next_task_key.clone(),
                 );
 
-                self.encoded_tasks
-                    .insert(next_task_key.clone(), next_encoded_task);
+                // Stash pre-encoded layer CBs (they survive clear)
+                self.context.orchestrator.stash_pending();
+                self.encoded_tasks.insert(next_task_key, next_encoded_task);
             }
 
-            // Wait for GPU
             self.context.orchestrator.wait();
 
             let run_time = run_start.elapsed().as_secs_f64();
@@ -531,15 +557,6 @@ impl Generator {
         }
     }
 
-    fn allow_pre_encode(&self) -> bool {
-        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
-
-        let result =
-            self.decoding_config.allow_pre_encode && !metal_debug_active;
-
-        result
-    }
-
     fn sync_prefix(&mut self) {
         if self.tokens.is_empty() {
             return;
@@ -557,5 +574,10 @@ impl Generator {
             }
             self.registered_prefix_len = desired_prefix_len;
         }
+    }
+
+    fn allow_pre_encode(&self) -> bool {
+        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
+        self.decoding_config.allow_pre_encode && !metal_debug_active
     }
 }
