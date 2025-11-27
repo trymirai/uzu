@@ -438,12 +438,17 @@ impl Generator {
             } else {
                 self.context.reset_command_buffer();
 
+                let start_time = Instant::now();
                 _ = task.build_encoded_task(
                     &self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, true, false),
                     encoded_task_key.clone(),
                 );
+                let end_time = Instant::now();
+                let encode_time =
+                    end_time.duration_since(start_time).as_secs_f64();
+                println!("Encode time: {}", encode_time);
             }
 
             let root_command_buffer =
@@ -465,6 +470,7 @@ impl Generator {
                 let next_task_key: String =
                     task.encoded_task_key(self.tokens.len() + 1);
 
+                let start_time = Instant::now();
                 let next_encoded_task = task.build_encoded_task(
                     &self.context,
                     &mut state,
@@ -472,12 +478,21 @@ impl Generator {
                         .with_projection(1),
                     next_task_key.clone(),
                 );
+                let end_time = Instant::now();
+                let encode_time =
+                    end_time.duration_since(start_time).as_secs_f64();
+                println!("Pre-encode time: {}", encode_time);
 
                 self.encoded_tasks
                     .insert(next_task_key.clone(), next_encoded_task);
             }
 
+            let start_time = Instant::now();
             root_command_buffer.wait_until_completed();
+            let end_time = Instant::now();
+            let wait_time = end_time.duration_since(start_time).as_secs_f64();
+            println!("Wait time: {}", wait_time);
+
             let run_time = run_start.elapsed().as_secs_f64();
 
             if should_capture {
