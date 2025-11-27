@@ -107,6 +107,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         .encode(
             &logits_buffer,
             None,
+            None,
             &output_buffer,
             SamplingMethod::Greedy,
             batch_size,
@@ -246,6 +247,7 @@ fn test_topp_sampling_from_prob_exact_match(
         kernel
             .encode(
                 &logits_buf,
+                None,
                 Some(&seeds_buf),
                 &output_buf,
                 SamplingMethod::Stochastic {
@@ -373,6 +375,7 @@ fn test_topp_sampling_statistical_large() {
         kernel
             .encode(
                 &logits_buf,
+                None,
                 Some(&seeds_buf),
                 &output_buf,
                 SamplingMethod::Stochastic {
@@ -481,6 +484,7 @@ fn perf_topp_128k_vocab() {
     kernel
         .encode(
             &logits_buf,
+            None,
             Some(&seeds_buf),
             &output_buf,
             SamplingMethod::Stochastic {
@@ -586,6 +590,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     kernel
         .encode(
             &logits_buf,
+            None,
             Some(&seeds_buf),
             &output_buf,
             SamplingMethod::Greedy,
@@ -707,6 +712,7 @@ fn test_categorical_sampling() {
         kernel
             .encode(
                 &logits_buffer,
+                None,
                 Some(&seeds_buffer),
                 &output_buffer,
                 SamplingMethod::Stochastic {
@@ -850,6 +856,7 @@ fn test_categorical_sampling_statistical() {
         kernel
             .encode(
                 &logits_buffer,
+                None,
                 Some(&seeds_buffer),
                 &output_buffer,
                 SamplingMethod::Stochastic {
@@ -956,6 +963,7 @@ fn perf_categorical_128k_vocab() {
     kernel
         .encode(
             &logits_buf,
+            None,
             Some(&seeds_buf),
             &output_buf,
             SamplingMethod::Stochastic {

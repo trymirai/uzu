@@ -36,6 +36,7 @@ impl GeneratorEncodedTask {
 pub struct GeneratorRunTask<'a> {
     pub token_ids: &'a [u64],
     pub token_positions: &'a [usize],
+    pub token_bitmask: Option<&'a [u32]>,
     pub token_seeds: &'a [u64],
     pub expected_number_of_new_tokens: usize,
     pub active_suffix_length: usize,
@@ -47,6 +48,7 @@ impl<'a> GeneratorRunTask<'a> {
         GeneratorRunTask {
             token_ids: self.token_ids,
             token_positions: self.token_positions,
+            token_bitmask: self.token_bitmask,
             token_seeds: self.token_seeds,
             expected_number_of_new_tokens: self.expected_number_of_new_tokens,
             active_suffix_length: self.active_suffix_length,
@@ -78,6 +80,7 @@ impl<'a> GeneratorRunTask<'a> {
             context.shared_buffers.clone(),
             self.token_ids,
             self.token_positions,
+            self.token_bitmask,
             self.token_seeds,
             self.active_suffix_length,
             self.is_prefilling,
