@@ -71,7 +71,9 @@ impl HeapAllocator {
         size_bytes: u64,
         options: MTLResourceOptions,
     ) -> Option<Buffer> {
-        let buffer = self.heap.new_buffer(size_bytes, options)?;
+        let untracked_options =
+            options | MTLResourceOptions::HazardTrackingModeTracked;
+        let buffer = self.heap.new_buffer(size_bytes, untracked_options)?;
         let new_total =
             self.allocated_bytes.get() + self.heap.current_allocated_size();
         self.allocated_bytes.set(new_total);
@@ -143,16 +145,14 @@ impl BufferAllocator for FallbackHeapAllocator {
     ) -> Buffer {
         if let Some(buffer) = self.heap.allocate(size_in_bytes as u64, options)
         {
-            self.heap_alloc_count
-                .set(self.heap_alloc_count.get() + 1);
+            self.heap_alloc_count.set(self.heap_alloc_count.get() + 1);
             buffer
         } else {
             eprintln!(
                 "[FallbackHeapAllocator] Heap full, falling back to device allocation: {}KB",
                 size_in_bytes / 1024
             );
-            self.device_alloc_count
-                .set(self.device_alloc_count.get() + 1);
+            self.device_alloc_count.set(self.device_alloc_count.get() + 1);
             self.device.new_buffer(size_in_bytes as u64, options)
         }
     }

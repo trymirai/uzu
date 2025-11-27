@@ -82,11 +82,10 @@ impl DecoderTestContext {
         }
 
         // Calculate heap size: weights file size + generous buffer for scratch/cache
-        let weights_size = std::fs::metadata(&weights_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let weights_size =
+            std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
         // Heap size = weights + 1GB for scratch/cache buffers
-        let heap_size = weights_size + 1024 * 1024 * 1024;
+        let heap_size = weights_size + 128 * 1024 * 1024;
 
         let mtl_context = Rc::new(
             MTLContext::new_with_heap(
