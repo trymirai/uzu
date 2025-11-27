@@ -2643,6 +2643,7 @@ name = "uzu"
 version = "0.1.6"
 dependencies = [
  "bitflags 2.9.4",
+ "block",
  "bytemuck",
  "clap",
  "half",

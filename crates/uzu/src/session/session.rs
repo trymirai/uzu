@@ -1,4 +1,10 @@
-use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -346,23 +352,96 @@ impl Session {
 
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
-        let generate_output = loop {
-            let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_method)?;
-            let generate_tokens = generate_result.tokens.clone();
-            let generate_duration = generate_start.elapsed().as_secs_f64();
-            generate_results.push(generate_result);
-            generate_durations.push(generate_duration);
 
-            let generate_finish_reason =
-                finish_reason(generator, generate_tokens);
-            let generate_generated_text =
-                build_generated_text(generator, &self.tokenizer)?;
-            let generate_parsed_text =
-                self.output_parser.parse(generate_generated_text);
+        // Use async pipeline when suffix_length == 1 (no speculation)
+        let use_async = generator.decoding_config.generate_suffix_length() == 1;
 
-            let generate_output = Output {
-                text: generate_parsed_text,
+        let generate_output = if use_async {
+            // Async +N lookahead pipeline
+            let tokens_to_generate = config.tokens_limit as usize;
+            let lookahead = generator.async_lookahead();
+
+            generator.prepare_async(tokens_to_generate);
+
+            let (tx, rx) = std::sync::mpsc::channel::<(usize, u64, f64)>();
+            let last_callback_time = Arc::new(Mutex::new(Instant::now()));
+
+            let initial_submit = std::cmp::min(lookahead, tokens_to_generate);
+            for idx in 0..initial_submit {
+                let tx_clone = tx.clone();
+                let last_time = last_callback_time.clone();
+                generator.async_generate(
+                    idx,
+                    sampling_method,
+                    move |token| {
+                        let now = Instant::now();
+                        let mut last = last_time.lock().unwrap();
+                        let duration = now.duration_since(*last).as_secs_f64();
+                        *last = now;
+                        drop(last);
+                        let _ = tx_clone.send((idx, token, duration));
+                    },
+                )?;
+            }
+
+            let mut async_finish_reason = FinishReason::Length;
+            let mut next_to_submit = initial_submit;
+            let mut in_flight = initial_submit;
+
+            for _ in 0..tokens_to_generate {
+                if next_to_submit < tokens_to_generate && in_flight < lookahead {
+                    let tx_clone = tx.clone();
+                    let last_time = last_callback_time.clone();
+                    let idx = next_to_submit;
+                    generator.async_generate(
+                        idx,
+                        sampling_method,
+                        move |token| {
+                            let now = Instant::now();
+                            let mut last = last_time.lock().unwrap();
+                            let duration = now.duration_since(*last).as_secs_f64();
+                            *last = now;
+                            drop(last);
+                            let _ = tx_clone.send((idx, token, duration));
+                        },
+                    )?;
+                    next_to_submit += 1;
+                    in_flight += 1;
+                }
+
+                let (_, token, duration) =
+                    rx.recv().map_err(|_| Error::SamplingFailed)?;
+                in_flight -= 1;
+
+                generator.tokens.push(token);
+                generate_results.push(GenerateResult {
+                    tokens: vec![token],
+                    forwardpass_duration: duration,
+                });
+                generate_durations.push(duration);
+
+                if eos_tokens.contains(&token) {
+                    async_finish_reason = FinishReason::Stop;
+                    while in_flight > 0 {
+                        let (_, extra_token, extra_duration) =
+                            rx.recv().map_err(|_| Error::SamplingFailed)?;
+                        generator.tokens.push(extra_token);
+                        generate_results.push(GenerateResult {
+                            tokens: vec![extra_token],
+                            forwardpass_duration: extra_duration,
+                        });
+                        generate_durations.push(extra_duration);
+                        in_flight -= 1;
+                    }
+                    break;
+                }
+            }
+
+            let generated_text = build_generated_text(generator, &self.tokenizer)?;
+            let parsed_text = self.output_parser.parse(generated_text);
+
+            Output {
+                text: parsed_text,
                 stats: Self::build_stats(
                     &self.model_metadata,
                     prefill_result.clone(),
@@ -373,24 +452,58 @@ impl Session {
                     generator.decoding_config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
-                    generator.tokens[prefix_len_before + tokens.len()..].len(),
+                    generate_results.len(),
                 ),
-                finish_reason: generate_finish_reason.clone(),
-            };
+                finish_reason: Some(async_finish_reason),
+            }
+        } else {
+            // Sync generate loop (speculation enabled)
+            loop {
+                let generate_start = Instant::now();
+                let generate_result = generator.generate(sampling_method)?;
+                let generate_tokens = generate_result.tokens.clone();
+                let generate_duration = generate_start.elapsed().as_secs_f64();
+                generate_results.push(generate_result);
+                generate_durations.push(generate_duration);
 
-            let generate_should_continue = if let Some(progress) = &progress {
-                progress(generate_output.clone())
-            } else {
-                true
-            };
+                let generate_finish_reason =
+                    finish_reason(generator, generate_tokens);
+                let generate_generated_text =
+                    build_generated_text(generator, &self.tokenizer)?;
+                let generate_parsed_text =
+                    self.output_parser.parse(generate_generated_text);
 
-            if !generate_should_continue || generate_finish_reason.is_some() {
-                if generate_should_continue {
-                    break generate_output;
+                let generate_output = Output {
+                    text: generate_parsed_text,
+                    stats: Self::build_stats(
+                        &self.model_metadata,
+                        prefill_result.clone(),
+                        prefill_duration,
+                        prefill_suffix_length,
+                        generate_results.clone(),
+                        generate_durations.clone(),
+                        generator.decoding_config.generate_suffix_length(),
+                        run_start.elapsed().as_secs_f64(),
+                        tokens.len(),
+                        generator.tokens[prefix_len_before + tokens.len()..].len(),
+                    ),
+                    finish_reason: generate_finish_reason.clone(),
+                };
+
+                let generate_should_continue = if let Some(progress) = &progress {
+                    progress(generate_output.clone())
                 } else {
-                    break generate_output.clone_with_finish_reason(Some(
-                        FinishReason::Cancelled,
-                    ));
+                    true
+                };
+
+                if !generate_should_continue || generate_finish_reason.is_some() {
+                    if generate_should_continue {
+                        break generate_output;
+                    } else {
+                        break generate_output.clone_with_finish_reason(Some(
+                            FinishReason::Cancelled,
+                        ));
+                    }
                 }
             }
         };

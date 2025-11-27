@@ -61,6 +61,9 @@ impl GeneratorRunTask {
             &self.token_seeds,
             false,
             external_bias_fn,
+            false,
+            None,
+            None,
         );
 
         return state;
