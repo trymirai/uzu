@@ -318,6 +318,10 @@ impl Tracer {
             &token_seeds,
             true,
             None,
+            false,
+            false,
+            None,
+            None,
         );
 
         let root_command_buffer = self

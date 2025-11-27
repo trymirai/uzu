@@ -942,6 +942,10 @@ impl ForwardPassState {
         token_seeds: &[u64],
         trace: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        skip_token_ids_copy: bool,
+        use_async_positions: bool,
+        async_positions: Option<(&metal::Buffer, usize)>,
+        async_seeds: Option<(&metal::Buffer, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -978,39 +982,68 @@ impl ForwardPassState {
                 DataType::U64,
             )
         };
-        context.copy_from_view(&mut token_ids_array, token_ids.into());
+        if !skip_token_ids_copy {
+            context.copy_from_view(&mut token_ids_array, token_ids.into());
+        }
         let token_ids_refcell = RefCell::new(token_ids_array);
 
         // --------------------
         // Token Positions (i32)
         // --------------------
-        let mut token_positions_array = unsafe {
-            MetalArray::new(
-                scratch.token_positions.clone(),
-                &[suffix_length],
-                DataType::I32,
-            )
+        let token_positions_refcell = if use_async_positions {
+            let (buffer, offset) = async_positions.expect(
+                "async_positions required when use_async_positions=true",
+            );
+            let token_positions_array = unsafe {
+                MetalArray::new_with_offset(
+                    buffer.clone(),
+                    &[suffix_length],
+                    DataType::I32,
+                    offset * std::mem::size_of::<i32>(),
+                )
+            };
+            RefCell::new(token_positions_array)
+        } else {
+            let mut token_positions_array = unsafe {
+                MetalArray::new(
+                    scratch.token_positions.clone(),
+                    &[suffix_length],
+                    DataType::I32,
+                )
+            };
+            let token_positions_i32: Box<[i32]> =
+                token_positions.iter().map(|p| *p as i32).collect();
+            context.copy_from_view(
+                &mut token_positions_array,
+                token_positions_i32.as_ref().into(),
+            );
+            RefCell::new(token_positions_array)
         };
-        let token_positions_i32: Box<[i32]> =
-            token_positions.iter().map(|p| *p as i32).collect();
-        context.copy_from_view(
-            &mut token_positions_array,
-            token_positions_i32.as_ref().into(),
-        );
-        let token_positions_refcell = RefCell::new(token_positions_array);
 
         // --------------------
         // Token Seeds
         // --------------------
-        let mut token_seeds_array = unsafe {
-            MetalArray::new(
-                scratch.token_seeds.clone(),
-                &[suffix_length],
-                DataType::U64,
-            )
+        let token_seeds_refcell = if let Some((buffer, offset)) = async_seeds {
+            let token_seeds_array = unsafe {
+                MetalArray::new_with_offset(
+                    buffer.clone(),
+                    &[suffix_length],
+                    DataType::U64,
+                    offset * std::mem::size_of::<u64>(),
+                )
+            };
+            RefCell::new(token_seeds_array)
+        } else {
+            let mut token_seeds_array = unsafe {
+                MetalArray::new(
+                    scratch.token_seeds.clone(),
+                    &[suffix_length],
+                    DataType::U64,
+                )
+            };
+            context.copy_from_view(&mut token_seeds_array, token_seeds.into());
+            RefCell::new(token_seeds_array)
         };
-        context.copy_from_view(&mut token_seeds_array, token_seeds.into());
-        let token_seeds_refcell = RefCell::new(token_seeds_array);
 
         // --------------------
         // Attention Bias

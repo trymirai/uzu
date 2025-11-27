@@ -16,6 +16,8 @@ pub struct MetalArray {
     shape: Box<[usize]>,
     /// Data type of the elements
     data_type: DataType,
+    /// Byte offset into the buffer
+    offset: usize,
 }
 
 impl Array for MetalArray {
@@ -30,7 +32,7 @@ impl Array for MetalArray {
     fn buffer(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                self.buffer.contents() as *const u8,
+                (self.buffer.contents() as *const u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
@@ -39,7 +41,7 @@ impl Array for MetalArray {
     fn buffer_mut(&mut self) -> &mut [u8] {
         unsafe {
             std::slice::from_raw_parts_mut(
-                self.buffer.contents() as *mut u8,
+                (self.buffer.contents() as *mut u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
@@ -53,12 +55,23 @@ impl MetalArray {
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
+        Self::new_with_offset(buffer, shape, data_type, 0)
+    }
+
+    /// Create a new Array with byte offset into the buffer
+    pub unsafe fn new_with_offset(
+        buffer: MTLBuffer,
+        shape: &[usize],
+        data_type: DataType,
+        offset: usize,
+    ) -> Self {
         let required_bytes = array_size_in_bytes(shape, data_type);
         assert!(
-            required_bytes <= buffer.length() as usize,
-            "Shape {:?} with data type {:?} requires {} bytes, but buffer length is {} bytes",
+            offset + required_bytes <= buffer.length() as usize,
+            "Shape {:?} with data type {:?} at offset {} requires {} bytes, but buffer length is {} bytes",
             shape,
             data_type,
+            offset,
             required_bytes,
             buffer.length()
         );
@@ -66,6 +79,7 @@ impl MetalArray {
             buffer,
             shape: shape.into(),
             data_type,
+            offset,
         }
     }
 
@@ -82,6 +96,10 @@ impl MetalArray {
     /// Returns the underlying MTLBuffer.
     pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {
         &self.buffer
+    }
+
+    pub fn mtl_buffer_offset(&self) -> u64 {
+        self.offset as u64
     }
 
     /// Splits the array into multiple `MetalArray` objects along the first dimension (rows) only.

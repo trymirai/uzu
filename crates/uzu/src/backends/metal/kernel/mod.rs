@@ -14,6 +14,7 @@ pub mod ssm;
 mod tensor_add_bias;
 mod tensor_add_swap;
 mod tensor_copy;
+pub mod token_copy;
 
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
@@ -43,6 +44,7 @@ pub use ssm::{
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
+pub use token_copy::TokenCopyKernel;
 
 use super::{MTLContext, metal_extensions};
 pub use crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock;

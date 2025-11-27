@@ -1,4 +1,10 @@
-use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -346,23 +352,60 @@ impl Session {
 
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
-        let generate_output = loop {
-            let generate_start = Instant::now();
-            let generate_result = generator.generate(sampling_method)?;
-            let generate_tokens = generate_result.tokens.clone();
-            let generate_duration = generate_start.elapsed().as_secs_f64();
-            generate_results.push(generate_result);
-            generate_durations.push(generate_duration);
+        let use_async = generator.decoding_config.generate_suffix_length() == 1;
 
-            let generate_finish_reason =
-                finish_reason(generator, generate_tokens);
-            let generate_generated_text =
+        let generate_output = if use_async {
+            let tokens_to_generate = config.tokens_limit as usize;
+            let (tx, rx) = std::sync::mpsc::channel::<(usize, u64, f64)>();
+
+            generator.context.reset_async_event_counter();
+            generator.set_async_prefill_count();
+            generator.context.prepare_async_positions(
+                generator.tokens.len(),
+                tokens_to_generate,
+            );
+            generator.context.prepare_async_seeds(tokens_to_generate);
+            let last_callback_time = Arc::new(Mutex::new(Instant::now()));
+
+            for i in 0..tokens_to_generate {
+                let tx_clone = tx.clone();
+                let last_time = last_callback_time.clone();
+                let idx = i;
+
+                generator.async_generate(
+                    idx,
+                    sampling_method,
+                    move |token| {
+                        let callback_time = Instant::now();
+                        let mut last = last_time.lock().unwrap();
+                        let duration =
+                            callback_time.duration_since(*last).as_secs_f64();
+                        *last = callback_time;
+                        drop(last);
+                        let _ = tx_clone.send((idx, token, duration));
+                    },
+                )?;
+            }
+            drop(tx);
+
+            let mut results: Vec<(usize, u64, f64)> = rx.iter().collect();
+            results.sort_by_key(|(idx, _, _)| *idx);
+
+            for (_, token, duration) in results.iter() {
+                generator.tokens.push(*token);
+                generate_results.push(GenerateResult {
+                    tokens: vec![*token],
+                    forwardpass_duration: *duration,
+                });
+                generate_durations.push(*duration);
+            }
+
+            let generated_text =
                 build_generated_text(generator, &self.tokenizer)?;
-            let generate_parsed_text =
-                self.output_parser.parse(generate_generated_text);
+            let parsed_text = self.output_parser.parse(generated_text);
 
-            let generate_output = Output {
-                text: generate_parsed_text,
+            Output {
+                text: parsed_text,
                 stats: Self::build_stats(
                     &self.model_metadata,
                     prefill_result.clone(),
@@ -373,24 +416,60 @@ impl Session {
                     generator.decoding_config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
                     tokens.len(),
-                    generator.tokens[prefix_len_before + tokens.len()..].len(),
+                    tokens_to_generate,
                 ),
-                finish_reason: generate_finish_reason.clone(),
-            };
+                finish_reason: Some(FinishReason::Length),
+            }
+        } else {
+            loop {
+                let generate_start = Instant::now();
+                let generate_result = generator.generate(sampling_method)?;
+                let generate_tokens = generate_result.tokens.clone();
+                let generate_duration = generate_start.elapsed().as_secs_f64();
+                generate_results.push(generate_result);
+                generate_durations.push(generate_duration);
 
-            let generate_should_continue = if let Some(progress) = &progress {
-                progress(generate_output.clone())
-            } else {
-                true
-            };
+                let generate_finish_reason =
+                    finish_reason(generator, generate_tokens);
+                let generate_generated_text =
+                    build_generated_text(generator, &self.tokenizer)?;
+                let generate_parsed_text =
+                    self.output_parser.parse(generate_generated_text);
 
-            if !generate_should_continue || generate_finish_reason.is_some() {
-                if generate_should_continue {
-                    break generate_output;
+                let generate_output = Output {
+                    text: generate_parsed_text,
+                    stats: Self::build_stats(
+                        &self.model_metadata,
+                        prefill_result.clone(),
+                        prefill_duration,
+                        prefill_suffix_length,
+                        generate_results.clone(),
+                        generate_durations.clone(),
+                        generator.decoding_config.generate_suffix_length(),
+                        run_start.elapsed().as_secs_f64(),
+                        tokens.len(),
+                        generator.tokens[prefix_len_before + tokens.len()..]
+                            .len(),
+                    ),
+                    finish_reason: generate_finish_reason.clone(),
+                };
+
+                let generate_should_continue = if let Some(progress) = &progress
+                {
+                    progress(generate_output.clone())
                 } else {
-                    break generate_output.clone_with_finish_reason(Some(
-                        FinishReason::Cancelled,
-                    ));
+                    true
+                };
+
+                if !generate_should_continue || generate_finish_reason.is_some()
+                {
+                    if generate_should_continue {
+                        break generate_output;
+                    } else {
+                        break generate_output.clone_with_finish_reason(Some(
+                            FinishReason::Cancelled,
+                        ));
+                    }
                 }
             }
         };

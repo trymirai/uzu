@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 
+use block::ConcreteBlock;
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -31,6 +32,8 @@ pub struct Generator {
     encoded_tasks: HashMap<String, GeneratorEncodedTask>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager,
+
+    async_prefill_count: usize,
 }
 
 impl Generator {
@@ -52,6 +55,7 @@ impl Generator {
             encoded_tasks: HashMap::new(),
             registered_prefix_len: 0,
             gpu_capture,
+            async_prefill_count: 0,
         };
 
         //Warmup
@@ -176,6 +180,7 @@ impl Generator {
                 task,
                 false,
                 self.allow_pre_encode(),
+                is_last_prefill_step,
                 sampling_method,
             );
 
@@ -333,6 +338,7 @@ impl Generator {
             task,
             false,
             self.allow_pre_encode(),
+            true,
             sampling_method,
         );
 
@@ -369,6 +375,256 @@ impl Generator {
         })
     }
 
+    pub fn async_generate<F>(
+        &mut self,
+        pass_idx: usize,
+        sampling_method: SamplingMethod,
+        on_complete: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(u64) + Send + 'static,
+    {
+        assert!(
+            self.decoding_config.generate_suffix_length() == 1,
+            "async_generate only supports single token generation (suffix_length=1)"
+        );
+
+        let current_counter = self.context.async_event_counter.get();
+        let is_continuation = current_counter > 0;
+
+        let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
+
+        let task = GeneratorRunTask {
+            token_ids: vec![last_token],
+            token_positions: vec![0], // Not used - comes from async_positions_buffer
+            token_seeds: vec![0], // Not used - comes from async_seeds_buffer
+            expected_number_of_new_tokens: 1,
+            active_suffix_length: 1,
+            is_prefilling: false,
+        };
+
+        let mut state = task.create_state_async(
+            &mut self.context,
+            pass_idx,
+            is_continuation,
+        );
+        state.sampling_method = Some(sampling_method);
+
+        self.context.reset_command_buffer();
+
+        let root_cmd = self.context.command_buffer.root_command_buffer();
+
+        if is_continuation {
+            root_cmd.encode_wait_for_event(
+                &self.context.async_event,
+                current_counter,
+            );
+        }
+
+        _ = task.build_encoded_task(
+            &self.context,
+            &mut state,
+            &EncodingParameters::new(false, true, false),
+            task.encoded_task_key(self.tokens.len()),
+        );
+
+        self.context.gpu_sampler.encode(
+            &mut state,
+            &self.context.command_buffer,
+            &EncodingParameters::new(false, true, false),
+        );
+
+        let sampling_output_buffer = {
+            let sampling_output = state
+                .sampling_output
+                .as_ref()
+                .expect("Sampling output buffer not found");
+            let mut buffer = sampling_output.borrow_mut();
+            unsafe { buffer.mtl_buffer().to_owned() }
+        };
+
+        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+        let results_buffer = self.context.async_results_buffer.clone();
+
+        {
+            let root_cmd = self.context.command_buffer.root_command_buffer();
+            let encoder = root_cmd.new_compute_command_encoder();
+            self.context.token_copy.encode(
+                &sampling_output_buffer,
+                &token_ids_buffer,
+                encoder,
+            );
+            self.context.token_copy.encode_to_offset(
+                &sampling_output_buffer,
+                &results_buffer,
+                pass_idx,
+                encoder,
+            );
+            encoder.end_encoding();
+        }
+
+        let next_counter = current_counter + 1;
+        root_cmd.encode_signal_event(&self.context.async_event, next_counter);
+        self.context.async_event_counter.set(next_counter);
+
+        let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
+        let callback_clone = callback.clone();
+
+        let block =
+            ConcreteBlock::new(move |_cmd_buf: &metal::CommandBufferRef| {
+                let token = unsafe {
+                    let ptr = results_buffer.contents() as *const u32;
+                    let token_ptr = ptr.add(pass_idx);
+                    *token_ptr as u64
+                };
+                if let Some(cb) = callback_clone.lock().unwrap().take() {
+                    cb(token);
+                }
+            });
+        let block = block.copy();
+
+        let root_command_buffer =
+            self.context.command_buffer.root_command_buffer();
+        root_command_buffer.add_completed_handler(&block);
+
+        self.context.command_buffer.commit_and_continue();
+
+        Ok(())
+    }
+
+    pub fn update_last_token(
+        &mut self,
+        token: u64,
+    ) {
+        if let Some(last) = self.tokens.last_mut() {
+            *last = token;
+        }
+    }
+
+    pub fn set_async_prefill_count(&mut self) {
+        self.async_prefill_count = self.tokens.len();
+    }
+
+    pub fn async_generate_batch<F>(
+        &mut self,
+        count: usize,
+        sampling_method: SamplingMethod,
+        on_complete: F,
+    ) -> Result<(), Error>
+    where
+        F: Fn(usize, u64) + Send + Sync + 'static,
+    {
+        assert!(
+            self.decoding_config.generate_suffix_length() == 1,
+            "async_generate_batch only supports single token generation"
+        );
+        assert!(count > 0, "count must be > 0");
+
+        let sampling_output_buffer =
+            self.context.scratch_buffers.sampling_output.clone();
+        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+        let callback = Arc::new(on_complete);
+
+        let start_position = self.tokens.len() - 1;
+
+        for i in 0..count {
+            self.context.reset_command_buffer();
+
+            let position = start_position + i;
+            let seed = self.context.next_seed.next();
+
+            if i == 0 {
+                let last_token =
+                    *self.tokens.last().ok_or(Error::PrefillFailed)?;
+                let task = GeneratorRunTask {
+                    token_ids: vec![last_token],
+                    token_positions: vec![position],
+                    token_seeds: vec![seed],
+                    expected_number_of_new_tokens: 1,
+                    active_suffix_length: 1,
+                    is_prefilling: false,
+                };
+
+                let mut state = task.create_state(&mut self.context, None);
+                state.sampling_method = Some(sampling_method);
+
+                _ = task.build_encoded_task(
+                    &self.context,
+                    &mut state,
+                    &EncodingParameters::new(false, true, false),
+                    task.encoded_task_key(self.tokens.len() + i),
+                );
+
+                self.context.gpu_sampler.encode(
+                    &mut state,
+                    &self.context.command_buffer,
+                    &EncodingParameters::new(false, true, false),
+                );
+            } else {
+                let task = GeneratorRunTask {
+                    token_ids: vec![0],
+                    token_positions: vec![position],
+                    token_seeds: vec![seed],
+                    expected_number_of_new_tokens: 1,
+                    active_suffix_length: 1,
+                    is_prefilling: false,
+                };
+
+                let mut state = task.create_state(&mut self.context, None);
+                state.sampling_method = Some(sampling_method);
+
+                _ = task.build_encoded_task(
+                    &self.context,
+                    &mut state,
+                    &EncodingParameters::new(false, true, false),
+                    task.encoded_task_key(self.tokens.len() + i),
+                );
+
+                self.context.gpu_sampler.encode(
+                    &mut state,
+                    &self.context.command_buffer,
+                    &EncodingParameters::new(false, true, false),
+                );
+            }
+
+            {
+                let root_cmd =
+                    self.context.command_buffer.root_command_buffer();
+                let encoder = root_cmd.new_compute_command_encoder();
+                self.context.token_copy.encode(
+                    &sampling_output_buffer,
+                    &token_ids_buffer,
+                    encoder,
+                );
+                encoder.end_encoding();
+            }
+
+            let callback_clone = callback.clone();
+            let buf_clone = sampling_output_buffer.clone();
+            let idx = i;
+
+            let block = ConcreteBlock::new(
+                move |_cmd_buf: &metal::CommandBufferRef| {
+                    let token = unsafe {
+                        let ptr = buf_clone.contents() as *const u32;
+                        *ptr as u64
+                    };
+                    callback_clone(idx, token);
+                },
+            );
+            let block = block.copy();
+
+            let root_cmd = self.context.command_buffer.root_command_buffer();
+            root_cmd.add_completed_handler(&block);
+
+            self.context.command_buffer.commit_and_continue();
+
+            self.tokens.push(0);
+        }
+
+        Ok(())
+    }
+
     pub fn clear_cache(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
             self.encoded_tasks.clear();
@@ -381,6 +637,7 @@ impl Generator {
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
         self.gpu_capture.reset();
+        self.context.reset_async_event_counter();
     }
 
     pub fn prefix_len(&self) -> usize {
@@ -401,7 +658,7 @@ impl Generator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default());
+            self.run_model(task, true, false, true, SamplingMethod::default());
     }
 
     fn run_model(
@@ -409,6 +666,7 @@ impl Generator {
         task: GeneratorRunTask,
         warmup: bool,
         allow_pre_encode: bool,
+        need_wait_until_completed: bool,
         sampling_method: SamplingMethod,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
@@ -477,7 +735,9 @@ impl Generator {
                     .insert(next_task_key.clone(), next_encoded_task);
             }
 
-            root_command_buffer.wait_until_completed();
+            if need_wait_until_completed {
+                root_command_buffer.wait_until_completed();
+            }
             let run_time = run_start.elapsed().as_secs_f64();
 
             if should_capture {

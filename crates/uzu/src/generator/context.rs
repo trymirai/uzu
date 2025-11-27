@@ -1,5 +1,12 @@
-use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fs::File,
+    io::BufReader,
+    path::Path,
+    rc::Rc,
+};
 
+use metal::Event as MTLEvent;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
@@ -10,7 +17,7 @@ use crate::{
         MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
-        kernel::SamplingKernelEncodable,
+        kernel::{SamplingKernelEncodable, TokenCopyKernel},
     },
     config::{LanguageModelConfig, ModelMetadata},
     generator::rng::DerivableSeed,
@@ -35,7 +42,14 @@ pub struct GeneratorContext {
     pub executables: DecoderExecutables,
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: SamplingKernelEncodable,
+    pub token_copy: TokenCopyKernel,
     pub next_seed: DerivableSeed,
+
+    pub async_event: MTLEvent,
+    pub async_event_counter: Cell<u64>,
+    pub async_results_buffer: metal::Buffer,
+    pub async_positions_buffer: metal::Buffer,
+    pub async_seeds_buffer: metal::Buffer,
 }
 
 impl GeneratorContext {
@@ -76,15 +90,18 @@ impl GeneratorContext {
 
         // Calculate heap size: weights file size + generous buffer for scratch/cache
         let weights_path = model_path.join("model.safetensors");
-        let weights_size = std::fs::metadata(&weights_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let weights_size =
+            std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
         // Heap size = weights + 1GB for scratch/cache buffers (logits can be 500MB+)
         let heap_size = weights_size + 1024 * 1024 * 1024;
 
         let mtl_context = Rc::new(
-            MTLContext::new_with_heap(mtl_device, mtl_command_queue, Some(heap_size))
-                .map_err(|_| Error::UnableToCreateMetalContext)?,
+            MTLContext::new_with_heap(
+                mtl_device,
+                mtl_command_queue,
+                Some(heap_size),
+            )
+            .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let compilation_config = Rc::new(CompilationConfig::default());
@@ -146,6 +163,26 @@ impl GeneratorContext {
         )
         .map_err(|_| Error::UnableToCreateMetalContext)?;
 
+        let token_copy = TokenCopyKernel::new(&mtl_context)
+            .map_err(|_| Error::UnableToCreateMetalContext)?;
+
+        let async_event = mtl_context.device.new_event();
+
+        let async_results_buffer = mtl_context.device.new_buffer(
+            (max_prefix_length * std::mem::size_of::<u32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
+        let async_positions_buffer = mtl_context.device.new_buffer(
+            (max_prefix_length * std::mem::size_of::<i32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
+        let async_seeds_buffer = mtl_context.device.new_buffer(
+            (max_prefix_length * std::mem::size_of::<u64>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let base_seed = decoding_config.sampling_seed.resolve();
         let next_seed = DerivableSeed::new(base_seed);
 
@@ -160,7 +197,13 @@ impl GeneratorContext {
             executables,
             kv_cache_update,
             gpu_sampler,
+            token_copy,
             next_seed,
+            async_event,
+            async_event_counter: Cell::new(0),
+            async_results_buffer,
+            async_positions_buffer,
+            async_seeds_buffer,
         };
 
         return Ok(context);
@@ -172,5 +215,35 @@ impl GeneratorContext {
                 &self.mtl_context.command_queue,
             );
         });
+    }
+
+    pub fn reset_async_event_counter(&self) {
+        self.async_event_counter.set(0);
+    }
+
+    pub fn prepare_async_positions(
+        &self,
+        prefill_count: usize,
+        tokens_to_generate: usize,
+    ) {
+        let ptr = self.async_positions_buffer.contents() as *mut i32;
+        for i in 0..tokens_to_generate {
+            unsafe {
+                *ptr.add(i) = (prefill_count + i) as i32;
+            }
+        }
+    }
+
+    pub fn prepare_async_seeds(
+        &mut self,
+        tokens_to_generate: usize,
+    ) {
+        let ptr = self.async_seeds_buffer.contents() as *mut u64;
+        for i in 0..tokens_to_generate {
+            let seed = self.next_seed.next();
+            unsafe {
+                *ptr.add(i) = seed;
+            }
+        }
     }
 }

@@ -47,6 +47,15 @@ impl GeneratorRunTask {
         context: &mut GeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> ForwardPassState {
+        self.create_state_with_options(context, external_bias_fn, false)
+    }
+
+    pub fn create_state_with_options(
+        &self,
+        context: &mut GeneratorContext,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        skip_token_ids_copy: bool,
+    ) -> ForwardPassState {
         let state = ForwardPassState::new(
             context.mtl_context.clone(),
             &context.model_config.decoder_config,
@@ -61,6 +70,39 @@ impl GeneratorRunTask {
             &self.token_seeds,
             false,
             external_bias_fn,
+            skip_token_ids_copy,
+            false,
+            None,
+            None,
+        );
+
+        return state;
+    }
+
+    pub fn create_state_async(
+        &self,
+        context: &mut GeneratorContext,
+        pass_idx: usize,
+        skip_token_ids_copy: bool,
+    ) -> ForwardPassState {
+        let state = ForwardPassState::new(
+            context.mtl_context.clone(),
+            &context.model_config.decoder_config,
+            &context.model_shape,
+            &context.scratch_buffers,
+            context.cache_layers.clone(),
+            context.shared_buffers.clone(),
+            &self.token_ids,
+            &self.token_positions,
+            self.active_suffix_length,
+            self.is_prefilling,
+            &self.token_seeds,
+            false,
+            None,
+            skip_token_ids_copy,
+            true,
+            Some((&context.async_positions_buffer, pass_idx)),
+            Some((&context.async_seeds_buffer, pass_idx)),
         );
 
         return state;
