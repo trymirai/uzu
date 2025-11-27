@@ -207,6 +207,14 @@ impl ModelShape {
         [self.num_groups, suffix_length, self.head_dim]
     }
 
+    pub fn rotated_values_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 3] {
+        // Values share the same grouping as keys (grouped by num_groups)
+        [self.num_groups, suffix_length, self.head_dim]
+    }
+
     pub fn kv_cache_layer_shapes(
         &self,
         max_prefix_length: usize,

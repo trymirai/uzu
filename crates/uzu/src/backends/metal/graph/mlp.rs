@@ -37,6 +37,8 @@ pub fn mlp_subgraph(
             let up_proj = &split_results[0];
             let gate = &split_results[1];
 
+            // ModernBERT and current lalamo always apply activation to the gate,
+            // then multiply with the up projection. Weight import handles any differences.
             let activated_gate = activation(
                 graph,
                 &dense.activation,

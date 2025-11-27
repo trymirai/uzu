@@ -35,7 +35,7 @@ impl EncodingParameters {
 pub trait EncodableWithState {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     );

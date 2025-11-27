@@ -11,7 +11,7 @@ use super::{
 use crate::{
     Array,
     backends::metal::forward_pass::{
-        ForwardPassState, INVALID_POSITION,
+        ForwardPassState, INVALID_POSITION, LLMForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
     linearizer::trie::{TokenTrie, TrieCreationConfig},
@@ -128,7 +128,7 @@ impl Generator {
         ]
         .concat();
 
-        let mut last_state: Option<ForwardPassState> = None;
+        let mut last_state: Option<LLMForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -410,12 +410,14 @@ impl Generator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-    ) -> (ForwardPassState, f64) {
+    ) -> (LLMForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
             let mut state = task.create_state(&mut self.context, None);
-            state.sampling_method = Some(sampling_method);
+            if let Some(method) = state.sampling_method_mut() {
+                *method = Some(sampling_method);
+            }
 
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture =
@@ -490,9 +492,9 @@ impl Generator {
 
     fn sample(
         &mut self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
     ) -> Result<Vec<u64>, Error> {
-        let sampling_output = state.sampling_output.as_ref()
+        let sampling_output = state.sampling_output()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();

@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
 use uzu::session::{
-    Session,
+    ChatSession,
     config::{DecodingConfig, RunConfig},
     types::{Input, Output},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = PathBuf::from("MODEL_PATH");
-    let mut session = Session::new(model_path, DecodingConfig::default())?;
+    let mut session = ChatSession::new(model_path, DecodingConfig::default())?;
 
     let input = Input::Text(String::from("Tell about London"));
     let output = session.run(

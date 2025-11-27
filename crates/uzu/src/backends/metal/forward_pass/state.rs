@@ -21,6 +21,7 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
+#[allow(dead_code)]
 pub enum EmbeddingsBuffers {
     Tied {
         /// [vocab_size, model_dim]
@@ -445,6 +446,8 @@ struct AuxBuffers {
     rotated_queries: ArrayCell,
     /// [num_groups, max_suffix_length, head_dim]
     rotated_keys: ArrayCell,
+    /// [num_groups, max_suffix_length, head_dim]
+    rotated_values: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count * head_dim]
     attention_partials: ArrayCell,
     /// [num_heads * suffix_length * total_blocks_count]
@@ -594,6 +597,11 @@ impl AuxBuffers {
                 rotated_keys: RefCell::new(MetalArray::new(
                     scratch.rotated_keys.clone(),
                     &model_shape.rotated_keys_shape(suffix_length),
+                    act_dtype,
+                )),
+                rotated_values: RefCell::new(MetalArray::new(
+                    scratch.rotated_values.clone(),
+                    &model_shape.rotated_values_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_partials: RefCell::new(MetalArray::new(
@@ -903,7 +911,7 @@ impl AuxBuffers {
     }
 }
 
-pub struct ForwardPassState {
+pub struct LLMForwardPassState {
     context: Rc<MTLContext>,
     /// [suffix_length] - u64
     token_ids: ArrayCell,
@@ -927,7 +935,7 @@ pub struct ForwardPassState {
     is_prefilling: bool,
 }
 
-impl ForwardPassState {
+impl LLMForwardPassState {
     pub fn new(
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
@@ -1213,6 +1221,7 @@ impl ForwardPassState {
             },
             ArrayId::RotatedQueries => self.aux_buffers.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.aux_buffers.rotated_keys.clone(),
+            ArrayId::RotatedValues => self.aux_buffers.rotated_values.clone(),
             ArrayId::AttentionPartials => {
                 self.aux_buffers.attention_partials.clone()
             },
@@ -1335,6 +1344,14 @@ impl ForwardPassState {
                 self.shared_buffers.borrow().attention_sinks.as_ref()
                     .expect("Attention sinks not initialized")[layer_index].clone()
             },
+
+            // Classifier prediction head buffers (not supported in LLM state)
+            ArrayId::ClassifierPooling
+            | ArrayId::ClassifierPredictionHeadDense
+            | ArrayId::ClassifierPredictionHeadNorm
+            | ArrayId::ClassifierPredictionHeadLogits => {
+                panic!("Classifier prediction head ArrayIds are not supported in LLMForwardPassState")
+            },
         }
     }
 
@@ -1394,7 +1411,75 @@ impl ForwardPassState {
     }
 }
 
-impl Drop for ForwardPassState {
+impl super::state_trait::ForwardPassState for LLMForwardPassState {
+    fn arrays(
+        &self,
+        ids: &[ArrayId],
+    ) -> Box<[ArrayCell]> {
+        self.arrays(ids)
+    }
+
+    fn hashmaps(
+        &self,
+        ids: &[HashMapId],
+    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
+        self.hashmaps(ids)
+    }
+
+    fn aux_buffers_suffix_length(&self) -> usize {
+        self.aux_buffers_suffix_length()
+    }
+
+    fn mtl_context(&self) -> &Rc<MTLContext> {
+        self.mtl_context()
+    }
+
+    fn shared_buffers(&self) -> &Rc<RefCell<SharedBuffers>> {
+        &self.shared_buffers
+    }
+
+    fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
+        Some(&self.cache_layers)
+    }
+
+    fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+        self.conv_padded_buffer()
+    }
+
+    fn active_suffix_length(&self) -> usize {
+        self.active_suffix_length()
+    }
+
+    fn is_prefilling(&self) -> bool {
+        self.is_prefilling()
+    }
+
+    fn sampling_output(&self) -> Option<&ArrayCell> {
+        self.sampling_output.as_ref()
+    }
+
+    fn traces(&self) -> Option<&Rc<RefCell<DecoderActivationTrace>>> {
+        self.traces.as_ref()
+    }
+
+    fn sampling_method_mut(
+        &mut self
+    ) -> Option<&mut Option<crate::session::parameter::SamplingMethod>> {
+        Some(&mut self.sampling_method)
+    }
+
+    fn sampling_method(
+        &self
+    ) -> Option<crate::session::parameter::SamplingMethod> {
+        self.sampling_method
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl Drop for LLMForwardPassState {
     fn drop(&mut self) {
         // Nothing extra to clean up now that heap is removed.
     }
@@ -1456,6 +1541,7 @@ pub enum ArrayId {
 
     RotatedQueries,
     RotatedKeys,
+    RotatedValues,
 
     AttentionPartials,
     AttentionSums,
@@ -1488,6 +1574,12 @@ pub enum ArrayId {
     MoeScatterPartials,
     MoeScatterBlockBases,
     MoeBlockAlloc,
+
+    // Classifier prediction head buffers
+    ClassifierPooling,
+    ClassifierPredictionHeadDense,
+    ClassifierPredictionHeadNorm,
+    ClassifierPredictionHeadLogits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

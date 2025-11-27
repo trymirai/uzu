@@ -4,7 +4,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 use crate::{
-    DataType,
+    DataType, DecoderLayerConfig,
     backends::metal::{
         MTLContext,
         compilation_parameters::CompilationConfig,
@@ -19,10 +19,7 @@ use crate::{
             TensorCopy,
         },
     },
-    config::{
-        DecoderLayerType,
-        decoder_layer::{DecoderLayerConfig, MixerConfig},
-    },
+    config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
 };
 
@@ -174,6 +171,8 @@ impl LayerExecutables {
                             layer_index,
                             attention_scale,
                             attention_config.has_sinks,
+                            attention_config.is_causal.unwrap_or(true),
+                            attention_config.sliding_window_size,
                         )
                         .expect(
                             "Failed to create AttentionWrapper with Metal kernel",
@@ -296,18 +295,19 @@ impl LayerExecutables {
 impl EncodableWithState for LayerExecutables {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let layer_traces = if let Some(traces) = state.traces.clone() {
+        let layer_traces = if let Some(traces) = state.traces().cloned() {
             traces.borrow().layer_results.get(self.layer_index).cloned()
         } else {
             None
         };
 
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
+            state.encode_copy_array(
+                command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().inputs.clone(),
             );
@@ -318,7 +318,8 @@ impl EncodableWithState for LayerExecutables {
 
         self.pre_attention_norm.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
+            state.encode_copy_array(
+                command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().pre_attention_norm.clone(),
             );
@@ -362,7 +363,8 @@ impl EncodableWithState for LayerExecutables {
         if let Some(post_attention_norm) = &self.post_attention_norm {
             post_attention_norm.encode(state, command_buffer, parameters);
             if let Some(layer_traces) = layer_traces.clone() {
-                state.copy_array(
+                state.encode_copy_array(
+                    command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_attention_norm.clone(),
                 );
@@ -374,7 +376,8 @@ impl EncodableWithState for LayerExecutables {
         // shortcut = input + attention_result
         // main = input + attention_result
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
+            state.encode_copy_array(
+                command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().mlp_inputs.clone(),
             );
@@ -382,7 +385,8 @@ impl EncodableWithState for LayerExecutables {
 
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
+            state.encode_copy_array(
+                command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().pre_mlp_norm.clone(),
             );
@@ -390,13 +394,18 @@ impl EncodableWithState for LayerExecutables {
 
         self.mlp.encode(state, command_buffer, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(ArrayId::Main, layer_traces.borrow().mlp.clone());
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                layer_traces.borrow().mlp.clone(),
+            );
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             post_mlp_norm.encode(state, command_buffer, parameters);
             if let Some(layer_traces) = layer_traces.clone() {
-                state.copy_array(
+                state.encode_copy_array(
+                    command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_mlp_norm.clone(),
                 );
@@ -408,7 +417,8 @@ impl EncodableWithState for LayerExecutables {
         // shortcut = input + attention_result + mlp_result
         // main = input + attention_result + mlp_result
         if let Some(layer_traces) = layer_traces.clone() {
-            state.copy_array(
+            state.encode_copy_array(
+                command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().outputs.clone(),
             );

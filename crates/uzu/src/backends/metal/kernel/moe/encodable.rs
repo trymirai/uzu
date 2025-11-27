@@ -10,17 +10,14 @@ use super::{
     MoeScatterKernels, MoeScatterWithMapArguments,
 };
 use crate::{
-    DataType,
+    Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
+    RoutingFunctionConfig,
     backends::metal::{
         KernelDataType, MTLContext, MetalArray,
         forward_pass::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
-    },
-    config::{
-        Activation, LinearConfig, MixtureOfExpertsConfig,
-        mlp::RoutingFunctionConfig,
     },
     parameters::ParameterTree,
 };
@@ -297,7 +294,7 @@ impl MoeBlockEncodable {
 impl EncodableWithState for MoeBlockEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

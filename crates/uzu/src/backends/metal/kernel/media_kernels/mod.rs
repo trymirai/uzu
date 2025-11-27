@@ -88,7 +88,7 @@ impl ScalePadNormalizeImage {
 impl EncodableWithState for ScalePadNormalizeImage {
     fn encode(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         _parameters: &EncodingParameters,
     ) {

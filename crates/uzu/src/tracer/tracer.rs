@@ -12,10 +12,10 @@ use num_traits::NumCast;
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{
-        CacheLayers, ForwardPassState, KVCacheUpdate, KernelDataType,
+        CacheLayers, KVCacheUpdate, KernelDataType,
         MTLContext, MetalArray,
         forward_pass::{
-            ArrayId, ForwardPassBuffers,
+            ArrayId, ForwardPassBuffers, LLMForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             traces::DecoderActivationTrace,
         },
@@ -304,7 +304,7 @@ impl Tracer {
 
         let token_seeds: Vec<u64> = vec![0; token_ids.len()];
 
-        let mut state = ForwardPassState::new(
+        let mut state = LLMForwardPassState::new(
             self.generator_context.mtl_context.clone(),
             &self.generator_context.model_config.decoder_config,
             &self.generator_context.model_shape,
@@ -344,7 +344,7 @@ impl Tracer {
     fn validate_traces(
         &self,
         suffix_length: usize,
-        state: &ForwardPassState,
+        state: &LLMForwardPassState,
         traces_view: &ParameterTree<Rc<MTLContext>>,
         traces: Rc<RefCell<DecoderActivationTrace>>,
     ) -> TracerValidationResults {

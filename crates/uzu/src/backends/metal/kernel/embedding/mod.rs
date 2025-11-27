@@ -281,7 +281,7 @@ impl QuantizedEmbeddingLookupKernelBlock {
 impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &CommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -486,7 +486,7 @@ impl QuantizedEmbeddingReadoutKernelBlock {
 impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &CommandBuffer,
         parameters: &EncodingParameters,
     ) {

@@ -38,6 +38,7 @@ pub struct ForwardPassBuffers {
     // 3-D
     pub rotated_queries: MTLBuffer,
     pub rotated_keys: MTLBuffer,
+    pub rotated_values: MTLBuffer,
 
     // 2-pass attention intermediate buffers
     pub attention_partials: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
@@ -98,18 +99,33 @@ impl ForwardPassBuffers {
             sampling_output: alloc(&[max_suffix_len], DataType::U32),
 
             // 2-D
-            attention_window_size_to_bias: (0..model_shape.num_layers)
-                .map(|layer| {
-                    (
-                        model_shape.sliding_window_length_per_layer
-                            [layer as usize],
-                        alloc(
-                            &[max_suffix_len, max_suffix_len + max_prefix_len],
-                            act_ty,
-                        ),
-                    )
-                })
-                .collect::<HashMap<Option<usize>, MTLBuffer>>(),
+            attention_window_size_to_bias: {
+                // Collect unique window sizes across all layers
+                let unique_window_sizes: std::collections::HashSet<
+                    Option<usize>,
+                > = model_shape
+                    .sliding_window_length_per_layer
+                    .iter()
+                    .copied()
+                    .collect();
+
+                // Create one buffer per unique window size
+                unique_window_sizes
+                    .into_iter()
+                    .map(|window_size| {
+                        (
+                            window_size,
+                            alloc(
+                                &[
+                                    max_suffix_len,
+                                    max_suffix_len + max_prefix_len,
+                                ],
+                                act_ty,
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<Option<usize>, MTLBuffer>>()
+            },
             logits: alloc(&model_shape.logits_shape(max_suffix_len), act_ty),
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty),
             shortcut: alloc(&model_shape.main_shape(max_suffix_len), act_ty),
@@ -157,6 +173,10 @@ impl ForwardPassBuffers {
             ),
             rotated_keys: alloc(
                 &model_shape.rotated_keys_shape(max_suffix_len),
+                act_ty,
+            ),
+            rotated_values: alloc(
+                &model_shape.rotated_values_shape(max_suffix_len),
                 act_ty,
             ),
 

@@ -7,6 +7,7 @@ mod model_shape;
 mod mpsgraph_block;
 pub mod ssm_layer;
 mod state;
+mod state_trait;
 pub mod traces;
 pub mod transformer_layer;
 
@@ -18,5 +19,7 @@ pub use model_shape::ModelShape;
 pub use mpsgraph_block::MPSGraphBlock;
 pub use ssm_layer::SSMLayer;
 pub use state::{
-    ArrayId, ForwardPassState, HashMapId, RopeType, SharedBuffers,
+    ArrayId, EmbeddingsBuffers, HashMapId, LLMForwardPassState, RopeType,
+    SharedBuffers,
 };
+pub use state_trait::ForwardPassState;

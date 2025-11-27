@@ -60,17 +60,22 @@ impl GeneratorContext {
         let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
                 .map_err(|_| Error::UnableToLoadConfig)?;
+
+        // Extract language model config
+        let language_model_config = model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or(Error::UnableToLoadConfig)?;
+
         let decoder_config =
-            Rc::new(model_metadata.model_config.decoder_config.clone());
+            Rc::new(language_model_config.decoder_config.clone());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let prefill_step_size = decoding_config
-            .prefill_step_size
-            .resolve(&model_metadata.model_config);
+        let prefill_step_size =
+            decoding_config.prefill_step_size.resolve(language_model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
-        let max_prefix_length: usize = decoding_config
-            .context_length
-            .resolve(&model_metadata.model_config);
+        let max_prefix_length: usize =
+            decoding_config.context_length.resolve(language_model_config);
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
@@ -148,7 +153,7 @@ impl GeneratorContext {
             cache_layers,
             shared_buffers,
             scratch_buffers,
-            model_config: model_metadata.model_config.clone(),
+            model_config: language_model_config.clone(),
             model_shape,
             executables,
             kv_cache_update,

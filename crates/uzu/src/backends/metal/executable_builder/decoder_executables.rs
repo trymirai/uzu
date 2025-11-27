@@ -4,7 +4,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::layer_executables::LayerExecutables;
 use crate::{
-    DataType,
+    DataType, DecoderConfig,
     backends::metal::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
@@ -15,7 +15,7 @@ use crate::{
         },
         kernel::{RMSNormKernelEncodable, RopeKernelEncodable},
     },
-    config::{DecoderConfig, DecoderLayerType, decoder_layer::MixerConfig},
+    config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
 };
 
@@ -196,7 +196,7 @@ impl DecoderExecutables {
 impl EncodableWithState for DecoderExecutables {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -211,14 +211,21 @@ impl EncodableWithState for DecoderExecutables {
         }
 
         self.norm.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
-            state
-                .copy_array(ArrayId::Main, traces.borrow().output_norm.clone());
+        if let Some(traces) = state.traces().cloned() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Main,
+                traces.borrow().output_norm.clone(),
+            );
         }
 
         self.readout.encode(state, command_buffer, parameters);
-        if let Some(traces) = state.traces.clone() {
-            state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
+        if let Some(traces) = state.traces().cloned() {
+            state.encode_copy_array(
+                command_buffer,
+                ArrayId::Logits,
+                traces.borrow().logits.clone(),
+            );
         }
     }
 }

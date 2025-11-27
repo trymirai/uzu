@@ -153,7 +153,7 @@ impl RopeKernelEncodable {
 impl EncodableWithState for RopeKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

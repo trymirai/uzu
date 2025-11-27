@@ -158,7 +158,7 @@ impl MlpBlockEncodable {
 impl EncodableWithState for MlpBlockEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         params: &EncodingParameters,
     ) {

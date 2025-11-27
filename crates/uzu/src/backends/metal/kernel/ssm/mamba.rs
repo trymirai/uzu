@@ -4,9 +4,9 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    SSDPrefillArguments, SSDPrefillKernel,
-    SSDPrefillMode, SSDUpdateArguments, SSDUpdateKernel, SplitInProjArguments,
-    SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
+    SSDUpdateKernel, SplitInProjArguments, SplitInProjKernel,
+    conv1d_scan::Conv1dDecodeArguments,
 };
 use crate::{
     DataType,
@@ -19,7 +19,7 @@ use crate::{
             transformer_layer,
         },
     },
-    config::{DecoderLayerType, mamba::Mamba2Config},
+    config::{DecoderLayerType, Mamba2Config},
     parameters::ParameterTree,
 };
 
@@ -145,7 +145,7 @@ impl MambaMixerEncodable {
 
     fn encode_pipeline(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -177,7 +177,7 @@ impl MambaMixerEncodable {
 
     fn split_inproj(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
@@ -229,7 +229,7 @@ impl MambaMixerEncodable {
 
     fn run_conv_scan(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
@@ -354,7 +354,7 @@ impl MambaMixerEncodable {
 
     fn run_prefill_ssm(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
@@ -437,7 +437,7 @@ impl MambaMixerEncodable {
 
     fn run_decode_ssm(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
@@ -532,7 +532,7 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 impl EncodableWithState for MambaMixerEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {

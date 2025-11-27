@@ -8,14 +8,11 @@ use metal::{
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use thiserror::Error;
 
-use crate::{
-    Array,
-    backends::metal::{
-        KernelDataType, MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState, HashMapId,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-        },
+use crate::backends::metal::{
+    KernelDataType, MTLContext, MTLError,
+    forward_pass::{
+        ArrayId, ForwardPassState, HashMapId,
+        encodable_with_state::{EncodableWithState, EncodingParameters},
     },
 };
 
@@ -25,7 +22,7 @@ pub enum AttentionKernelVariant {
     TwoPass,
 }
 
-type PipelineKey = (usize, bool);
+type PipelineKey = (usize, bool, bool); // (head_dim, has_sinks, is_causal)
 
 pub struct AttentionKernelPipelines {
     single_pass: HashMap<PipelineKey, MTLComputePipelineState>,
@@ -68,6 +65,7 @@ pub struct AttentionSinglePassArguments<'a> {
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
+    pub is_causal: bool,
 }
 
 pub struct AttentionTwoPassArguments<'a> {
@@ -93,6 +91,7 @@ pub struct AttentionTwoPassArguments<'a> {
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
+    pub is_causal: bool,
 }
 
 pub struct KVCacheUpdateArguments<'a> {
@@ -108,12 +107,14 @@ pub struct KVCacheUpdateArguments<'a> {
     pub max_sequence_length: usize,
 }
 
-fn make_function_constants(has_sinks_value: bool) -> FunctionConstantValues {
+fn make_function_constants(
+    has_sinks_value: bool,
+    is_causal_value: bool,
+) -> FunctionConstantValues {
     let function_constants = FunctionConstantValues::new();
 
     let has_mask_value = true;
     let query_transposed_value = false;
-    let do_causal_value = false;
     let bool_mask_value = false;
     let float_mask_value = true;
 
@@ -127,11 +128,6 @@ fn make_function_constants(has_sinks_value: bool) -> FunctionConstantValues {
         MTLDataType::Bool,
         21,
     ); // query_transposed
-    function_constants.set_constant_value_at_index(
-        &do_causal_value as *const bool as *const std::ffi::c_void,
-        MTLDataType::Bool,
-        22,
-    ); // do_causal
     function_constants.set_constant_value_at_index(
         &bool_mask_value as *const bool as *const std::ffi::c_void,
         MTLDataType::Bool,
@@ -147,6 +143,11 @@ fn make_function_constants(has_sinks_value: bool) -> FunctionConstantValues {
         MTLDataType::Bool,
         25,
     ); // has_sinks
+    function_constants.set_constant_value_at_index(
+        &is_causal_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        26,
+    ); // is_causal
 
     function_constants
 }
@@ -163,46 +164,55 @@ impl AttentionKernel {
         let mut two_pass_1 = HashMap::new();
         let mut two_pass_2 = HashMap::new();
 
-        // Pre-generate all supported variants for both sink configurations
+        // Pre-generate all supported variants for sinks and causal configurations
         for &has_sinks_value in &[false, true] {
-            let function_constants = make_function_constants(has_sinks_value);
+            for &is_causal_value in &[false, true] {
+                let function_constants =
+                    make_function_constants(has_sinks_value, is_causal_value);
 
-            for &head_dim in &supported_head_dims {
-                if let Ok((pipeline, _)) = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "attention_single_pass_{}_{}",
-                            data_suffix, head_dim
-                        ),
-                        Some(&function_constants),
-                    )
-                {
-                    single_pass.insert((head_dim, has_sinks_value), pipeline);
-                }
-
-                if let Ok((pipeline, _)) = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "attention_2pass_1_{}_{}",
-                            data_suffix, head_dim
-                        ),
-                        Some(&function_constants),
-                    )
-                {
-                    two_pass_1.insert((head_dim, has_sinks_value), pipeline);
-                }
-
-                if !two_pass_2.contains_key(&head_dim) {
+                for &head_dim in &supported_head_dims {
                     if let Ok((pipeline, _)) = context
                         .compute_pipeline_state_with_reflection(
                             &format!(
-                                "attention_2pass_2_{}_{}",
+                                "attention_single_pass_{}_{}",
                                 data_suffix, head_dim
                             ),
                             Some(&function_constants),
                         )
                     {
-                        two_pass_2.insert(head_dim, pipeline);
+                        single_pass.insert(
+                            (head_dim, has_sinks_value, is_causal_value),
+                            pipeline,
+                        );
+                    }
+
+                    if let Ok((pipeline, _)) = context
+                        .compute_pipeline_state_with_reflection(
+                            &format!(
+                                "attention_2pass_1_{}_{}",
+                                data_suffix, head_dim
+                            ),
+                            Some(&function_constants),
+                        )
+                    {
+                        two_pass_1.insert(
+                            (head_dim, has_sinks_value, is_causal_value),
+                            pipeline,
+                        );
+                    }
+
+                    if !two_pass_2.contains_key(&head_dim) {
+                        if let Ok((pipeline, _)) = context
+                            .compute_pipeline_state_with_reflection(
+                                &format!(
+                                    "attention_2pass_2_{}_{}",
+                                    data_suffix, head_dim
+                                ),
+                                Some(&function_constants),
+                            )
+                        {
+                            two_pass_2.insert(head_dim, pipeline);
+                        }
                     }
                 }
             }
@@ -229,15 +239,17 @@ impl AttentionKernel {
     pub fn supports_single_pass(
         &self,
         head_dim: usize,
+        is_causal: bool,
     ) -> bool {
-        self.pipelines.single_pass.contains_key(&(head_dim, false))
+        self.pipelines.single_pass.contains_key(&(head_dim, false, is_causal))
     }
 
     pub fn supports_two_pass(
         &self,
         head_dim: usize,
+        is_causal: bool,
     ) -> bool {
-        self.pipelines.two_pass_1.contains_key(&(head_dim, false))
+        self.pipelines.two_pass_1.contains_key(&(head_dim, false, is_causal))
             && self.pipelines.two_pass_2.contains_key(&head_dim)
     }
 
@@ -245,8 +257,10 @@ impl AttentionKernel {
         &self,
         sequence_length: usize,
         head_dim: usize,
+        is_causal: bool,
     ) -> AttentionKernelVariant {
-        if self.supports_two_pass(head_dim) && sequence_length > 1024 {
+        if self.supports_two_pass(head_dim, is_causal) && sequence_length > 1024
+        {
             AttentionKernelVariant::TwoPass
         } else {
             AttentionKernelVariant::SinglePass
@@ -262,7 +276,7 @@ impl AttentionKernel {
         let pipeline = self
             .pipelines
             .single_pass
-            .get(&(args.head_dim, has_sinks))
+            .get(&(args.head_dim, has_sinks, args.is_causal))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         compute_encoder.set_compute_pipeline_state(pipeline);
@@ -359,7 +373,7 @@ impl AttentionKernel {
         let pass1_pipeline = self
             .pipelines
             .two_pass_1
-            .get(&(args.head_dim, has_sinks))
+            .get(&(args.head_dim, has_sinks, args.is_causal))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         let pass2_pipeline =
@@ -554,6 +568,8 @@ pub struct AttentionKernelEncodable {
     layer_index: usize,
     attention_scale: Option<f32>,
     has_sinks: bool,
+    is_causal: bool,
+    sliding_window_size: Option<usize>,
 }
 
 impl AttentionKernelEncodable {
@@ -563,6 +579,8 @@ impl AttentionKernelEncodable {
         layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,
+        is_causal: bool,
+        sliding_window_size: Option<usize>,
     ) -> Result<Self, AttentionError> {
         let kernel = AttentionKernel::new(context, data_type)?;
         Ok(Self {
@@ -570,6 +588,8 @@ impl AttentionKernelEncodable {
             layer_index,
             attention_scale,
             has_sinks,
+            is_causal,
+            sliding_window_size,
         })
     }
 }
@@ -577,7 +597,7 @@ impl AttentionKernelEncodable {
 impl EncodableWithState for AttentionKernelEncodable {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut dyn ForwardPassState,
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
@@ -588,23 +608,29 @@ impl EncodableWithState for AttentionKernelEncodable {
             num_groups,
             max_sequence_length,
         ) = {
+            use crate::Array;
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
-            let suffix_length = qkv_array.shape()[0];
+            let suffix_length = Array::shape(&*qkv_array)[0];
 
             let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
             let queries_array = queries_binding[0].borrow();
-            let num_heads = queries_array.shape()[0];
-            let head_dim = queries_array.shape()[2];
+            let num_heads = Array::shape(&*queries_array)[0];
+            let head_dim = Array::shape(&*queries_array)[2];
 
             let keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
             let keys_array = keys_binding[0].borrow();
-            let num_groups = keys_array.shape()[0];
+            let num_groups = Array::shape(&*keys_array)[0];
 
-            let key_cache_binding =
-                state.arrays(&[ArrayId::Keys(self.layer_index)]);
-            let key_cache_array = key_cache_binding[0].borrow();
-            let max_sequence_length = key_cache_array.shape()[1];
+            let max_sequence_length = if let Some(_kv) = state.cache_layers() {
+                let key_cache_binding =
+                    state.arrays(&[ArrayId::Keys(self.layer_index)]);
+                let key_cache_array = key_cache_binding[0].borrow();
+                Array::shape(&*key_cache_array)[1]
+            } else {
+                // For classifiers without KV cache, max_sequence_length is just suffix_length
+                suffix_length
+            };
 
             (
                 suffix_length,
@@ -616,7 +642,10 @@ impl EncodableWithState for AttentionKernelEncodable {
         };
 
         let (segment_prefix_length, window_length) = {
-            let cache = state.cache_layers.borrow();
+            let cache = state
+                .cache_layers()
+                .expect("Cache layers required for attention")
+                .borrow();
             let layer = cache.data[self.layer_index]
                 .as_transformer()
                 .expect("Attention kernel expects transformer layer state");
@@ -634,15 +663,15 @@ impl EncodableWithState for AttentionKernelEncodable {
         let scale =
             self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
-        let variant = self.kernel.choose_variant(sequence_length, head_dim);
+        let variant = self.kernel.choose_variant(
+            sequence_length,
+            head_dim,
+            self.is_causal,
+        );
 
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
         let qkv_binding = state.arrays(&[ArrayId::QKV]);
-        let key_cache_binding =
-            state.arrays(&[ArrayId::Keys(self.layer_index)]);
-        let value_cache_binding =
-            state.arrays(&[ArrayId::Values(self.layer_index)]);
         let attention_bias_binding =
             state.hashmaps(&[HashMapId::AttentionBias]);
         let attention_output_binding =
@@ -664,11 +693,58 @@ impl EncodableWithState for AttentionKernelEncodable {
         let mut qkv_array = qkv_binding[0].borrow_mut();
         let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
 
-        let mut key_cache_array = key_cache_binding[0].borrow_mut();
-        let key_cache_buffer = unsafe { key_cache_array.mtl_buffer() };
+        // Prepare command encoder early (used for optional value extraction)
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        let mut value_cache_array = value_cache_binding[0].borrow_mut();
-        let value_cache_buffer = unsafe { value_cache_array.mtl_buffer() };
+        // Get KV cache buffers only if KV cache exists (LLM mode)
+        let has_kv_cache = state.cache_layers().is_some();
+        let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
+            let key_cache_binding =
+                state.arrays(&[ArrayId::Keys(self.layer_index)]);
+            let value_cache_binding =
+                state.arrays(&[ArrayId::Values(self.layer_index)]);
+
+            let mut key_cache_array = key_cache_binding[0].borrow_mut();
+            let key_cache_buf = unsafe { key_cache_array.mtl_buffer().clone() };
+
+            let mut value_cache_array = value_cache_binding[0].borrow_mut();
+            let value_cache_buf =
+                unsafe { value_cache_array.mtl_buffer().clone() };
+
+            (key_cache_buf, value_cache_buf)
+        } else {
+            // For classifiers, we need a values buffer with [num_groups, suffix_length, head_dim] layout.
+            // Use the KV cache update kernel to extract values from QKV into a dedicated rotated_values buffer.
+            let rotated_values_binding =
+                state.arrays(&[ArrayId::RotatedValues]);
+            let mut rotated_values_array =
+                rotated_values_binding[0].borrow_mut();
+            let rotated_values_buf =
+                unsafe { rotated_values_array.mtl_buffer().clone() };
+
+            // Reuse the KV cache update kernel to write values into rotated_values_buf.
+            if let Err(e) = self.kernel.encode_kv_cache_update(
+                &compute_encoder,
+                KVCacheUpdateArguments {
+                    rotated_keys_buffer: &rotated_keys_buffer,
+                    qkv_buffer: &qkv_buffer,
+                    key_cache_buffer: &rotated_keys_buffer, // keys already in desired layout; harmless overwrite
+                    value_cache_buffer: &rotated_values_buf,
+                    num_groups,
+                    num_heads,
+                    head_dim,
+                    suffix_length,
+                    segment_prefix_length: 0,
+                    max_sequence_length,
+                },
+            ) {
+                eprintln!("Failed to prepare rotated values buffer: {:?}", e);
+            }
+
+            (rotated_keys_buffer.clone(), rotated_values_buf)
+        };
 
         let mut queries_array = rotated_queries_binding[0].borrow_mut();
         let queries_buffer = unsafe { queries_array.mtl_buffer() };
@@ -708,29 +784,27 @@ impl EncodableWithState for AttentionKernelEncodable {
             binding[0].borrow_mut().mtl_buffer().clone()
         });
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
-        if let Err(e) = self.kernel.encode_kv_cache_update(
-            &compute_encoder,
-            KVCacheUpdateArguments {
-                rotated_keys_buffer: &rotated_keys_buffer,
-                qkv_buffer: &qkv_buffer,
-                key_cache_buffer: &key_cache_buffer,
-                value_cache_buffer: &value_cache_buffer,
-                num_groups,
-                num_heads,
-                head_dim,
-                suffix_length,
-                segment_prefix_length,
-                max_sequence_length,
-            },
-        ) {
-            eprintln!("Failed to encode KV cache update: {:?}", e);
-            compute_encoder.end_encoding();
-            return;
+        // Only update KV cache for LLM mode (not for classifiers)
+        if has_kv_cache {
+            if let Err(e) = self.kernel.encode_kv_cache_update(
+                &compute_encoder,
+                KVCacheUpdateArguments {
+                    rotated_keys_buffer: &rotated_keys_buffer,
+                    qkv_buffer: &qkv_buffer,
+                    key_cache_buffer: &key_cache_buffer,
+                    value_cache_buffer: &value_cache_buffer,
+                    num_groups,
+                    num_heads,
+                    head_dim,
+                    suffix_length,
+                    segment_prefix_length,
+                    max_sequence_length,
+                },
+            ) {
+                eprintln!("Failed to encode KV cache update: {:?}", e);
+                compute_encoder.end_encoding();
+                return;
+            }
         }
 
         let k_head_stride = (max_sequence_length * head_dim) as i32;
@@ -762,6 +836,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         num_heads,
                         suffix_length,
                         head_dim,
+                        is_causal: self.is_causal,
                     },
                 ) {
                     eprintln!(
@@ -796,6 +871,7 @@ impl EncodableWithState for AttentionKernelEncodable {
                         num_heads,
                         suffix_length,
                         head_dim,
+                        is_causal: self.is_causal,
                     },
                 ) {
                     eprintln!("Failed to encode two-pass attention: {:?}", e);
