@@ -232,7 +232,7 @@ impl SamplingKernel {
     pub fn encode(
         &self,
         logits_buffer: &MTLBuffer,
-        seeds_buffer: Option<&MTLBuffer>,
+        seeds_buffer: Option<(&MTLBuffer, u64)>,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -256,7 +256,7 @@ impl SamplingKernel {
     pub fn encode_with_encoder(
         &self,
         logits_buffer: &MTLBuffer,
-        seeds_buffer: Option<&MTLBuffer>,
+        seeds_buffer: Option<(&MTLBuffer, u64)>,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -320,9 +320,12 @@ impl SamplingKernel {
                 last_logits_buffer = &self.partial_topp_buffer;
             }
 
+            let (seeds_buf, seeds_offset) =
+                seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?;
             self.encode_gumbel(
                 last_logits_buffer,
-                seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                seeds_buf,
+                seeds_offset,
                 &self.partial_gumbel_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -463,6 +466,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: &MTLBuffer,
+        seeds_offset: u64,
         processed_logits_buffer: &MTLBuffer,
         batch_size: u32,
         vocab_size: u32,
@@ -471,7 +475,7 @@ impl SamplingKernel {
         compute_encoder.set_compute_pipeline_state(&self.gumbel_pipeline);
 
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(seeds_buffer), 0);
+        compute_encoder.set_buffer(1, Some(seeds_buffer), seeds_offset);
         compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
         compute_encoder.set_bytes(
             3,
@@ -662,12 +666,14 @@ impl EncodableWithState for SamplingKernelEncodable {
 
         let sampling_method = state.sampling_method.unwrap();
 
+        let seeds_offset = seeds.mtl_buffer_offset();
+
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         if let Err(e) = self.kernel.encode(
-            unsafe { &logits.mtl_buffer() },
-            unsafe { Some(&seeds.mtl_buffer()) },
-            unsafe { &output_buffer_ref.mtl_buffer() },
+            unsafe { logits.mtl_buffer() },
+            unsafe { Some((seeds.mtl_buffer(), seeds_offset)) },
+            unsafe { output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,
             vocab_size,
