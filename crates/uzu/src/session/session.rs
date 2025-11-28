@@ -547,7 +547,8 @@ impl Session {
     where
         F: Fn(Output) -> bool,
     {
-        let tokens_to_generate = ctx.tokens_limit;
+        let tokens_to_generate =
+            ctx.tokens_limit.saturating_sub(ctx.prefill_result.tokens.len());
         let lookahead = generator.async_lookahead();
 
         generator.prepare_async(tokens_to_generate);
@@ -556,28 +557,16 @@ impl Session {
             mpsc::channel();
         let last_callback_time = Arc::new(Mutex::new(Instant::now()));
 
-        let initial_submit = std::cmp::min(lookahead, tokens_to_generate);
-        for idx in 0..initial_submit {
-            let tx_clone = tx.clone();
-            let last_time = last_callback_time.clone();
-            generator.async_generate(idx, sampling_method, move |token| {
-                let now = Instant::now();
-                let mut last = last_time.lock().unwrap();
-                let duration = now.duration_since(*last).as_secs_f64();
-                *last = now;
-                drop(last);
-                let _ = tx_clone.send((idx, token, duration));
-            })?;
-        }
-
         let mut results: Vec<GenerateResult> = Vec::new();
         let mut durations: Vec<f64> = Vec::new();
         let mut finish_reason = FinishReason::Length;
-        let mut next_to_submit = initial_submit;
-        let mut in_flight = initial_submit;
+        let mut next_to_submit = 0;
+        let mut in_flight = 0;
 
+        // Each iteration: submit passes to fill lookahead window, then wait for one result
         for _ in 0..tokens_to_generate {
-            if next_to_submit < tokens_to_generate && in_flight < lookahead {
+            // Submit passes until we have `lookahead` in flight (or no more to submit)
+            while in_flight < lookahead && next_to_submit < tokens_to_generate {
                 let tx_clone = tx.clone();
                 let last_time = last_callback_time.clone();
                 let idx = next_to_submit;
@@ -597,6 +586,7 @@ impl Session {
                 in_flight += 1;
             }
 
+            // Wait for one result
             let (_, token, duration) =
                 rx.recv().map_err(|_| Error::SamplingFailed)?;
             in_flight -= 1;
@@ -636,15 +626,9 @@ impl Session {
             };
 
             if should_stop {
+                // Drain in-flight passes without recording their tokens
                 while in_flight > 0 {
-                    let (_, extra_token, extra_duration) =
-                        rx.recv().map_err(|_| Error::SamplingFailed)?;
-                    generator.tokens.push(extra_token);
-                    results.push(GenerateResult {
-                        tokens: vec![extra_token],
-                        forwardpass_duration: extra_duration,
-                    });
-                    durations.push(extra_duration);
+                    let _ = rx.recv().map_err(|_| Error::SamplingFailed)?;
                     in_flight -= 1;
                 }
                 break;
