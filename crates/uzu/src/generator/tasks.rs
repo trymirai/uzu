@@ -101,33 +101,18 @@ impl GeneratorRunTask {
         parameters: &EncodingParameters,
         key: String,
     ) -> GeneratorEncodedTask {
-        // TODO: Re-enable predicate buffer when we can ensure consistent visibility
-        // and MPSGraph support. For now, we rely on reset_command_buffer.
-        // let enabled_value: u32 = 1;
-        // let predicate_buffer = context.mtl_context.device.new_buffer_with_data(
-        //     &enabled_value as *const u32 as *const _,
-        //     size_of::<u32>() as u64,
-        //     MTLResourceOptions::StorageModeShared,
-        // );
-
-        // let parameters_with_predicate =
-        //     parameters.clone().with_predicate(&predicate_buffer);
-        context.executables.encode(
-            state,
-            &context.command_buffer,
-            parameters, // Pass original parameters (predicate=None)
-        );
+        context.executables.encode(state, &context.command_buffer, parameters);
 
         let encoded_task = GeneratorEncodedTask {
             key,
-            // Create a dummy buffer or handle Option in GeneratorEncodedTask?
-            // GeneratorEncodedTask expects a buffer. I'll create a dummy one but not use it for encoding.
             predicate_buffer: context.mtl_context.device.new_buffer(
                 size_of::<u32>() as u64,
                 MTLResourceOptions::StorageModeShared,
             ),
         };
+
         // encoded_task.set_predicate_enabled(true);
+
         encoded_task
     }
 }
