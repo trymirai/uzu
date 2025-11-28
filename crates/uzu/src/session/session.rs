@@ -195,13 +195,13 @@ impl Session {
                 if self.static_context.is_none() {
                     let mut prefill_config = config.clone();
                     prefill_config.tokens_limit = 0;
-                    let (_out, ctx) =
+                    let (_out, run_context) =
                         self.extend(input.clone(), None, prefill_config)?;
-                    self.static_context = Some(ctx);
+                    self.static_context = Some(run_context);
                 }
                 let tmp = self.static_context.take();
-                if let Some(ref ctx) = tmp {
-                    self.reconfigure_generator(Some(ctx))?;
+                if let Some(ref run_context) = tmp {
+                    self.reconfigure_generator(Some(run_context))?;
                 }
                 self.static_context = tmp;
             },
@@ -313,7 +313,7 @@ impl Session {
             .prefill_step_size
             .resolve(&self.model_metadata.model_config);
 
-        let ctx = RunContext {
+        let run_context = RunContext {
             eos_tokens,
             context_length,
             prefix_len_before,
@@ -326,12 +326,12 @@ impl Session {
         };
 
         let prefill_finish_reason =
-            Self::check_finish_reason(&ctx, generator, &prefill_tokens);
+            Self::check_finish_reason(&run_context, generator, &prefill_tokens);
         let prefill_output = Self::build_output(
             &self.model_metadata,
             &self.tokenizer,
             &self.output_parser,
-            &ctx,
+            &run_context,
             generator,
             &[],
             &[],
@@ -365,7 +365,7 @@ impl Session {
                         &self.model_metadata,
                         &self.tokenizer,
                         &self.output_parser,
-                        &ctx,
+                        &run_context,
                         generator,
                         sampling_method,
                         &progress,
@@ -374,7 +374,7 @@ impl Session {
                     &self.model_metadata,
                     &self.tokenizer,
                     &self.output_parser,
-                    &ctx,
+                    &run_context,
                     generator,
                     &results,
                     &durations,
@@ -383,12 +383,20 @@ impl Session {
             },
             (AsyncMode::Batch, true) => {
                 let (results, durations, finish_reason) =
-                    Self::run_async_batch(&ctx, generator, sampling_method)?;
+                    Self::run_async_batch(
+                        &self.model_metadata,
+                        &self.tokenizer,
+                        &self.output_parser,
+                        &run_context,
+                        generator,
+                        sampling_method,
+                        &progress,
+                    )?;
                 Self::build_output(
                     &self.model_metadata,
                     &self.tokenizer,
                     &self.output_parser,
-                    &ctx,
+                    &run_context,
                     generator,
                     &results,
                     &durations,
@@ -399,7 +407,7 @@ impl Session {
                 &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
-                &ctx,
+                &run_context,
                 generator,
                 sampling_method,
                 &progress,
@@ -418,16 +426,16 @@ impl Session {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
         generator.reset_state();
-        if let Some(ctx) = context {
+        if let Some(run_context) = context {
             let mut generator_state =
                 generator.context.cache_layers.borrow_mut();
-            for (ctx_layer, gen_layer) in ctx
+            for (run_context_layer, gen_layer) in run_context
                 .cache_layers
                 .data
                 .iter()
                 .zip(generator_state.data.iter_mut())
             {
-                match (ctx_layer, gen_layer) {
+                match (run_context_layer, gen_layer) {
                     (
                         CacheLayer::Transformer(src),
                         CacheLayer::Transformer(dst),
@@ -481,7 +489,7 @@ impl Session {
             }
             drop(generator_state);
 
-            generator.tokens = ctx.tokens.clone();
+            generator.tokens = run_context.tokens.clone();
         }
         Ok(())
     }
@@ -507,9 +515,10 @@ impl Session {
     fn decode_generated_tokens(
         tokenizer: &Tokenizer,
         generator: &Generator,
-        ctx: &RunContext,
+        run_context: &RunContext,
     ) -> Result<String, Error> {
-        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
         let generated_tokens: Vec<u32> =
             generator.tokens[start_idx..].iter().map(|&v| v as u32).collect();
         tokenizer
@@ -518,18 +527,21 @@ impl Session {
     }
 
     fn check_finish_reason(
-        ctx: &RunContext,
+        run_context: &RunContext,
         generator: &Generator,
         new_tokens: &[u64],
     ) -> Option<FinishReason> {
-        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
         let total_new_tokens = generator.tokens[start_idx..].len();
-        let has_eos = new_tokens.iter().any(|t| ctx.eos_tokens.contains(t));
-        let context_limit = generator.tokens.len() >= ctx.context_length;
+        let has_eos =
+            new_tokens.iter().any(|t| run_context.eos_tokens.contains(t));
+        let context_limit =
+            generator.tokens.len() >= run_context.context_length;
 
         if has_eos {
             Some(FinishReason::Stop)
-        } else if total_new_tokens >= ctx.tokens_limit {
+        } else if total_new_tokens >= run_context.tokens_limit {
             Some(FinishReason::Length)
         } else if context_limit {
             Some(FinishReason::ContextLimitReached)
@@ -542,29 +554,31 @@ impl Session {
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
-        ctx: &RunContext,
+        run_context: &RunContext,
         generator: &Generator,
         generate_results: &[GenerateResult],
         generate_durations: &[f64],
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
-        let text = Self::decode_generated_tokens(tokenizer, generator, ctx)?;
+        let text =
+            Self::decode_generated_tokens(tokenizer, generator, run_context)?;
         let parsed = output_parser.parse(text);
-        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = generator.tokens[start_idx..].len();
 
         Ok(Output {
             text: parsed,
             stats: Self::build_stats(
                 model_metadata,
-                ctx.prefill_result.clone(),
-                ctx.prefill_duration,
-                ctx.prefill_suffix_length,
+                run_context.prefill_result.clone(),
+                run_context.prefill_duration,
+                run_context.prefill_suffix_length,
                 generate_results.to_vec(),
                 generate_durations.to_vec(),
                 generator.decoding_config.generate_suffix_length(),
-                ctx.run_start.elapsed().as_secs_f64(),
-                ctx.input_tokens_len,
+                run_context.run_start.elapsed().as_secs_f64(),
+                run_context.input_tokens_len,
                 output_tokens,
             ),
             finish_reason,
@@ -680,11 +694,18 @@ impl Session {
         Ok((results, durations, finish_reason))
     }
 
-    fn run_async_batch(
+    fn run_async_batch<F>(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
         run_context: &RunContext,
         generator: &mut Generator,
         sampling_method: SamplingMethod,
-    ) -> Result<(Vec<GenerateResult>, Vec<f64>, FinishReason), Error> {
+        progress: &Option<F>,
+    ) -> Result<(Vec<GenerateResult>, Vec<f64>, FinishReason), Error>
+    where
+        F: Fn(Output) -> bool,
+    {
         let tokens_to_generate = run_context
             .tokens_limit
             .saturating_sub(run_context.prefill_result.tokens.len());
@@ -749,8 +770,34 @@ impl Session {
                 });
                 durations.push(duration);
 
-                if run_context.eos_tokens.contains(&token) {
+                let should_stop = if run_context.eos_tokens.contains(&token) {
                     finish_reason = FinishReason::Stop;
+                    true
+                } else if generator.tokens.len() >= run_context.context_length {
+                    finish_reason = FinishReason::ContextLimitReached;
+                    true
+                } else if let Some(progress_fn) = progress {
+                    let output = Self::build_output(
+                        model_metadata,
+                        tokenizer,
+                        output_parser,
+                        run_context,
+                        generator,
+                        &results,
+                        &durations,
+                        None,
+                    )?;
+                    if !progress_fn(output) {
+                        finish_reason = FinishReason::Cancelled;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if should_stop {
                     let remaining = batch_submitted
                         - (total_received - (next_to_submit - batch_submitted));
                     for _ in 0..remaining {
