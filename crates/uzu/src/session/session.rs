@@ -539,7 +539,7 @@ impl Session {
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
-        ctx: &RunContext,
+        run_context: &RunContext,
         generator: &mut Generator,
         sampling_method: SamplingMethod,
         progress: &Option<F>,
@@ -547,14 +547,17 @@ impl Session {
     where
         F: Fn(Output) -> bool,
     {
-        let tokens_to_generate =
-            ctx.tokens_limit.saturating_sub(ctx.prefill_result.tokens.len());
+        let tokens_to_generate = run_context
+            .tokens_limit
+            .saturating_sub(run_context.prefill_result.tokens.len());
         let lookahead = generator.async_lookahead();
 
         generator.prepare_async(tokens_to_generate);
 
-        let (tx, rx): (Sender<(usize, u64, f64)>, Receiver<(usize, u64, f64)>) =
-            mpsc::channel();
+        let (sender, receiver): (
+            Sender<(usize, u64, f64)>,
+            Receiver<(usize, u64, f64)>,
+        ) = mpsc::channel();
         let last_callback_time = Arc::new(Mutex::new(Instant::now()));
 
         let mut results: Vec<GenerateResult> = Vec::new();
@@ -567,11 +570,11 @@ impl Session {
         for _ in 0..tokens_to_generate {
             // Submit passes until we have `lookahead` in flight (or no more to submit)
             while in_flight < lookahead && next_to_submit < tokens_to_generate {
-                let tx_clone = tx.clone();
+                let sender_clone = sender.clone();
                 let last_time = last_callback_time.clone();
-                let idx = next_to_submit;
+                let pass_index = next_to_submit;
                 generator.async_generate(
-                    idx,
+                    pass_index,
                     sampling_method,
                     move |token| {
                         let now = Instant::now();
@@ -579,7 +582,8 @@ impl Session {
                         let duration = now.duration_since(*last).as_secs_f64();
                         *last = now;
                         drop(last);
-                        let _ = tx_clone.send((idx, token, duration));
+                        let _ =
+                            sender_clone.send((pass_index, token, duration));
                     },
                 )?;
                 next_to_submit += 1;
@@ -588,7 +592,7 @@ impl Session {
 
             // Wait for one result
             let (_, token, duration) =
-                rx.recv().map_err(|_| Error::SamplingFailed)?;
+                receiver.recv().map_err(|_| Error::SamplingFailed)?;
             in_flight -= 1;
 
             generator.tokens.push(token);
@@ -598,10 +602,10 @@ impl Session {
             });
             durations.push(duration);
 
-            let should_stop = if ctx.eos_tokens.contains(&token) {
+            let should_stop = if run_context.eos_tokens.contains(&token) {
                 finish_reason = FinishReason::Stop;
                 true
-            } else if generator.tokens.len() >= ctx.context_length {
+            } else if generator.tokens.len() >= run_context.context_length {
                 finish_reason = FinishReason::ContextLimitReached;
                 true
             } else if let Some(progress_fn) = progress {
@@ -609,7 +613,7 @@ impl Session {
                     model_metadata,
                     tokenizer,
                     output_parser,
-                    ctx,
+                    run_context,
                     generator,
                     &results,
                     &durations,
@@ -628,7 +632,8 @@ impl Session {
             if should_stop {
                 // Drain in-flight passes without recording their tokens
                 while in_flight > 0 {
-                    let _ = rx.recv().map_err(|_| Error::SamplingFailed)?;
+                    let _ =
+                        receiver.recv().map_err(|_| Error::SamplingFailed)?;
                     in_flight -= 1;
                 }
                 break;
@@ -642,7 +647,7 @@ impl Session {
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
-        ctx: &RunContext,
+        run_context: &RunContext,
         generator: &mut Generator,
         sampling_method: SamplingMethod,
         progress: &Option<F>,
@@ -663,12 +668,12 @@ impl Session {
             durations.push(duration);
 
             let finish_reason =
-                Self::check_finish_reason(ctx, generator, &new_tokens);
+                Self::check_finish_reason(run_context, generator, &new_tokens);
             let output = Self::build_output(
                 model_metadata,
                 tokenizer,
                 output_parser,
-                ctx,
+                run_context,
                 generator,
                 &results,
                 &durations,
