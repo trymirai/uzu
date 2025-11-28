@@ -2,7 +2,10 @@ use std::{
     fs::File,
     io::BufReader,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, Sender},
+    },
     time::Instant,
 };
 
@@ -22,13 +25,25 @@ use crate::{
             Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
-        parameter::{ConfigResolvableValue, ContextMode},
+        parameter::{ConfigResolvableValue, ContextMode, SamplingMethod},
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
             TotalStats,
         },
     },
 };
+
+struct RunContext {
+    eos_tokens: Vec<u64>,
+    context_length: usize,
+    prefix_len_before: usize,
+    input_tokens_len: usize,
+    tokens_limit: usize,
+    prefill_result: PrefillResult,
+    prefill_duration: f64,
+    prefill_suffix_length: usize,
+    run_start: Instant,
+}
 
 pub struct Session {
     pub model_path: PathBuf,
@@ -243,8 +258,6 @@ impl Session {
             return Err(Error::ContextLengthExceeded);
         }
 
-        let prefix_len_before = generator.tokens.len().saturating_sub(1);
-
         let eos_tokens: Vec<u64> = self
             .model_metadata
             .model_config
@@ -254,47 +267,12 @@ impl Session {
             .map(|&x| x as u64)
             .collect();
 
-        let finish_reason = |generator: &Generator,
-                             tokens_new: Vec<u64>|
-         -> Option<FinishReason> {
-            let start_idx = prefix_len_before + tokens.len();
-            let total_tokens = generator.tokens.len();
-            let total_new_tokens = generator.tokens[start_idx..].len();
-            let has_eos_token =
-                tokens_new.iter().any(|token| eos_tokens.contains(token));
-            let context_limit_reached = total_tokens >= context_length;
-
-            if has_eos_token {
-                Some(FinishReason::Stop)
-            } else if total_new_tokens >= config.tokens_limit as usize {
-                Some(FinishReason::Length)
-            } else if context_limit_reached {
-                Some(FinishReason::ContextLimitReached)
-            } else {
-                None
-            }
-        };
-
-        let build_generated_text = |generator: &Generator,
-                                    tokenizer: &Tokenizer|
-         -> Result<String, Error> {
-            let start_idx = prefix_len_before + tokens.len();
-            let generated_tokens: Vec<u32> = generator.tokens[start_idx..]
-                .to_vec()
-                .iter()
-                .map(|value| *value as u32)
-                .collect();
-            let generated_text = tokenizer
-                .decode(&generated_tokens, true)
-                .map_err(|_| Error::UnableToDecodeText)?;
-            Ok(generated_text)
-        };
-
         let sampling_method =
             config.sampling_policy.resolve(&self.model_metadata.model_config);
 
         let prefill_start = Instant::now();
         let prefix_offset = generator.tokens.len();
+        let prefix_len_before = prefix_offset.saturating_sub(1);
 
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = generator.prefill(
@@ -307,36 +285,38 @@ impl Session {
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         generator.clear_cache();
 
-        let prefill_finish_reason =
-            finish_reason(generator, prefill_tokens.clone());
-        let prefill_generated_text =
-            build_generated_text(generator, &self.tokenizer)?;
-        let prefill_parsed_text =
-            self.output_parser.parse(prefill_generated_text);
-
         let prefill_suffix_length = generator
             .decoding_config
             .prefill_step_size
             .resolve(&self.model_metadata.model_config);
-        let prefill_output = Output {
-            text: prefill_parsed_text,
-            stats: Self::build_stats(
-                &self.model_metadata,
-                prefill_result.clone(),
-                prefill_duration,
-                prefill_suffix_length,
-                Vec::new(),
-                Vec::new(),
-                generator.decoding_config.generate_suffix_length(),
-                run_start.elapsed().as_secs_f64(),
-                tokens.len(),
-                generator.tokens[prefix_len_before + tokens.len()..].len(),
-            ),
-            finish_reason: prefill_finish_reason.clone(),
+
+        let ctx = RunContext {
+            eos_tokens,
+            context_length,
+            prefix_len_before,
+            input_tokens_len: tokens.len(),
+            tokens_limit: config.tokens_limit as usize,
+            prefill_result: prefill_result.clone(),
+            prefill_duration,
+            prefill_suffix_length,
+            run_start,
         };
 
-        let prefill_should_continue = if let Some(progress) = &progress {
-            progress(prefill_output.clone())
+        let prefill_finish_reason =
+            Self::check_finish_reason(&ctx, generator, &prefill_tokens);
+        let prefill_output = Self::build_output(
+            &self.model_metadata,
+            &self.tokenizer,
+            &self.output_parser,
+            &ctx,
+            generator,
+            &[],
+            &[],
+            prefill_finish_reason.clone(),
+        )?;
+
+        let prefill_should_continue = if let Some(ref p) = progress {
+            p(prefill_output.clone())
         } else {
             true
         };
@@ -350,170 +330,40 @@ impl Session {
             }
         }
 
-        let mut generate_results: Vec<GenerateResult> = Vec::new();
-        let mut generate_durations: Vec<f64> = Vec::new();
-
         // Use async pipeline when suffix_length == 1 (no speculation) and no attention layers
-        // Attention-based models don't support async generation yet
         let use_async = generator.decoding_config.generate_suffix_length() == 1
             && !generator.has_attention_layers();
 
         let generate_output = if use_async {
-            // Async +N lookahead pipeline
-            let tokens_to_generate = config.tokens_limit as usize;
-            let lookahead = generator.async_lookahead();
-
-            generator.prepare_async(tokens_to_generate);
-
-            let (tx, rx) = std::sync::mpsc::channel::<(usize, u64, f64)>();
-            let last_callback_time = Arc::new(Mutex::new(Instant::now()));
-
-            let initial_submit = std::cmp::min(lookahead, tokens_to_generate);
-            for idx in 0..initial_submit {
-                let tx_clone = tx.clone();
-                let last_time = last_callback_time.clone();
-                generator.async_generate(
-                    idx,
-                    sampling_method,
-                    move |token| {
-                        let now = Instant::now();
-                        let mut last = last_time.lock().unwrap();
-                        let duration = now.duration_since(*last).as_secs_f64();
-                        *last = now;
-                        drop(last);
-                        let _ = tx_clone.send((idx, token, duration));
-                    },
-                )?;
-            }
-
-            let mut async_finish_reason = FinishReason::Length;
-            let mut next_to_submit = initial_submit;
-            let mut in_flight = initial_submit;
-
-            for _ in 0..tokens_to_generate {
-                if next_to_submit < tokens_to_generate && in_flight < lookahead
-                {
-                    let tx_clone = tx.clone();
-                    let last_time = last_callback_time.clone();
-                    let idx = next_to_submit;
-                    generator.async_generate(
-                        idx,
-                        sampling_method,
-                        move |token| {
-                            let now = Instant::now();
-                            let mut last = last_time.lock().unwrap();
-                            let duration =
-                                now.duration_since(*last).as_secs_f64();
-                            *last = now;
-                            drop(last);
-                            let _ = tx_clone.send((idx, token, duration));
-                        },
-                    )?;
-                    next_to_submit += 1;
-                    in_flight += 1;
-                }
-
-                let (_, token, duration) =
-                    rx.recv().map_err(|_| Error::SamplingFailed)?;
-                in_flight -= 1;
-
-                generator.tokens.push(token);
-                generate_results.push(GenerateResult {
-                    tokens: vec![token],
-                    forwardpass_duration: duration,
-                });
-                generate_durations.push(duration);
-
-                if eos_tokens.contains(&token) {
-                    async_finish_reason = FinishReason::Stop;
-                    while in_flight > 0 {
-                        let (_, extra_token, extra_duration) =
-                            rx.recv().map_err(|_| Error::SamplingFailed)?;
-                        generator.tokens.push(extra_token);
-                        generate_results.push(GenerateResult {
-                            tokens: vec![extra_token],
-                            forwardpass_duration: extra_duration,
-                        });
-                        generate_durations.push(extra_duration);
-                        in_flight -= 1;
-                    }
-                    break;
-                }
-            }
-
-            let generated_text =
-                build_generated_text(generator, &self.tokenizer)?;
-            let parsed_text = self.output_parser.parse(generated_text);
-
-            Output {
-                text: parsed_text,
-                stats: Self::build_stats(
-                    &self.model_metadata,
-                    prefill_result.clone(),
-                    prefill_duration,
-                    prefill_suffix_length,
-                    generate_results.clone(),
-                    generate_durations.clone(),
-                    generator.decoding_config.generate_suffix_length(),
-                    run_start.elapsed().as_secs_f64(),
-                    tokens.len(),
-                    generate_results.len(),
-                ),
-                finish_reason: Some(async_finish_reason),
-            }
+            let (results, durations, finish_reason) = Self::run_async_generate(
+                &self.model_metadata,
+                &self.tokenizer,
+                &self.output_parser,
+                &ctx,
+                generator,
+                sampling_method,
+                &progress,
+            )?;
+            Self::build_output(
+                &self.model_metadata,
+                &self.tokenizer,
+                &self.output_parser,
+                &ctx,
+                generator,
+                &results,
+                &durations,
+                Some(finish_reason),
+            )?
         } else {
-            // Sync generate loop (speculation enabled)
-            loop {
-                let generate_start = Instant::now();
-                let generate_result = generator.generate(sampling_method)?;
-                let generate_tokens = generate_result.tokens.clone();
-                let generate_duration = generate_start.elapsed().as_secs_f64();
-                generate_results.push(generate_result);
-                generate_durations.push(generate_duration);
-
-                let generate_finish_reason =
-                    finish_reason(generator, generate_tokens);
-                let generate_generated_text =
-                    build_generated_text(generator, &self.tokenizer)?;
-                let generate_parsed_text =
-                    self.output_parser.parse(generate_generated_text);
-
-                let generate_output = Output {
-                    text: generate_parsed_text,
-                    stats: Self::build_stats(
-                        &self.model_metadata,
-                        prefill_result.clone(),
-                        prefill_duration,
-                        prefill_suffix_length,
-                        generate_results.clone(),
-                        generate_durations.clone(),
-                        generator.decoding_config.generate_suffix_length(),
-                        run_start.elapsed().as_secs_f64(),
-                        tokens.len(),
-                        generator.tokens[prefix_len_before + tokens.len()..]
-                            .len(),
-                    ),
-                    finish_reason: generate_finish_reason.clone(),
-                };
-
-                let generate_should_continue = if let Some(progress) = &progress
-                {
-                    progress(generate_output.clone())
-                } else {
-                    true
-                };
-
-                if !generate_should_continue || generate_finish_reason.is_some()
-                {
-                    if generate_should_continue {
-                        break generate_output;
-                    } else {
-                        break generate_output.clone_with_finish_reason(Some(
-                            FinishReason::Cancelled,
-                        ));
-                    }
-                }
-            }
+            Self::run_sync_generate(
+                &self.model_metadata,
+                &self.tokenizer,
+                &self.output_parser,
+                &ctx,
+                generator,
+                sampling_method,
+                &progress,
+            )?
         };
 
         generator.clear_cache();
@@ -610,6 +460,248 @@ impl Session {
             generator.decoding_config.clone(),
         );
         Ok(context)
+    }
+}
+
+impl Session {
+    fn decode_generated_tokens(
+        tokenizer: &Tokenizer,
+        generator: &Generator,
+        ctx: &RunContext,
+    ) -> Result<String, Error> {
+        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let generated_tokens: Vec<u32> =
+            generator.tokens[start_idx..].iter().map(|&v| v as u32).collect();
+        tokenizer
+            .decode(&generated_tokens, true)
+            .map_err(|_| Error::UnableToDecodeText)
+    }
+
+    fn check_finish_reason(
+        ctx: &RunContext,
+        generator: &Generator,
+        new_tokens: &[u64],
+    ) -> Option<FinishReason> {
+        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let total_new_tokens = generator.tokens[start_idx..].len();
+        let has_eos = new_tokens.iter().any(|t| ctx.eos_tokens.contains(t));
+        let context_limit = generator.tokens.len() >= ctx.context_length;
+
+        if has_eos {
+            Some(FinishReason::Stop)
+        } else if total_new_tokens >= ctx.tokens_limit {
+            Some(FinishReason::Length)
+        } else if context_limit {
+            Some(FinishReason::ContextLimitReached)
+        } else {
+            None
+        }
+    }
+
+    fn build_output(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        ctx: &RunContext,
+        generator: &Generator,
+        generate_results: &[GenerateResult],
+        generate_durations: &[f64],
+        finish_reason: Option<FinishReason>,
+    ) -> Result<Output, Error> {
+        let text = Self::decode_generated_tokens(tokenizer, generator, ctx)?;
+        let parsed = output_parser.parse(text);
+        let start_idx = ctx.prefix_len_before + ctx.input_tokens_len;
+        let output_tokens = generator.tokens[start_idx..].len();
+
+        Ok(Output {
+            text: parsed,
+            stats: Self::build_stats(
+                model_metadata,
+                ctx.prefill_result.clone(),
+                ctx.prefill_duration,
+                ctx.prefill_suffix_length,
+                generate_results.to_vec(),
+                generate_durations.to_vec(),
+                generator.decoding_config.generate_suffix_length(),
+                ctx.run_start.elapsed().as_secs_f64(),
+                ctx.input_tokens_len,
+                output_tokens,
+            ),
+            finish_reason,
+        })
+    }
+
+    fn run_async_generate<F>(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        ctx: &RunContext,
+        generator: &mut Generator,
+        sampling_method: SamplingMethod,
+        progress: &Option<F>,
+    ) -> Result<(Vec<GenerateResult>, Vec<f64>, FinishReason), Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        let tokens_to_generate = ctx.tokens_limit;
+        let lookahead = generator.async_lookahead();
+
+        generator.prepare_async(tokens_to_generate);
+
+        let (tx, rx): (Sender<(usize, u64, f64)>, Receiver<(usize, u64, f64)>) =
+            mpsc::channel();
+        let last_callback_time = Arc::new(Mutex::new(Instant::now()));
+
+        let initial_submit = std::cmp::min(lookahead, tokens_to_generate);
+        for idx in 0..initial_submit {
+            let tx_clone = tx.clone();
+            let last_time = last_callback_time.clone();
+            generator.async_generate(idx, sampling_method, move |token| {
+                let now = Instant::now();
+                let mut last = last_time.lock().unwrap();
+                let duration = now.duration_since(*last).as_secs_f64();
+                *last = now;
+                drop(last);
+                let _ = tx_clone.send((idx, token, duration));
+            })?;
+        }
+
+        let mut results: Vec<GenerateResult> = Vec::new();
+        let mut durations: Vec<f64> = Vec::new();
+        let mut finish_reason = FinishReason::Length;
+        let mut next_to_submit = initial_submit;
+        let mut in_flight = initial_submit;
+
+        for _ in 0..tokens_to_generate {
+            if next_to_submit < tokens_to_generate && in_flight < lookahead {
+                let tx_clone = tx.clone();
+                let last_time = last_callback_time.clone();
+                let idx = next_to_submit;
+                generator.async_generate(
+                    idx,
+                    sampling_method,
+                    move |token| {
+                        let now = Instant::now();
+                        let mut last = last_time.lock().unwrap();
+                        let duration = now.duration_since(*last).as_secs_f64();
+                        *last = now;
+                        drop(last);
+                        let _ = tx_clone.send((idx, token, duration));
+                    },
+                )?;
+                next_to_submit += 1;
+                in_flight += 1;
+            }
+
+            let (_, token, duration) =
+                rx.recv().map_err(|_| Error::SamplingFailed)?;
+            in_flight -= 1;
+
+            generator.tokens.push(token);
+            results.push(GenerateResult {
+                tokens: vec![token],
+                forwardpass_duration: duration,
+            });
+            durations.push(duration);
+
+            let should_stop = if ctx.eos_tokens.contains(&token) {
+                finish_reason = FinishReason::Stop;
+                true
+            } else if generator.tokens.len() >= ctx.context_length {
+                finish_reason = FinishReason::ContextLimitReached;
+                true
+            } else if let Some(progress_fn) = progress {
+                let output = Self::build_output(
+                    model_metadata,
+                    tokenizer,
+                    output_parser,
+                    ctx,
+                    generator,
+                    &results,
+                    &durations,
+                    None,
+                )?;
+                if !progress_fn(output) {
+                    finish_reason = FinishReason::Cancelled;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if should_stop {
+                while in_flight > 0 {
+                    let (_, extra_token, extra_duration) =
+                        rx.recv().map_err(|_| Error::SamplingFailed)?;
+                    generator.tokens.push(extra_token);
+                    results.push(GenerateResult {
+                        tokens: vec![extra_token],
+                        forwardpass_duration: extra_duration,
+                    });
+                    durations.push(extra_duration);
+                    in_flight -= 1;
+                }
+                break;
+            }
+        }
+
+        Ok((results, durations, finish_reason))
+    }
+
+    fn run_sync_generate<F>(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        ctx: &RunContext,
+        generator: &mut Generator,
+        sampling_method: SamplingMethod,
+        progress: &Option<F>,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        let mut results: Vec<GenerateResult> = Vec::new();
+        let mut durations: Vec<f64> = Vec::new();
+
+        loop {
+            let start = Instant::now();
+            let result = generator.generate(sampling_method)?;
+            let new_tokens = result.tokens.clone();
+            let duration = start.elapsed().as_secs_f64();
+            results.push(result);
+            durations.push(duration);
+
+            let finish_reason =
+                Self::check_finish_reason(ctx, generator, &new_tokens);
+            let output = Self::build_output(
+                model_metadata,
+                tokenizer,
+                output_parser,
+                ctx,
+                generator,
+                &results,
+                &durations,
+                finish_reason.clone(),
+            )?;
+
+            let should_continue = if let Some(progress_fn) = progress {
+                progress_fn(output.clone())
+            } else {
+                true
+            };
+
+            if !should_continue || finish_reason.is_some() {
+                if should_continue {
+                    return Ok(output);
+                } else {
+                    return Ok(output.clone_with_finish_reason(Some(
+                        FinishReason::Cancelled,
+                    )));
+                }
+            }
+        }
     }
 }
 
