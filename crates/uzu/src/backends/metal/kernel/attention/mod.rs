@@ -16,7 +16,6 @@ use crate::{
             ArrayId, ForwardPassState, HashMapId,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
-        metal_extensions::ComputeEncoderConditional,
     },
 };
 
@@ -598,17 +597,7 @@ impl EncodableWithState for AttentionKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        compute_encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.encode_with_encoder_impl(
-                    state,
-                    compute_encoder,
-                    parameters,
-                );
-            },
-            None::<fn()>,
-        );
+        self.encode_with_encoder_impl(state, compute_encoder, parameters);
 
         compute_encoder.end_encoding();
 

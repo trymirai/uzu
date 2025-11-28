@@ -1,7 +1,3 @@
-use std::mem::size_of;
-
-use metal::{Buffer, MTLResourceOptions};
-
 use super::context::GeneratorContext;
 use crate::backends::metal::{
     ForwardPassState,
@@ -12,24 +8,6 @@ use crate::backends::metal::{
 
 pub struct GeneratorEncodedTask {
     pub key: String,
-    predicate_buffer: Buffer,
-}
-
-impl GeneratorEncodedTask {
-    pub fn predicate_buffer(&self) -> &Buffer {
-        &self.predicate_buffer
-    }
-
-    pub fn disable_execution(&self) {
-        unsafe {
-            let ptr = self.predicate_buffer.contents() as *mut u32;
-            *ptr = 1;
-            self.predicate_buffer.did_modify_range(metal::NSRange::new(
-                0,
-                size_of::<u32>() as u64,
-            ));
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -100,14 +78,8 @@ impl GeneratorRunTask {
     ) -> GeneratorEncodedTask {
         context.executables.encode(state, &context.command_buffer, parameters);
 
-        let encoded_task = GeneratorEncodedTask {
+        GeneratorEncodedTask {
             key,
-            predicate_buffer: context.mtl_context.device.new_buffer(
-                size_of::<u32>() as u64,
-                MTLResourceOptions::StorageModeShared,
-            ),
-        };
-
-        encoded_task
+        }
     }
 }

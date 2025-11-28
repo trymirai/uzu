@@ -12,7 +12,6 @@ use super::super::{
         ArrayId, ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
-    metal_extensions::ComputeEncoderConditional,
 };
 use crate::{
     Array, DataType, backends::metal::MTLError, config::QuantizationMode,
@@ -513,13 +512,7 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
-        encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.encode_impl(state, encoder);
-            },
-            None::<fn()>,
-        );
+        self.encode_impl(state, encoder);
 
         encoder.end_encoding();
 

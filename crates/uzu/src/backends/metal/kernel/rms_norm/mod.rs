@@ -14,7 +14,6 @@ use crate::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
-        metal_extensions::ComputeEncoderConditional,
     },
     config::{RMSNormConfig, UpcastMode},
     parameters::ParameterTree,
@@ -454,23 +453,17 @@ impl EncodableWithState for RMSNormKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        compute_encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.kernel.encode(
-                    &compute_encoder,
-                    RMSNormArguments {
-                        input_buffer: &input_buffer,
-                        scales_buffer: &self.scales_buffer,
-                        output_buffer: &output_buffer,
-                        batch_size,
-                        model_dim,
-                        epsilon: self.config.epsilon,
-                        scale_offset: self.config.scale_offset.unwrap_or(0.0),
-                    },
-                );
+        self.kernel.encode(
+            &compute_encoder,
+            RMSNormArguments {
+                input_buffer: &input_buffer,
+                scales_buffer: &self.scales_buffer,
+                output_buffer: &output_buffer,
+                batch_size,
+                model_dim,
+                epsilon: self.config.epsilon,
+                scale_offset: self.config.scale_offset.unwrap_or(0.0),
             },
-            None::<fn()>,
         );
 
         compute_encoder.end_encoding();
@@ -673,13 +666,7 @@ impl EncodableWithState for QKNormKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        compute_encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.encode_with_encoder_impl(state, compute_encoder);
-            },
-            None::<fn()>,
-        );
+        self.encode_with_encoder_impl(state, compute_encoder);
 
         compute_encoder.end_encoding();
 

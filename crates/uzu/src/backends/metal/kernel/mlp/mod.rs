@@ -1,5 +1,6 @@
 use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState, MTLSize,
+    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
+    MTLSize,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -13,7 +14,6 @@ use crate::{
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
         kernel::QuantizedLinearKernelBlock,
-        metal_extensions::ComputeEncoderConditional,
     },
     config::Activation,
 };
@@ -175,13 +175,7 @@ impl EncodableWithState for MlpBlockEncodable {
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
 
-        encoder.condition(
-            params.predicate_ref(),
-            || {
-                self.gate.encode(encoder, fused_buf, hidden_buf, m);
-            },
-            None::<fn()>,
-        );
+        self.gate.encode(encoder, fused_buf, hidden_buf, m);
 
         encoder.end_encoding();
         drop(fused);
