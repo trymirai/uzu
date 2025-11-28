@@ -82,17 +82,19 @@ impl AsyncBuffers {
         }
     }
 
-    /// Prepare positions buffer: [prefill_count, prefill_count+1, ...]
+    /// Prepare positions buffer: [prefill_count-1, prefill_count, ...]
+    /// Uses prefill_count-1 to match sync path which uses self.tokens.len()-1
     pub fn prepare_positions(
         &self,
         prefill_count: usize,
         tokens_to_generate: usize,
     ) {
         self.prefill_count.set(prefill_count);
+        let base_position = prefill_count.saturating_sub(1);
         let ptr = self.positions.contents() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
-                *ptr.add(i) = (prefill_count + i) as i32;
+                *ptr.add(i) = (base_position + i) as i32;
             }
         }
     }
@@ -251,7 +253,7 @@ impl GeneratorContext {
         let token_copy = TokenCopyKernel::new(&mtl_context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let async_lookahead = 4; // Default lookahead for async pipeline
+        let async_lookahead = 4;
         let async_buffers = AsyncBuffers::new(
             &mtl_context.device,
             max_prefix_length,

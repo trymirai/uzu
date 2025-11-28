@@ -331,7 +331,11 @@ impl Session {
         }
 
         // Use async pipeline when suffix_length == 1 (no speculation) and no attention layers
-        let use_async = generator.decoding_config.generate_suffix_length() == 1
+        let force_sync = std::env::var("UZU_FORCE_SYNC")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        let use_async = !force_sync
+            && generator.decoding_config.generate_suffix_length() == 1
             && !generator.has_attention_layers();
 
         let generate_output = if use_async {
@@ -670,6 +674,7 @@ impl Session {
             let result = generator.generate(sampling_method)?;
             let new_tokens = result.tokens.clone();
             let duration = start.elapsed().as_secs_f64();
+
             results.push(result);
             durations.push(duration);
 

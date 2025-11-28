@@ -100,6 +100,8 @@ impl MetalArray {
     }
 
     /// Returns the underlying MTLBuffer.
+    /// NOTE: For arrays created with `new_with_offset`, callers must use `buffer_offset()`
+    /// and pass it to `encoder.set_buffer(..., offset)` - Metal has no sub-buffer concept.
     pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {
         &self.buffer
     }

@@ -247,6 +247,7 @@ impl SamplingKernel {
         self.encode_with_encoder(
             logits_buffer,
             seeds_buffer,
+            0, // No offset for non-async path
             sampled_tokens_buffer,
             sampling_method,
             batch_size,
@@ -261,6 +262,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: Option<&MTLBuffer>,
+        seeds_offset: usize,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -327,6 +329,7 @@ impl SamplingKernel {
             self.encode_gumbel(
                 last_logits_buffer,
                 seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                seeds_offset,
                 &self.partial_gumbel_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -467,6 +470,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: &MTLBuffer,
+        seeds_offset: usize,
         processed_logits_buffer: &MTLBuffer,
         batch_size: u32,
         vocab_size: u32,
@@ -475,7 +479,7 @@ impl SamplingKernel {
         compute_encoder.set_compute_pipeline_state(&self.gumbel_pipeline);
 
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(seeds_buffer), 0);
+        compute_encoder.set_buffer(1, Some(seeds_buffer), seeds_offset as u64);
         compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
         compute_encoder.set_bytes(
             3,
@@ -699,10 +703,12 @@ impl SamplingKernelEncodable {
             state.sampling_output.as_ref().unwrap().borrow_mut();
 
         let sampling_method = state.sampling_method.unwrap();
+        let seeds_offset = seeds.buffer_offset();
 
         if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
+            seeds_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,
