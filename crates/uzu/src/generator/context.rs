@@ -253,7 +253,7 @@ impl GeneratorContext {
         let token_copy = TokenCopyKernel::new(&mtl_context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let async_lookahead = 4;
+        let async_lookahead = 16;
         let async_buffers = AsyncBuffers::new(
             &mtl_context.device,
             max_prefix_length,
