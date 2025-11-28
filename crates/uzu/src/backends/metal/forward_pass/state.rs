@@ -997,34 +997,35 @@ impl ForwardPassState {
         // --------------------
         // Token Positions (i32)
         // --------------------
-        let token_positions_refcell = if let Some((buffer, offset)) = async_positions {
-            // Use pre-allocated async positions buffer at offset
-            let token_positions_array = unsafe {
-                MetalArray::new_with_offset(
-                    buffer.clone(),
-                    &[suffix_length],
-                    DataType::I32,
-                    offset * std::mem::size_of::<i32>(),
-                )
+        let token_positions_refcell =
+            if let Some((buffer, offset)) = async_positions {
+                // Use pre-allocated async positions buffer at offset
+                let token_positions_array = unsafe {
+                    MetalArray::new_with_offset(
+                        buffer.clone(),
+                        &[suffix_length],
+                        DataType::I32,
+                        offset * std::mem::size_of::<i32>(),
+                    )
+                };
+                RefCell::new(token_positions_array)
+            } else {
+                // Copy positions from CPU
+                let mut token_positions_array = unsafe {
+                    MetalArray::new(
+                        scratch.token_positions.clone(),
+                        &[suffix_length],
+                        DataType::I32,
+                    )
+                };
+                let token_positions_i32: Box<[i32]> =
+                    token_positions.iter().map(|p| *p as i32).collect();
+                context.copy_from_view(
+                    &mut token_positions_array,
+                    token_positions_i32.as_ref().into(),
+                );
+                RefCell::new(token_positions_array)
             };
-            RefCell::new(token_positions_array)
-        } else {
-            // Copy positions from CPU
-            let mut token_positions_array = unsafe {
-                MetalArray::new(
-                    scratch.token_positions.clone(),
-                    &[suffix_length],
-                    DataType::I32,
-                )
-            };
-            let token_positions_i32: Box<[i32]> =
-                token_positions.iter().map(|p| *p as i32).collect();
-            context.copy_from_view(
-                &mut token_positions_array,
-                token_positions_i32.as_ref().into(),
-            );
-            RefCell::new(token_positions_array)
-        };
 
         // --------------------
         // Token Seeds

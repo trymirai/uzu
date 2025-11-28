@@ -637,4 +637,8 @@ impl EncodableWithState for MoeBlockEncodable {
             mtl_command_buffer.wait_until_completed();
         }
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false // MoE uses blit encoders + complex multi-kernel pattern
+    }
 }

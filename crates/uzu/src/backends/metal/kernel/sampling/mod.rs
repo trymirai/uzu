@@ -640,6 +640,40 @@ impl EncodableWithState for SamplingKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let root_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        self.encode_impl(state, encoder);
+
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            root_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        self.encode_impl(state, encoder);
+    }
+}
+
+impl SamplingKernelEncodable {
+    fn encode_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
         assert!(
             state.sampling_output.is_some(),
             "Sampling output buffer must be pre-allocated"
@@ -666,23 +700,16 @@ impl EncodableWithState for SamplingKernelEncodable {
 
         let sampling_method = state.sampling_method.unwrap();
 
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        if let Err(e) = self.kernel.encode(
+        if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,
             vocab_size,
-            &root_command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
-        }
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root_command_buffer.wait_until_completed();
         }
     }
 }

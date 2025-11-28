@@ -189,4 +189,43 @@ impl EncodableWithState for MlpBlockEncodable {
             mtl_command_buffer.wait_until_completed();
         }
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_with_encoder_impl(state, encoder, parameters);
+    }
+}
+
+impl MlpBlockEncodable {
+    fn encode_with_encoder_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        params: &EncodingParameters,
+    ) {
+        // Up
+        self.up.encode_with_shared_encoder(state, encoder, params);
+        // Gate act+mul (fused_up -> hidden)
+        let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
+        let mut fused = arrays[0].borrow_mut();
+        let mut hidden = arrays[1].borrow_mut();
+        let m = fused.shape()[0] as i32;
+        let fused_buf = unsafe { fused.mtl_buffer() };
+        let hidden_buf = unsafe { hidden.mtl_buffer() };
+        self.gate
+            .encode(encoder, fused_buf, hidden_buf, m)
+            .expect("Failed to encode MLP activation/mul kernel");
+        drop(fused);
+        drop(hidden);
+        // Down
+        self.down.encode_with_shared_encoder(state, encoder, params);
+    }
 }

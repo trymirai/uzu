@@ -103,4 +103,8 @@ impl EncodableWithState for MPSGraphBlock {
             }
         }
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false // MPSGraph uses its own encoding mechanism, not compute encoders
+    }
 }

@@ -1,3 +1,4 @@
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::ForwardPassState;
@@ -39,4 +40,15 @@ pub trait EncodableWithState {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     );
+
+    fn supports_shared_encoder(&self) -> bool;
+
+    fn encode_with_shared_encoder(
+        &self,
+        _state: &mut ForwardPassState,
+        _encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        panic!("encode_with_shared_encoder called on unsupported type");
+    }
 }

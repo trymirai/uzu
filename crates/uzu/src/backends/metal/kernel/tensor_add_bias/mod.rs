@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputePipelineState as MTLComputePipelineState,
+    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
 };
 
 use super::{
@@ -39,6 +39,21 @@ impl TensorAddBias {
         command_buffer: &MTLCommandBuffer,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_encoder(
+            input, bias, output, num_cols, total_len, encoder,
+        );
+        encoder.end_encoding();
+    }
+
+    pub fn encode_with_encoder(
+        &self,
+        input: &MTLBuffer,
+        bias: &MTLBuffer,
+        output: &MTLBuffer,
+        num_cols: usize,
+        total_len: usize,
+        encoder: &ComputeCommandEncoderRef,
+    ) {
         encoder.set_label("Tensor Add Bias");
         encoder.set_compute_pipeline_state(&self.pipeline_state);
         encoder.set_buffer(0, Some(input), 0);
@@ -55,6 +70,5 @@ impl TensorAddBias {
             &(total_len as i32) as *const _ as *const _,
         );
         encoder.dispatch_1d_exactly(&self.pipeline_state, total_len, None);
-        encoder.end_encoding();
     }
 }

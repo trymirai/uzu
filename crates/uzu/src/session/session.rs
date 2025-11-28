@@ -353,8 +353,10 @@ impl Session {
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
 
-        // Use async pipeline when suffix_length == 1 (no speculation)
-        let use_async = generator.decoding_config.generate_suffix_length() == 1;
+        // Use async pipeline when suffix_length == 1 (no speculation) and no attention layers
+        // Attention-based models don't support async generation yet
+        let use_async = generator.decoding_config.generate_suffix_length() == 1
+            && !generator.has_attention_layers();
 
         let generate_output = if use_async {
             // Async +N lookahead pipeline
@@ -389,7 +391,8 @@ impl Session {
             let mut in_flight = initial_submit;
 
             for _ in 0..tokens_to_generate {
-                if next_to_submit < tokens_to_generate && in_flight < lookahead {
+                if next_to_submit < tokens_to_generate && in_flight < lookahead
+                {
                     let tx_clone = tx.clone();
                     let last_time = last_callback_time.clone();
                     let idx = next_to_submit;
@@ -399,7 +402,8 @@ impl Session {
                         move |token| {
                             let now = Instant::now();
                             let mut last = last_time.lock().unwrap();
-                            let duration = now.duration_since(*last).as_secs_f64();
+                            let duration =
+                                now.duration_since(*last).as_secs_f64();
                             *last = now;
                             drop(last);
                             let _ = tx_clone.send((idx, token, duration));
@@ -437,7 +441,8 @@ impl Session {
                 }
             }
 
-            let generated_text = build_generated_text(generator, &self.tokenizer)?;
+            let generated_text =
+                build_generated_text(generator, &self.tokenizer)?;
             let parsed_text = self.output_parser.parse(generated_text);
 
             Output {
@@ -485,18 +490,21 @@ impl Session {
                         generator.decoding_config.generate_suffix_length(),
                         run_start.elapsed().as_secs_f64(),
                         tokens.len(),
-                        generator.tokens[prefix_len_before + tokens.len()..].len(),
+                        generator.tokens[prefix_len_before + tokens.len()..]
+                            .len(),
                     ),
                     finish_reason: generate_finish_reason.clone(),
                 };
 
-                let generate_should_continue = if let Some(progress) = &progress {
+                let generate_should_continue = if let Some(progress) = &progress
+                {
                     progress(generate_output.clone())
                 } else {
                     true
                 };
 
-                if !generate_should_continue || generate_finish_reason.is_some() {
+                if !generate_should_continue || generate_finish_reason.is_some()
+                {
                     if generate_should_continue {
                         break generate_output;
                     } else {

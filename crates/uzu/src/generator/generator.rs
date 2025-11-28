@@ -569,10 +569,17 @@ impl Generator {
 
     /// Prepares async buffers for generation.
     /// Must be called after prefill, before async_generate loop.
-    pub fn prepare_async(&mut self, tokens_to_generate: usize) {
+    pub fn prepare_async(
+        &mut self,
+        tokens_to_generate: usize,
+    ) {
         let prefill_count = self.tokens.len();
-        self.context.async_buffers.prepare_positions(prefill_count, tokens_to_generate);
-        self.context.async_buffers.prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context
+            .async_buffers
+            .prepare_positions(prefill_count, tokens_to_generate);
+        self.context
+            .async_buffers
+            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
         self.context.async_buffers.reset_counter();
     }
 
@@ -604,7 +611,8 @@ impl Generator {
         let slot = pass_idx % lookahead;
         let async_event = self.context.async_buffers.event.clone();
         let results_buffer = self.context.async_buffers.results.clone();
-        let async_positions_buffer = self.context.async_buffers.positions.clone();
+        let async_positions_buffer =
+            self.context.async_buffers.positions.clone();
         let async_seeds_buffer = self.context.async_buffers.seeds.clone();
 
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
@@ -665,11 +673,12 @@ impl Generator {
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
-        let sampling_output = state.sampling_output.as_ref()
+        let sampling_output = state
+            .sampling_output
+            .as_ref()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = unsafe {
-            sampling_output.borrow_mut().mtl_buffer().clone()
-        };
+        let sampling_output_buffer =
+            unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
         let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
 
         let encoder = root_cmd.new_compute_command_encoder();
@@ -695,15 +704,16 @@ impl Generator {
         let results_buffer_clone = results_buffer.clone();
         let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
 
-        let block = ConcreteBlock::new(move |_cmd_buf: &metal::CommandBufferRef| {
-            let token = {
-                let ptr = results_buffer_clone.contents() as *const u32;
-                unsafe { *ptr.add(slot) as u64 }
-            };
-            if let Some(cb) = callback.lock().unwrap().take() {
-                cb(token);
-            }
-        });
+        let block =
+            ConcreteBlock::new(move |_cmd_buf: &metal::CommandBufferRef| {
+                let token = {
+                    let ptr = results_buffer_clone.contents() as *const u32;
+                    unsafe { *ptr.add(slot) as u64 }
+                };
+                if let Some(cb) = callback.lock().unwrap().take() {
+                    cb(token);
+                }
+            });
         let block = block.copy();
 
         root_cmd.add_completed_handler(&block);
@@ -715,5 +725,9 @@ impl Generator {
     /// Returns the lookahead value for async pipeline
     pub fn async_lookahead(&self) -> usize {
         self.context.async_buffers.lookahead
+    }
+
+    pub fn has_attention_layers(&self) -> bool {
+        self.context.model_config.decoder_config.has_attention_layers()
     }
 }

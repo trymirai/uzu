@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
+use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -279,6 +279,56 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 command_buffer.root_command_buffer().to_owned();
             command_buffer.commit_and_continue();
             mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
+        let batch_size = state.active_suffix_length();
+
+        let mut input_array_mut = arrays[0].borrow_mut();
+        let mut output_array_mut = arrays[1].borrow_mut();
+
+        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
+        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+
+        let args = QuantizedMatmulArguments {
+            a_buffer: input_buffer,
+            b_buffer: &self.weights_buffer,
+            scales_buffer: &self.scales_buffer,
+            zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
+            output_buffer: output_buffer,
+            batch: batch_size as i32,
+            input_dim: self.input_dim as i32,
+            output_dim: self.output_dim as i32,
+            quantization_type: self.quantization_type,
+        };
+
+        self.kernel
+            .encode(encoder, args)
+            .expect("Failed to encode quantized matmul kernel");
+
+        if let (Some(bias_add), Some(bias_buf)) =
+            (&self.bias_add_kernel, &self.biases_buffer)
+        {
+            let total_len = batch_size * self.output_dim;
+            bias_add.encode_with_encoder(
+                &output_buffer,
+                bias_buf,
+                &output_buffer,
+                self.output_dim,
+                total_len,
+                encoder,
+            );
         }
     }
 }
