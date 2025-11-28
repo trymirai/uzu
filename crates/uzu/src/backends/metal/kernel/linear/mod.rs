@@ -271,6 +271,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 self.output_dim,
                 total_len,
                 &retained_cb,
+                parameters.predicate,
             );
         }
 
@@ -290,7 +291,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
         &self,
         state: &mut ForwardPassState,
         encoder: &ComputeCommandEncoderRef,
-        _parameters: &EncodingParameters,
+        parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -328,6 +329,7 @@ impl EncodableWithState for QuantizedLinearKernelBlock {
                 self.output_dim,
                 total_len,
                 encoder,
+                parameters.predicate,
             );
         }
     }

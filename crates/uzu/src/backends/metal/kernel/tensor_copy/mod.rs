@@ -46,6 +46,7 @@ impl TensorCopy {
         destination_buffer: &MTLBuffer,
         length: usize,
         command_buffer: &MTLCommandBuffer,
+        _predicate: Option<&MTLBuffer>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_encoder_raw(
@@ -101,6 +102,7 @@ impl EncodableWithState for TensorCopy {
             &destination_mtl_buffer,
             length,
             &retained_mtl_command_buffer,
+            parameters.predicate,
         );
 
         if parameters.wait_until_completed {

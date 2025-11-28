@@ -1,16 +1,18 @@
-use metal::ComputeCommandEncoderRef;
+use metal::{Buffer, BufferRef, ComputeCommandEncoderRef};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::ForwardPassState;
 
-pub struct EncodingParameters {
+#[derive(Clone)]
+pub struct EncodingParameters<'a> {
     pub warmup: bool,
     pub enable_commit: bool,
     pub wait_until_completed: bool,
     pub projection_step: Option<usize>,
+    pub predicate: Option<&'a Buffer>,
 }
 
-impl EncodingParameters {
+impl<'a> EncodingParameters<'a> {
     pub fn new(
         warmup: bool,
         enable_commit: bool,
@@ -21,6 +23,7 @@ impl EncodingParameters {
             enable_commit,
             wait_until_completed,
             projection_step: None,
+            predicate: None,
         }
     }
 
@@ -30,6 +33,18 @@ impl EncodingParameters {
     ) -> Self {
         self.projection_step = Some(projection_step);
         self
+    }
+
+    pub fn with_predicate(
+        mut self,
+        predicate: &'a Buffer,
+    ) -> Self {
+        self.predicate = Some(predicate);
+        self
+    }
+
+    pub fn predicate_ref(&self) -> Option<&BufferRef> {
+        self.predicate.map(|buffer| buffer.as_ref())
     }
 }
 

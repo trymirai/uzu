@@ -6,7 +6,8 @@ use metal::{
 };
 
 use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
+    KernelDataType, MTLContext,
+    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 use crate::backends::metal::error::MTLError;
 
@@ -37,10 +38,11 @@ impl TensorAddBias {
         num_cols: usize,
         total_len: usize,
         command_buffer: &MTLCommandBuffer,
+        predicate: Option<&MTLBuffer>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_encoder(
-            input, bias, output, num_cols, total_len, encoder,
+            input, bias, output, num_cols, total_len, encoder, predicate,
         );
         encoder.end_encoding();
     }
@@ -53,22 +55,33 @@ impl TensorAddBias {
         num_cols: usize,
         total_len: usize,
         encoder: &ComputeCommandEncoderRef,
+        predicate: Option<&MTLBuffer>,
     ) {
-        encoder.set_label("Tensor Add Bias");
-        encoder.set_compute_pipeline_state(&self.pipeline_state);
-        encoder.set_buffer(0, Some(input), 0);
-        encoder.set_buffer(1, Some(bias), 0);
-        encoder.set_buffer(2, Some(output), 0);
-        encoder.set_bytes(
-            3,
-            size_of::<i32>() as u64,
-            &(num_cols as i32) as *const _ as *const _,
+        encoder.condition(
+            predicate.map(|b| b.as_ref()),
+            || {
+                encoder.set_label("Tensor Add Bias");
+                encoder.set_compute_pipeline_state(&self.pipeline_state);
+                encoder.set_buffer(0, Some(input), 0);
+                encoder.set_buffer(1, Some(bias), 0);
+                encoder.set_buffer(2, Some(output), 0);
+                encoder.set_bytes(
+                    3,
+                    size_of::<i32>() as u64,
+                    &(num_cols as i32) as *const _ as *const _,
+                );
+                encoder.set_bytes(
+                    4,
+                    size_of::<i32>() as u64,
+                    &(total_len as i32) as *const _ as *const _,
+                );
+                encoder.dispatch_1d_exactly(
+                    &self.pipeline_state,
+                    total_len,
+                    None,
+                );
+            },
+            None::<fn()>,
         );
-        encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &(total_len as i32) as *const _ as *const _,
-        );
-        encoder.dispatch_1d_exactly(&self.pipeline_state, total_len, None);
     }
 }

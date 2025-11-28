@@ -15,6 +15,7 @@ use crate::{
             ArrayId, ForwardPassState, RopeType,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
 };
 
@@ -161,7 +162,13 @@ impl EncodableWithState for RopeKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        self.encode_with_encoder_impl(state, compute_encoder);
+        compute_encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.encode_with_encoder_impl(state, compute_encoder);
+            },
+            None::<fn()>,
+        );
 
         compute_encoder.end_encoding();
 

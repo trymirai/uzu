@@ -12,6 +12,7 @@ use super::super::{
         ArrayId, ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
+    metal_extensions::ComputeEncoderConditional,
 };
 use crate::{
     Array, DataType, backends::metal::MTLError, config::QuantizationMode,
@@ -82,7 +83,7 @@ impl QuantizedEmbeddingLookupKernel {
         &self,
         encoder: &ComputeCommandEncoderRef,
         args: QuantizedEmbeddingLookupArguments,
-    ) -> Result<(), QuantizedEmbeddingError> {
+    ) {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers
@@ -124,8 +125,6 @@ impl QuantizedEmbeddingLookupKernel {
             MTLSize::new(threadgroups, 1, 1),
             MTLSize::new(threads_per_threadgroup, 1, 1),
         );
-
-        Ok(())
     }
 }
 
@@ -340,9 +339,7 @@ impl QuantizedEmbeddingLookupKernelBlock {
             group_size: self.group_size,
         };
 
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized embedding lookup kernel");
+        self.kernel.encode(encoder, args);
     }
 }
 
@@ -516,7 +513,13 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         let root_command_buffer = command_buffer.root_command_buffer();
         let encoder = root_command_buffer.new_compute_command_encoder();
 
-        self.encode_impl(state, encoder);
+        encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.encode_impl(state, encoder);
+            },
+            None::<fn()>,
+        );
 
         encoder.end_encoding();
 
