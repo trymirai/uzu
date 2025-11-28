@@ -650,25 +650,27 @@ impl Generator {
         state.sampling_method = Some(sampling_method);
 
         self.context.reset_command_buffer();
-        let root_cmd = self.context.command_buffer.root_command_buffer();
+        let root_command_buffer =
+            self.context.command_buffer.root_command_buffer();
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
-            root_cmd.encode_wait_for_event(&async_event, current_counter);
+            root_command_buffer
+                .encode_wait_for_event(&async_event, current_counter);
         }
 
         // Encode forward pass
         self.context.executables.encode(
             &mut state,
             &self.context.command_buffer,
-            &EncodingParameters::new(false, true, false),
+            &EncodingParameters::new(false, false, false),
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
             &self.context.command_buffer,
-            &EncodingParameters::new(false, true, false),
+            &EncodingParameters::new(false, false, false),
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -681,7 +683,7 @@ impl Generator {
             unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
         let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
 
-        let encoder = root_cmd.new_compute_command_encoder();
+        let encoder = root_command_buffer.new_compute_command_encoder();
         self.context.token_copy.encode_to_token_ids(
             &sampling_output_buffer,
             &token_ids_buffer,
@@ -697,26 +699,25 @@ impl Generator {
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        root_cmd.encode_signal_event(&async_event, next_counter);
+        root_command_buffer.encode_signal_event(&async_event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
         let results_buffer_clone = results_buffer.clone();
         let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
 
-        let block =
-            ConcreteBlock::new(move |_cmd_buf: &metal::CommandBufferRef| {
-                let token = {
-                    let ptr = results_buffer_clone.contents() as *const u32;
-                    unsafe { *ptr.add(slot) as u64 }
-                };
-                if let Some(cb) = callback.lock().unwrap().take() {
-                    cb(token);
-                }
-            });
+        let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+            let token = {
+                let ptr = results_buffer_clone.contents() as *const u32;
+                unsafe { *ptr.add(slot) as u64 }
+            };
+            if let Some(cb) = callback.lock().unwrap().take() {
+                cb(token);
+            }
+        });
         let block = block.copy();
 
-        root_cmd.add_completed_handler(&block);
+        root_command_buffer.add_completed_handler(&block);
         self.context.command_buffer.commit_and_continue();
 
         Ok(())
