@@ -3,11 +3,34 @@ use std::{
     io::BufReader,
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     time::Instant,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AsyncMode {
+    Sync,
+    Lookahead,
+    Batch,
+}
+
+impl AsyncMode {
+    fn from_env() -> Self {
+        match std::env::var("UZU_ASYNC_MODE").as_deref() {
+            Ok("sync") => AsyncMode::Sync,
+            Ok("lookahead") => AsyncMode::Lookahead,
+            Ok("batch") => AsyncMode::Batch,
+            _ => AsyncMode::Batch,
+        }
+    }
+}
+
+fn nanos_to_secs(nanos: u64) -> f64 {
+    nanos as f64 / 1_000_000_000.0
+}
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -330,16 +353,49 @@ impl Session {
             }
         }
 
-        // Use async pipeline when suffix_length == 1 (no speculation) and no attention layers
-        let force_sync = std::env::var("UZU_FORCE_SYNC")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-        let use_async = !force_sync
-            && generator.decoding_config.generate_suffix_length() == 1
+        let async_mode = AsyncMode::from_env();
+        let can_use_async = generator.decoding_config.generate_suffix_length()
+            == 1
             && !generator.has_attention_layers();
 
-        let generate_output = if use_async {
-            let (results, durations, finish_reason) = Self::run_async_generate(
+        let generate_output = match (async_mode, can_use_async) {
+            (AsyncMode::Lookahead, true) => {
+                let (results, durations, finish_reason) =
+                    Self::run_async_lookahead(
+                        &self.model_metadata,
+                        &self.tokenizer,
+                        &self.output_parser,
+                        &ctx,
+                        generator,
+                        sampling_method,
+                        &progress,
+                    )?;
+                Self::build_output(
+                    &self.model_metadata,
+                    &self.tokenizer,
+                    &self.output_parser,
+                    &ctx,
+                    generator,
+                    &results,
+                    &durations,
+                    Some(finish_reason),
+                )?
+            },
+            (AsyncMode::Batch, true) => {
+                let (results, durations, finish_reason) =
+                    Self::run_async_batch(&ctx, generator, sampling_method)?;
+                Self::build_output(
+                    &self.model_metadata,
+                    &self.tokenizer,
+                    &self.output_parser,
+                    &ctx,
+                    generator,
+                    &results,
+                    &durations,
+                    Some(finish_reason),
+                )?
+            },
+            _ => Self::run_sync_generate(
                 &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
@@ -347,27 +403,7 @@ impl Session {
                 generator,
                 sampling_method,
                 &progress,
-            )?;
-            Self::build_output(
-                &self.model_metadata,
-                &self.tokenizer,
-                &self.output_parser,
-                &ctx,
-                generator,
-                &results,
-                &durations,
-                Some(finish_reason),
-            )?
-        } else {
-            Self::run_sync_generate(
-                &self.model_metadata,
-                &self.tokenizer,
-                &self.output_parser,
-                &ctx,
-                generator,
-                sampling_method,
-                &progress,
-            )?
+            )?,
         };
 
         generator.clear_cache();
@@ -535,7 +571,7 @@ impl Session {
         })
     }
 
-    fn run_async_generate<F>(
+    fn run_async_lookahead<F>(
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
@@ -555,46 +591,48 @@ impl Session {
         generator.prepare_async(tokens_to_generate);
 
         let (sender, receiver): (
-            Sender<(usize, u64, f64)>,
-            Receiver<(usize, u64, f64)>,
+            Sender<(usize, u64, u64)>,
+            Receiver<(usize, u64, u64)>,
         ) = mpsc::channel();
-        let last_callback_time = Arc::new(Mutex::new(Instant::now()));
 
-        let mut results: Vec<GenerateResult> = Vec::new();
-        let mut durations: Vec<f64> = Vec::new();
+        let start_time = Instant::now();
+        let last_nanos = Arc::new(AtomicU64::new(0));
+
+        let mut results: Vec<GenerateResult> =
+            Vec::with_capacity(tokens_to_generate);
+        let mut durations: Vec<f64> = Vec::with_capacity(tokens_to_generate);
         let mut finish_reason = FinishReason::Length;
         let mut next_to_submit = 0;
         let mut in_flight = 0;
 
-        // Each iteration: submit passes to fill lookahead window, then wait for one result
         for _ in 0..tokens_to_generate {
-            // Submit passes until we have `lookahead` in flight (or no more to submit)
             while in_flight < lookahead && next_to_submit < tokens_to_generate {
-                let sender_clone = sender.clone();
-                let last_time = last_callback_time.clone();
-                let pass_index = next_to_submit;
+                let tx = sender.clone();
+                let last = last_nanos.clone();
+                let idx = next_to_submit;
+                let start = start_time;
                 generator.async_generate(
-                    pass_index,
+                    idx,
                     sampling_method,
                     move |token| {
-                        let now = Instant::now();
-                        let mut last = last_time.lock().unwrap();
-                        let duration = now.duration_since(*last).as_secs_f64();
-                        *last = now;
-                        drop(last);
-                        let _ =
-                            sender_clone.send((pass_index, token, duration));
+                        let now_nanos = start.elapsed().as_nanos() as u64;
+                        let prev_nanos = last.swap(now_nanos, Ordering::SeqCst);
+                        let _ = tx.send((
+                            idx,
+                            token,
+                            now_nanos.saturating_sub(prev_nanos),
+                        ));
                     },
                 )?;
                 next_to_submit += 1;
                 in_flight += 1;
             }
 
-            // Wait for one result
-            let (_, token, duration) =
+            let (_, token, duration_nanos) =
                 receiver.recv().map_err(|_| Error::SamplingFailed)?;
             in_flight -= 1;
 
+            let duration = nanos_to_secs(duration_nanos);
             generator.tokens.push(token);
             results.push(GenerateResult {
                 tokens: vec![token],
@@ -630,13 +668,96 @@ impl Session {
             };
 
             if should_stop {
-                // Drain in-flight passes without recording their tokens
                 while in_flight > 0 {
                     let _ =
                         receiver.recv().map_err(|_| Error::SamplingFailed)?;
                     in_flight -= 1;
                 }
                 break;
+            }
+        }
+
+        Ok((results, durations, finish_reason))
+    }
+
+    fn run_async_batch(
+        run_context: &RunContext,
+        generator: &mut Generator,
+        sampling_method: SamplingMethod,
+    ) -> Result<(Vec<GenerateResult>, Vec<f64>, FinishReason), Error> {
+        let tokens_to_generate = run_context
+            .tokens_limit
+            .saturating_sub(run_context.prefill_result.tokens.len());
+
+        let batch_size = std::env::var("UZU_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(128usize);
+
+        generator.prepare_async(tokens_to_generate);
+
+        let (sender, receiver): (
+            Sender<(usize, u64, u64)>,
+            Receiver<(usize, u64, u64)>,
+        ) = mpsc::channel();
+
+        let start_time = Instant::now();
+        let last_nanos = Arc::new(AtomicU64::new(0));
+
+        let mut results: Vec<GenerateResult> =
+            Vec::with_capacity(tokens_to_generate);
+        let mut durations: Vec<f64> = Vec::with_capacity(tokens_to_generate);
+        let mut finish_reason = FinishReason::Length;
+        let mut next_to_submit = 0;
+        let mut total_received = 0;
+
+        while total_received < tokens_to_generate {
+            let batch_end =
+                std::cmp::min(next_to_submit + batch_size, tokens_to_generate);
+
+            for idx in next_to_submit..batch_end {
+                let tx = sender.clone();
+                let last = last_nanos.clone();
+                let start = start_time;
+                generator.async_generate(
+                    idx,
+                    sampling_method,
+                    move |token| {
+                        let now_nanos = start.elapsed().as_nanos() as u64;
+                        let prev_nanos = last.swap(now_nanos, Ordering::SeqCst);
+                        let _ = tx.send((
+                            idx,
+                            token,
+                            now_nanos.saturating_sub(prev_nanos),
+                        ));
+                    },
+                )?;
+            }
+            let batch_submitted = batch_end - next_to_submit;
+            next_to_submit = batch_end;
+
+            for _ in 0..batch_submitted {
+                let (_, token, duration_nanos) =
+                    receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                total_received += 1;
+
+                let duration = nanos_to_secs(duration_nanos);
+                generator.tokens.push(token);
+                results.push(GenerateResult {
+                    tokens: vec![token],
+                    forwardpass_duration: duration,
+                });
+                durations.push(duration);
+
+                if run_context.eos_tokens.contains(&token) {
+                    finish_reason = FinishReason::Stop;
+                    let remaining = batch_submitted
+                        - (total_received - (next_to_submit - batch_submitted));
+                    for _ in 0..remaining {
+                        let _ = receiver.recv();
+                    }
+                    return Ok((results, durations, finish_reason));
+                }
             }
         }
 
