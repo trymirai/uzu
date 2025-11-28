@@ -112,14 +112,14 @@ where
     {
         match (predicate, else_block) {
             (Some(p), Some(else_fn)) => unsafe {
-                self.encode_start_if(p, 0, MTLCompareFunction::NotEqual, 0);
+                self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
                 if_block();
                 self.encode_start_else();
                 else_fn();
                 self.encode_end_if();
             },
             (Some(p), None) => unsafe {
-                self.encode_start_if(p, 0, MTLCompareFunction::NotEqual, 0);
+                self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
                 if_block();
                 self.encode_end_if();
             },

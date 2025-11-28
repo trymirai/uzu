@@ -20,13 +20,10 @@ impl GeneratorEncodedTask {
         &self.predicate_buffer
     }
 
-    pub fn set_predicate_enabled(
-        &self,
-        enabled: bool,
-    ) {
+    pub fn disable_execution(&self) {
         unsafe {
             let ptr = self.predicate_buffer.contents() as *mut u32;
-            *ptr = u32::from(enabled);
+            *ptr = 1;
             self.predicate_buffer.did_modify_range(metal::NSRange::new(
                 0,
                 size_of::<u32>() as u64,
@@ -110,8 +107,6 @@ impl GeneratorRunTask {
                 MTLResourceOptions::StorageModeShared,
             ),
         };
-
-        // encoded_task.set_predicate_enabled(true);
 
         encoded_task
     }
