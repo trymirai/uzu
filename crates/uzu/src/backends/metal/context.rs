@@ -4,13 +4,17 @@ include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use metal::{
-    CommandQueue as MTLCommandQueue,
+    Buffer as MTLBuffer, CommandQueue as MTLCommandQueue,
     ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
-    FunctionConstantValues, Library as MTLLibrary,
+    FunctionConstantValues, Library as MTLLibrary, MTLResourceOptions,
+    MTLStorageMode,
 };
 
 use super::{
-    MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
+    MetalArray,
+    buffer_allocator::{BufferAllocator, FallbackHeapAllocator},
+    error::MTLError,
+    metal_extensions::LibraryPipelineExtensions,
 };
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
 
@@ -19,12 +23,21 @@ pub struct MTLContext {
     pub command_queue: MTLCommandQueue,
     library: MTLLibrary,
     pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
+    heap_allocator: Option<FallbackHeapAllocator>,
 }
 
 impl MTLContext {
     pub fn new(
         device: MTLDevice,
         command_queue: MTLCommandQueue,
+    ) -> Result<Self, MTLError> {
+        Self::new_with_heap(device, command_queue, None)
+    }
+
+    pub fn new_with_heap(
+        device: MTLDevice,
+        command_queue: MTLCommandQueue,
+        heap_size_bytes: Option<u64>,
     ) -> Result<Self, MTLError> {
         let library = match device.new_library_with_data(METAL_LIBRARY_DATA) {
             Ok(lib) => lib,
@@ -36,12 +49,48 @@ impl MTLContext {
             },
         };
 
+        let heap_allocator = heap_size_bytes.map(|size| {
+            FallbackHeapAllocator::new(
+                device.clone(),
+                size,
+                MTLStorageMode::Shared,
+            )
+        });
+
         Ok(Self {
             device,
             command_queue,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            heap_allocator,
         })
+    }
+
+    pub fn allocate_buffer(
+        &self,
+        size_bytes: usize,
+        options: MTLResourceOptions,
+    ) -> MTLBuffer {
+        if let Some(ref allocator) = self.heap_allocator {
+            allocator.allocate_buffer(size_bytes, options)
+        } else {
+            self.device.new_buffer(size_bytes as u64, options)
+        }
+    }
+
+    pub fn print_heap_stats(&self) {
+        if let Some(ref allocator) = self.heap_allocator {
+            let (heap_count, device_count, used, total) = allocator.stats();
+            eprintln!(
+                "[MTLContext] Heap stats: {} heap allocs, {} device fallbacks, \
+                 used={:.1}MB / total={:.1}MB ({:.1}%)",
+                heap_count,
+                device_count,
+                used as f64 / (1024.0 * 1024.0),
+                total as f64 / (1024.0 * 1024.0),
+                (used as f64 / total as f64) * 100.0
+            );
+        }
     }
 
     pub fn compute_pipeline_state(
@@ -130,9 +179,9 @@ impl DeviceContext for MTLContext {
         unsafe {
             let buffer_size_bytes = array_size_in_bytes(shape, data_type);
 
-            let buffer = self.device.new_buffer(
-                buffer_size_bytes as u64,
-                metal::MTLResourceOptions::StorageModeShared,
+            let buffer = self.allocate_buffer(
+                buffer_size_bytes,
+                MTLResourceOptions::StorageModeShared,
             );
             MetalArray::new(buffer, shape, data_type)
         }

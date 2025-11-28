@@ -247,17 +247,13 @@ impl QuantizedEmbeddingLookupKernelBlock {
                         );
                     },
                 };
-                let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context.device.new_buffer(
+                let size_bytes = vocab_size * num_groups * elem_size;
+                let buf = mtl_context.allocate_buffer(
                     size_bytes,
                     metal::MTLResourceOptions::StorageModeShared,
                 );
                 unsafe {
-                    std::ptr::write_bytes(
-                        buf.contents(),
-                        0,
-                        size_bytes as usize,
-                    );
+                    std::ptr::write_bytes(buf.contents(), 0, size_bytes);
                 }
                 buf
             },
@@ -455,17 +451,13 @@ impl QuantizedEmbeddingReadoutKernelBlock {
                         );
                     },
                 };
-                let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context.device.new_buffer(
+                let size_bytes = vocab_size * num_groups * elem_size;
+                let buf = mtl_context.allocate_buffer(
                     size_bytes,
                     metal::MTLResourceOptions::StorageModeShared,
                 );
                 unsafe {
-                    std::ptr::write_bytes(
-                        buf.contents(),
-                        0,
-                        size_bytes as usize,
-                    );
+                    std::ptr::write_bytes(buf.contents(), 0, size_bytes);
                 }
                 buf
             },

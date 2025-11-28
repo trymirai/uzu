@@ -119,9 +119,8 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_temperature_buffer = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
+        let partial_temperature_buffer = context.allocate_buffer(
+            max_elements * Into::<DataType>::into(data_type).size_in_bytes(),
             MTLResourceOptions::StorageModeShared,
         );
 
@@ -133,9 +132,8 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_topk_buffer = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
+        let partial_topk_buffer = context.allocate_buffer(
+            max_elements * Into::<DataType>::into(data_type).size_in_bytes(),
             MTLResourceOptions::StorageModeShared,
         );
 
@@ -147,9 +145,8 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_topp_buffer = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
+        let partial_topp_buffer = context.allocate_buffer(
+            max_elements * Into::<DataType>::into(data_type).size_in_bytes(),
             MTLResourceOptions::StorageModeShared,
         );
 
@@ -161,9 +158,8 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_gumbel_buffer = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
+        let partial_gumbel_buffer = context.allocate_buffer(
+            max_elements * Into::<DataType>::into(data_type).size_in_bytes(),
             MTLResourceOptions::StorageModeShared,
         );
 
@@ -205,8 +201,8 @@ impl SamplingKernel {
                 let max_partial_results =
                     max_batch_size * max_vocab_groups_per_batch;
 
-                let partial_results_buffer = context.device.new_buffer(
-                    (max_partial_results * size_of::<ArgmaxPair>()) as u64,
+                let partial_results_buffer = context.allocate_buffer(
+                    max_partial_results * size_of::<ArgmaxPair>(),
                     MTLResourceOptions::StorageModeShared,
                 );
 

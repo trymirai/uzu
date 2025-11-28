@@ -66,8 +66,8 @@ impl KVCacheUpdate {
             .compute_pipeline_state_with_reflection(&function_name, None)
             .map_err(|e| KVCacheUpdateError::MetalError(e))?;
 
-        let indices_buffer = context.device.new_buffer(
-            (max_sequence_length * size_of::<Swap>()) as u64,
+        let indices_buffer = context.allocate_buffer(
+            max_sequence_length * size_of::<Swap>(),
             MTLResourceOptions::StorageModeShared,
         );
 

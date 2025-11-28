@@ -81,9 +81,19 @@ impl DecoderTestContext {
             ));
         }
 
+        // Calculate heap size: weights file size + generous buffer for scratch/cache
+        let weights_size =
+            std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
+        // Heap size = weights + 1GB for scratch/cache buffers
+        let heap_size = weights_size + 1024 * 1024 * 1024;
+
         let mtl_context = Rc::new(
-            MTLContext::new(mtl_device.clone(), mtl_command_queue.clone())
-                .map_err(|e| format!("Failed to create MetalContext: {}", e))?,
+            MTLContext::new_with_heap(
+                mtl_device.clone(),
+                mtl_command_queue.clone(),
+                Some(heap_size),
+            )
+            .map_err(|e| format!("Failed to create MetalContext: {}", e))?,
         );
 
         let weights_file = File::open(&weights_path)
