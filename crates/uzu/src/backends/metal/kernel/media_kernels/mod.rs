@@ -94,6 +94,10 @@ impl EncodableWithState for ScalePadNormalizeImage {
     ) {
         let _ = command_buffer;
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false // Image processing uses its own encoding path
+    }
 }
 
 #[derive(Debug)]

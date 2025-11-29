@@ -14,6 +14,7 @@ use crate::{
             ArrayId, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
     config::{RMSNormConfig, UpcastMode},
     parameters::ParameterTree,
@@ -208,10 +209,12 @@ impl RMSNormKernel {
         &self,
         compute_encoder: &ComputeCommandEncoderRef,
         args: RMSNormArguments,
-    ) -> Result<(), RMSNormError> {
-        if self.kernel_type != RMSNormKernelType::Standard {
-            return Err(RMSNormError::InvalidKernelType);
-        }
+    ) {
+        assert_eq!(
+            self.kernel_type,
+            RMSNormKernelType::Standard,
+            "Invalid kernel type for standard RMS norm operation"
+        );
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
@@ -258,18 +261,18 @@ impl RMSNormKernel {
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
-
-        Ok(())
     }
 
     pub fn encode_qk_norm(
         &self,
         compute_encoder: &ComputeCommandEncoderRef,
         args: QKNormArguments,
-    ) -> Result<(), RMSNormError> {
-        if self.kernel_type != RMSNormKernelType::QueryKey {
-            return Err(RMSNormError::InvalidKernelType);
-        }
+    ) {
+        assert_eq!(
+            self.kernel_type,
+            RMSNormKernelType::QueryKey,
+            "Invalid kernel type for QK norm operation"
+        );
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
@@ -350,8 +353,6 @@ impl RMSNormKernel {
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
-
-        Ok(())
     }
 }
 
@@ -453,8 +454,62 @@ impl EncodableWithState for RMSNormKernelEncodable {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
-        if let Err(e) = self.kernel.encode(
-            &compute_encoder,
+        compute_encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.kernel.encode(
+                    &compute_encoder,
+                    RMSNormArguments {
+                        input_buffer: &input_buffer,
+                        scales_buffer: &self.scales_buffer,
+                        output_buffer: &output_buffer,
+                        batch_size,
+                        model_dim,
+                        epsilon: self.config.epsilon,
+                        scale_offset: self.config.scale_offset.unwrap_or(0.0),
+                    },
+                );
+            },
+            None::<fn()>,
+        );
+
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        let input_binding = state.arrays(&[self.input_array_id]);
+        let output_binding = state.arrays(&[self.output_array_id]);
+
+        let input_shape = {
+            let input_array = input_binding[0].borrow();
+            input_array.shape().to_vec()
+        };
+
+        let mut input_array = input_binding[0].borrow_mut();
+        let mut output_array = output_binding[0].borrow_mut();
+
+        let input_buffer = unsafe { input_array.mtl_buffer() };
+        let output_buffer = unsafe { output_array.mtl_buffer() };
+
+        let batch_size = input_shape[0] as i32;
+        let model_dim = input_shape[1] as i32;
+
+        self.kernel.encode(
+            encoder,
             RMSNormArguments {
                 input_buffer: &input_buffer,
                 scales_buffer: &self.scales_buffer,
@@ -464,16 +519,7 @@ impl EncodableWithState for RMSNormKernelEncodable {
                 epsilon: self.config.epsilon,
                 scale_offset: self.config.scale_offset.unwrap_or(0.0),
             },
-        ) {
-            eprintln!("Failed to encode RMS norm kernel: {:?}", e);
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
+        );
     }
 }
 
@@ -623,6 +669,46 @@ impl EncodableWithState for QKNormKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+
+        compute_encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.encode_with_encoder_impl(state, compute_encoder);
+            },
+            None::<fn()>,
+        );
+
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        self.encode_with_encoder_impl(state, encoder);
+    }
+}
+
+impl QKNormKernelEncodable {
+    fn encode_with_encoder_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+    ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {
             let qkv_array = qkv_binding[0].borrow();
@@ -635,10 +721,6 @@ impl EncodableWithState for QKNormKernelEncodable {
         let batch_size = qkv_shape[0] as i32;
         let head_dim = self.head_dim as i32;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         // Process query normalization if configured
         if let (
             Some(query_kernel),
@@ -647,14 +729,13 @@ impl EncodableWithState for QKNormKernelEncodable {
         ) =
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
-            if let Err(e) = query_kernel.encode_qk_norm(
-                &compute_encoder,
+            query_kernel.encode_qk_norm(
+                encoder,
                 QKNormArguments {
                     qkv_input_buffer: &qkv_buffer,
                     scales_buffer: query_scales_buffer,
                     qkv_output_buffer: &qkv_buffer,
                     batch_size,
-                    // Always pass actual head counts (needed for correct buffer addressing)
                     num_q_heads: self.num_q_heads as i32,
                     num_kv_heads: self.num_kv_heads as i32,
                     head_dim,
@@ -662,26 +743,19 @@ impl EncodableWithState for QKNormKernelEncodable {
                     scale_offset: query_config.scale_offset.unwrap_or(0.0),
                     target: QKNormTarget::QueryHeads,
                 },
-            ) {
-                eprintln!(
-                    "Failed to encode query normalization kernel: {:?}",
-                    e
-                );
-            }
+            );
         }
 
-        // Process key normalization if configured
         if let (Some(key_kernel), Some(key_scales_buffer), Some(key_config)) =
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
-            if let Err(e) = key_kernel.encode_qk_norm(
-                &compute_encoder,
+            key_kernel.encode_qk_norm(
+                encoder,
                 QKNormArguments {
                     qkv_input_buffer: &qkv_buffer,
                     scales_buffer: key_scales_buffer,
                     qkv_output_buffer: &qkv_buffer,
                     batch_size,
-                    // Always pass actual head counts (needed for correct buffer addressing)
                     num_q_heads: self.num_q_heads as i32,
                     num_kv_heads: self.num_kv_heads as i32,
                     head_dim,
@@ -689,16 +763,7 @@ impl EncodableWithState for QKNormKernelEncodable {
                     scale_offset: key_config.scale_offset.unwrap_or(0.0),
                     target: QKNormTarget::KeyHeads,
                 },
-            ) {
-                eprintln!("Failed to encode key normalization kernel: {:?}", e);
-            }
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            );
         }
     }
 }

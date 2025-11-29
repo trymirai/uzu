@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
@@ -9,7 +10,7 @@ use crate::{
         MTLContext,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ArrayId, ForwardPassState,
+            ArrayId, EncoderResolver, ForwardPassState,
             encodable_with_state::{EncodableWithState, EncodingParameters},
             transformer_layer,
         },
@@ -293,11 +294,11 @@ impl LayerExecutables {
     }
 }
 
-impl EncodableWithState for LayerExecutables {
-    fn encode(
+impl LayerExecutables {
+    fn encode_with_shared_encoder_impl(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         parameters: &EncodingParameters,
     ) {
         let layer_traces = if let Some(traces) = state.traces.clone() {
@@ -313,10 +314,11 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
-        // shortcut = input
+        self.copy_main_to_shortcut
+            .encode_with_shared_encoder(state, encoder, parameters);
 
-        self.pre_attention_norm.encode(state, command_buffer, parameters);
+        self.pre_attention_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -332,13 +334,16 @@ impl EncodableWithState for LayerExecutables {
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode(state, command_buffer, parameters);
+                qkv_projection
+                    .encode_with_shared_encoder(state, encoder, parameters);
                 if let Some(norm) = qk_norm {
-                    norm.encode(state, command_buffer, parameters);
+                    norm.encode_with_shared_encoder(state, encoder, parameters);
                 }
-                rope.encode(state, command_buffer, parameters);
-                attention.encode(state, command_buffer, parameters);
-                out_projection.encode(state, command_buffer, parameters);
+                rope.encode_with_shared_encoder(state, encoder, parameters);
+                attention
+                    .encode_with_shared_encoder(state, encoder, parameters);
+                out_projection
+                    .encode_with_shared_encoder(state, encoder, parameters);
                 if let Some(layer_traces) = layer_traces.clone() {
                     state.copy_array(
                         ArrayId::Main,
@@ -349,7 +354,7 @@ impl EncodableWithState for LayerExecutables {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer, parameters);
+                mixer.encode_with_shared_encoder(state, encoder, parameters);
                 if let Some(layer_traces) = layer_traces.clone() {
                     state.copy_array(
                         ArrayId::Main,
@@ -360,7 +365,8 @@ impl EncodableWithState for LayerExecutables {
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode(state, command_buffer, parameters);
+            post_attention_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
             if let Some(layer_traces) = layer_traces.clone() {
                 state.copy_array(
                     ArrayId::Main,
@@ -368,11 +374,9 @@ impl EncodableWithState for LayerExecutables {
                 );
             }
         }
-        //main = attention_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
-        // shortcut = input + attention_result
-        // main = input + attention_result
+        self.main_shortcut_add_swap
+            .encode_with_shared_encoder(state, encoder, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -380,7 +384,8 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        self.pre_mlp_norm.encode(state, command_buffer, parameters);
+        self.pre_mlp_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
@@ -388,13 +393,14 @@ impl EncodableWithState for LayerExecutables {
             );
         }
 
-        self.mlp.encode(state, command_buffer, parameters);
+        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer, parameters);
+            post_mlp_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
             if let Some(layer_traces) = layer_traces.clone() {
                 state.copy_array(
                     ArrayId::Main,
@@ -402,16 +408,209 @@ impl EncodableWithState for LayerExecutables {
                 );
             }
         }
-        // main = mlp_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
-        // shortcut = input + attention_result + mlp_result
-        // main = input + attention_result + mlp_result
+        self.main_shortcut_add_swap
+            .encode_with_shared_encoder(state, encoder, parameters);
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(
                 ArrayId::Main,
                 layer_traces.borrow().outputs.clone(),
             );
         }
+    }
+
+    fn all_blocks_support_shared_encoder(&self) -> bool {
+        let mixer_supports = match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                qkv_projection.supports_shared_encoder()
+                    && qk_norm
+                        .as_ref()
+                        .map_or(true, |n| n.supports_shared_encoder())
+                    && rope.supports_shared_encoder()
+                    && attention.supports_shared_encoder()
+                    && out_projection.supports_shared_encoder()
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => mixer.supports_shared_encoder(),
+        };
+
+        self.copy_main_to_shortcut.supports_shared_encoder()
+            && self.pre_attention_norm.supports_shared_encoder()
+            && mixer_supports
+            && self
+                .post_attention_norm
+                .as_ref()
+                .map_or(true, |n| n.supports_shared_encoder())
+            && self.main_shortcut_add_swap.supports_shared_encoder()
+            && self.pre_mlp_norm.supports_shared_encoder()
+            && self.mlp.supports_shared_encoder()
+            && self
+                .post_mlp_norm
+                .as_ref()
+                .map_or(true, |n| n.supports_shared_encoder())
+    }
+
+    fn encode_with_resolver(
+        &self,
+        state: &mut ForwardPassState,
+        command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+    ) {
+        let layer_traces = if let Some(traces) = state.traces.clone() {
+            traces.borrow().layer_results.get(self.layer_index).cloned()
+        } else {
+            None
+        };
+
+        let mut resolver = EncoderResolver::new(command_buffer);
+
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(
+                ArrayId::Main,
+                layer_traces.borrow().inputs.clone(),
+            );
+        }
+
+        resolver.encode(self.copy_main_to_shortcut.as_ref(), state, parameters);
+
+        resolver.encode(self.pre_attention_norm.as_ref(), state, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(
+                ArrayId::Main,
+                layer_traces.borrow().pre_attention_norm.clone(),
+            );
+        }
+
+        match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                resolver.encode(qkv_projection.as_ref(), state, parameters);
+                if let Some(norm) = qk_norm {
+                    resolver.encode(norm.as_ref(), state, parameters);
+                }
+                resolver.encode(rope.as_ref().as_ref(), state, parameters);
+                resolver.encode(attention.as_ref(), state, parameters);
+                resolver.encode(out_projection.as_ref(), state, parameters);
+                if let Some(layer_traces) = layer_traces.clone() {
+                    state.copy_array(
+                        ArrayId::Main,
+                        layer_traces.borrow().attention.clone(),
+                    );
+                }
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                resolver.encode(mixer.as_ref(), state, parameters);
+                if let Some(layer_traces) = layer_traces.clone() {
+                    state.copy_array(
+                        ArrayId::Main,
+                        layer_traces.borrow().attention.clone(),
+                    );
+                }
+            },
+        }
+
+        if let Some(post_attention_norm) = &self.post_attention_norm {
+            resolver.encode(post_attention_norm.as_ref(), state, parameters);
+            if let Some(layer_traces) = layer_traces.clone() {
+                state.copy_array(
+                    ArrayId::Main,
+                    layer_traces.borrow().post_attention_norm.clone(),
+                );
+            }
+        }
+
+        resolver.encode(
+            self.main_shortcut_add_swap.as_ref(),
+            state,
+            parameters,
+        );
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(
+                ArrayId::Main,
+                layer_traces.borrow().mlp_inputs.clone(),
+            );
+        }
+
+        resolver.encode(self.pre_mlp_norm.as_ref(), state, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(
+                ArrayId::Main,
+                layer_traces.borrow().pre_mlp_norm.clone(),
+            );
+        }
+
+        resolver.encode(self.mlp.as_ref(), state, parameters);
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(ArrayId::Main, layer_traces.borrow().mlp.clone());
+        }
+
+        if let Some(post_mlp_norm) = &self.post_mlp_norm {
+            resolver.encode(post_mlp_norm.as_ref(), state, parameters);
+            if let Some(layer_traces) = layer_traces.clone() {
+                state.copy_array(
+                    ArrayId::Main,
+                    layer_traces.borrow().post_mlp_norm.clone(),
+                );
+            }
+        }
+
+        resolver.encode(
+            self.main_shortcut_add_swap.as_ref(),
+            state,
+            parameters,
+        );
+        if let Some(layer_traces) = layer_traces.clone() {
+            state.copy_array(
+                ArrayId::Main,
+                layer_traces.borrow().outputs.clone(),
+            );
+        }
+
+        resolver.finish();
+    }
+}
+
+impl EncodableWithState for LayerExecutables {
+    fn encode(
+        &self,
+        state: &mut ForwardPassState,
+        command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_with_resolver(state, command_buffer, parameters);
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.all_blocks_support_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_with_shared_encoder_impl(state, encoder, parameters);
     }
 }

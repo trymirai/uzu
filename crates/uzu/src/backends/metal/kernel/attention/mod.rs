@@ -16,6 +16,7 @@ use crate::{
             ArrayId, ForwardPassState, HashMapId,
             encodable_with_state::{EncodableWithState, EncodingParameters},
         },
+        metal_extensions::ComputeEncoderConditional,
     },
 };
 
@@ -168,24 +169,30 @@ impl AttentionKernel {
             let function_constants = make_function_constants(has_sinks_value);
 
             for &head_dim in &supported_head_dims {
+                let single_pass_name = format!(
+                    "attention_single_pass_{}_{}",
+                    data_suffix, head_dim
+                );
+                let single_pass_key =
+                    format!("{}_sinks_{}", single_pass_name, has_sinks_value);
                 if let Ok((pipeline, _)) = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "attention_single_pass_{}_{}",
-                            data_suffix, head_dim
-                        ),
+                    .compute_pipeline_state_with_reflection_cached(
+                        &single_pass_key,
+                        &single_pass_name,
                         Some(&function_constants),
                     )
                 {
                     single_pass.insert((head_dim, has_sinks_value), pipeline);
                 }
 
+                let two_pass_1_name =
+                    format!("attention_2pass_1_{}_{}", data_suffix, head_dim);
+                let two_pass_1_key =
+                    format!("{}_sinks_{}", two_pass_1_name, has_sinks_value);
                 if let Ok((pipeline, _)) = context
-                    .compute_pipeline_state_with_reflection(
-                        &format!(
-                            "attention_2pass_1_{}_{}",
-                            data_suffix, head_dim
-                        ),
+                    .compute_pipeline_state_with_reflection_cached(
+                        &two_pass_1_key,
+                        &two_pass_1_name,
                         Some(&function_constants),
                     )
                 {
@@ -193,12 +200,18 @@ impl AttentionKernel {
                 }
 
                 if !two_pass_2.contains_key(&head_dim) {
+                    let two_pass_2_name = format!(
+                        "attention_2pass_2_{}_{}",
+                        data_suffix, head_dim
+                    );
+                    let two_pass_2_key = format!(
+                        "{}_sinks_{}",
+                        two_pass_2_name, has_sinks_value
+                    );
                     if let Ok((pipeline, _)) = context
-                        .compute_pipeline_state_with_reflection(
-                            &format!(
-                                "attention_2pass_2_{}_{}",
-                                data_suffix, head_dim
-                            ),
+                        .compute_pipeline_state_with_reflection_cached(
+                            &two_pass_2_key,
+                            &two_pass_2_name,
                             Some(&function_constants),
                         )
                     {
@@ -581,6 +594,51 @@ impl EncodableWithState for AttentionKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+
+        compute_encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.encode_with_encoder_impl(
+                    state,
+                    compute_encoder,
+                    parameters,
+                );
+            },
+            None::<fn()>,
+        );
+
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_with_encoder_impl(state, encoder, parameters);
+    }
+}
+
+impl AttentionKernelEncodable {
+    fn encode_with_encoder_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
         let (
             suffix_length,
             num_heads,
@@ -708,13 +766,8 @@ impl EncodableWithState for AttentionKernelEncodable {
             binding[0].borrow_mut().mtl_buffer().clone()
         });
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         if let Err(e) = self.kernel.encode_kv_cache_update(
-            &compute_encoder,
+            encoder,
             KVCacheUpdateArguments {
                 rotated_keys_buffer: &rotated_keys_buffer,
                 qkv_buffer: &qkv_buffer,
@@ -729,7 +782,6 @@ impl EncodableWithState for AttentionKernelEncodable {
             },
         ) {
             eprintln!("Failed to encode KV cache update: {:?}", e);
-            compute_encoder.end_encoding();
             return;
         }
 
@@ -741,7 +793,7 @@ impl EncodableWithState for AttentionKernelEncodable {
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if let Err(e) = self.kernel.encode_single_pass(
-                    &compute_encoder,
+                    encoder,
                     AttentionSinglePassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -772,7 +824,7 @@ impl EncodableWithState for AttentionKernelEncodable {
             },
             AttentionKernelVariant::TwoPass => {
                 if let Err(e) = self.kernel.encode_two_pass(
-                    &compute_encoder,
+                    encoder,
                     AttentionTwoPassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -801,13 +853,6 @@ impl EncodableWithState for AttentionKernelEncodable {
                     eprintln!("Failed to encode two-pass attention: {:?}", e);
                 }
             },
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
         }
     }
 }

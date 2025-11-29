@@ -16,6 +16,8 @@ pub struct MetalArray {
     shape: Box<[usize]>,
     /// Data type of the elements
     data_type: DataType,
+    /// Byte offset into the buffer (for indexed async buffers)
+    offset: usize,
 }
 
 impl Array for MetalArray {
@@ -30,7 +32,7 @@ impl Array for MetalArray {
     fn buffer(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                self.buffer.contents() as *const u8,
+                (self.buffer.contents() as *const u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
@@ -39,7 +41,7 @@ impl Array for MetalArray {
     fn buffer_mut(&mut self) -> &mut [u8] {
         unsafe {
             std::slice::from_raw_parts_mut(
-                self.buffer.contents() as *mut u8,
+                (self.buffer.contents() as *mut u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
@@ -47,26 +49,44 @@ impl Array for MetalArray {
 }
 
 impl MetalArray {
-    /// Create a new Array
+    /// Create a new Array at offset 0
     pub unsafe fn new(
         buffer: MTLBuffer,
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
+        unsafe { Self::new_with_offset(buffer, shape, data_type, 0) }
+    }
+
+    /// Create a new Array at a byte offset into the buffer.
+    /// Used for indexed async buffers where each pass uses a different offset.
+    pub unsafe fn new_with_offset(
+        buffer: MTLBuffer,
+        shape: &[usize],
+        data_type: DataType,
+        offset: usize,
+    ) -> Self {
         let required_bytes = array_size_in_bytes(shape, data_type);
         assert!(
-            required_bytes <= buffer.length() as usize,
-            "Shape {:?} with data type {:?} requires {} bytes, but buffer length is {} bytes",
+            offset + required_bytes <= buffer.length() as usize,
+            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
-            required_bytes,
+            offset,
+            offset + required_bytes,
             buffer.length()
         );
         Self {
             buffer,
             shape: shape.into(),
             data_type,
+            offset,
         }
+    }
+
+    /// Returns the byte offset into the underlying buffer
+    pub fn buffer_offset(&self) -> usize {
+        self.offset
     }
 
     /// Wraps the underlying MTLBuffer into MPSTensorData for use with MPSGraph.
@@ -80,6 +100,8 @@ impl MetalArray {
     }
 
     /// Returns the underlying MTLBuffer.
+    /// NOTE: For arrays created with `new_with_offset`, callers must use `buffer_offset()`
+    /// and pass it to `encoder.set_buffer(..., offset)` - Metal has no sub-buffer concept.
     pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {
         &self.buffer
     }

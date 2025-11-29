@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 
+use block::ConcreteBlock;
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -564,5 +565,165 @@ impl Generator {
             }
             self.registered_prefix_len = desired_prefix_len;
         }
+    }
+
+    /// Prepares async buffers for generation.
+    /// Must be called after prefill, before async_generate loop.
+    pub fn prepare_async(
+        &mut self,
+        tokens_to_generate: usize,
+    ) {
+        let prefill_count = self.tokens.len();
+        self.context
+            .async_buffers
+            .prepare_positions(prefill_count, tokens_to_generate);
+        self.context
+            .async_buffers
+            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.reset_counter();
+    }
+
+    /// Submits a single async forward pass.
+    /// Does NOT block. Callback fires when GPU completes.
+    ///
+    /// - `pass_idx`: Index of this pass (0, 1, 2, ...)
+    /// - `sampling_method`: Sampling configuration
+    /// - `on_complete`: Callback receiving sampled token as u64
+    pub fn async_generate<F>(
+        &mut self,
+        pass_idx: usize,
+        sampling_method: SamplingMethod,
+        on_complete: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(u64) + Send + 'static,
+    {
+        assert_eq!(
+            self.decoding_config.generate_suffix_length(),
+            1,
+            "async_generate only supports suffix_length=1"
+        );
+
+        // Extract values from async_buffers before mutable borrow
+        let current_counter = self.context.async_buffers.counter.get();
+        let is_continuation = current_counter > 0;
+        let batch_size = self.context.async_buffers.batch_size;
+        let slot = pass_idx % batch_size;
+        let async_event = self.context.async_buffers.event.clone();
+        let results_buffer = self.context.async_buffers.results.clone();
+        let async_positions_buffer =
+            self.context.async_buffers.positions.clone();
+        let async_seeds_buffer = self.context.async_buffers.seeds.clone();
+
+        let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
+
+        let task = GeneratorRunTask {
+            token_ids: vec![last_token],
+            token_positions: vec![0], // Ignored, using async buffer
+            token_seeds: vec![0],     // Ignored, using async buffer
+            expected_number_of_new_tokens: 1,
+            active_suffix_length: 1,
+            is_prefilling: false,
+        };
+
+        let async_positions = Some((&async_positions_buffer, pass_idx));
+        let async_seeds = Some((&async_seeds_buffer, pass_idx));
+
+        let mut state = ForwardPassState::new(
+            self.context.mtl_context.clone(),
+            &self.context.model_config.decoder_config,
+            &self.context.model_shape,
+            &self.context.scratch_buffers,
+            self.context.cache_layers.clone(),
+            self.context.shared_buffers.clone(),
+            &task.token_ids,
+            &task.token_positions,
+            task.active_suffix_length,
+            task.is_prefilling,
+            &task.token_seeds,
+            false,
+            None,
+            is_continuation,
+            async_positions,
+            async_seeds,
+        );
+        state.sampling_method = Some(sampling_method);
+
+        self.context.reset_command_buffer();
+        let root_command_buffer =
+            self.context.command_buffer.root_command_buffer();
+
+        // Wait on previous pass if this is a continuation
+        if is_continuation {
+            root_command_buffer
+                .encode_wait_for_event(&async_event, current_counter);
+        }
+
+        // Encode forward pass
+        self.context.executables.encode(
+            &mut state,
+            &self.context.command_buffer,
+            &EncodingParameters::new(false, false, false),
+        );
+
+        // Encode sampling
+        self.context.gpu_sampler.encode(
+            &mut state,
+            &self.context.command_buffer,
+            &EncodingParameters::new(false, false, false),
+        );
+
+        // Copy sampled token: sampling_output → token_ids (for next pass)
+        // and sampling_output → results[slot] (for callback)
+        let sampling_output = state
+            .sampling_output
+            .as_ref()
+            .expect("sampling_output must exist after sampling encode");
+        let sampling_output_buffer =
+            unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
+        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+
+        let encoder = root_command_buffer.new_compute_command_encoder();
+        self.context.token_copy.encode_to_token_ids(
+            &sampling_output_buffer,
+            &token_ids_buffer,
+            encoder,
+        );
+        self.context.token_copy.encode_to_results(
+            &sampling_output_buffer,
+            &results_buffer,
+            slot,
+            encoder,
+        );
+        encoder.end_encoding();
+
+        // Signal event for next pass
+        let next_counter = current_counter + 1;
+        root_command_buffer.encode_signal_event(&async_event, next_counter);
+        self.context.async_buffers.counter.set(next_counter);
+
+        // Add completion handler
+        let results_buffer_clone = results_buffer.clone();
+        let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
+
+        let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+            let token = {
+                let ptr = results_buffer_clone.contents() as *const u32;
+                unsafe { *ptr.add(slot) as u64 }
+            };
+            if let Some(cb) = callback.lock().unwrap().take() {
+                cb(token);
+            }
+        });
+        let block = block.copy();
+
+        root_command_buffer.add_completed_handler(&block);
+        self.context.command_buffer.commit_and_continue();
+
+        Ok(())
+    }
+
+    pub fn has_attention_layers(&self) -> bool {
+        self.context.model_config.decoder_config.has_attention_layers()
     }
 }

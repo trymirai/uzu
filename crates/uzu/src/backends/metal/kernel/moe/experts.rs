@@ -136,8 +136,14 @@ impl MoeExpertsTwoPassDecodeKernel {
                     "moe_experts_decode_pass_a_indirect_{}",
                     dtype_suffix
                 );
+                let cache_key =
+                    format!("{}_gate_{}_tile_{}", kernel_name, gate, tile_h);
                 pass_a_indirect[gate as usize].push(
-                    ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?,
+                    ctx.compute_pipeline_state_cached(
+                        &cache_key,
+                        &kernel_name,
+                        Some(&fcv),
+                    )?,
                 );
             }
         }
@@ -334,8 +340,13 @@ impl MoeExpertsTwoPassPrefillKernel {
                     "moe_two_pass_prefill_pass_a_indirect_{}",
                     dtype_suffix
                 );
+                let cache_key = format!("{}_gate_{}", kernel_name, gate);
                 pass_a_indirect[gate as usize].push(
-                    ctx.compute_pipeline_state(&kernel_name, Some(&fcv))?,
+                    ctx.compute_pipeline_state_cached(
+                        &cache_key,
+                        &kernel_name,
+                        Some(&fcv),
+                    )?,
                 );
             }
         }

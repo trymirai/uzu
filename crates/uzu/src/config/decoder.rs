@@ -229,6 +229,16 @@ impl DecoderConfig {
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
     }
+
+    pub fn has_attention_layers(&self) -> bool {
+        if let Some(layer_types) = &self.layer_types {
+            layer_types
+                .iter()
+                .any(|lt| matches!(lt, DecoderLayerType::Transformer))
+        } else {
+            matches!(self.layer_config.mixer_config, MixerConfig::Attention(_))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -221,4 +221,8 @@ impl EncodableWithState for DecoderExecutables {
             state.copy_array(ArrayId::Logits, traces.borrow().logits.clone());
         }
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false
+    }
 }

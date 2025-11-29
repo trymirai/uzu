@@ -247,6 +247,7 @@ impl SamplingKernel {
         self.encode_with_encoder(
             logits_buffer,
             seeds_buffer,
+            0, // No offset for non-async path
             sampled_tokens_buffer,
             sampling_method,
             batch_size,
@@ -261,6 +262,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: Option<&MTLBuffer>,
+        seeds_offset: usize,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -327,6 +329,7 @@ impl SamplingKernel {
             self.encode_gumbel(
                 last_logits_buffer,
                 seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                seeds_offset,
                 &self.partial_gumbel_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -467,6 +470,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: &MTLBuffer,
+        seeds_offset: usize,
         processed_logits_buffer: &MTLBuffer,
         batch_size: u32,
         vocab_size: u32,
@@ -475,7 +479,7 @@ impl SamplingKernel {
         compute_encoder.set_compute_pipeline_state(&self.gumbel_pipeline);
 
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(seeds_buffer), 0);
+        compute_encoder.set_buffer(1, Some(seeds_buffer), seeds_offset as u64);
         compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
         compute_encoder.set_bytes(
             3,
@@ -640,6 +644,40 @@ impl EncodableWithState for SamplingKernelEncodable {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let root_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        self.encode_impl(state, encoder);
+
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            root_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        self.encode_impl(state, encoder);
+    }
+}
+
+impl SamplingKernelEncodable {
+    fn encode_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
         assert!(
             state.sampling_output.is_some(),
             "Sampling output buffer must be pre-allocated"
@@ -665,24 +703,19 @@ impl EncodableWithState for SamplingKernelEncodable {
             state.sampling_output.as_ref().unwrap().borrow_mut();
 
         let sampling_method = state.sampling_method.unwrap();
+        let seeds_offset = seeds.buffer_offset();
 
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        if let Err(e) = self.kernel.encode(
+        if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
+            seeds_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,
             vocab_size,
-            &root_command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
-        }
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root_command_buffer.wait_until_completed();
         }
     }
 }

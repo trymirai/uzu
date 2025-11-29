@@ -12,6 +12,7 @@ use super::super::{
         ArrayId, ForwardPassState,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
+    metal_extensions::ComputeEncoderConditional,
 };
 use crate::{
     Array, DataType, backends::metal::MTLError, config::QuantizationMode,
@@ -82,7 +83,7 @@ impl QuantizedEmbeddingLookupKernel {
         &self,
         encoder: &ComputeCommandEncoderRef,
         args: QuantizedEmbeddingLookupArguments,
-    ) -> Result<(), QuantizedEmbeddingError> {
+    ) {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers
@@ -124,8 +125,6 @@ impl QuantizedEmbeddingLookupKernel {
             MTLSize::new(threadgroups, 1, 1),
             MTLSize::new(threads_per_threadgroup, 1, 1),
         );
-
-        Ok(())
     }
 }
 
@@ -285,6 +284,41 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
         command_buffer: &CommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let root_command_buffer = command_buffer.root_command_buffer();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        self.encode_impl(state, encoder);
+
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        self.encode_impl(state, encoder);
+    }
+}
+
+impl QuantizedEmbeddingLookupKernelBlock {
+    fn encode_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
         let mut token_ids_array_mut = arrays[0].borrow_mut();
@@ -292,9 +326,6 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
 
         let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
 
         let args = QuantizedEmbeddingLookupArguments {
             token_ids_buffer,
@@ -308,18 +339,7 @@ impl EncodableWithState for QuantizedEmbeddingLookupKernelBlock {
             group_size: self.group_size,
         };
 
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized embedding lookup kernel");
-
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
+        self.kernel.encode(encoder, args);
     }
 }
 
@@ -490,6 +510,47 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         command_buffer: &CommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let root_command_buffer = command_buffer.root_command_buffer();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        encoder.condition(
+            parameters.predicate_ref(),
+            || {
+                self.encode_impl(state, encoder);
+            },
+            None::<fn()>,
+        );
+
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        self.encode_impl(state, encoder);
+    }
+}
+
+impl QuantizedEmbeddingReadoutKernelBlock {
+    fn encode_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.active_suffix_length();
         let mut input_array_mut = arrays[0].borrow_mut();
@@ -497,9 +558,6 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
 
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
 
         // For transposed matmul: input @ weights.T
         // where weights is [vocab_size, model_dim]
@@ -522,14 +580,5 @@ impl EncodableWithState for QuantizedEmbeddingReadoutKernelBlock {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
-
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
     }
 }

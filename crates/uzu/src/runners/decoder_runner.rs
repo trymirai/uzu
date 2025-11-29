@@ -132,6 +132,9 @@ impl DecoderTestContext {
             &token_seeds,
             false,
             None,
+            false,
+            None,
+            None,
         );
 
         let executables = DecoderExecutables::new(
