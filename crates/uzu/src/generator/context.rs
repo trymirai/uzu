@@ -38,8 +38,8 @@ pub struct AsyncBuffers {
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
     pub seeds: metal::Buffer,
-    /// Results buffer: [lookahead] u32
-    /// Each pass writes its sampled token to results[pass_idx % lookahead]
+    /// Results buffer: [batch_size] u32
+    /// Each pass writes its sampled token to results[pass_idx % batch_size]
     pub results: metal::Buffer,
     /// Metal event for GPU-side synchronization between passes
     pub event: MTLEvent,
@@ -47,15 +47,15 @@ pub struct AsyncBuffers {
     pub counter: Cell<u64>,
     /// Number of tokens after prefill (base for position calculation)
     pub prefill_count: Cell<usize>,
-    /// Lookahead count (number of passes to keep in flight)
-    pub lookahead: usize,
+    /// Batch size (number of passes to keep in flight)
+    pub batch_size: usize,
 }
 
 impl AsyncBuffers {
     pub fn new(
         device: &metal::DeviceRef,
         max_tokens: usize,
-        lookahead: usize,
+        batch_size: usize,
     ) -> Self {
         let positions = device.new_buffer(
             (max_tokens * std::mem::size_of::<i32>()) as u64,
@@ -66,7 +66,7 @@ impl AsyncBuffers {
             metal::MTLResourceOptions::StorageModeShared,
         );
         let results = device.new_buffer(
-            (lookahead * std::mem::size_of::<u32>()) as u64,
+            (batch_size * std::mem::size_of::<u32>()) as u64,
             metal::MTLResourceOptions::StorageModeShared,
         );
         let event = device.new_event();
@@ -78,7 +78,7 @@ impl AsyncBuffers {
             event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
-            lookahead,
+            batch_size,
         }
     }
 
@@ -124,7 +124,7 @@ impl AsyncBuffers {
         pass_idx: usize,
     ) -> u32 {
         let ptr = self.results.contents() as *const u32;
-        unsafe { *ptr.add(pass_idx % self.lookahead) }
+        unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }
 
@@ -253,11 +253,11 @@ impl GeneratorContext {
         let token_copy = TokenCopyKernel::new(&mtl_context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let async_lookahead = 16;
+        let async_batch_size = decoding_config.async_batch_size.resolve();
         let async_buffers = AsyncBuffers::new(
             &mtl_context.device,
             max_prefix_length,
-            async_lookahead,
+            async_batch_size,
         );
 
         let base_seed = decoding_config.sampling_seed.resolve();

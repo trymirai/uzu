@@ -607,8 +607,8 @@ impl Generator {
         // Extract values from async_buffers before mutable borrow
         let current_counter = self.context.async_buffers.counter.get();
         let is_continuation = current_counter > 0;
-        let lookahead = self.context.async_buffers.lookahead;
-        let slot = pass_idx % lookahead;
+        let batch_size = self.context.async_buffers.batch_size;
+        let slot = pass_idx % batch_size;
         let async_event = self.context.async_buffers.event.clone();
         let results_buffer = self.context.async_buffers.results.clone();
         let async_positions_buffer =
@@ -721,11 +721,6 @@ impl Generator {
         self.context.command_buffer.commit_and_continue();
 
         Ok(())
-    }
-
-    /// Returns the lookahead value for async pipeline
-    pub fn async_lookahead(&self) -> usize {
-        self.context.async_buffers.lookahead
     }
 
     pub fn has_attention_layers(&self) -> bool {

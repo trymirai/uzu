@@ -1,6 +1,9 @@
 use crate::session::{
     config::SpeculatorConfig,
-    parameter::{ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
+    parameter::{
+        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize,
+        SamplingSeed,
+    },
 };
 
 #[derive(Clone)]
@@ -11,6 +14,7 @@ pub struct DecodingConfig {
     pub speculator_config: SpeculatorConfig,
     pub sampling_seed: SamplingSeed,
     pub allow_pre_encode: bool,
+    pub async_batch_size: AsyncBatchSize,
 }
 
 impl DecodingConfig {
@@ -29,6 +33,7 @@ impl DecodingConfig {
             speculator_config,
             sampling_seed,
             allow_pre_encode,
+            async_batch_size: AsyncBatchSize::default(),
         }
     }
 
@@ -46,6 +51,7 @@ impl Default for DecodingConfig {
             speculator_config: SpeculatorConfig::default(),
             sampling_seed: SamplingSeed::default(),
             allow_pre_encode: true,
+            async_batch_size: AsyncBatchSize::default(),
         }
     }
 }
@@ -107,6 +113,16 @@ impl DecodingConfig {
     ) -> Self {
         Self {
             allow_pre_encode,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_async_batch_size(
+        &self,
+        async_batch_size: AsyncBatchSize,
+    ) -> Self {
+        Self {
+            async_batch_size,
             ..self.clone()
         }
     }
