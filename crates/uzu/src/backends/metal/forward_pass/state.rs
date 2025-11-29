@@ -925,6 +925,7 @@ pub struct ForwardPassState {
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
     active_suffix_length: usize,
     is_prefilling: bool,
+    // add condition predicate buffer
 }
 
 impl ForwardPassState {

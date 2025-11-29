@@ -435,7 +435,7 @@ impl Generator {
             }
 
             if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                // Nothing
+                // Using pre-encoded task
             } else {
                 self.context.reset_command_buffer();
 
@@ -628,6 +628,7 @@ impl Generator {
 
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
+        // add async_condition_predicate buffer
 
         let mut state = ForwardPassState::new(
             self.context.mtl_context.clone(),

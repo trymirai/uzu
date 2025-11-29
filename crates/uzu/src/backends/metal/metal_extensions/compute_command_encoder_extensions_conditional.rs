@@ -21,6 +21,16 @@ trait ComputeEncoderRawConditional {
     unsafe fn encode_start_else(&self);
 
     unsafe fn encode_end_if(&self) -> bool;
+
+    unsafe fn encode_start_while(
+        &self,
+        predicate: &BufferRef,
+        offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
+    );
+
+    unsafe fn encode_end_while(&self) -> bool;
 }
 
 /// Safe conditional wrapper that uses the raw unsafe methods internally.
@@ -29,11 +39,23 @@ pub trait ComputeEncoderConditional {
         &self,
         predicate: &BufferRef,
         offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
         IfBlock: FnOnce(),
         ElseBlock: FnOnce();
+
+    fn while_loop<LoopBlock>(
+        &self,
+        predicate: &BufferRef,
+        offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
+        loop_block: LoopBlock,
+    ) where
+        LoopBlock: FnMut();
 }
 
 impl ComputeEncoderRawConditional for ComputeCommandEncoder {
@@ -63,6 +85,30 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoder {
     unsafe fn encode_end_if(&self) -> bool {
         let obj = self.as_ptr() as *mut Object;
         let result: bool = msg_send![obj, encodeEndIf];
+        result
+    }
+
+    unsafe fn encode_start_while(
+        &self,
+        predicate: &BufferRef,
+        offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
+    ) {
+        let obj = self.as_ptr() as *mut Object;
+        let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let _: () = msg_send![
+            obj,
+            encodeStartWhile: predicate_ptr
+            offset: offset
+            comparison: comparison
+            referenceValue: reference_value
+        ];
+    }
+
+    unsafe fn encode_end_while(&self) -> bool {
+        let obj = self.as_ptr() as *mut Object;
+        let result: bool = msg_send![obj, encodeEndWhile];
         result
     }
 }
@@ -96,6 +142,30 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoderRef {
         let result: bool = msg_send![obj, encodeEndIf];
         result
     }
+
+    unsafe fn encode_start_while(
+        &self,
+        predicate: &BufferRef,
+        offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
+    ) {
+        let obj = self as *const _ as *mut Object;
+        let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let _: () = msg_send![
+            obj,
+            encodeStartWhile: predicate_ptr
+            offset: offset
+            comparison: comparison
+            referenceValue: reference_value
+        ];
+    }
+
+    unsafe fn encode_end_while(&self) -> bool {
+        let obj = self as *const _ as *mut Object;
+        let result: bool = msg_send![obj, encodeEndWhile];
+        result
+    }
 }
 
 impl<T> ComputeEncoderConditional for T
@@ -106,6 +176,8 @@ where
         &self,
         predicate: &BufferRef,
         offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
@@ -117,8 +189,8 @@ where
                 self.encode_start_if(
                     predicate,
                     offset,
-                    MTLCompareFunction::Equal,
-                    0,
+                    comparison,
+                    reference_value,
                 );
                 if_block();
                 self.encode_start_else();
@@ -129,12 +201,34 @@ where
                 self.encode_start_if(
                     predicate,
                     offset,
-                    MTLCompareFunction::Equal,
-                    0,
+                    comparison,
+                    reference_value,
                 );
                 if_block();
                 self.encode_end_if();
             },
+        }
+    }
+
+    fn while_loop<LoopBlock>(
+        &self,
+        predicate: &BufferRef,
+        offset: usize,
+        comparison: MTLCompareFunction,
+        reference_value: u32,
+        mut loop_block: LoopBlock,
+    ) where
+        LoopBlock: FnMut(),
+    {
+        unsafe {
+            self.encode_start_while(
+                predicate,
+                offset,
+                comparison,
+                reference_value,
+            );
+            loop_block();
+            self.encode_end_while();
         }
     }
 }

@@ -7,7 +7,12 @@ use uzu::session::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = PathBuf::from("MODEL_PATH");
+    let home =
+        std::env::var("HOME").expect("HOME environment variable not set");
+    let model_path = PathBuf::from(format!(
+        "{}/Developer/trymirai/uzu/models/0.1.6/llama-3.2-1b-instruct",
+        home
+    ));
     let mut session = Session::new(model_path, DecodingConfig::default())?;
 
     let input = Input::Text(String::from("Tell about London"));
