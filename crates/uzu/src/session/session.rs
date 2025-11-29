@@ -30,9 +30,7 @@ use crate::{
             Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
-        parameter::{
-            ConfigResolvableValue, ContextMode, ResolvableValue, SamplingMethod,
-        },
+        parameter::{ConfigResolvableValue, ContextMode, SamplingMethod},
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
             TotalStats,
@@ -342,8 +340,10 @@ impl Session {
             && !generator.has_attention_layers();
 
         let generate_output = if can_use_async {
-            let batch_size =
-                generator.decoding_config.async_batch_size.resolve();
+            let batch_size = generator
+                .decoding_config
+                .async_batch_size
+                .resolve(&self.model_path);
             let (results, durations, finish_reason) = Self::run_async_batch(
                 &self.model_metadata,
                 &self.tokenizer,

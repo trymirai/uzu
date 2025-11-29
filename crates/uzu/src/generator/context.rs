@@ -253,7 +253,8 @@ impl GeneratorContext {
         let token_copy = TokenCopyKernel::new(&mtl_context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let async_batch_size = decoding_config.async_batch_size.resolve();
+        let async_batch_size =
+            decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
             &mtl_context.device,
             max_prefix_length,

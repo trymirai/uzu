@@ -928,12 +928,6 @@ pub struct ForwardPassState {
 }
 
 impl ForwardPassState {
-    /// Creates a new ForwardPassState.
-    ///
-    /// For async pipeline, use the optional async parameters:
-    /// - `skip_token_ids_copy`: If true, don't copy token_ids from CPU (GPU handles it)
-    /// - `async_positions`: If Some, use pre-allocated positions buffer at offset
-    /// - `async_seeds`: If Some, use pre-allocated seeds buffer at offset
     pub fn new(
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,

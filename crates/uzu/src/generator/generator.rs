@@ -643,7 +643,7 @@ impl Generator {
             &task.token_seeds,
             false,
             None,
-            is_continuation, // skip_token_ids_copy for continuation passes
+            is_continuation,
             async_positions,
             async_seeds,
         );
