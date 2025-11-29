@@ -6,6 +6,8 @@ pub enum SSMKernelError {
     MetalError(#[from] MTLError),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
+    #[error("Invalid arguments: {0}")]
+    InvalidArguments(String),
 }
 
 fn fn_suffix(dt: KernelDataType) -> &'static str {

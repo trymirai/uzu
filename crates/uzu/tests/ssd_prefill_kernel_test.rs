@@ -252,6 +252,44 @@ fn run_prefill_kernel_mode(
         device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
     let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
 
+    // Flash mode needs buffers
+    let needs_flash_buffers = mode == SSDPrefillMode::Flash;
+
+    let flash_scratch_buf = if needs_flash_buffers {
+        let decay = device.new_buffer(
+            (fixture.num_heads * (fixture.suffix_len + 1) * 4) as u64,
+            STORAGE_MODE,
+        );
+        zero_buffer(&decay);
+        Some(decay)
+    } else {
+        None
+    };
+
+    let (flash_cb_buf, flash_y_float_buf, flash_state_c_buf) =
+        if needs_flash_buffers {
+            let cb = device.new_buffer(
+                (fixture.num_heads
+                    * fixture.suffix_len
+                    * fixture.suffix_len
+                    * 4) as u64,
+                STORAGE_MODE,
+            );
+            let y_float =
+                device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+            let state_c = device.new_buffer(
+                (fixture.num_heads * fixture.head_dim * fixture.suffix_len * 4)
+                    as u64,
+                STORAGE_MODE,
+            );
+            zero_buffer(&cb);
+            zero_buffer(&y_float);
+            zero_buffer(&state_c);
+            (Some(cb), Some(y_float), Some(state_c))
+        } else {
+            (None, None, None)
+        };
+
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
 
@@ -273,6 +311,10 @@ fn run_prefill_kernel_mode(
         state_strides: fixture.state_strides,
         channels: fixture.num_heads,
         head_dim: fixture.head_dim,
+        flash_scratch: flash_scratch_buf.as_ref(),
+        flash_cb: flash_cb_buf.as_ref(),
+        flash_y_float: flash_y_float_buf.as_ref(),
+        flash_state_c: flash_state_c_buf.as_ref(),
     };
 
     let command_buffer = ctx.command_queue.new_command_buffer();
@@ -509,6 +551,137 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 }
 
 #[test]
+fn ssd_prefill_flash_matches_cpu_reference() {
+    assert_matches_cpu_reference(SSDPrefillMode::Flash);
+}
+
+#[test]
+fn flash_cb_gemm_is_correct() {
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping CB GEMM test: no Metal device");
+        return;
+    };
+
+    // Use aligned dimensions matching kernel tile sizes (BM=16, BN=32, BK=64)
+    let suffix_len = 64usize;
+    let num_groups = 4usize;
+    let state_dim = 64usize;
+    let num_heads = 4usize;
+
+    let total_cb = suffix_len * num_groups * state_dim;
+
+    // B and C data: [suffix_len, num_groups, state_dim]
+    let b_data: Vec<f32> =
+        (0..total_cb).map(|i| (i as f32 * 0.1) % 1.0 - 0.5).collect();
+    let c_data: Vec<f32> =
+        (0..total_cb).map(|i| ((i + 7) as f32 * 0.1) % 1.0 - 0.5).collect();
+
+    // Compute CPU reference: CB[h, t, s] = sum_n C[t, g, n] * B[s, g, n]
+    // where g = h / (num_heads / num_groups)
+    let mut cb_ref = vec![0.0f32; num_heads * suffix_len * suffix_len];
+    let cb_token_stride = num_groups * state_dim;
+    let cb_group_stride = state_dim;
+
+    for h in 0..num_heads {
+        let g = h / (num_heads / num_groups);
+        for t in 0..suffix_len {
+            for s in 0..suffix_len {
+                let mut dot = 0.0f32;
+                for n in 0..state_dim {
+                    let c_idx = t * cb_token_stride + g * cb_group_stride + n;
+                    let b_idx = s * cb_token_stride + g * cb_group_stride + n;
+                    dot += c_data[c_idx] * b_data[b_idx];
+                }
+                cb_ref[h * suffix_len * suffix_len + t * suffix_len + s] = dot;
+            }
+        }
+    }
+
+    // Run GPU kernel
+    let device = &ctx.device;
+    let b_buf = device.new_buffer_with_data(
+        b_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        c_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let cb_buf = device.new_buffer(
+        (num_heads * suffix_len * suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+    zero_buffer(&cb_buf);
+
+    let kernel = ctx.compute_pipeline_state("ssd_gemm_cb_float", None).unwrap();
+
+    let cb = ctx.command_queue.new_command_buffer();
+    let enc = cb.new_compute_command_encoder();
+    enc.set_compute_pipeline_state(&kernel);
+    enc.set_buffer(0, Some(&c_buf), 0);
+    enc.set_buffer(1, Some(&b_buf), 0);
+    enc.set_buffer(2, Some(&cb_buf), 0);
+    let seq_len = suffix_len as u32;
+    let state_dim_u32 = state_dim as u32;
+    let num_heads_u32 = num_heads as u32;
+    let num_groups_u32 = num_groups as u32;
+    let cb_strides: [usize; 3] = [cb_token_stride, cb_group_stride, 1];
+    enc.set_bytes(3, 4, &seq_len as *const u32 as *const _);
+    enc.set_bytes(4, 4, &state_dim_u32 as *const u32 as *const _);
+    enc.set_bytes(5, 4, &num_heads_u32 as *const u32 as *const _);
+    enc.set_bytes(6, 4, &num_groups_u32 as *const u32 as *const _);
+    enc.set_bytes(7, 8, &cb_strides[0] as *const usize as *const _);
+    enc.set_bytes(8, 8, &cb_strides[1] as *const usize as *const _);
+    enc.set_bytes(9, 8, &cb_strides[2] as *const usize as *const _);
+
+    // Tile-based: 16x32 output tiles, need 4 simdgroups (128 threads)
+    // 16/8 = 2 row groups, 32/16 = 2 col groups = 2*2 = 4 simdgroups
+    let tiles_m = (suffix_len as u64 + 15) / 16;
+    let tiles_n = (suffix_len as u64 + 31) / 32;
+    enc.dispatch_thread_groups(
+        metal::MTLSize {
+            width: tiles_n,
+            height: tiles_m,
+            depth: num_heads as u64,
+        },
+        metal::MTLSize {
+            width: 128,
+            height: 1,
+            depth: 1,
+        }, // 4 simdgroups
+    );
+    enc.end_encoding();
+    cb.commit();
+    cb.wait_until_completed();
+
+    let cb_gpu = read_buffer(&cb_buf, num_heads * suffix_len * suffix_len);
+
+    // Compare
+    let mut max_diff = 0.0f32;
+    let mut max_idx = 0usize;
+    for (i, (&gpu, &cpu)) in cb_gpu.iter().zip(&cb_ref).enumerate() {
+        let diff = (gpu - cpu).abs();
+        if diff > max_diff {
+            max_diff = diff;
+            max_idx = i;
+        }
+    }
+
+    let tolerance = 1e-4;
+    assert!(
+        max_diff <= tolerance,
+        "CB GEMM diverges at idx {}: gpu={} cpu={} (diff {})",
+        max_idx,
+        cb_gpu[max_idx],
+        cb_ref[max_idx],
+        max_diff
+    );
+    println!("CB GEMM test passed, max_diff={}", max_diff);
+}
+
+#[test]
 fn conv1d_scan_is_deterministic() {
     let Some(ctx) = create_context() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
@@ -578,4 +751,494 @@ fn conv1d_scan_is_deterministic() {
             "Conv states differ (alias_io={alias_io})"
         );
     }
+}
+
+#[test]
+fn ssd_prefill_benchmark_256() {
+    use uzu::backends::metal::metal_extensions::command_buffer_extensions::CommandBufferTimingAccess;
+
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping benchmark: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+
+    // Config from Llamba-1B-4bit-mlx32
+    let num_heads = 32usize;
+    let num_groups = 32usize;
+    let head_dim = 64usize;
+    let state_dim = 64usize;
+    let suffix_len = 256usize;
+    let group_size = (num_heads / num_groups) as i32;
+
+    let group_count = num_groups;
+    let total_x = suffix_len * num_heads * head_dim;
+    let total_dt = suffix_len * num_heads;
+    let total_cb = suffix_len * group_count * state_dim;
+    let total_state = num_heads * head_dim * state_dim;
+
+    let x_data: Vec<f32> =
+        (0..total_x).map(|i| ((i % 17) as f32) * 0.01).collect();
+    let dt_data: Vec<f32> =
+        (0..total_dt).map(|i| ((i % 13) as f32) * 0.2).collect();
+    let b_data: Vec<f32> =
+        (0..total_cb).map(|i| ((i % 11) as f32) * 0.02).collect();
+    let c_data: Vec<f32> =
+        (0..total_cb).map(|i| ((i % 19) as f32) * 0.01).collect();
+    let d_data: Vec<f32> =
+        (0..num_heads).map(|i| ((i % 3) as f32) * 0.05).collect();
+    let z_data: Vec<f32> =
+        (0..total_x).map(|i| ((i % 23) as f32) * 0.02).collect();
+    let state_init: Vec<f32> =
+        (0..total_state).map(|i| ((i % 29) as f32) * 0.03).collect();
+
+    let x_strides = [num_heads * head_dim, head_dim, 1usize];
+    let dt_strides = [num_heads, 1usize];
+    let cb_strides = [group_count * state_dim, state_dim, 1usize];
+    let state_strides = [head_dim * state_dim, state_dim, 1usize];
+
+    let device = &ctx.device;
+    let x_buf = device.new_buffer_with_data(
+        x_data.as_ptr() as *const _,
+        (total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let dt_buf = device.new_buffer_with_data(
+        dt_data.as_ptr() as *const _,
+        (total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        b_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        c_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let d_buf = device.new_buffer_with_data(
+        d_data.as_ptr() as *const _,
+        (num_heads * 4) as u64,
+        STORAGE_MODE,
+    );
+    let z_buf = device.new_buffer_with_data(
+        z_data.as_ptr() as *const _,
+        (total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
+    let flash_scratch_buf = device
+        .new_buffer((num_heads * (suffix_len + 1) * 4) as u64, STORAGE_MODE);
+    let flash_cb_buf = device.new_buffer(
+        (num_heads * suffix_len * suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+    let flash_y_float_buf =
+        device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
+    let flash_state_c_buf = device.new_buffer(
+        (num_heads * head_dim * suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+
+    let args = |mode: SSDPrefillMode| SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &state_buf,
+        y: &y_buf,
+        suffix_len,
+        group_size,
+        state_size: state_dim as i32,
+        x_strides,
+        dt_strides,
+        cb_strides,
+        state_strides,
+        channels: num_heads,
+        head_dim,
+        flash_scratch: if mode == SSDPrefillMode::Flash {
+            Some(&flash_scratch_buf)
+        } else {
+            None
+        },
+        flash_cb: if mode == SSDPrefillMode::Flash {
+            Some(&flash_cb_buf)
+        } else {
+            None
+        },
+        flash_y_float: if mode == SSDPrefillMode::Flash {
+            Some(&flash_y_float_buf)
+        } else {
+            None
+        },
+        flash_state_c: if mode == SSDPrefillMode::Flash {
+            Some(&flash_state_c_buf)
+        } else {
+            None
+        },
+    };
+
+    let warmup = 5;
+    let iterations = 20;
+
+    let benchmark_mode = |mode: SSDPrefillMode| {
+        // Warmup
+        for _ in 0..warmup {
+            write_buffer(&state_buf, &state_init);
+            let cb = ctx.command_queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            kernel.encode(enc, args(mode), mode).unwrap();
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        }
+
+        // Measure
+        let mut times = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            write_buffer(&state_buf, &state_init);
+            let cb = ctx.command_queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            kernel.encode(enc, args(mode), mode).unwrap();
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+            if let Some(t) = cb.gpu_execution_time_ms() {
+                times.push(t);
+            }
+        }
+
+        let avg = times.iter().sum::<f64>() / times.len() as f64;
+        let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        (avg, min, max)
+    };
+
+    println!(
+        "\n=== SSD Prefill Benchmark (Llamba-1B config, L={suffix_len}) ==="
+    );
+    println!(
+        "  suffix_len={suffix_len}, num_heads={num_heads}, head_dim={head_dim}, state_dim={state_dim}"
+    );
+
+    let (avg, min, max) = benchmark_mode(SSDPrefillMode::SinglePass);
+    println!("  SinglePass: avg={avg:.3}ms, min={min:.3}ms, max={max:.3}ms");
+
+    let (avg, min, max) = benchmark_mode(SSDPrefillMode::Flash);
+    println!("  Flash: avg={avg:.3}ms, min={min:.3}ms, max={max:.3}ms");
+}
+
+#[test]
+#[ignore] // Run with: cargo test --release ssd_prefill_flash_capture -- --ignored --nocapture
+fn ssd_prefill_flash_capture() {
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use metal::{CaptureDescriptor, CaptureManager, MTLCaptureDestination};
+
+    // Enable Metal capture layer
+    unsafe {
+        std::env::set_var("METAL_CAPTURE_ENABLED", "1");
+    }
+
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping capture: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let fixture = SSDPrefillFixture::new();
+
+    // Allocate buffers
+    let device = &ctx.device;
+    let x_buf = device.new_buffer_with_data(
+        fixture.x_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let dt_buf = device.new_buffer_with_data(
+        fixture.dt_data.as_ptr() as *const _,
+        (fixture.total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        fixture.b_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        fixture.c_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let d_buf = device.new_buffer_with_data(
+        fixture.d_data.as_ptr() as *const _,
+        (fixture.num_heads * 4) as u64,
+        STORAGE_MODE,
+    );
+    let z_buf = device.new_buffer_with_data(
+        fixture.z_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf =
+        device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+
+    let flash_scratch_buf = device.new_buffer(
+        (fixture.num_heads * (fixture.suffix_len + 1) * 4) as u64,
+        STORAGE_MODE,
+    );
+    let flash_cb_buf = device.new_buffer(
+        (fixture.num_heads * fixture.suffix_len * fixture.suffix_len * 4)
+            as u64,
+        STORAGE_MODE,
+    );
+    let flash_y_float_buf =
+        device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+    let flash_state_c_buf = device.new_buffer(
+        (fixture.num_heads * fixture.head_dim * fixture.suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+
+    write_buffer(&state_buf, &fixture.state_init);
+    zero_buffer(&y_buf);
+    zero_buffer(&flash_scratch_buf);
+    zero_buffer(&flash_cb_buf);
+    zero_buffer(&flash_y_float_buf);
+    zero_buffer(&flash_state_c_buf);
+
+    let args = SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &state_buf,
+        y: &y_buf,
+        suffix_len: fixture.suffix_len,
+        group_size: fixture.group_size,
+        state_size: fixture.state_dim as i32,
+        x_strides: fixture.x_strides,
+        dt_strides: fixture.dt_strides,
+        cb_strides: fixture.cb_strides,
+        state_strides: fixture.state_strides,
+        channels: fixture.num_heads,
+        head_dim: fixture.head_dim,
+        flash_scratch: Some(&flash_scratch_buf),
+        flash_cb: Some(&flash_cb_buf),
+        flash_y_float: Some(&flash_y_float_buf),
+        flash_state_c: Some(&flash_state_c_buf),
+    };
+
+    // Setup capture
+    let timestamp =
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let trace_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(format!("ssd_prefill_flash-{}.gputrace", timestamp));
+
+    let capture_manager = CaptureManager::shared();
+    let capture_descriptor = CaptureDescriptor::new();
+    capture_descriptor.set_destination(MTLCaptureDestination::GpuTraceDocument);
+    capture_descriptor.set_output_url(&trace_path);
+    ctx.command_queue.set_label("ssd_prefill_flash_test");
+    capture_descriptor.set_capture_command_queue(&ctx.command_queue);
+
+    capture_manager
+        .start_capture(&capture_descriptor)
+        .expect("Failed to start GPU capture");
+    println!("🔍 GPU capture started: {:?}", trace_path);
+
+    // Run Flash kernel
+    let command_buffer = ctx.command_queue.new_command_buffer();
+    command_buffer.set_label("ssd_prefill_flash");
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_label("flash_encoder");
+    kernel.encode(encoder, args, SSDPrefillMode::Flash).unwrap();
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    // Stop capture
+    capture_manager.stop_capture();
+    println!("✅ GPU capture saved to: {:?}", trace_path);
+    println!("   Open with: open {:?}", trace_path);
+}
+
+#[test]
+fn ssd_prefill_benchmark_512() {
+    use uzu::backends::metal::metal_extensions::command_buffer_extensions::CommandBufferTimingAccess;
+
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping benchmark: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+
+    let num_heads = 32usize;
+    let num_groups = 32usize;
+    let head_dim = 64usize;
+    let state_dim = 64usize;
+    let suffix_len = 512usize;
+    let group_size = (num_heads / num_groups) as i32;
+
+    let group_count = num_groups;
+    let total_x = suffix_len * num_heads * head_dim;
+    let total_dt = suffix_len * num_heads;
+    let total_cb = suffix_len * group_count * state_dim;
+    let total_state = num_heads * head_dim * state_dim;
+
+    let x_data: Vec<f32> =
+        (0..total_x).map(|i| ((i % 17) as f32) * 0.01).collect();
+    let dt_data: Vec<f32> =
+        (0..total_dt).map(|i| ((i % 13) as f32) * 0.2).collect();
+    let b_data: Vec<f32> =
+        (0..total_cb).map(|i| ((i % 11) as f32) * 0.02).collect();
+    let c_data: Vec<f32> =
+        (0..total_cb).map(|i| ((i % 19) as f32) * 0.01).collect();
+    let d_data: Vec<f32> =
+        (0..num_heads).map(|i| ((i % 3) as f32) * 0.05).collect();
+    let z_data: Vec<f32> =
+        (0..total_x).map(|i| ((i % 23) as f32) * 0.02).collect();
+    let state_init: Vec<f32> =
+        (0..total_state).map(|i| ((i % 29) as f32) * 0.03).collect();
+
+    let x_strides = [num_heads * head_dim, head_dim, 1usize];
+    let dt_strides = [num_heads, 1usize];
+    let cb_strides = [group_count * state_dim, state_dim, 1usize];
+    let state_strides = [head_dim * state_dim, state_dim, 1usize];
+
+    let device = &ctx.device;
+    let x_buf = device.new_buffer_with_data(
+        x_data.as_ptr() as *const _,
+        (total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let dt_buf = device.new_buffer_with_data(
+        dt_data.as_ptr() as *const _,
+        (total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        b_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        c_data.as_ptr() as *const _,
+        (total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let d_buf = device.new_buffer_with_data(
+        d_data.as_ptr() as *const _,
+        (num_heads * 4) as u64,
+        STORAGE_MODE,
+    );
+    let z_buf = device.new_buffer_with_data(
+        z_data.as_ptr() as *const _,
+        (total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf = device.new_buffer((total_state * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
+    let flash_scratch_buf = device
+        .new_buffer((num_heads * (suffix_len + 1) * 4) as u64, STORAGE_MODE);
+    let flash_cb_buf = device.new_buffer(
+        (num_heads * suffix_len * suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+    let flash_y_float_buf =
+        device.new_buffer((total_x * 4) as u64, STORAGE_MODE);
+    let flash_state_c_buf = device.new_buffer(
+        (num_heads * head_dim * suffix_len * 4) as u64,
+        STORAGE_MODE,
+    );
+
+    let args = |mode: SSDPrefillMode| SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &state_buf,
+        y: &y_buf,
+        suffix_len,
+        group_size,
+        state_size: state_dim as i32,
+        x_strides,
+        dt_strides,
+        cb_strides,
+        state_strides,
+        channels: num_heads,
+        head_dim,
+        flash_scratch: if mode == SSDPrefillMode::Flash {
+            Some(&flash_scratch_buf)
+        } else {
+            None
+        },
+        flash_cb: if mode == SSDPrefillMode::Flash {
+            Some(&flash_cb_buf)
+        } else {
+            None
+        },
+        flash_y_float: if mode == SSDPrefillMode::Flash {
+            Some(&flash_y_float_buf)
+        } else {
+            None
+        },
+        flash_state_c: if mode == SSDPrefillMode::Flash {
+            Some(&flash_state_c_buf)
+        } else {
+            None
+        },
+    };
+
+    let warmup = 5;
+    let iterations = 20;
+
+    let benchmark_mode = |mode: SSDPrefillMode| {
+        for _ in 0..warmup {
+            write_buffer(&state_buf, &state_init);
+            let cb = ctx.command_queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            kernel.encode(enc, args(mode), mode).unwrap();
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        }
+        let mut times = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            write_buffer(&state_buf, &state_init);
+            let cb = ctx.command_queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            kernel.encode(enc, args(mode), mode).unwrap();
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+            if let Some(t) = cb.gpu_execution_time_ms() {
+                times.push(t);
+            }
+        }
+        let avg = times.iter().sum::<f64>() / times.len() as f64;
+        let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        (avg, min, max)
+    };
+
+    println!(
+        "\n=== SSD Prefill Benchmark (Llamba-1B config, L={suffix_len}) ==="
+    );
+    let (avg, min, max) = benchmark_mode(SSDPrefillMode::SinglePass);
+    println!("  SinglePass: avg={avg:.3}ms, min={min:.3}ms, max={max:.3}ms");
+    let (avg, min, max) = benchmark_mode(SSDPrefillMode::Flash);
+    println!("  Flash: avg={avg:.3}ms, min={min:.3}ms, max={max:.3}ms");
 }

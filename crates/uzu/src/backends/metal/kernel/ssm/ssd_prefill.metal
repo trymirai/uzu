@@ -402,3 +402,979 @@ instantiate_ssd_prefill_kernel_sequential(bfloat, bfloat);
 instantiate_ssd_prefill_kernel_sequential(half, half);
 
 #undef instantiate_ssd_prefill_kernel_sequential
+
+// ============================================================================
+// 
+// Pass 1: Precompute CB[g,t,s] = B[g,s,:] · C[g,t,:] and decay prefix sums
+// Pass 2: Compute y[h,t,dh] = sum_{s<=t} decay[s:t] * CB[g,t,s] * x[h,s,dh]
+// ============================================================================
+
+// Pass 1: Compute decay prefix sums per head
+// Grid: (num_heads,) - one threadgroup per head
+// Output: cum_log_decay[h, t] = sum_{i=0}^{t-1} log_decay[h,i]
+template <typename T>
+[[max_total_threads_per_threadgroup(256)]]
+kernel void ssd_prefill_flash_pass1_decay(
+    device const T* dt_raw [[ buffer(0) ]],       // (suffix, h)
+    device float* cum_log_decay [[ buffer(1) ]],  // (h, suffix+1)
+    constant const size_t& suffix_len [[ buffer(2) ]],
+    constant const size_t& dt_token_stride [[ buffer(3) ]],
+    constant const size_t& dt_head_stride [[ buffer(4) ]],
+    uint h_idx [[ threadgroup_position_in_grid ]],
+    ushort lid [[ thread_index_in_threadgroup ]]
+) {
+    const uint suffix = uint(suffix_len);
+    device float* out = cum_log_decay + h_idx * (suffix + 1);
+    
+    // Use raking approach: each of 256 threads handles suffix/256 elements
+    threadgroup float tg_partial[256];
+    threadgroup float tg_prefix[256];
+    
+    const uint elements_per_thread = (suffix + 255) / 256;
+    const uint my_start = uint(lid) * elements_per_thread;
+    const uint my_end = min(my_start + elements_per_thread, suffix);
+    
+    // Each thread computes local sum
+    float local_sum = 0.0f;
+    for (uint i = my_start; i < my_end; i++) {
+        float dt_val = softplus(float(dt_raw[i * dt_token_stride + h_idx * dt_head_stride]));
+        local_sum -= dt_val;
+    }
+    tg_partial[lid] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    // Prefix sum across threads using raking
+    float prefix = threadgroup_raking_prefix_exclusive_sum<256>(tg_partial[lid], tg_prefix, lid);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float my_prefix = tg_prefix[lid];
+    
+    // Write output with prefix added
+    out[0] = 0.0f;
+    float running = my_prefix;
+    for (uint i = my_start; i < my_end; i++) {
+        float dt_val = softplus(float(dt_raw[i * dt_token_stride + h_idx * dt_head_stride]));
+        running -= dt_val;
+        out[i + 1] = running;
+    }
+}
+
+// ============================================================================ 
+// Pass 2a: CB = C @ B^T (GEMM)
+// Pass 2b: CB *= decay * causal_mask (element-wise)
+// Pass 2c: y = CB @ dtx (GEMM) + state contribution
+// Pass 2d: y = (y + D*x) * silu(z) (element-wise)
+// ============================================================================
+
+#include <metal_simdgroup_matrix>
+
+// GEMM tile sizes (from MoE kernel, proven to work well)
+constant constexpr uint SSD_BM = 32;
+constant constexpr uint SSD_BN = 32;
+constant constexpr uint SSD_BK = 32;
+constant constexpr uint SSD_SG_BM = 16;
+constant constexpr uint SSD_SG_BN = 16;
+
+// CB GEMM tile configuration
+constant uint SSDCB_BM = 16;
+constant uint SSDCB_BN = 32;
+constant uint SSDCB_BK = 64;
+constant uint SSDCB_SG_BM = 8;
+constant uint SSDCB_SG_BN = 16;
+constant uint SSDCB_SG_TILE = 8;
+
+
+// CB GEMM - MLX-style with L bounds checking
+// Assumes: N % BK = 0 (N=64). L can be any value.
+// Vectorized loads for N dimension, bounds checks for L dimension.
+template <typename T>
+kernel void ssd_gemm_cb(
+    device const T* C_in [[ buffer(0) ]],      // [L, G, N]
+    device const T* B_in [[ buffer(1) ]],      // [L, G, N]
+    device float* CB_out [[ buffer(2) ]],      // [H, L, L]
+    constant const uint& L [[ buffer(3) ]],    // suffix_len
+    constant const uint& N [[ buffer(4) ]],    // state_dim (64)
+    constant const uint& H [[ buffer(5) ]],    // num_heads
+    constant const uint& G [[ buffer(6) ]],    // num_groups
+    constant const size_t& lda [[ buffer(7) ]], // token_stride = G * N
+    constant const size_t& group_stride [[ buffer(8) ]], // = N
+    constant const size_t& unused [[ buffer(9) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    uint sg_id [[ simdgroup_index_in_threadgroup ]],
+    uint simd_lid [[ thread_index_in_simdgroup ]]
+) {
+    constexpr uint BM = 16;
+    constexpr uint BN = 32;
+    constexpr uint BK = 64;   // N dimension - aligned
+    constexpr uint TGP_SIZE = 128;
+    
+    constexpr uint C_VEC = 8;
+    constexpr uint C_TCOLS = BK / C_VEC;
+    constexpr uint B_VEC = 8;
+    constexpr uint B_TCOLS = BK / B_VEC;
+    constexpr uint B_TROWS = TGP_SIZE / B_TCOLS;
+    
+    const uint tile_n = tg_pos.x;
+    const uint tile_m = tg_pos.y;
+    const uint h = tg_pos.z;
+    
+    const uint row_start = tile_m * BM;
+    const uint col_start = tile_n * BN;
+    
+    // Bounds for this tile
+    const uint m_valid = min(BM, L - row_start);
+    const uint n_valid = min(BN, L - col_start);
+    
+    const uint g = h / (H / G);
+    device const T* C_base = C_in + g * group_stride + row_start * lda;
+    device const T* B_base = B_in + g * group_stride + col_start * lda;
+    device float* CB_h = CB_out + (size_t)h * L * L + row_start * L + col_start;
+    
+    constexpr uint TG_PAD = 4;
+    threadgroup float tg_C[BM * (BK + TG_PAD)];
+    threadgroup float tg_B[BN * (BK + TG_PAD)];
+    constexpr uint TG_C_LD = BK + TG_PAD;
+    constexpr uint TG_B_LD = BK + TG_PAD;
+    
+    const uint lin = sg_id * 32 + simd_lid;
+    const uint c_bi = lin / C_TCOLS;
+    const uint c_bj = (lin % C_TCOLS) * C_VEC;
+    const uint b_bi = lin / B_TCOLS;
+    const uint b_bj = (lin % B_TCOLS) * B_VEC;
+    
+    const uint row_sg = sg_id / 2;
+    const uint col_sg = sg_id % 2;
+    const uint row_sg_off = row_sg * 8;
+    const uint col_sg_off = col_sg * 16;
+    
+    metal::simdgroup_float8x8 acc[2];
+    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    
+    {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        // Load C tile with L bounds check on rows
+        {
+            threadgroup float* my_dst = tg_C + c_bi * TG_C_LD + c_bj;
+            if (c_bi < m_valid) {
+                device const T* my_src = C_base + c_bi * lda + c_bj;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < C_VEC; j++) {
+                    my_dst[j] = float(my_src[j]);
+                }
+            } else {
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < C_VEC; j++) {
+                    my_dst[j] = 0.0f;
+                }
+            }
+        }
+        
+        // Load B tile with L bounds check on rows
+        {
+            threadgroup float* my_dst = tg_B + b_bi * TG_B_LD + b_bj;
+            if (b_bi < n_valid) {
+                device const T* my_src = B_base + b_bi * lda + b_bj;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < B_VEC; j++) {
+                    my_dst[j] = float(my_src[j]);
+                }
+            } else {
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < B_VEC; j++) {
+                    my_dst[j] = 0.0f;
+                }
+            }
+            
+            // Second half
+            if (b_bi + B_TROWS < BN) {
+                threadgroup float* my_dst2 = my_dst + B_TROWS * TG_B_LD;
+                if (b_bi + B_TROWS < n_valid) {
+                    device const T* my_src2 = B_base + (b_bi + B_TROWS) * lda + b_bj;
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < B_VEC; j++) {
+                        my_dst2[j] = float(my_src2[j]);
+                    }
+                } else {
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < B_VEC; j++) {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
+        }
+        
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        #pragma clang loop unroll(full)
+        for (uint kk = 0; kk < BK; kk += 8) {
+            metal::simdgroup_float8x8 c_frag;
+            simdgroup_load(c_frag, tg_C, TG_C_LD, ulong2(kk, row_sg_off), false);
+            
+            #pragma clang loop unroll(full)
+            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+                metal::simdgroup_float8x8 b_frag;
+                simdgroup_load(b_frag, tg_B, TG_B_LD, ulong2(kk, col_sg_off + n_sub), true);
+                simdgroup_multiply_accumulate(acc[n_sub / 8], c_frag, b_frag, acc[n_sub / 8]);
+            }
+        }
+    }
+    
+    // Store with L bounds check
+    const uint qid = simd_lid >> 2;
+    const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
+    const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
+    
+    const uint local_t = row_sg_off + lane_row;
+    if (local_t < m_valid) {
+        device float* out_row = CB_h + local_t * L;
+        #pragma clang loop unroll(full)
+        for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+            auto frag = acc[n_sub / 8].thread_elements();
+            uint local_s = col_sg_off + n_sub + lane_col_base;
+            if (local_s < n_valid) out_row[local_s] = frag[0];
+            if (local_s + 1 < n_valid) out_row[local_s + 1] = frag[1];
+        }
+    }
+}
+
+// Pass 2b: Apply decay and causal mask to CB
+// Grid: (ceil(L/256), num_heads)
+template <typename T>
+kernel void ssd_apply_decay_mask(
+    device float* CB [[ buffer(0) ]],              // [num_heads, L, L]
+    device const float* cum_log_decay [[ buffer(1) ]], // [num_heads, L+1]
+    constant const uint& suffix_len [[ buffer(2) ]],
+    constant const uint& num_heads [[ buffer(3) ]],
+    uint2 tg_pos [[ threadgroup_position_in_grid ]],
+    uint tid [[ thread_index_in_threadgroup ]]
+) {
+    const uint h_idx = tg_pos.y;
+    if (h_idx >= num_heads) return;
+    
+    const uint L = suffix_len;
+    const uint base_idx = tg_pos.x * 256 + tid;
+    
+    device const float* my_decay = cum_log_decay + h_idx * (L + 1);
+    device float* my_CB = CB + (size_t)h_idx * L * L;
+    
+    // Each thread handles one (t, s) pair
+    if (base_idx < L * L) {
+        uint t = base_idx / L;
+        uint s = base_idx % L;
+        
+        if (s > t) {
+            my_CB[base_idx] = 0.0f;  // Causal mask
+        } else {
+            float cb = my_CB[base_idx];
+            float decay = fast::exp(my_decay[t + 1] - my_decay[s + 1]);
+            my_CB[base_idx] = cb * decay;
+        }
+    }
+}
+
+// Pass 2c: y = CB @ x (pure GEMM, no state contribution here)
+// Grid: (tiles_n, tiles_m, num_heads)
+// Assumes: dh % 32 = 0 (aligned). L can be any value.
+template <typename T>
+kernel void ssd_gemm_y(
+    device const float* CB [[ buffer(0) ]],        // [num_heads, L, L]
+    device const T* x [[ buffer(1) ]],             // [L, H, dh]
+    device const T* dt_raw [[ buffer(2) ]],        // unused
+    device const T* C_in [[ buffer(3) ]],          // unused in this kernel
+    device const T* state [[ buffer(4) ]],         // unused in this kernel
+    device const float* cum_log_decay [[ buffer(5) ]], // unused in this kernel
+    device float* y_out [[ buffer(6) ]],           // [L, H, dh]
+    constant const uint& suffix_len [[ buffer(7) ]],
+    constant const uint& num_heads [[ buffer(8) ]],
+    constant const uint& head_dim [[ buffer(9) ]],
+    constant const uint& state_dim [[ buffer(10) ]],
+    constant const uint& num_groups [[ buffer(11) ]],
+    constant const size_t* x_strides [[ buffer(12) ]],
+    constant const size_t* dt_strides [[ buffer(13) ]],
+    constant const size_t* cb_strides [[ buffer(14) ]],
+    constant const size_t* state_strides [[ buffer(15) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    uint sg_id [[ simdgroup_index_in_threadgroup ]],
+    uint simd_lid [[ thread_index_in_simdgroup ]]
+) {
+    constexpr uint BM = 16;   // t dimension
+    constexpr uint BN = 32;   // dh dimension (aligned)
+    constexpr uint BK = 64;   // s/source dimension
+    constexpr uint TGP_SIZE = 128;
+    
+    constexpr uint CB_VEC = 8;
+    constexpr uint CB_TCOLS = BK / CB_VEC;
+    constexpr uint X_VEC = 8;
+    constexpr uint X_TCOLS = BN / X_VEC;
+    constexpr uint X_TROWS = TGP_SIZE / X_TCOLS;
+    
+    const uint tile_n = tg_pos.x;
+    const uint tile_m = tg_pos.y;
+    const uint h_idx = tg_pos.z;
+    
+    const uint L = suffix_len;
+    const uint dh = head_dim;
+    
+    const uint row_start = tile_m * BM;
+    const uint col_start = tile_n * BN;
+    const uint m_valid = min(BM, L - row_start);
+    
+    const size_t x_token_stride = x_strides[0];
+    const size_t x_head_stride = x_strides[1];
+    
+    device const float* CB_base = CB + (size_t)h_idx * L * L + row_start * L;
+    device const T* x_base = x + h_idx * x_head_stride + col_start;
+    device float* y_base = y_out + h_idx * x_head_stride + row_start * x_token_stride + col_start;
+    
+    constexpr uint TG_PAD = 4;
+    threadgroup float tg_CB[BM * (BK + TG_PAD)];
+    threadgroup float tg_X[BK * (BN + TG_PAD)];
+    constexpr uint TG_CB_LD = BK + TG_PAD;
+    constexpr uint TG_X_LD = BN + TG_PAD;
+    
+    const uint lin = sg_id * 32 + simd_lid;
+    const uint cb_bi = lin / CB_TCOLS;
+    const uint cb_bj = (lin % CB_TCOLS) * CB_VEC;
+    const uint x_bi = lin / X_TCOLS;
+    const uint x_bj = (lin % X_TCOLS) * X_VEC;
+    
+    const uint row_sg = sg_id / 2;
+    const uint col_sg = sg_id % 2;
+    const uint row_sg_off = row_sg * 8;
+    const uint col_sg_off = col_sg * 16;
+    
+    metal::simdgroup_float8x8 acc[2];
+    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    
+    // K-loop over source positions with L bounds
+    for (uint k_off = 0; k_off < L; k_off += BK) {
+        const uint k_valid = min(BK, L - k_off);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        // Load CB tile with bounds checking
+        {
+            threadgroup float* my_dst = tg_CB + cb_bi * TG_CB_LD + cb_bj;
+            if (cb_bi < m_valid) {
+                device const float* my_src = CB_base + cb_bi * L + k_off + cb_bj;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < CB_VEC; j++) {
+                    my_dst[j] = (cb_bj + j < k_valid) ? my_src[j] : 0.0f;
+                }
+            } else {
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < CB_VEC; j++) {
+                    my_dst[j] = 0.0f;
+                }
+            }
+        }
+        
+        // Load X tile with bounds checking for source positions
+        {
+            threadgroup float* my_dst = tg_X + x_bi * TG_X_LD + x_bj;
+            if (k_off + x_bi < L) {
+                device const T* my_src = x_base + (k_off + x_bi) * x_token_stride + x_bj;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < X_VEC; j++) {
+                    my_dst[j] = float(my_src[j]);
+                }
+            } else {
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < X_VEC; j++) {
+                    my_dst[j] = 0.0f;
+                }
+            }
+            
+            // Second half
+            if (x_bi + X_TROWS < BK) {
+                threadgroup float* my_dst2 = my_dst + X_TROWS * TG_X_LD;
+                if (k_off + x_bi + X_TROWS < L) {
+                    device const T* my_src2 = x_base + (k_off + x_bi + X_TROWS) * x_token_stride + x_bj;
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < X_VEC; j++) {
+                        my_dst2[j] = float(my_src2[j]);
+                    }
+                } else {
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < X_VEC; j++) {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
+        }
+        
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        #pragma clang loop unroll(full)
+        for (uint kk = 0; kk < BK; kk += 8) {
+            metal::simdgroup_float8x8 cb_frag;
+            simdgroup_load(cb_frag, tg_CB, TG_CB_LD, ulong2(kk, row_sg_off), false);
+            
+            #pragma clang loop unroll(full)
+            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+                metal::simdgroup_float8x8 x_frag;
+                simdgroup_load(x_frag, tg_X, TG_X_LD, ulong2(col_sg_off + n_sub, kk), false);
+                simdgroup_multiply_accumulate(acc[n_sub / 8], cb_frag, x_frag, acc[n_sub / 8]);
+            }
+        }
+    }
+    
+    // Store with L bounds check on rows
+    const uint qid = simd_lid >> 2;
+    const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
+    const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
+    
+    const uint local_t = row_sg_off + lane_row;
+    if (local_t < m_valid) {
+        device float* out_row = y_base + local_t * x_token_stride;
+        #pragma clang loop unroll(full)
+        for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+            auto frag = acc[n_sub / 8].thread_elements();
+            const uint col0 = col_sg_off + n_sub + lane_col_base;
+            out_row[col0] = frag[0];
+            out_row[col0 + 1] = frag[1];
+        }
+    }
+}
+
+// Pass 2c2: state_C = state @ C^T using simdgroup MMA
+// Computes state_C[H, dh, L] = state[H, dh, N] @ C[L, G, N]^T (broadcast over groups)
+// Grid: (tiles_n, tiles_m, num_heads) where M=dh, N=L, K=state_dim
+// Assumes: dh % 16 = 0, N % 64 = 0 (aligned). L can be any value.
+template <typename T>
+kernel void ssd_gemm_state_c(
+    device const T* state [[ buffer(0) ]],         // [H, dh, N]
+    device const T* C_in [[ buffer(1) ]],          // [L, groups, N]
+    device float* state_C [[ buffer(2) ]],         // [H, dh, L]
+    constant const uint& suffix_len [[ buffer(3) ]],
+    constant const uint& num_heads [[ buffer(4) ]],
+    constant const uint& head_dim [[ buffer(5) ]],
+    constant const uint& state_dim [[ buffer(6) ]],
+    constant const uint& num_groups [[ buffer(7) ]],
+    constant const size_t* cb_strides [[ buffer(8) ]],
+    constant const size_t* state_strides [[ buffer(9) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    uint sg_id [[ simdgroup_index_in_threadgroup ]],
+    uint simd_lid [[ thread_index_in_simdgroup ]]
+) {
+    constexpr uint BM = 16;   // dh tiles (aligned)
+    constexpr uint BN = 32;   // L tiles
+    constexpr uint BK = 64;   // N (state_dim) tiles (aligned)
+    constexpr uint TGP_SIZE = 128;
+    
+    constexpr uint S_VEC = 8;
+    constexpr uint S_TCOLS = BK / S_VEC;
+    constexpr uint C_VEC = 8;
+    constexpr uint C_TCOLS = BK / C_VEC;
+    constexpr uint C_TROWS = TGP_SIZE / C_TCOLS;
+    
+    const uint tile_n = tg_pos.x;
+    const uint tile_m = tg_pos.y;
+    const uint h_idx = tg_pos.z;
+    
+    const uint L = suffix_len;
+    const uint dh = head_dim;
+    const uint N = state_dim;
+    const uint group_idx = h_idx / (num_heads / num_groups);
+    
+    const uint row_start = tile_m * BM;
+    const uint col_start = tile_n * BN;
+    const uint n_valid = min(BN, L - col_start);
+    
+    const size_t cb_token_stride = cb_strides[0];
+    const size_t cb_group_stride = cb_strides[1];
+    const size_t state_head_stride = state_strides[0];
+    const size_t state_dim_stride = state_strides[1];
+    
+    device const T* state_base = state + h_idx * state_head_stride + row_start * state_dim_stride;
+    device const T* C_base = C_in + group_idx * cb_group_stride + col_start * cb_token_stride;
+    device float* out_base = state_C + h_idx * dh * L + row_start * L + col_start;
+    
+    constexpr uint TG_PAD = 4;
+    threadgroup float tg_state[BM * (BK + TG_PAD)];
+    threadgroup float tg_C[BN * (BK + TG_PAD)];
+    constexpr uint TG_S_LD = BK + TG_PAD;
+    constexpr uint TG_C_LD = BK + TG_PAD;
+    
+    const uint lin = sg_id * 32 + simd_lid;
+    const uint s_bi = lin / S_TCOLS;
+    const uint s_bj = (lin % S_TCOLS) * S_VEC;
+    const uint c_bi = lin / C_TCOLS;
+    const uint c_bj = (lin % C_TCOLS) * C_VEC;
+    
+    const uint row_sg = sg_id / 2;
+    const uint col_sg = sg_id % 2;
+    const uint row_sg_off = row_sg * 8;
+    const uint col_sg_off = col_sg * 16;
+    
+    metal::simdgroup_float8x8 acc[2];
+    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    
+    {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        // Load state tile: aligned, no bounds check needed
+        {
+            device const T* my_src = state_base + s_bi * state_dim_stride + s_bj;
+            threadgroup float* my_dst = tg_state + s_bi * TG_S_LD + s_bj;
+            #pragma clang loop unroll(full)
+            for (uint j = 0; j < S_VEC; j++) {
+                my_dst[j] = float(my_src[j]);
+            }
+        }
+        
+        // Load C tile with L bounds check
+        {
+            threadgroup float* my_dst = tg_C + c_bi * TG_C_LD + c_bj;
+            if (c_bi < n_valid) {
+                device const T* my_src = C_base + c_bi * cb_token_stride + c_bj;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < C_VEC; j++) {
+                    my_dst[j] = float(my_src[j]);
+                }
+            } else {
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < C_VEC; j++) {
+                    my_dst[j] = 0.0f;
+                }
+            }
+            
+            // Second half
+            if (c_bi + C_TROWS < BN) {
+                threadgroup float* my_dst2 = my_dst + C_TROWS * TG_C_LD;
+                if (c_bi + C_TROWS < n_valid) {
+                    device const T* my_src2 = C_base + (c_bi + C_TROWS) * cb_token_stride + c_bj;
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < C_VEC; j++) {
+                        my_dst2[j] = float(my_src2[j]);
+                    }
+                } else {
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < C_VEC; j++) {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
+        }
+        
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        #pragma clang loop unroll(full)
+        for (uint kk = 0; kk < BK; kk += 8) {
+            metal::simdgroup_float8x8 s_frag;
+            simdgroup_load(s_frag, tg_state, TG_S_LD, ulong2(kk, row_sg_off), false);
+            
+            #pragma clang loop unroll(full)
+            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+                metal::simdgroup_float8x8 c_frag;
+                simdgroup_load(c_frag, tg_C, TG_C_LD, ulong2(kk, col_sg_off + n_sub), true);
+                simdgroup_multiply_accumulate(acc[n_sub / 8], s_frag, c_frag, acc[n_sub / 8]);
+            }
+        }
+    }
+    
+    // Store with L bounds check
+    const uint qid = simd_lid >> 2;
+    const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
+    const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
+    
+    const uint local_d = row_sg_off + lane_row;
+    device float* out_row = out_base + local_d * L;
+    
+    #pragma clang loop unroll(full)
+    for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+        auto frag = acc[n_sub / 8].thread_elements();
+        uint local_t = col_sg_off + n_sub + lane_col_base;
+        if (local_t < n_valid) out_row[local_t] = frag[0];
+        if (local_t + 1 < n_valid) out_row[local_t + 1] = frag[1];
+    }
+}
+
+// Pass 2c3: Simple element-wise y += decay * state_C
+// Grid: (ceil(L*H*dh / 256),)
+kernel void ssd_add_state_simple(
+    device float* y [[ buffer(0) ]],               // [L, H, dh]
+    device const float* state_C [[ buffer(1) ]],   // [H, dh, L]
+    device const float* cum_log_decay [[ buffer(2) ]], // [H, L+1]
+    constant const uint& suffix_len [[ buffer(3) ]],
+    constant const uint& num_heads [[ buffer(4) ]],
+    constant const uint& head_dim [[ buffer(5) ]],
+    constant const size_t* x_strides [[ buffer(6) ]],
+    uint tg_pos [[ threadgroup_position_in_grid ]],
+    uint tid [[ thread_index_in_threadgroup ]]
+) {
+    const uint idx = tg_pos * 256 + tid;
+    const uint L = suffix_len;
+    const uint H = num_heads;
+    const uint dh = head_dim;
+    const uint total = L * H * dh;
+    
+    if (idx >= total) return;
+    
+    // Decode idx to (t, h, d) matching y layout
+    const uint d = idx % dh;
+    const uint h = (idx / dh) % H;
+    const uint t = idx / (dh * H);
+    
+    // Read decay for this (h, t)
+    float decay_0_t = fast::exp(cum_log_decay[h * (L + 1) + t + 1]);
+    
+    // Read state_C[h, d, t]
+    float sc = state_C[h * dh * L + d * L + t];
+    
+    // Add to y using strides
+    size_t y_idx = t * x_strides[0] + h * x_strides[1] + d * x_strides[2];
+    y[y_idx] += decay_0_t * sc;
+}
+
+// Pass 2d: Apply skip + gate
+// Grid: (ceil(L*H*dh / 256),)
+template <typename T>
+kernel void ssd_apply_skip_gate(
+    device const float* y_in [[ buffer(0) ]],      // [L, H, dh]
+    device const T* x [[ buffer(1) ]],             // [L, H, dh]
+    device const T* D [[ buffer(2) ]],             // [H]
+    device const T* z [[ buffer(3) ]],             // [L, H, dh]
+    device T* y_out [[ buffer(4) ]],               // [L, H, dh]
+    constant const uint& total_elems [[ buffer(5) ]],
+    constant const uint& num_heads [[ buffer(6) ]],
+    constant const uint& head_dim [[ buffer(7) ]],
+    uint tg_pos [[ threadgroup_position_in_grid ]],
+    uint tid [[ thread_index_in_threadgroup ]]
+) {
+    const uint idx = tg_pos * 256 + tid;
+    if (idx >= total_elems) return;
+    
+    // Decode idx to (t, h, dh)
+    const uint dh = idx % head_dim;
+    const uint h = (idx / head_dim) % num_heads;
+    
+    float y_val = y_in[idx];
+    float x_val = float(x[idx]);
+    float d_val = float(D[h]);
+    float z_val = float(z[idx]);
+    
+    float gate = z_val / (1.0f + fast::exp(-z_val));  // SiLU
+    float skip = d_val * x_val;
+    
+    y_out[idx] = static_cast<T>((y_val + skip) * gate);
+}
+
+// =============================================================================
+// State Update Kernels
+// =============================================================================
+
+// State update GEMM: contribution = (scaled_x)^T @ B
+// Computes: contribution[H, dh, N] = Σ_t (decay_t_to_T * x[t, h, d]) * B[t, g, n]
+// This is: [dh, L] @ [L, N] = [dh, N] per head
+// Grid: (tiles_n, tiles_m, num_heads) where M=dh, N=state_dim, K=L
+// Assumes: dh % 16 = 0, N % 32 = 0 (aligned). L can be any value.
+template <typename T>
+kernel void ssd_gemm_state_update(
+    device const T* x [[ buffer(0) ]],                 // [L, H, dh]
+    device const T* B_in [[ buffer(1) ]],              // [L, G, N]
+    device const float* cum_log_decay [[ buffer(2) ]], // [H, L+1]
+    device float* contribution [[ buffer(3) ]],        // [H, dh, N]
+    constant const uint& suffix_len [[ buffer(4) ]],
+    constant const uint& num_heads [[ buffer(5) ]],
+    constant const uint& head_dim [[ buffer(6) ]],
+    constant const uint& state_dim [[ buffer(7) ]],
+    constant const uint& num_groups [[ buffer(8) ]],
+    constant const size_t* x_strides [[ buffer(9) ]],
+    constant const size_t* cb_strides [[ buffer(10) ]],
+    uint3 tg_pos [[ threadgroup_position_in_grid ]],
+    uint sg_id [[ simdgroup_index_in_threadgroup ]],
+    uint simd_lid [[ thread_index_in_simdgroup ]]
+) {
+    constexpr uint BM = 16;   // dh tiles (aligned)
+    constexpr uint BN = 32;   // N (state_dim) tiles (aligned)
+    constexpr uint BK = 64;   // L (sequence) tiles
+    constexpr uint TGP_SIZE = 128;
+    
+    constexpr uint X_VEC = 8;
+    constexpr uint X_TCOLS = BK / X_VEC;
+    constexpr uint B_VEC = 8;
+    constexpr uint B_TCOLS = BK / B_VEC;
+    constexpr uint B_TROWS = TGP_SIZE / B_TCOLS;
+    
+    const uint tile_n = tg_pos.x;
+    const uint tile_m = tg_pos.y;
+    const uint h_idx = tg_pos.z;
+    
+    const uint L = suffix_len;
+    const uint dh = head_dim;
+    const uint N = state_dim;
+    const uint group_idx = h_idx / (num_heads / num_groups);
+    
+    const uint row_start = tile_m * BM;
+    const uint col_start = tile_n * BN;
+    
+    const size_t x_token_stride = x_strides[0];
+    const size_t x_head_stride = x_strides[1];
+    const size_t cb_token_stride = cb_strides[0];
+    const size_t cb_group_stride = cb_strides[1];
+    
+    const float total_log_decay = cum_log_decay[h_idx * (L + 1) + L];
+    device const float* decay_base = cum_log_decay + h_idx * (L + 1) + 1;
+    
+    device const T* x_base = x + h_idx * x_head_stride + row_start;
+    device const T* B_base = B_in + group_idx * cb_group_stride + col_start;
+    device float* out_base = contribution + h_idx * dh * N + row_start * N + col_start;
+    
+    constexpr uint TG_PAD = 4;
+    threadgroup float tg_x[BM * (BK + TG_PAD)];
+    threadgroup float tg_B[BN * (BK + TG_PAD)];
+    constexpr uint TG_X_LD = BK + TG_PAD;
+    constexpr uint TG_B_LD = BK + TG_PAD;
+    
+    const uint lin = sg_id * 32 + simd_lid;
+    const uint x_bi = lin / X_TCOLS;
+    const uint x_bj = (lin % X_TCOLS) * X_VEC;
+    const uint b_bi = lin / B_TCOLS;
+    const uint b_bj = (lin % B_TCOLS) * B_VEC;
+    
+    const uint row_sg = sg_id / 2;
+    const uint col_sg = sg_id % 2;
+    const uint row_sg_off = row_sg * 8;
+    const uint col_sg_off = col_sg * 16;
+    
+    metal::simdgroup_float8x8 acc[2];
+    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    
+    // K-loop with L bounds
+    for (uint k_off = 0; k_off < L; k_off += BK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        // Load x tile with decay scaling and L bounds
+        {
+            const uint t_base = k_off + x_bj;
+            threadgroup float* my_dst = tg_x + x_bi * TG_X_LD + x_bj;
+            
+            #pragma clang loop unroll(full)
+            for (uint j = 0; j < X_VEC; j++) {
+                if (t_base + j < L) {
+                    float x_val = float(x_base[(t_base + j) * x_token_stride + x_bi]);
+                    float decay_t_to_T = fast::exp(total_log_decay - decay_base[t_base + j]);
+                    my_dst[j] = x_val * decay_t_to_T;
+                } else {
+                    my_dst[j] = 0.0f;
+                }
+            }
+        }
+        
+        // Load B tile with L bounds
+        {
+            const uint t_base = k_off + b_bj;
+            threadgroup float* my_dst = tg_B + b_bi * TG_B_LD + b_bj;
+            
+            #pragma clang loop unroll(full)
+            for (uint j = 0; j < B_VEC; j++) {
+                if (t_base + j < L) {
+                    my_dst[j] = float(B_base[(t_base + j) * cb_token_stride + b_bi]);
+                } else {
+                    my_dst[j] = 0.0f;
+                }
+            }
+            
+            // Second half
+            if (b_bi + B_TROWS < BN) {
+                threadgroup float* my_dst2 = my_dst + B_TROWS * TG_B_LD;
+                #pragma clang loop unroll(full)
+                for (uint j = 0; j < B_VEC; j++) {
+                    if (t_base + j < L) {
+                        my_dst2[j] = float(B_base[(t_base + j) * cb_token_stride + b_bi + B_TROWS]);
+                    } else {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
+        }
+        
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        #pragma clang loop unroll(full)
+        for (uint kk = 0; kk < BK; kk += 8) {
+            metal::simdgroup_float8x8 x_frag;
+            simdgroup_load(x_frag, tg_x, TG_X_LD, ulong2(kk, row_sg_off), false);
+            
+            #pragma clang loop unroll(full)
+            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+                metal::simdgroup_float8x8 b_frag;
+                simdgroup_load(b_frag, tg_B, TG_B_LD, ulong2(kk, col_sg_off + n_sub), true);
+                simdgroup_multiply_accumulate(acc[n_sub / 8], x_frag, b_frag, acc[n_sub / 8]);
+            }
+        }
+    }
+    
+    // Store results (dh and N are aligned, no bounds check needed)
+    const uint qid = simd_lid >> 2;
+    const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
+    const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
+    
+    const uint local_d = row_sg_off + lane_row;
+    device float* out_row = out_base + local_d * N;
+    
+    #pragma clang loop unroll(full)
+    for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
+        auto frag = acc[n_sub / 8].thread_elements();
+        uint local_n = col_sg_off + n_sub + lane_col_base;
+        out_row[local_n] = frag[0];
+        out_row[local_n + 1] = frag[1];
+    }
+}
+
+// Finalize state: state_new = decay_total * state_old + contribution
+// Grid: (ceil(H*dh*N / 256),)
+template <typename T>
+kernel void ssd_finalize_state(
+    device T* state [[ buffer(0) ]],                   // [H, dh, N] in-place
+    device const float* contribution [[ buffer(1) ]], // [H, dh, N]
+    device const float* cum_log_decay [[ buffer(2) ]], // [H, L+1]
+    constant const uint& suffix_len [[ buffer(3) ]],
+    constant const uint& num_heads [[ buffer(4) ]],
+    constant const uint& head_dim [[ buffer(5) ]],
+    constant const uint& state_dim [[ buffer(6) ]],
+    constant const size_t* state_strides [[ buffer(7) ]],
+    uint tg_pos [[ threadgroup_position_in_grid ]],
+    uint tid [[ thread_index_in_threadgroup ]]
+) {
+    const uint idx = tg_pos * 256 + tid;
+    const uint H = num_heads;
+    const uint dh = head_dim;
+    const uint N = state_dim;
+    const uint L = suffix_len;
+    const uint total = H * dh * N;
+    
+    if (idx >= total) return;
+    
+    // Decode idx to (h, d, n)
+    const uint n = idx % N;
+    const uint d = (idx / N) % dh;
+    const uint h = idx / (N * dh);
+    
+    // Total decay: exp(cum_log_decay[h, L])
+    float decay_total = fast::exp(cum_log_decay[h * (L + 1) + L]);
+    
+    // Read contribution[h, d, n] from contiguous layout
+    float contrib = contribution[h * dh * N + d * N + n];
+    
+    // Read/write state using strides
+    const size_t state_head_stride = state_strides[0];
+    const size_t state_dim_stride = state_strides[1];
+    const size_t state_inner_stride = state_strides[2];
+    size_t state_idx = h * state_head_stride + d * state_dim_stride + n * state_inner_stride;
+    
+    float old_state = float(state[state_idx]);
+    float new_state = decay_total * old_state + contrib;
+    state[state_idx] = static_cast<T>(new_state);
+}
+
+// Template instantiations
+
+#define INSTANTIATE_SSD_GEMM_STATE_UPDATE(tname, T) \
+    template [[host_name("ssd_gemm_state_update_" #tname)]] \
+    kernel void ssd_gemm_state_update<T>( \
+        device const T*, device const T*, device const float*, device float*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const uint&, constant const uint&, constant const size_t*, \
+        constant const size_t*, uint3, uint, uint);
+
+INSTANTIATE_SSD_GEMM_STATE_UPDATE(float, float)
+INSTANTIATE_SSD_GEMM_STATE_UPDATE(bfloat, bfloat)
+INSTANTIATE_SSD_GEMM_STATE_UPDATE(half, half)
+
+#define INSTANTIATE_SSD_FINALIZE_STATE(tname, T) \
+    template [[host_name("ssd_finalize_state_" #tname)]] \
+    kernel void ssd_finalize_state<T>( \
+        device T*, device const float*, device const float*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const uint&, constant const size_t*, uint, uint);
+
+INSTANTIATE_SSD_FINALIZE_STATE(float, float)
+INSTANTIATE_SSD_FINALIZE_STATE(bfloat, bfloat)
+INSTANTIATE_SSD_FINALIZE_STATE(half, half)
+
+#define INSTANTIATE_SSD_GEMM_CB(tname, T) \
+    template [[host_name("ssd_gemm_cb_" #tname)]] \
+    kernel void ssd_gemm_cb<T>( \
+        device const T*, device const T*, device float*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const uint&, constant const size_t&, constant const size_t&, \
+        constant const size_t&, uint3, uint, uint);
+
+INSTANTIATE_SSD_GEMM_CB(float, float)
+INSTANTIATE_SSD_GEMM_CB(bfloat, bfloat)
+INSTANTIATE_SSD_GEMM_CB(half, half)
+
+#define INSTANTIATE_SSD_APPLY_DECAY_MASK(tname, T) \
+    template [[host_name("ssd_apply_decay_mask_" #tname)]] \
+    kernel void ssd_apply_decay_mask<T>( \
+        device float*, device const float*, \
+        constant const uint&, constant const uint&, uint2, uint);
+
+INSTANTIATE_SSD_APPLY_DECAY_MASK(float, float)
+INSTANTIATE_SSD_APPLY_DECAY_MASK(bfloat, bfloat)
+INSTANTIATE_SSD_APPLY_DECAY_MASK(half, half)
+
+#define INSTANTIATE_SSD_GEMM_Y(tname, T) \
+    template [[host_name("ssd_gemm_y_" #tname)]] \
+    kernel void ssd_gemm_y<T>( \
+        device const float*, device const T*, device const T*, device const T*, \
+        device const T*, device const float*, device float*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const uint&, constant const uint&, constant const size_t*, \
+        constant const size_t*, constant const size_t*, constant const size_t*, \
+        uint3, uint, uint);
+
+INSTANTIATE_SSD_GEMM_Y(float, float)
+INSTANTIATE_SSD_GEMM_Y(bfloat, bfloat)
+INSTANTIATE_SSD_GEMM_Y(half, half)
+
+// =============================================================================
+// Template instantiations
+// =============================================================================
+
+#define INSTANTIATE_SSD_GEMM_STATE_C(tname, T) \
+    template [[host_name("ssd_gemm_state_c_" #tname)]] \
+    kernel void ssd_gemm_state_c<T>( \
+        device const T*, device const T*, device float*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const uint&, constant const uint&, constant const size_t*, \
+        constant const size_t*, uint3, uint, uint);
+
+INSTANTIATE_SSD_GEMM_STATE_C(float, float)
+INSTANTIATE_SSD_GEMM_STATE_C(bfloat, bfloat)
+INSTANTIATE_SSD_GEMM_STATE_C(half, half)
+
+#define INSTANTIATE_SSD_APPLY_SKIP_GATE(tname, T) \
+    template [[host_name("ssd_apply_skip_gate_" #tname)]] \
+    kernel void ssd_apply_skip_gate<T>( \
+        device const float*, device const T*, device const T*, device const T*, \
+        device T*, constant const uint&, constant const uint&, constant const uint&, \
+        uint, uint);
+
+INSTANTIATE_SSD_APPLY_SKIP_GATE(float, float)
+INSTANTIATE_SSD_APPLY_SKIP_GATE(bfloat, bfloat)
+INSTANTIATE_SSD_APPLY_SKIP_GATE(half, half)
+
+// Template instantiation for decay pass (kept from original)
+#define instantiate_ssd_prefill_flash_pass1(type_name, type)                \
+  template [[host_name("ssd_prefill_flash_pass1_decay_" #type_name)]]       \
+  kernel void ssd_prefill_flash_pass1_decay<type>(                          \
+    device const type* dt_raw [[ buffer(0) ]],                              \
+    device float* cum_log_decay [[ buffer(1) ]],                            \
+    constant const size_t& suffix_len [[ buffer(2) ]],                      \
+    constant const size_t& dt_token_stride [[ buffer(3) ]],                 \
+    constant const size_t& dt_head_stride [[ buffer(4) ]],                  \
+    uint h_idx [[ threadgroup_position_in_grid ]],                          \
+    ushort lid [[ thread_index_in_threadgroup ]]                            \
+  );
+
+instantiate_ssd_prefill_flash_pass1(float, float);
+instantiate_ssd_prefill_flash_pass1(bfloat, bfloat);
+instantiate_ssd_prefill_flash_pass1(half, half);
+
+#undef instantiate_ssd_prefill_flash_pass1

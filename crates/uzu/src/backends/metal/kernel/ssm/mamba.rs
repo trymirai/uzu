@@ -1,6 +1,8 @@
-use std::{env, rc::Rc};
+use std::{cell::RefCell, env, rc::Rc};
 
-use metal::ComputeCommandEncoderRef;
+use metal::{
+    Buffer as MTLBuffer, ComputeCommandEncoderRef, MTLResourceOptions,
+};
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -24,6 +26,14 @@ use crate::{
     parameters::ParameterTree,
 };
 
+struct FlashBuffers {
+    scratch: MTLBuffer, // [H, L+1] for cum_log_decay
+    cb: MTLBuffer,      // [H, L, L] for CB matrix
+    y_float: MTLBuffer, // [L, H, dh] intermediate y
+    state_c: MTLBuffer, // [L, H, dh] state contribution
+    max_seq_len: usize,
+}
+
 pub(crate) struct MambaMixerEncodable {
     layer_index: usize,
     config: Mamba2Config,
@@ -39,6 +49,8 @@ pub(crate) struct MambaMixerEncodable {
     gate_bias: MetalArray,
     skip_connection_weight: MetalArray,
     prefill_mode: SSDPrefillMode,
+    flash_buffers: RefCell<Option<FlashBuffers>>,
+    device: metal::Device,
 }
 
 impl MambaMixerEncodable {
@@ -135,6 +147,7 @@ impl MambaMixerEncodable {
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
+        let device = mtl_context.device.clone();
 
         Self {
             layer_index,
@@ -151,6 +164,8 @@ impl MambaMixerEncodable {
             gate_bias,
             skip_connection_weight,
             prefill_mode,
+            flash_buffers: RefCell::new(None),
+            device,
         }
     }
 
@@ -430,6 +445,28 @@ impl MambaMixerEncodable {
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
+        // Ensure flash buffers are allocated if Flash mode is used
+        let needs_flash = matches!(self.prefill_mode, SSDPrefillMode::Flash);
+        if needs_flash {
+            self.ensure_flash_buffers(suffix_length);
+        }
+
+        let flash_ref = self.flash_buffers.borrow();
+        let (flash_scratch, flash_cb, flash_y_float, flash_state_c) =
+            if needs_flash {
+                let fb = flash_ref
+                    .as_ref()
+                    .expect("Flash buffers should be allocated");
+                (
+                    Some(&fb.scratch),
+                    Some(&fb.cb),
+                    Some(&fb.y_float),
+                    Some(&fb.state_c),
+                )
+            } else {
+                (None, None, None, None)
+            };
+
         self.ssm_prefill
             .encode(
                 encoder,
@@ -464,10 +501,60 @@ impl MambaMixerEncodable {
                     ],
                     channels: self.config.num_heads,
                     head_dim: self.config.head_dim,
+                    flash_scratch,
+                    flash_cb,
+                    flash_y_float,
+                    flash_state_c,
                 },
                 self.prefill_mode,
             )
             .expect("Failed to encode SSD prefill kernel");
+    }
+
+    fn ensure_flash_buffers(
+        &self,
+        seq_len: usize,
+    ) {
+        let mut buffers = self.flash_buffers.borrow_mut();
+
+        // Check if existing buffers are large enough
+        if let Some(fb) = buffers.as_ref() {
+            if fb.max_seq_len >= seq_len {
+                return;
+            }
+        }
+
+        // Allocate new buffers
+        let h = self.config.num_heads;
+        let dh = self.config.head_dim;
+        let l = seq_len;
+
+        let storage = MTLResourceOptions::StorageModePrivate;
+
+        let scratch = self.device.new_buffer(
+            ((h * (l + 1)) * std::mem::size_of::<f32>()) as u64,
+            storage,
+        );
+        let cb = self.device.new_buffer(
+            ((h * l * l) * std::mem::size_of::<f32>()) as u64,
+            storage,
+        );
+        let y_float = self.device.new_buffer(
+            ((l * h * dh) * std::mem::size_of::<f32>()) as u64,
+            storage,
+        );
+        let state_c = self.device.new_buffer(
+            ((l * h * dh) * std::mem::size_of::<f32>()) as u64,
+            storage,
+        );
+
+        *buffers = Some(FlashBuffers {
+            scratch,
+            cb,
+            y_float,
+            state_c,
+            max_seq_len: seq_len,
+        });
     }
 
     fn run_decode_ssm_with_encoder(
@@ -552,12 +639,11 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
     match env::var("UZU_SSM_PREFILL_MODE") {
         Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
             "seq" | "sequential" | "baseline" => SSDPrefillMode::Sequential,
-            "single" | "singlepass" | "single_pass" => {
-                SSDPrefillMode::SinglePass
-            },
-            _ => SSDPrefillMode::SinglePass,
+            "single" | "singlepass" | "single_pass" => SSDPrefillMode::SinglePass,
+            "flash" => SSDPrefillMode::Flash,
+            _ => SSDPrefillMode::Flash,
         },
-        Err(_) => SSDPrefillMode::SinglePass,
+        Err(_) => SSDPrefillMode::Flash,
     }
 }
 
