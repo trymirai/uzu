@@ -556,132 +556,6 @@ fn ssd_prefill_flash_matches_cpu_reference() {
 }
 
 #[test]
-fn flash_cb_gemm_is_correct() {
-    let Some(ctx) = create_context() else {
-        eprintln!("Skipping CB GEMM test: no Metal device");
-        return;
-    };
-
-    // Use aligned dimensions matching kernel tile sizes (BM=16, BN=32, BK=64)
-    let suffix_len = 64usize;
-    let num_groups = 4usize;
-    let state_dim = 64usize;
-    let num_heads = 4usize;
-
-    let total_cb = suffix_len * num_groups * state_dim;
-
-    // B and C data: [suffix_len, num_groups, state_dim]
-    let b_data: Vec<f32> =
-        (0..total_cb).map(|i| (i as f32 * 0.1) % 1.0 - 0.5).collect();
-    let c_data: Vec<f32> =
-        (0..total_cb).map(|i| ((i + 7) as f32 * 0.1) % 1.0 - 0.5).collect();
-
-    // Compute CPU reference: CB[h, t, s] = sum_n C[t, g, n] * B[s, g, n]
-    // where g = h / (num_heads / num_groups)
-    let mut cb_ref = vec![0.0f32; num_heads * suffix_len * suffix_len];
-    let cb_token_stride = num_groups * state_dim;
-    let cb_group_stride = state_dim;
-
-    for h in 0..num_heads {
-        let g = h / (num_heads / num_groups);
-        for t in 0..suffix_len {
-            for s in 0..suffix_len {
-                let mut dot = 0.0f32;
-                for n in 0..state_dim {
-                    let c_idx = t * cb_token_stride + g * cb_group_stride + n;
-                    let b_idx = s * cb_token_stride + g * cb_group_stride + n;
-                    dot += c_data[c_idx] * b_data[b_idx];
-                }
-                cb_ref[h * suffix_len * suffix_len + t * suffix_len + s] = dot;
-            }
-        }
-    }
-
-    // Run GPU kernel
-    let device = &ctx.device;
-    let b_buf = device.new_buffer_with_data(
-        b_data.as_ptr() as *const _,
-        (total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let c_buf = device.new_buffer_with_data(
-        c_data.as_ptr() as *const _,
-        (total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let cb_buf = device.new_buffer(
-        (num_heads * suffix_len * suffix_len * 4) as u64,
-        STORAGE_MODE,
-    );
-    zero_buffer(&cb_buf);
-
-    let kernel = ctx.compute_pipeline_state("ssd_gemm_cb_float", None).unwrap();
-
-    let cb = ctx.command_queue.new_command_buffer();
-    let enc = cb.new_compute_command_encoder();
-    enc.set_compute_pipeline_state(&kernel);
-    enc.set_buffer(0, Some(&c_buf), 0);
-    enc.set_buffer(1, Some(&b_buf), 0);
-    enc.set_buffer(2, Some(&cb_buf), 0);
-    let seq_len = suffix_len as u32;
-    let state_dim_u32 = state_dim as u32;
-    let num_heads_u32 = num_heads as u32;
-    let num_groups_u32 = num_groups as u32;
-    let cb_strides: [usize; 3] = [cb_token_stride, cb_group_stride, 1];
-    enc.set_bytes(3, 4, &seq_len as *const u32 as *const _);
-    enc.set_bytes(4, 4, &state_dim_u32 as *const u32 as *const _);
-    enc.set_bytes(5, 4, &num_heads_u32 as *const u32 as *const _);
-    enc.set_bytes(6, 4, &num_groups_u32 as *const u32 as *const _);
-    enc.set_bytes(7, 8, &cb_strides[0] as *const usize as *const _);
-    enc.set_bytes(8, 8, &cb_strides[1] as *const usize as *const _);
-    enc.set_bytes(9, 8, &cb_strides[2] as *const usize as *const _);
-
-    // Tile-based: 16x32 output tiles, need 4 simdgroups (128 threads)
-    // 16/8 = 2 row groups, 32/16 = 2 col groups = 2*2 = 4 simdgroups
-    let tiles_m = (suffix_len as u64 + 15) / 16;
-    let tiles_n = (suffix_len as u64 + 31) / 32;
-    enc.dispatch_thread_groups(
-        metal::MTLSize {
-            width: tiles_n,
-            height: tiles_m,
-            depth: num_heads as u64,
-        },
-        metal::MTLSize {
-            width: 128,
-            height: 1,
-            depth: 1,
-        }, // 4 simdgroups
-    );
-    enc.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
-
-    let cb_gpu = read_buffer(&cb_buf, num_heads * suffix_len * suffix_len);
-
-    // Compare
-    let mut max_diff = 0.0f32;
-    let mut max_idx = 0usize;
-    for (i, (&gpu, &cpu)) in cb_gpu.iter().zip(&cb_ref).enumerate() {
-        let diff = (gpu - cpu).abs();
-        if diff > max_diff {
-            max_diff = diff;
-            max_idx = i;
-        }
-    }
-
-    let tolerance = 1e-4;
-    assert!(
-        max_diff <= tolerance,
-        "CB GEMM diverges at idx {}: gpu={} cpu={} (diff {})",
-        max_idx,
-        cb_gpu[max_idx],
-        cb_ref[max_idx],
-        max_diff
-    );
-    println!("CB GEMM test passed, max_diff={}", max_diff);
-}
-
-#[test]
 fn conv1d_scan_is_deterministic() {
     let Some(ctx) = create_context() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
@@ -1068,6 +942,123 @@ fn ssd_prefill_flash_capture() {
     command_buffer.wait_until_completed();
 
     // Stop capture
+    capture_manager.stop_capture();
+    println!("✅ GPU capture saved to: {:?}", trace_path);
+    println!("   Open with: open {:?}", trace_path);
+}
+
+#[test]
+#[ignore] // Run with: cargo test --release ssd_prefill_singlepass_capture -- --ignored --nocapture
+fn ssd_prefill_singlepass_capture() {
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use metal::{CaptureDescriptor, CaptureManager, MTLCaptureDestination};
+
+    unsafe {
+        std::env::set_var("METAL_CAPTURE_ENABLED", "1");
+    }
+
+    let Some(ctx) = create_context() else {
+        eprintln!("Skipping capture: no Metal device");
+        return;
+    };
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
+    let fixture = SSDPrefillFixture::new();
+
+    let device = &ctx.device;
+    let x_buf = device.new_buffer_with_data(
+        fixture.x_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let dt_buf = device.new_buffer_with_data(
+        fixture.dt_data.as_ptr() as *const _,
+        (fixture.total_dt * 4) as u64,
+        STORAGE_MODE,
+    );
+    let b_buf = device.new_buffer_with_data(
+        fixture.b_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let c_buf = device.new_buffer_with_data(
+        fixture.c_data.as_ptr() as *const _,
+        (fixture.total_cb * 4) as u64,
+        STORAGE_MODE,
+    );
+    let d_buf = device.new_buffer_with_data(
+        fixture.d_data.as_ptr() as *const _,
+        (fixture.num_heads * 4) as u64,
+        STORAGE_MODE,
+    );
+    let z_buf = device.new_buffer_with_data(
+        fixture.z_data.as_ptr() as *const _,
+        (fixture.total_x * 4) as u64,
+        STORAGE_MODE,
+    );
+    let state_buf =
+        device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
+    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+
+    write_buffer(&state_buf, &fixture.state_init);
+    zero_buffer(&y_buf);
+
+    let args = SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &state_buf,
+        y: &y_buf,
+        suffix_len: fixture.suffix_len,
+        group_size: fixture.group_size,
+        state_size: fixture.state_dim as i32,
+        x_strides: fixture.x_strides,
+        dt_strides: fixture.dt_strides,
+        cb_strides: fixture.cb_strides,
+        state_strides: fixture.state_strides,
+        channels: fixture.num_heads,
+        head_dim: fixture.head_dim,
+        flash_scratch: None,
+        flash_cb: None,
+        flash_y_float: None,
+        flash_state_c: None,
+    };
+
+    let timestamp =
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let trace_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(format!("ssd_prefill_singlepass-{}.gputrace", timestamp));
+
+    let capture_manager = CaptureManager::shared();
+    let capture_descriptor = CaptureDescriptor::new();
+    capture_descriptor.set_destination(MTLCaptureDestination::GpuTraceDocument);
+    capture_descriptor.set_output_url(&trace_path);
+    ctx.command_queue.set_label("ssd_prefill_singlepass_test");
+    capture_descriptor.set_capture_command_queue(&ctx.command_queue);
+
+    capture_manager
+        .start_capture(&capture_descriptor)
+        .expect("Failed to start GPU capture");
+    println!("🔍 GPU capture started: {:?}", trace_path);
+
+    let command_buffer = ctx.command_queue.new_command_buffer();
+    command_buffer.set_label("ssd_prefill_singlepass");
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_label("singlepass_encoder");
+    kernel
+        .encode(encoder, args, SSDPrefillMode::SinglePass)
+        .unwrap();
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
     capture_manager.stop_capture();
     println!("✅ GPU capture saved to: {:?}", trace_path);
     println!("   Open with: open {:?}", trace_path);

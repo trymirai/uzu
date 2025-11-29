@@ -483,32 +483,32 @@ constant uint SSDCB_SG_BN = 16;
 constant uint SSDCB_SG_TILE = 8;
 
 
-// CB GEMM - MLX-style with L bounds checking
-// Assumes: N % BK = 0 (N=64). L can be any value.
-// Vectorized loads for N dimension, bounds checks for L dimension.
+// Pass 2a+2b FUSED: CB = tril((C @ B^T) * decay_mask) with BM=32
+// 4 accumulators per simdgroup for better occupancy
 template <typename T>
-kernel void ssd_gemm_cb(
-    device const T* C_in [[ buffer(0) ]],      // [L, G, N]
-    device const T* B_in [[ buffer(1) ]],      // [L, G, N]
-    device float* CB_out [[ buffer(2) ]],      // [H, L, L]
-    constant const uint& L [[ buffer(3) ]],    // suffix_len
-    constant const uint& N [[ buffer(4) ]],    // state_dim (64)
-    constant const uint& H [[ buffer(5) ]],    // num_heads
-    constant const uint& G [[ buffer(6) ]],    // num_groups
-    constant const size_t& lda [[ buffer(7) ]], // token_stride = G * N
-    constant const size_t& group_stride [[ buffer(8) ]], // = N
-    constant const size_t& unused [[ buffer(9) ]],
+kernel void ssd_gemm_cb_fused(
+    device const T* C_in [[ buffer(0) ]],
+    device const T* B_in [[ buffer(1) ]],
+    device const float* cum_log_decay [[ buffer(2) ]],
+    device float* CB_out [[ buffer(3) ]],
+    constant const uint& L [[ buffer(4) ]],
+    constant const uint& N [[ buffer(5) ]],
+    constant const uint& H [[ buffer(6) ]],
+    constant const uint& G [[ buffer(7) ]],
+    constant const size_t& lda [[ buffer(8) ]],
+    constant const size_t& group_stride [[ buffer(9) ]],
     uint3 tg_pos [[ threadgroup_position_in_grid ]],
     uint sg_id [[ simdgroup_index_in_threadgroup ]],
     uint simd_lid [[ thread_index_in_simdgroup ]]
 ) {
-    constexpr uint BM = 16;
+    constexpr uint BM = 32;  // Doubled from 16
     constexpr uint BN = 32;
-    constexpr uint BK = 64;   // N dimension - aligned
+    constexpr uint BK = 64;
     constexpr uint TGP_SIZE = 128;
     
     constexpr uint C_VEC = 8;
     constexpr uint C_TCOLS = BK / C_VEC;
+    constexpr uint C_TROWS = TGP_SIZE / C_TCOLS;
     constexpr uint B_VEC = 8;
     constexpr uint B_TCOLS = BK / B_VEC;
     constexpr uint B_TROWS = TGP_SIZE / B_TCOLS;
@@ -520,7 +520,6 @@ kernel void ssd_gemm_cb(
     const uint row_start = tile_m * BM;
     const uint col_start = tile_n * BN;
     
-    // Bounds for this tile
     const uint m_valid = min(BM, L - row_start);
     const uint n_valid = min(BN, L - col_start);
     
@@ -528,6 +527,7 @@ kernel void ssd_gemm_cb(
     device const T* C_base = C_in + g * group_stride + row_start * lda;
     device const T* B_base = B_in + g * group_stride + col_start * lda;
     device float* CB_h = CB_out + (size_t)h * L * L + row_start * L + col_start;
+    device const float* my_decay = cum_log_decay + h * (L + 1);
     
     constexpr uint TG_PAD = 4;
     threadgroup float tg_C[BM * (BK + TG_PAD)];
@@ -541,19 +541,23 @@ kernel void ssd_gemm_cb(
     const uint b_bi = lin / B_TCOLS;
     const uint b_bj = (lin % B_TCOLS) * B_VEC;
     
+    // 2×2 simdgroup layout for 32×32 output
     const uint row_sg = sg_id / 2;
     const uint col_sg = sg_id % 2;
-    const uint row_sg_off = row_sg * 8;
+    const uint row_sg_off = row_sg * 16;
     const uint col_sg_off = col_sg * 16;
     
-    metal::simdgroup_float8x8 acc[2];
-    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
-    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    // 4 accumulators per simdgroup
+    metal::simdgroup_float8x8 acc[4];
+    #pragma clang loop unroll(full)
+    for (int i = 0; i < 4; i++) {
+        acc[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
     
     {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         
-        // Load C tile with L bounds check on rows
+        // Load C tile (BM=32 rows)
         {
             threadgroup float* my_dst = tg_C + c_bi * TG_C_LD + c_bj;
             if (c_bi < m_valid) {
@@ -568,9 +572,25 @@ kernel void ssd_gemm_cb(
                     my_dst[j] = 0.0f;
                 }
             }
+            // Second half for BM=32
+            if (c_bi + C_TROWS < BM) {
+                threadgroup float* my_dst2 = my_dst + C_TROWS * TG_C_LD;
+                if (c_bi + C_TROWS < m_valid) {
+                    device const T* my_src2 = C_base + (c_bi + C_TROWS) * lda + c_bj;
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < C_VEC; j++) {
+                        my_dst2[j] = float(my_src2[j]);
+                    }
+                } else {
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < C_VEC; j++) {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
         }
         
-        // Load B tile with L bounds check on rows
+        // Load B tile (BN=32 rows)
         {
             threadgroup float* my_dst = tg_B + b_bi * TG_B_LD + b_bj;
             if (b_bi < n_valid) {
@@ -585,8 +605,6 @@ kernel void ssd_gemm_cb(
                     my_dst[j] = 0.0f;
                 }
             }
-            
-            // Second half
             if (b_bi + B_TROWS < BN) {
                 threadgroup float* my_dst2 = my_dst + B_TROWS * TG_B_LD;
                 if (b_bi + B_TROWS < n_valid) {
@@ -606,105 +624,89 @@ kernel void ssd_gemm_cb(
         
         threadgroup_barrier(mem_flags::mem_threadgroup);
         
+        // MMA with 4 accumulators (2×2 layout)
         #pragma clang loop unroll(full)
         for (uint kk = 0; kk < BK; kk += 8) {
-            metal::simdgroup_float8x8 c_frag;
-            simdgroup_load(c_frag, tg_C, TG_C_LD, ulong2(kk, row_sg_off), false);
+            metal::simdgroup_float8x8 c_frag0, c_frag1;
+            simdgroup_load(c_frag0, tg_C, TG_C_LD, ulong2(kk, row_sg_off), false);
+            simdgroup_load(c_frag1, tg_C, TG_C_LD, ulong2(kk, row_sg_off + 8), false);
             
-            #pragma clang loop unroll(full)
-            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
-                metal::simdgroup_float8x8 b_frag;
-                simdgroup_load(b_frag, tg_B, TG_B_LD, ulong2(kk, col_sg_off + n_sub), true);
-                simdgroup_multiply_accumulate(acc[n_sub / 8], c_frag, b_frag, acc[n_sub / 8]);
-            }
+            metal::simdgroup_float8x8 b_frag0, b_frag1;
+            simdgroup_load(b_frag0, tg_B, TG_B_LD, ulong2(kk, col_sg_off), true);
+            simdgroup_load(b_frag1, tg_B, TG_B_LD, ulong2(kk, col_sg_off + 8), true);
+            
+            // Serpentine MMA pattern
+            simdgroup_multiply_accumulate(acc[0], c_frag0, b_frag0, acc[0]);
+            simdgroup_multiply_accumulate(acc[1], c_frag0, b_frag1, acc[1]);
+            simdgroup_multiply_accumulate(acc[3], c_frag1, b_frag1, acc[3]);
+            simdgroup_multiply_accumulate(acc[2], c_frag1, b_frag0, acc[2]);
         }
     }
     
-    // Store with L bounds check
+    // Store with decay and causal mask - 4 fragments
     const uint qid = simd_lid >> 2;
     const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
     const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
     
-    const uint local_t = row_sg_off + lane_row;
-    if (local_t < m_valid) {
-        device float* out_row = CB_h + local_t * L;
-        #pragma clang loop unroll(full)
-        for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
-            auto frag = acc[n_sub / 8].thread_elements();
-            uint local_s = col_sg_off + n_sub + lane_col_base;
-            if (local_s < n_valid) out_row[local_s] = frag[0];
-            if (local_s + 1 < n_valid) out_row[local_s + 1] = frag[1];
+    #pragma clang loop unroll(full)
+    for (uint mi = 0; mi < 2; mi++) {
+        const uint local_t = row_sg_off + mi * 8 + lane_row;
+        if (local_t < m_valid) {
+            const uint global_t = row_start + local_t;
+            const float decay_t = my_decay[global_t + 1];
+            device float* out_row = CB_h + local_t * L;
+            
+            #pragma clang loop unroll(full)
+            for (uint ni = 0; ni < 2; ni++) {
+                auto frag = acc[mi * 2 + ni].thread_elements();
+                uint local_s = col_sg_off + ni * 8 + lane_col_base;
+                uint global_s = col_start + local_s;
+                
+                if (local_s < n_valid) {
+                    if (global_s > global_t) {
+                        out_row[local_s] = 0.0f;
+                    } else {
+                        float decay = fast::exp(decay_t - my_decay[global_s + 1]);
+                        out_row[local_s] = frag[0] * decay;
+                    }
+                }
+                if (local_s + 1 < n_valid) {
+                    if (global_s + 1 > global_t) {
+                        out_row[local_s + 1] = 0.0f;
+                    } else {
+                        float decay = fast::exp(decay_t - my_decay[global_s + 2]);
+                        out_row[local_s + 1] = frag[1] * decay;
+                    }
+                }
+            }
         }
     }
 }
 
-// Pass 2b: Apply decay and causal mask to CB
-// Grid: (ceil(L/256), num_heads)
-template <typename T>
-kernel void ssd_apply_decay_mask(
-    device float* CB [[ buffer(0) ]],              // [num_heads, L, L]
-    device const float* cum_log_decay [[ buffer(1) ]], // [num_heads, L+1]
-    constant const uint& suffix_len [[ buffer(2) ]],
-    constant const uint& num_heads [[ buffer(3) ]],
-    uint2 tg_pos [[ threadgroup_position_in_grid ]],
-    uint tid [[ thread_index_in_threadgroup ]]
-) {
-    const uint h_idx = tg_pos.y;
-    if (h_idx >= num_heads) return;
-    
-    const uint L = suffix_len;
-    const uint base_idx = tg_pos.x * 256 + tid;
-    
-    device const float* my_decay = cum_log_decay + h_idx * (L + 1);
-    device float* my_CB = CB + (size_t)h_idx * L * L;
-    
-    // Each thread handles one (t, s) pair
-    if (base_idx < L * L) {
-        uint t = base_idx / L;
-        uint s = base_idx % L;
-        
-        if (s > t) {
-            my_CB[base_idx] = 0.0f;  // Causal mask
-        } else {
-            float cb = my_CB[base_idx];
-            float decay = fast::exp(my_decay[t + 1] - my_decay[s + 1]);
-            my_CB[base_idx] = cb * decay;
-        }
-    }
-}
-
-// Pass 2c: y = CB @ x (pure GEMM, no state contribution here)
-// Grid: (tiles_n, tiles_m, num_heads)
-// Assumes: dh % 32 = 0 (aligned). L can be any value.
+// Pass 2c: y = CB @ x (BM=32 for better occupancy)
+// Grid: (tiles_n, tiles_m, num_heads) where tiles cover output
+// 4 accumulators per simdgroup
 template <typename T>
 kernel void ssd_gemm_y(
-    device const float* CB [[ buffer(0) ]],        // [num_heads, L, L]
-    device const T* x [[ buffer(1) ]],             // [L, H, dh]
-    device const T* dt_raw [[ buffer(2) ]],        // unused
-    device const T* C_in [[ buffer(3) ]],          // unused in this kernel
-    device const T* state [[ buffer(4) ]],         // unused in this kernel
-    device const float* cum_log_decay [[ buffer(5) ]], // unused in this kernel
-    device float* y_out [[ buffer(6) ]],           // [L, H, dh]
-    constant const uint& suffix_len [[ buffer(7) ]],
-    constant const uint& num_heads [[ buffer(8) ]],
-    constant const uint& head_dim [[ buffer(9) ]],
-    constant const uint& state_dim [[ buffer(10) ]],
-    constant const uint& num_groups [[ buffer(11) ]],
-    constant const size_t* x_strides [[ buffer(12) ]],
-    constant const size_t* dt_strides [[ buffer(13) ]],
-    constant const size_t* cb_strides [[ buffer(14) ]],
-    constant const size_t* state_strides [[ buffer(15) ]],
+    device const float* CB [[ buffer(0) ]],
+    device const T* x [[ buffer(1) ]],
+    device float* y_out [[ buffer(2) ]],
+    constant const uint& suffix_len [[ buffer(3) ]],
+    constant const uint& num_heads [[ buffer(4) ]],
+    constant const uint& head_dim [[ buffer(5) ]],
+    constant const size_t* x_strides [[ buffer(6) ]],
     uint3 tg_pos [[ threadgroup_position_in_grid ]],
     uint sg_id [[ simdgroup_index_in_threadgroup ]],
     uint simd_lid [[ thread_index_in_simdgroup ]]
 ) {
-    constexpr uint BM = 16;   // t dimension
-    constexpr uint BN = 32;   // dh dimension (aligned)
-    constexpr uint BK = 64;   // s/source dimension
+    constexpr uint BM = 32;   // Doubled from 16
+    constexpr uint BN = 32;
+    constexpr uint BK = 64;
     constexpr uint TGP_SIZE = 128;
     
     constexpr uint CB_VEC = 8;
     constexpr uint CB_TCOLS = BK / CB_VEC;
+    constexpr uint CB_TROWS = TGP_SIZE / CB_TCOLS;
     constexpr uint X_VEC = 8;
     constexpr uint X_TCOLS = BN / X_VEC;
     constexpr uint X_TROWS = TGP_SIZE / X_TCOLS;
@@ -739,28 +741,30 @@ kernel void ssd_gemm_y(
     const uint x_bi = lin / X_TCOLS;
     const uint x_bj = (lin % X_TCOLS) * X_VEC;
     
+    // 2×2 simdgroup layout for 32×32 output
     const uint row_sg = sg_id / 2;
     const uint col_sg = sg_id % 2;
-    const uint row_sg_off = row_sg * 8;
-    const uint col_sg_off = col_sg * 16;
+    const uint row_sg_off = row_sg * 16;  // Each simdgroup handles 16 rows
+    const uint col_sg_off = col_sg * 16;  // Each simdgroup handles 16 cols
     
-    metal::simdgroup_float8x8 acc[2];
-    acc[0] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
-    acc[1] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    // 4 accumulators per simdgroup (2×2 fragments of 8×8)
+    metal::simdgroup_float8x8 acc[4];
+    #pragma clang loop unroll(full)
+    for (int i = 0; i < 4; i++) {
+        acc[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
     
-    // K-loop over source positions with L bounds
     for (uint k_off = 0; k_off < L; k_off += BK) {
-        const uint k_valid = min(BK, L - k_off);
         threadgroup_barrier(mem_flags::mem_threadgroup);
         
-        // Load CB tile with bounds checking
+        // Load CB tile - need to load BM=32 rows
         {
             threadgroup float* my_dst = tg_CB + cb_bi * TG_CB_LD + cb_bj;
             if (cb_bi < m_valid) {
                 device const float* my_src = CB_base + cb_bi * L + k_off + cb_bj;
                 #pragma clang loop unroll(full)
                 for (uint j = 0; j < CB_VEC; j++) {
-                    my_dst[j] = (cb_bj + j < k_valid) ? my_src[j] : 0.0f;
+                    my_dst[j] = my_src[j];
                 }
             } else {
                 #pragma clang loop unroll(full)
@@ -768,9 +772,25 @@ kernel void ssd_gemm_y(
                     my_dst[j] = 0.0f;
                 }
             }
+            // Second half for BM=32
+            if (cb_bi + CB_TROWS < BM) {
+                threadgroup float* my_dst2 = my_dst + CB_TROWS * TG_CB_LD;
+                if (cb_bi + CB_TROWS < m_valid) {
+                    device const float* my_src2 = CB_base + (cb_bi + CB_TROWS) * L + k_off + cb_bj;
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < CB_VEC; j++) {
+                        my_dst2[j] = my_src2[j];
+                    }
+                } else {
+                    #pragma clang loop unroll(full)
+                    for (uint j = 0; j < CB_VEC; j++) {
+                        my_dst2[j] = 0.0f;
+                    }
+                }
+            }
         }
         
-        // Load X tile with bounds checking for source positions
+        // Load X tile
         {
             threadgroup float* my_dst = tg_X + x_bi * TG_X_LD + x_bj;
             if (k_off + x_bi < L) {
@@ -785,8 +805,6 @@ kernel void ssd_gemm_y(
                     my_dst[j] = 0.0f;
                 }
             }
-            
-            // Second half
             if (x_bi + X_TROWS < BK) {
                 threadgroup float* my_dst2 = my_dst + X_TROWS * TG_X_LD;
                 if (k_off + x_bi + X_TROWS < L) {
@@ -806,34 +824,45 @@ kernel void ssd_gemm_y(
         
         threadgroup_barrier(mem_flags::mem_threadgroup);
         
+        // MMA with 4 accumulators (2×2 layout of 8×8 fragments)
         #pragma clang loop unroll(full)
         for (uint kk = 0; kk < BK; kk += 8) {
-            metal::simdgroup_float8x8 cb_frag;
-            simdgroup_load(cb_frag, tg_CB, TG_CB_LD, ulong2(kk, row_sg_off), false);
+            // Load 2 CB fragments for rows
+            metal::simdgroup_float8x8 cb_frag0, cb_frag1;
+            simdgroup_load(cb_frag0, tg_CB, TG_CB_LD, ulong2(kk, row_sg_off), false);
+            simdgroup_load(cb_frag1, tg_CB, TG_CB_LD, ulong2(kk, row_sg_off + 8), false);
             
-            #pragma clang loop unroll(full)
-            for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
-                metal::simdgroup_float8x8 x_frag;
-                simdgroup_load(x_frag, tg_X, TG_X_LD, ulong2(col_sg_off + n_sub, kk), false);
-                simdgroup_multiply_accumulate(acc[n_sub / 8], cb_frag, x_frag, acc[n_sub / 8]);
-            }
+            // Load 2 X fragments for cols
+            metal::simdgroup_float8x8 x_frag0, x_frag1;
+            simdgroup_load(x_frag0, tg_X, TG_X_LD, ulong2(col_sg_off, kk), false);
+            simdgroup_load(x_frag1, tg_X, TG_X_LD, ulong2(col_sg_off + 8, kk), false);
+            
+            // 2×2 MMA (serpentine for better register reuse)
+            simdgroup_multiply_accumulate(acc[0], cb_frag0, x_frag0, acc[0]);
+            simdgroup_multiply_accumulate(acc[1], cb_frag0, x_frag1, acc[1]);
+            simdgroup_multiply_accumulate(acc[3], cb_frag1, x_frag1, acc[3]);
+            simdgroup_multiply_accumulate(acc[2], cb_frag1, x_frag0, acc[2]);
         }
     }
     
-    // Store with L bounds check on rows
+    // Store results
     const uint qid = simd_lid >> 2;
     const uint lane_row = (qid & 4u) + ((simd_lid >> 1) & 3u);
     const uint lane_col_base = ((qid & 2u) << 1) + ((simd_lid & 1u) << 1);
     
-    const uint local_t = row_sg_off + lane_row;
-    if (local_t < m_valid) {
-        device float* out_row = y_base + local_t * x_token_stride;
-        #pragma clang loop unroll(full)
-        for (uint n_sub = 0; n_sub < 16; n_sub += 8) {
-            auto frag = acc[n_sub / 8].thread_elements();
-            const uint col0 = col_sg_off + n_sub + lane_col_base;
-            out_row[col0] = frag[0];
-            out_row[col0 + 1] = frag[1];
+    // Store all 4 fragments (2×2)
+    #pragma clang loop unroll(full)
+    for (uint mi = 0; mi < 2; mi++) {
+        const uint local_t = row_sg_off + mi * 8 + lane_row;
+        if (local_t < m_valid) {
+            device float* out_row = y_base + local_t * x_token_stride;
+            #pragma clang loop unroll(full)
+            for (uint ni = 0; ni < 2; ni++) {
+                auto frag = acc[mi * 2 + ni].thread_elements();
+                const uint col0 = col_sg_off + ni * 8 + lane_col_base;
+                out_row[col0] = frag[0];
+                out_row[col0 + 1] = frag[1];
+            }
         }
     }
 }
@@ -992,16 +1021,21 @@ kernel void ssd_gemm_state_c(
     }
 }
 
-// Pass 2c3: Simple element-wise y += decay * state_C
-// Grid: (ceil(L*H*dh / 256),)
-kernel void ssd_add_state_simple(
-    device float* y [[ buffer(0) ]],               // [L, H, dh]
+// Pass 4 FUSED: add_state + skip_gate in one pass
+// Computes: y_out = (y_in + decay * state_C + D * x) * silu(z)
+template <typename T>
+kernel void ssd_fused_add_skip_gate(
+    device const float* y_in [[ buffer(0) ]],      // [L, H, dh] from y GEMM
     device const float* state_C [[ buffer(1) ]],   // [H, dh, L]
     device const float* cum_log_decay [[ buffer(2) ]], // [H, L+1]
-    constant const uint& suffix_len [[ buffer(3) ]],
-    constant const uint& num_heads [[ buffer(4) ]],
-    constant const uint& head_dim [[ buffer(5) ]],
-    constant const size_t* x_strides [[ buffer(6) ]],
+    device const T* x [[ buffer(3) ]],             // [L, H, dh]
+    device const T* D [[ buffer(4) ]],             // [H]
+    device const T* z [[ buffer(5) ]],             // [L, H, dh]
+    device T* y_out [[ buffer(6) ]],               // [L, H, dh]
+    constant const uint& suffix_len [[ buffer(7) ]],
+    constant const uint& num_heads [[ buffer(8) ]],
+    constant const uint& head_dim [[ buffer(9) ]],
+    constant const size_t* x_strides [[ buffer(10) ]],
     uint tg_pos [[ threadgroup_position_in_grid ]],
     uint tid [[ thread_index_in_threadgroup ]]
 ) {
@@ -1013,53 +1047,31 @@ kernel void ssd_add_state_simple(
     
     if (idx >= total) return;
     
-    // Decode idx to (t, h, d) matching y layout
+    // Decode idx to (t, h, d)
     const uint d = idx % dh;
     const uint h = (idx / dh) % H;
     const uint t = idx / (dh * H);
     
-    // Read decay for this (h, t)
+    // Compute linear index for x/z/y_out (may have different strides)
+    const size_t xz_idx = t * x_strides[0] + h * x_strides[1] + d * x_strides[2];
+    
+    // Load values
+    float y_val = y_in[xz_idx];
+    float x_val = float(x[xz_idx]);
+    float z_val = float(z[xz_idx]);
+    float d_val = float(D[h]);
+    
+    // Decay for state contribution: exp(cum_log_decay[h, t+1])
     float decay_0_t = fast::exp(cum_log_decay[h * (L + 1) + t + 1]);
     
-    // Read state_C[h, d, t]
+    // state_C[h, d, t]
     float sc = state_C[h * dh * L + d * L + t];
     
-    // Add to y using strides
-    size_t y_idx = t * x_strides[0] + h * x_strides[1] + d * x_strides[2];
-    y[y_idx] += decay_0_t * sc;
-}
-
-// Pass 2d: Apply skip + gate
-// Grid: (ceil(L*H*dh / 256),)
-template <typename T>
-kernel void ssd_apply_skip_gate(
-    device const float* y_in [[ buffer(0) ]],      // [L, H, dh]
-    device const T* x [[ buffer(1) ]],             // [L, H, dh]
-    device const T* D [[ buffer(2) ]],             // [H]
-    device const T* z [[ buffer(3) ]],             // [L, H, dh]
-    device T* y_out [[ buffer(4) ]],               // [L, H, dh]
-    constant const uint& total_elems [[ buffer(5) ]],
-    constant const uint& num_heads [[ buffer(6) ]],
-    constant const uint& head_dim [[ buffer(7) ]],
-    uint tg_pos [[ threadgroup_position_in_grid ]],
-    uint tid [[ thread_index_in_threadgroup ]]
-) {
-    const uint idx = tg_pos * 256 + tid;
-    if (idx >= total_elems) return;
-    
-    // Decode idx to (t, h, dh)
-    const uint dh = idx % head_dim;
-    const uint h = (idx / head_dim) % num_heads;
-    
-    float y_val = y_in[idx];
-    float x_val = float(x[idx]);
-    float d_val = float(D[h]);
-    float z_val = float(z[idx]);
-    
+    // Fused computation: (y + decay*state_c + D*x) * silu(z)
     float gate = z_val / (1.0f + fast::exp(-z_val));  // SiLU
-    float skip = d_val * x_val;
+    float result = (y_val + decay_0_t * sc + d_val * x_val) * gate;
     
-    y_out[idx] = static_cast<T>((y_val + skip) * gate);
+    y_out[xz_idx] = static_cast<T>(result);
 }
 
 // =============================================================================
@@ -1297,37 +1309,24 @@ INSTANTIATE_SSD_FINALIZE_STATE(float, float)
 INSTANTIATE_SSD_FINALIZE_STATE(bfloat, bfloat)
 INSTANTIATE_SSD_FINALIZE_STATE(half, half)
 
-#define INSTANTIATE_SSD_GEMM_CB(tname, T) \
-    template [[host_name("ssd_gemm_cb_" #tname)]] \
-    kernel void ssd_gemm_cb<T>( \
-        device const T*, device const T*, device float*, \
+#define INSTANTIATE_SSD_GEMM_CB_FUSED(tname, T) \
+    template [[host_name("ssd_gemm_cb_fused_" #tname)]] \
+    kernel void ssd_gemm_cb_fused<T>( \
+        device const T*, device const T*, device const float*, device float*, \
         constant const uint&, constant const uint&, constant const uint&, \
         constant const uint&, constant const size_t&, constant const size_t&, \
-        constant const size_t&, uint3, uint, uint);
+        uint3, uint, uint);
 
-INSTANTIATE_SSD_GEMM_CB(float, float)
-INSTANTIATE_SSD_GEMM_CB(bfloat, bfloat)
-INSTANTIATE_SSD_GEMM_CB(half, half)
-
-#define INSTANTIATE_SSD_APPLY_DECAY_MASK(tname, T) \
-    template [[host_name("ssd_apply_decay_mask_" #tname)]] \
-    kernel void ssd_apply_decay_mask<T>( \
-        device float*, device const float*, \
-        constant const uint&, constant const uint&, uint2, uint);
-
-INSTANTIATE_SSD_APPLY_DECAY_MASK(float, float)
-INSTANTIATE_SSD_APPLY_DECAY_MASK(bfloat, bfloat)
-INSTANTIATE_SSD_APPLY_DECAY_MASK(half, half)
+INSTANTIATE_SSD_GEMM_CB_FUSED(float, float)
+INSTANTIATE_SSD_GEMM_CB_FUSED(bfloat, bfloat)
+INSTANTIATE_SSD_GEMM_CB_FUSED(half, half)
 
 #define INSTANTIATE_SSD_GEMM_Y(tname, T) \
     template [[host_name("ssd_gemm_y_" #tname)]] \
     kernel void ssd_gemm_y<T>( \
-        device const float*, device const T*, device const T*, device const T*, \
-        device const T*, device const float*, device float*, \
+        device const float*, device const T*, device float*, \
         constant const uint&, constant const uint&, constant const uint&, \
-        constant const uint&, constant const uint&, constant const size_t*, \
-        constant const size_t*, constant const size_t*, constant const size_t*, \
-        uint3, uint, uint);
+        constant const size_t*, uint3, uint, uint);
 
 INSTANTIATE_SSD_GEMM_Y(float, float)
 INSTANTIATE_SSD_GEMM_Y(bfloat, bfloat)
@@ -1349,16 +1348,17 @@ INSTANTIATE_SSD_GEMM_STATE_C(float, float)
 INSTANTIATE_SSD_GEMM_STATE_C(bfloat, bfloat)
 INSTANTIATE_SSD_GEMM_STATE_C(half, half)
 
-#define INSTANTIATE_SSD_APPLY_SKIP_GATE(tname, T) \
-    template [[host_name("ssd_apply_skip_gate_" #tname)]] \
-    kernel void ssd_apply_skip_gate<T>( \
-        device const float*, device const T*, device const T*, device const T*, \
-        device T*, constant const uint&, constant const uint&, constant const uint&, \
-        uint, uint);
+#define INSTANTIATE_SSD_FUSED_ADD_SKIP_GATE(tname, T) \
+    template [[host_name("ssd_fused_add_skip_gate_" #tname)]] \
+    kernel void ssd_fused_add_skip_gate<T>( \
+        device const float*, device const float*, device const float*, \
+        device const T*, device const T*, device const T*, device T*, \
+        constant const uint&, constant const uint&, constant const uint&, \
+        constant const size_t*, uint, uint);
 
-INSTANTIATE_SSD_APPLY_SKIP_GATE(float, float)
-INSTANTIATE_SSD_APPLY_SKIP_GATE(bfloat, bfloat)
-INSTANTIATE_SSD_APPLY_SKIP_GATE(half, half)
+INSTANTIATE_SSD_FUSED_ADD_SKIP_GATE(float, float)
+INSTANTIATE_SSD_FUSED_ADD_SKIP_GATE(bfloat, bfloat)
+INSTANTIATE_SSD_FUSED_ADD_SKIP_GATE(half, half)
 
 // Template instantiation for decay pass (kept from original)
 #define instantiate_ssd_prefill_flash_pass1(type_name, type)                \

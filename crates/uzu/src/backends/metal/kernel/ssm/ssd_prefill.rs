@@ -10,9 +10,6 @@ use crate::backends::metal::{KernelDataType, MTLContext};
 
 const SSD_PREFILL_SINGLE_THREADS: u64 = 32;
 const SSD_PREFILL_PASS1_THREADS: u64 = 256;
-// CB GEMM tile sizes (match Metal kernel)
-const SSDCB_BM: u64 = 16;
-const SSDCB_BN: u64 = 32;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {
@@ -27,12 +24,10 @@ pub struct SSDPrefillKernel {
     single_pass_64: MTLComputePipelineState,
     // Multi-pass Flash kernels
     flash_pass1_decay: MTLComputePipelineState,
-    flash_gemm_cb: MTLComputePipelineState,
-    flash_apply_decay_mask: MTLComputePipelineState,
+    flash_gemm_cb_fused: MTLComputePipelineState,
     flash_gemm_y: MTLComputePipelineState,
     flash_gemm_state_c: MTLComputePipelineState,
-    flash_add_state_simple: MTLComputePipelineState,
-    flash_apply_skip_gate: MTLComputePipelineState,
+    flash_fused_add_skip_gate: MTLComputePipelineState,
     // State update kernels
     flash_gemm_state_update: MTLComputePipelineState,
     flash_finalize_state: MTLComputePipelineState,
@@ -96,12 +91,9 @@ impl SSDPrefillKernel {
                 None,
             )
             .map_err(SSMKernelError::MetalError)?;
-        let flash_gemm_cb = context
-            .compute_pipeline_state(&format!("ssd_gemm_cb_{}", suffix), None)
-            .map_err(SSMKernelError::MetalError)?;
-        let flash_apply_decay_mask = context
+        let flash_gemm_cb_fused = context
             .compute_pipeline_state(
-                &format!("ssd_apply_decay_mask_{}", suffix),
+                &format!("ssd_gemm_cb_fused_{}", suffix),
                 None,
             )
             .map_err(SSMKernelError::MetalError)?;
@@ -114,12 +106,9 @@ impl SSDPrefillKernel {
                 None,
             )
             .map_err(SSMKernelError::MetalError)?;
-        let flash_add_state_simple = context
-            .compute_pipeline_state("ssd_add_state_simple", None)
-            .map_err(SSMKernelError::MetalError)?;
-        let flash_apply_skip_gate = context
+        let flash_fused_add_skip_gate = context
             .compute_pipeline_state(
-                &format!("ssd_apply_skip_gate_{}", suffix),
+                &format!("ssd_fused_add_skip_gate_{}", suffix),
                 None,
             )
             .map_err(SSMKernelError::MetalError)?;
@@ -141,12 +130,10 @@ impl SSDPrefillKernel {
             single_pass,
             single_pass_64,
             flash_pass1_decay,
-            flash_gemm_cb,
-            flash_apply_decay_mask,
+            flash_gemm_cb_fused,
             flash_gemm_y,
             flash_gemm_state_c,
-            flash_add_state_simple,
-            flash_apply_skip_gate,
+            flash_fused_add_skip_gate,
             flash_gemm_state_update,
             flash_finalize_state,
         })
@@ -306,48 +293,44 @@ impl SSDPrefillKernel {
         );
         compute_encoder.memory_barrier_with_resources(&[decay_buf]);
 
-        // ========== Pass 2: GEMM CB = C @ B^T ==========
-        let tiles_m = (seq_len as u64 + SSDCB_BM - 1) / SSDCB_BM;
-        let tiles_n = (seq_len as u64 + SSDCB_BN - 1) / SSDCB_BN;
+        // ========== Pass 2: FUSED CB = tril((C @ B^T) * decay) (BM=32, BN=32) ==========
+        let tiles_m = (seq_len as u64 + 31) / 32; // BM=32
+        let tiles_n = (seq_len as u64 + 31) / 32; // BN=32
 
-        compute_encoder.set_compute_pipeline_state(&self.flash_gemm_cb);
+        compute_encoder.set_compute_pipeline_state(&self.flash_gemm_cb_fused);
         compute_encoder.set_buffer(0, Some(args.c), 0);
         compute_encoder.set_buffer(1, Some(args.b), 0);
-        compute_encoder.set_buffer(2, Some(cb_buf), 0);
+        compute_encoder.set_buffer(2, Some(decay_buf), 0);
+        compute_encoder.set_buffer(3, Some(cb_buf), 0);
         compute_encoder.set_bytes(
-            3,
+            4,
             size_of::<u32>() as u64,
             &seq_len as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            4,
+            5,
             size_of::<u32>() as u64,
             &state_dim as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            5,
+            6,
             size_of::<u32>() as u64,
             &num_heads as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            6,
+            7,
             size_of::<u32>() as u64,
             &num_groups as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            7,
+            8,
             size_of::<usize>() as u64,
             &args.cb_strides[0] as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            8,
-            size_of::<usize>() as u64,
-            &args.cb_strides[1] as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
             9,
             size_of::<usize>() as u64,
-            &args.cb_strides[2] as *const _ as *const _,
+            &args.cb_strides[1] as *const _ as *const _,
         );
         compute_encoder.dispatch_thread_groups(
             MTLSize {
@@ -359,98 +342,37 @@ impl SSDPrefillKernel {
                 width: 128,
                 height: 1,
                 depth: 1,
-            }, // 4 simdgroups
-        );
-        compute_encoder.memory_barrier_with_resources(&[cb_buf]);
-
-        // ========== Pass 3: Apply decay + causal mask ==========
-        let total_cb_elems = (seq_len as u64) * (seq_len as u64);
-        let cb_threadgroups = (total_cb_elems + 255) / 256;
-
-        compute_encoder
-            .set_compute_pipeline_state(&self.flash_apply_decay_mask);
-        compute_encoder.set_buffer(0, Some(cb_buf), 0);
-        compute_encoder.set_buffer(1, Some(decay_buf), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<u32>() as u64,
-            &seq_len as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &num_heads as *const _ as *const _,
-        );
-        compute_encoder.dispatch_thread_groups(
-            MTLSize {
-                width: cb_threadgroups,
-                height: num_heads as u64,
-                depth: 1,
-            },
-            MTLSize {
-                width: 256,
-                height: 1,
-                depth: 1,
             },
         );
         compute_encoder.memory_barrier_with_resources(&[cb_buf]);
 
-        // ========== Pass 4: GEMM y = CB @ x (pure GEMM) ==========
-        let tiles_m_y = (seq_len as u64 + SSDCB_BM - 1) / SSDCB_BM;
-        let tiles_n_y = (head_dim as u64 + SSDCB_BN - 1) / SSDCB_BN;
+        // ========== Pass 3: GEMM y = CB @ x (BM=32, BN=32) ==========
+        let tiles_m_y = (seq_len as u64 + 31) / 32; // BM=32
+        let tiles_n_y = (head_dim as u64 + 31) / 32; // BN=32
 
         compute_encoder.set_compute_pipeline_state(&self.flash_gemm_y);
         compute_encoder.set_buffer(0, Some(cb_buf), 0);
         compute_encoder.set_buffer(1, Some(args.x), 0);
-        compute_encoder.set_buffer(2, Some(args.dt), 0);
-        compute_encoder.set_buffer(3, Some(args.c), 0);
-        compute_encoder.set_buffer(4, Some(args.state), 0);
-        compute_encoder.set_buffer(5, Some(decay_buf), 0);
-        compute_encoder.set_buffer(6, Some(y_float_buf), 0);
+        compute_encoder.set_buffer(2, Some(y_float_buf), 0);
         compute_encoder.set_bytes(
-            7,
+            3,
             size_of::<u32>() as u64,
             &seq_len as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            8,
+            4,
             size_of::<u32>() as u64,
             &num_heads as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            9,
+            5,
             size_of::<u32>() as u64,
             &head_dim as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &state_dim as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<u32>() as u64,
-            &num_groups as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
-            12,
+            6,
             (3 * size_of::<usize>()) as u64,
             args.x_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            13,
-            (2 * size_of::<usize>()) as u64,
-            args.dt_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            14,
-            (3 * size_of::<usize>()) as u64,
-            args.cb_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            15,
-            (3 * size_of::<usize>()) as u64,
-            args.state_strides.as_ptr() as *const _,
         );
         compute_encoder.dispatch_thread_groups(
             MTLSize {
@@ -524,80 +446,44 @@ impl SSDPrefillKernel {
         );
         compute_encoder.memory_barrier_with_resources(&[state_c_buf]);
 
-        // ========== Pass 4.5b: Element-wise y += decay * state_C ==========
+        // ========== Pass 4: FUSED add_state + skip_gate ==========
+        // y_out = (y_in + decay * state_C + D * x) * silu(z)
         let total_elements =
             (seq_len as u64) * (num_heads as u64) * (head_dim as u64);
-        let add_tgs = (total_elements + 255) / 256;
+        let fused_tgs = (total_elements + 255) / 256;
 
         compute_encoder
-            .set_compute_pipeline_state(&self.flash_add_state_simple);
+            .set_compute_pipeline_state(&self.flash_fused_add_skip_gate);
         compute_encoder.set_buffer(0, Some(y_float_buf), 0);
         compute_encoder.set_buffer(1, Some(state_c_buf), 0);
         compute_encoder.set_buffer(2, Some(decay_buf), 0);
+        compute_encoder.set_buffer(3, Some(args.x), 0);
+        compute_encoder.set_buffer(4, Some(args.d), 0);
+        compute_encoder.set_buffer(5, Some(args.z), 0);
+        compute_encoder.set_buffer(6, Some(args.y), 0);
         compute_encoder.set_bytes(
-            3,
+            7,
             size_of::<u32>() as u64,
             &seq_len as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            4,
+            8,
             size_of::<u32>() as u64,
             &num_heads as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            5,
+            9,
             size_of::<u32>() as u64,
             &head_dim as *const _ as *const _,
         );
         compute_encoder.set_bytes(
-            6,
+            10,
             (3 * size_of::<usize>()) as u64,
             args.x_strides.as_ptr() as *const _,
         );
         compute_encoder.dispatch_thread_groups(
             MTLSize {
-                width: add_tgs,
-                height: 1,
-                depth: 1,
-            },
-            MTLSize {
-                width: 256,
-                height: 1,
-                depth: 1,
-            },
-        );
-        compute_encoder.memory_barrier_with_resources(&[y_float_buf]);
-
-        // ========== Pass 5: Apply skip + gate ==========
-        let total_y_elems =
-            (seq_len as u64) * (num_heads as u64) * (head_dim as u64);
-        let y_threadgroups = (total_y_elems + 255) / 256;
-        let total_elems_u32 = total_y_elems as u32;
-
-        compute_encoder.set_compute_pipeline_state(&self.flash_apply_skip_gate);
-        compute_encoder.set_buffer(0, Some(y_float_buf), 0);
-        compute_encoder.set_buffer(1, Some(args.x), 0);
-        compute_encoder.set_buffer(2, Some(args.d), 0);
-        compute_encoder.set_buffer(3, Some(args.z), 0);
-        compute_encoder.set_buffer(4, Some(args.y), 0);
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &total_elems_u32 as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &num_heads as *const _ as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &head_dim as *const _ as *const _,
-        );
-        compute_encoder.dispatch_thread_groups(
-            MTLSize {
-                width: y_threadgroups,
+                width: fused_tgs,
                 height: 1,
                 depth: 1,
             },
