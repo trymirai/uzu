@@ -5,8 +5,8 @@ use uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
-        ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
-        SamplingPolicy, SamplingSeed,
+        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize,
+        SamplingMethod, SamplingPolicy, SamplingSeed,
     },
     types::{Input, Message, Output},
 };
@@ -22,6 +22,7 @@ fn build_decoding_config() -> DecodingConfig {
         PrefillStepSize::default(),
         SpeculatorConfig::default(),
         SamplingSeed::Custom(42),
+        AsyncBatchSize::default(),
         true,
     )
 }

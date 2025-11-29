@@ -13,8 +13,8 @@ pub struct DecodingConfig {
     pub prefill_step_size: PrefillStepSize,
     pub speculator_config: SpeculatorConfig,
     pub sampling_seed: SamplingSeed,
-    pub allow_pre_encode: bool,
     pub async_batch_size: AsyncBatchSize,
+    pub allow_pre_encode: bool,
 }
 
 impl DecodingConfig {
@@ -24,6 +24,7 @@ impl DecodingConfig {
         prefill_step_size: PrefillStepSize,
         speculator_config: SpeculatorConfig,
         sampling_seed: SamplingSeed,
+        async_batch_size: AsyncBatchSize,
         allow_pre_encode: bool,
     ) -> Self {
         Self {
@@ -32,8 +33,8 @@ impl DecodingConfig {
             prefill_step_size,
             speculator_config,
             sampling_seed,
+            async_batch_size,
             allow_pre_encode,
-            async_batch_size: AsyncBatchSize::default(),
         }
     }
 
@@ -50,8 +51,8 @@ impl Default for DecodingConfig {
             prefill_step_size: PrefillStepSize::default(),
             speculator_config: SpeculatorConfig::default(),
             sampling_seed: SamplingSeed::default(),
-            allow_pre_encode: true,
             async_batch_size: AsyncBatchSize::default(),
+            allow_pre_encode: true,
         }
     }
 }
@@ -107,22 +108,22 @@ impl DecodingConfig {
         }
     }
 
-    pub fn with_allow_pre_encode(
-        &self,
-        allow_pre_encode: bool,
-    ) -> Self {
-        Self {
-            allow_pre_encode,
-            ..self.clone()
-        }
-    }
-
     pub fn with_async_batch_size(
         &self,
         async_batch_size: AsyncBatchSize,
     ) -> Self {
         Self {
             async_batch_size,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_allow_pre_encode(
+        &self,
+        allow_pre_encode: bool,
+    ) -> Self {
+        Self {
+            allow_pre_encode,
             ..self.clone()
         }
     }
