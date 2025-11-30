@@ -7,6 +7,20 @@ use metal::{
     objc::{msg_send, runtime::Object, sel, sel_impl},
 };
 
+/// Invert a comparison to match Metal conditional encoding semantics.
+fn invert_compare_fn(cmp: MTLCompareFunction) -> MTLCompareFunction {
+    match cmp {
+        MTLCompareFunction::Never => MTLCompareFunction::Always,
+        MTLCompareFunction::Less => MTLCompareFunction::GreaterEqual,
+        MTLCompareFunction::Equal => MTLCompareFunction::NotEqual,
+        MTLCompareFunction::LessEqual => MTLCompareFunction::Greater,
+        MTLCompareFunction::Greater => MTLCompareFunction::LessEqual,
+        MTLCompareFunction::NotEqual => MTLCompareFunction::Equal,
+        MTLCompareFunction::GreaterEqual => MTLCompareFunction::Less,
+        MTLCompareFunction::Always => MTLCompareFunction::Never,
+    }
+}
+
 /// Low-level, unsafe conditional control of Metal encoders.
 /// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.
 trait ComputeEncoderRawConditional {
@@ -68,6 +82,7 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoder {
     ) {
         let obj = self.as_ptr() as *mut Object;
         let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let comparison = invert_compare_fn(comparison);
         let _: () = msg_send![
             obj,
             encodeStartIf: predicate_ptr
@@ -97,6 +112,7 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoder {
     ) {
         let obj = self.as_ptr() as *mut Object;
         let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let comparison = invert_compare_fn(comparison);
         let _: () = msg_send![
             obj,
             encodeStartWhile: predicate_ptr
@@ -123,6 +139,7 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoderRef {
     ) {
         let obj = self as *const _ as *mut Object;
         let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let comparison = invert_compare_fn(comparison);
         let _: () = msg_send![
             obj,
             encodeStartIf:predicate_ptr
@@ -152,6 +169,7 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoderRef {
     ) {
         let obj = self as *const _ as *mut Object;
         let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let comparison = invert_compare_fn(comparison);
         let _: () = msg_send![
             obj,
             encodeStartWhile: predicate_ptr
