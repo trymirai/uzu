@@ -123,3 +123,4 @@ pub fn cpu_tile_scan(tile_counts: &[u32]) -> (Vec<u32>, u32) {
     let total_tiles = *tile_offsets.last().unwrap();
     (tile_offsets, total_tiles)
 }
+

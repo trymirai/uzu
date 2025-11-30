@@ -1,13 +1,20 @@
+//! MoE Block Encodable with path selection:
+//! - suffix == 1: Single-token fused decode (no scatter/gather)
+//! - suffix <= 32: Indirect decode path (GEMV-based)
+//! - suffix > 32: Indirect prefill path (GEMM/MMA-based)
+
 use std::{cell::RefCell, rc::Rc};
 
+use metal::CommandBufferRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-    MoeExpertsTwoPassPrefillKernel, MoeFinalizeKernel, MoeGatherArguments,
-    MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-    MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeExpertsTwoPassPrefillKernel, MoeFinalizeArguments, MoeFinalizeKernel,
+    MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
+    MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeSimpleDecodeFusedArguments, MoeSimpleDecodeFusedKernel,
 };
 use crate::{
     DataType,
@@ -25,6 +32,9 @@ use crate::{
     parameters::ParameterTree,
 };
 
+/// Threshold for decode vs prefill path selection
+const INDIRECT_DECODE_THRESHOLD: usize = 32;
+
 enum RouterBlock {
     Metal {
         weights_buf: metal::Buffer,
@@ -40,17 +50,51 @@ pub struct SharedMoeWeights {
     pub down_biases_buf: Rc<metal::Buffer>,
 }
 
+/// Buffers used by MoE encoding paths
+struct MoeBuffers {
+    main: metal::Buffer,
+    topk_ids: metal::Buffer,
+    topk_probs: metal::Buffer,
+    offsets: metal::Buffer,
+    sumk: metal::Buffer,
+    bucketed_ids: metal::Buffer,
+    bucketed_probs: metal::Buffer,
+    x_perm: metal::Buffer,
+    tok2row: metal::Buffer,
+    y_partial: metal::Buffer,
+    tile_counts: metal::Buffer,
+    tile_offsets: metal::Buffer,
+    tile_map: metal::Buffer,
+    total_tiles: metal::Buffer,
+    dispatch_args: metal::Buffer,
+    partials: metal::Buffer,
+    block_bases: metal::Buffer,
+    block_alloc: metal::Buffer,
+    hidden: metal::Buffer,
+    row_expert_map: metal::Buffer,
+}
+
 pub struct MoeBlockEncodable {
+    // Router
     router: RouterBlock,
     router_data_type: KernelDataType,
     router_renorm: bool,
     router_topk_kernel: MoeRouterTopKKernel,
+
+    // Indirect path shared components
     counts_offsets_kernel: MoeCountsOffsetsFusedKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernel: MoeGatherKernel,
+    finalize_kernel: MoeFinalizeKernel,
+
+    // Indirect path variants
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
-    finalize_kernel: MoeFinalizeKernel,
+
+    // Single-token decode path
+    simple_decode_fused_kernel: MoeSimpleDecodeFusedKernel,
+
+    // Config and weights
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
     hidden_dim: usize,
@@ -133,6 +177,7 @@ impl MoeBlockEncodable {
             },
         };
 
+        // Initialize kernels
         let router_topk_kernel =
             MoeRouterTopKKernel::new(context).map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -173,6 +218,13 @@ impl MoeBlockEncodable {
                     e
                 ))
             })?;
+        let simple_decode_fused_kernel =
+            MoeSimpleDecodeFusedKernel::new(context).map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "Simple decode fused kernel error: {:?}",
+                    e
+                ))
+            })?;
         let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Finalize kernel error: {:?}",
@@ -180,6 +232,7 @@ impl MoeBlockEncodable {
             ))
         })?;
 
+        // Load expert weights
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "experts subtree error: {:?}",
@@ -272,6 +325,7 @@ impl MoeBlockEncodable {
             gather_kernel,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
+            simple_decode_fused_kernel,
             finalize_kernel,
             moe_config: moe_config.clone(),
             model_dim,
@@ -283,14 +337,388 @@ impl MoeBlockEncodable {
 
     fn gating_code_from_activation(activation: &Activation) -> u32 {
         match activation {
-            Activation::Gelu => 3,
+            Activation::Gelu => 3, // GEGLU
             Activation::SiLU {
                 ..
-            } => 2,
+            } => 2, // SwiGLU
             Activation::Identity => {
                 panic!("Identity activation is not supported for MoE kernels")
             },
         }
+    }
+
+    fn dtype_size(&self) -> usize {
+        match self.data_type {
+            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
+            KernelDataType::Float32 => 4,
+        }
+    }
+
+    fn encode_router(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let e = self.moe_config.mixture_size;
+        let k = self.moe_config.num_experts_per_token;
+
+        match &self.router {
+            RouterBlock::Metal {
+                weights_buf,
+                biases_buf,
+            } => {
+                self.router_topk_kernel
+                    .encode(
+                        root,
+                        self.router_data_type,
+                        MoeRouterTopKArguments {
+                            input_buffer: &buffers.main,
+                            weight_buffer: weights_buf,
+                            bias_buffer: biases_buf,
+                            topk_ids_buffer: &buffers.topk_ids,
+                            topk_probs_buffer: &buffers.topk_probs,
+                            t: suffix_length,
+                            d_model: self.model_dim,
+                            e,
+                            k,
+                            renorm: self.router_renorm,
+                        },
+                    )
+                    .expect("MoE router+topk failed");
+            },
+        }
+    }
+
+    fn encode_indirect_setup(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let e = self.moe_config.mixture_size;
+        let k = self.moe_config.num_experts_per_token;
+
+        // Counts + offsets
+        self.counts_offsets_kernel
+            .encode(
+                root,
+                MoeCountsOffsetsFusedArguments {
+                    topk_ids_buffer: &buffers.topk_ids,
+                    offsets_buffer: &buffers.offsets,
+                    sum_k_buffer: &buffers.sumk,
+                    partials_buffer: &buffers.partials,
+                    t: suffix_length,
+                    e,
+                    k,
+                },
+            )
+            .expect("MoE counts+offsets failed");
+
+        let num_blocks = ((suffix_length + 255) / 256).max(1);
+        let num_tiles = ((e + 512 - 1) / 512).max(1);
+
+        // Block bases
+        self.scatter_kernels
+            .encode_block_bases(
+                root,
+                super::MoeBlockBasesArguments {
+                    partials_buffer: &buffers.partials,
+                    block_bases_buffer: &buffers.block_bases,
+                    block_alloc_buffer: &buffers.block_alloc,
+                    e,
+                    num_blocks,
+                    num_tiles,
+                },
+            )
+            .expect("MoE block bases failed");
+
+        // Scatter with tok2row map
+        self.scatter_kernels
+            .encode_scatter_with_map(
+                root,
+                MoeScatterWithMapArguments {
+                    base: super::MoeScatterArguments {
+                        topk_ids_buffer: &buffers.topk_ids,
+                        topk_probs_buffer: &buffers.topk_probs,
+                        offsets_buffer: &buffers.offsets,
+                        block_bases_buffer: &buffers.block_bases,
+                        block_alloc_buffer: &buffers.block_alloc,
+                        out_ids_buffer: &buffers.bucketed_ids,
+                        out_probs_buffer: &buffers.bucketed_probs,
+                        t: suffix_length,
+                        e,
+                        k,
+                        num_blocks,
+                        num_tiles,
+                    },
+                    tok2row_buffer: &buffers.tok2row,
+                },
+                self.data_type,
+            )
+            .expect("MoE scatter failed");
+
+        // Gather
+        self.gather_kernel
+            .encode(
+                root,
+                self.data_type,
+                MoeGatherArguments {
+                    x_buffer: &buffers.main,
+                    bucketed_ids_buffer: &buffers.bucketed_ids,
+                    x_perm_buffer: &buffers.x_perm,
+                    sumk_buffer: &buffers.sumk,
+                    t: suffix_length,
+                    k,
+                    d_model: self.model_dim,
+                },
+            )
+            .expect("MoE gather failed");
+    }
+
+    fn clear_indirect_buffers(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let k = self.moe_config.num_experts_per_token;
+        if k == 0 {
+            return;
+        }
+
+        let blit_encoder = root.new_blit_command_encoder();
+        let entries = suffix_length * k;
+        let topk_bytes = entries * std::mem::size_of::<u32>();
+        let tok2row_bytes = entries * std::mem::size_of::<i32>();
+        let dtype_size = self.dtype_size();
+
+        if topk_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &buffers.topk_ids,
+                metal::NSRange::new(0, topk_bytes as u64),
+                0xFF,
+            );
+        }
+        if tok2row_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &buffers.tok2row,
+                metal::NSRange::new(0, tok2row_bytes as u64),
+                0xFF,
+            );
+        }
+
+        let hidden_bytes =
+            (suffix_length * k * self.hidden_dim * dtype_size) as u64;
+        if hidden_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &buffers.hidden,
+                metal::NSRange::new(0, hidden_bytes),
+                0,
+            );
+        }
+
+        let y_partial_bytes =
+            (suffix_length * k * self.model_dim * dtype_size) as u64;
+        if y_partial_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &buffers.y_partial,
+                metal::NSRange::new(0, y_partial_bytes),
+                0,
+            );
+        }
+
+        let x_perm_bytes =
+            (suffix_length * k * self.model_dim * dtype_size) as u64;
+        if x_perm_bytes > 0 {
+            blit_encoder.fill_buffer(
+                &buffers.x_perm,
+                metal::NSRange::new(0, x_perm_bytes),
+                0,
+            );
+        }
+
+        blit_encoder.end_encoding();
+    }
+
+    fn encode_single_token_path(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+    ) {
+        let k = self.moe_config.num_experts_per_token;
+        let gating_code = Self::gating_code_from_activation(
+            &self.moe_config.expert_config.activation,
+        );
+
+        self.simple_decode_fused_kernel
+            .encode(
+                root,
+                MoeSimpleDecodeFusedArguments {
+                    x: &buffers.main,
+                    topk_ids: &buffers.topk_ids,
+                    topk_probs: &buffers.topk_probs,
+                    w13_all: &self.shared_weights.w13_buf,
+                    w2_all: &self.shared_weights.w2_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
+                    hidden: &buffers.hidden,
+                    y: &buffers.main,
+                    d_model: self.model_dim,
+                    d_ff: self.hidden_dim,
+                    k,
+                    gating_code,
+                    data_type: self.data_type,
+                },
+            )
+            .expect("MoE single-token fused decode failed");
+    }
+
+    fn encode_indirect_decode_path(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let e = self.moe_config.mixture_size;
+        let k = self.moe_config.num_experts_per_token;
+        let gating_code = Self::gating_code_from_activation(
+            &self.moe_config.expert_config.activation,
+        );
+
+        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0]
+            .unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1]
+            .unwrap_or(f32::INFINITY);
+        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
+        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
+        let silu_alpha = self.moe_config.expert_config.activation.alpha();
+
+        let total_rows = suffix_length * k;
+        const K_TILE: usize = 64;
+        let num_tiles_k = ((self.hidden_dim + K_TILE - 1) / K_TILE) as u32;
+
+        self.experts_two_pass_decode_kernel
+            .encode(
+                root,
+                MoeExpertsTwoPassArguments {
+                    x_perm_buffer: &buffers.x_perm,
+                    expert_offsets: &buffers.offsets,
+                    row_expert_map: &buffers.row_expert_map,
+                    hidden_buffer: &buffers.hidden,
+                    output_buffer: &buffers.y_partial,
+                    w13_all: &self.shared_weights.w13_buf,
+                    w2_all: &self.shared_weights.w2_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
+                    tile_counts: &buffers.tile_counts,
+                    tile_offsets: &buffers.tile_offsets,
+                    tile_map: &buffers.tile_map,
+                    total_tiles: &buffers.total_tiles,
+                    dispatch_args: &buffers.dispatch_args,
+                    total_rows,
+                    d_model: self.model_dim,
+                    d_ff: self.hidden_dim,
+                    e,
+                    num_tiles_k,
+                    gating_code,
+                    gate_clip_min,
+                    gate_clip_max,
+                    up_clip_min,
+                    up_clip_max,
+                    silu_alpha,
+                    data_type: self.data_type,
+                },
+            )
+            .expect("MoE indirect decode failed");
+
+        self.encode_finalize(root, buffers, suffix_length);
+    }
+
+    fn encode_indirect_prefill_path(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let e = self.moe_config.mixture_size;
+        let k = self.moe_config.num_experts_per_token;
+        let gating_code = Self::gating_code_from_activation(
+            &self.moe_config.expert_config.activation,
+        );
+
+        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0]
+            .unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1]
+            .unwrap_or(f32::INFINITY);
+        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
+        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
+        let silu_alpha = self.moe_config.expert_config.activation.alpha();
+
+        let total_rows = suffix_length * k;
+        const K_TILE: usize = 128;
+        let num_tiles_k = ((self.hidden_dim + K_TILE - 1) / K_TILE) as u32;
+
+        self.experts_two_pass_prefill_kernel
+            .encode(
+                root,
+                MoeExpertsTwoPassArguments {
+                    x_perm_buffer: &buffers.x_perm,
+                    expert_offsets: &buffers.offsets,
+                    row_expert_map: &buffers.row_expert_map,
+                    hidden_buffer: &buffers.hidden,
+                    output_buffer: &buffers.y_partial,
+                    w13_all: &self.shared_weights.w13_buf,
+                    w2_all: &self.shared_weights.w2_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
+                    tile_counts: &buffers.tile_counts,
+                    tile_offsets: &buffers.tile_offsets,
+                    tile_map: &buffers.tile_map,
+                    total_tiles: &buffers.total_tiles,
+                    dispatch_args: &buffers.dispatch_args,
+                    total_rows,
+                    d_model: self.model_dim,
+                    d_ff: self.hidden_dim,
+                    e,
+                    num_tiles_k,
+                    gating_code,
+                    gate_clip_min,
+                    gate_clip_max,
+                    up_clip_min,
+                    up_clip_max,
+                    silu_alpha,
+                    data_type: self.data_type,
+                },
+            )
+            .expect("MoE indirect prefill failed");
+
+        self.encode_finalize(root, buffers, suffix_length);
+    }
+
+    fn encode_finalize(
+        &self,
+        root: &CommandBufferRef,
+        buffers: &MoeBuffers,
+        suffix_length: usize,
+    ) {
+        let k = self.moe_config.num_experts_per_token;
+
+        self.finalize_kernel
+            .encode(
+                root,
+                MoeFinalizeArguments {
+                    tok2row_buffer: &buffers.tok2row,
+                    probs_buffer: &buffers.topk_probs,
+                    y_partial_buffer: &buffers.y_partial,
+                    y_out_buffer: &buffers.main,
+                    t: suffix_length,
+                    d_model: self.model_dim,
+                    k,
+                },
+                self.data_type,
+            )
+            .expect("MoE finalize failed");
     }
 }
 
@@ -327,310 +755,59 @@ impl EncodableWithState for MoeBlockEncodable {
 
         let clone_buffer = |array: &RefCell<MetalArray>| -> metal::Buffer {
             let mut borrow = array.borrow_mut();
-            let buffer = unsafe { borrow.mtl_buffer().clone() };
-            buffer
+            unsafe { borrow.mtl_buffer().clone() }
         };
 
         let mut array_iter = arrays.iter();
-        let main_buf = clone_buffer(array_iter.next().unwrap());
-        let topk_ids_buf = clone_buffer(array_iter.next().unwrap());
-        let topk_probs_buf = clone_buffer(array_iter.next().unwrap());
-        let offsets_buf = clone_buffer(array_iter.next().unwrap());
-        let sumk_buf = clone_buffer(array_iter.next().unwrap());
-        let bucketed_ids_buf = clone_buffer(array_iter.next().unwrap());
-        let bucketed_probs_buf = clone_buffer(array_iter.next().unwrap());
-        let x_perm_buf = clone_buffer(array_iter.next().unwrap());
-        let tok2row_buf = clone_buffer(array_iter.next().unwrap());
-        let y_partial_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_counts_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_offsets_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_map_buf = clone_buffer(array_iter.next().unwrap());
-        let total_tiles_buf = clone_buffer(array_iter.next().unwrap());
-        let dispatch_args_buf = clone_buffer(array_iter.next().unwrap());
-        let partials_buf = clone_buffer(array_iter.next().unwrap());
-        let block_bases_buf = clone_buffer(array_iter.next().unwrap());
-        let block_alloc_buf = clone_buffer(array_iter.next().unwrap());
-        let hidden_buf = clone_buffer(array_iter.next().unwrap());
-        let row_expert_map_buf = clone_buffer(array_iter.next().unwrap());
+        let buffers = MoeBuffers {
+            main: clone_buffer(array_iter.next().unwrap()),
+            topk_ids: clone_buffer(array_iter.next().unwrap()),
+            topk_probs: clone_buffer(array_iter.next().unwrap()),
+            offsets: clone_buffer(array_iter.next().unwrap()),
+            sumk: clone_buffer(array_iter.next().unwrap()),
+            bucketed_ids: clone_buffer(array_iter.next().unwrap()),
+            bucketed_probs: clone_buffer(array_iter.next().unwrap()),
+            x_perm: clone_buffer(array_iter.next().unwrap()),
+            tok2row: clone_buffer(array_iter.next().unwrap()),
+            y_partial: clone_buffer(array_iter.next().unwrap()),
+            tile_counts: clone_buffer(array_iter.next().unwrap()),
+            tile_offsets: clone_buffer(array_iter.next().unwrap()),
+            tile_map: clone_buffer(array_iter.next().unwrap()),
+            total_tiles: clone_buffer(array_iter.next().unwrap()),
+            dispatch_args: clone_buffer(array_iter.next().unwrap()),
+            partials: clone_buffer(array_iter.next().unwrap()),
+            block_bases: clone_buffer(array_iter.next().unwrap()),
+            block_alloc: clone_buffer(array_iter.next().unwrap()),
+            hidden: clone_buffer(array_iter.next().unwrap()),
+            row_expert_map: clone_buffer(array_iter.next().unwrap()),
+        };
         debug_assert!(array_iter.next().is_none());
-
-        let e = self.moe_config.mixture_size;
-        let k = self.moe_config.num_experts_per_token;
 
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         let root = &*mtl_command_buffer;
-        let k_tile = 128;
 
-        // Clear internal MoE buffers
-        let dtype_size = match self.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-
-        let blit_encoder = root.new_blit_command_encoder();
-
-        if suffix_length > 0 && k > 0 {
-            let entries = suffix_length * k;
-            let topk_bytes = entries * std::mem::size_of::<u32>();
-            let tok2row_bytes = entries * std::mem::size_of::<i32>();
-
-            // Clear topk_ids and tok2row buffers
-            if topk_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &topk_ids_buf,
-                    metal::NSRange::new(0, topk_bytes as u64),
-                    0xFF,
-                );
-            }
-            if tok2row_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &tok2row_buf,
-                    metal::NSRange::new(0, tok2row_bytes as u64),
-                    0xFF,
-                );
-            }
-
-            // Clear hidden buffer
-            let hidden_bytes =
-                (suffix_length * k * self.hidden_dim * dtype_size) as u64;
-            if hidden_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &hidden_buf,
-                    metal::NSRange::new(0, hidden_bytes),
-                    0,
-                );
-            }
-
-            // Clear y_partial buffer
-            let y_partial_bytes =
-                (suffix_length * k * self.model_dim * dtype_size) as u64;
-            if y_partial_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &y_partial_buf,
-                    metal::NSRange::new(0, y_partial_bytes),
-                    0,
-                );
-            }
-
-            // Clear x_perm buffer
-            let x_perm_bytes =
-                (suffix_length * k * self.model_dim * dtype_size) as u64;
-            if x_perm_bytes > 0 {
-                blit_encoder.fill_buffer(
-                    &x_perm_buf,
-                    metal::NSRange::new(0, x_perm_bytes),
-                    0,
-                );
-            }
-        }
-
-        blit_encoder.end_encoding();
-
-        // Use fused Router+TopK kernel for non-quantized routers
-        match &self.router {
-            RouterBlock::Metal {
-                weights_buf,
-                biases_buf,
-            } => {
-                // Use the fused router+topk kernel
-                self.router_topk_kernel
-                    .encode(
-                        root,
-                        self.router_data_type,
-                        MoeRouterTopKArguments {
-                            input_buffer: &main_buf,
-                            weight_buffer: weights_buf,
-                            bias_buffer: biases_buf,
-                            topk_ids_buffer: &topk_ids_buf,
-                            topk_probs_buffer: &topk_probs_buf,
-                            t: suffix_length,
-                            d_model: self.model_dim,
-                            e,
-                            k,
-                            renorm: self.router_renorm,
-                        },
-                    )
-                    .expect("MoE fused router+topk failed");
-            },
-        }
-
-        self.counts_offsets_kernel
-            .encode(
-                root,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t: suffix_length,
-                    e,
-                    k,
-                },
-            )
-            .expect("MoE counts+offsets failed");
-
-        let num_blocks = ((suffix_length + 255) / 256).max(1);
-        let num_tiles = ((e + 512 - 1) / 512).max(1);
-
-        self.scatter_kernels
-            .encode_block_bases(
-                root,
-                super::MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    e,
-                    num_blocks,
-                    num_tiles,
-                },
-            )
-            .expect("MoE block bases failed");
-
-        self.scatter_kernels
-            .encode_scatter_with_map(
-                root,
-                MoeScatterWithMapArguments {
-                    base: super::MoeScatterArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        offsets_buffer: &offsets_buf,
-                        block_bases_buffer: &block_bases_buf,
-                        block_alloc_buffer: &block_alloc_buf,
-                        out_ids_buffer: &bucketed_ids_buf,
-                        out_probs_buffer: &bucketed_probs_buf,
-                        t: suffix_length,
-                        e,
-                        k,
-                        num_blocks,
-                        num_tiles,
-                    },
-                    tok2row_buffer: &tok2row_buf,
-                },
-                self.data_type,
-            )
-            .expect("MoE scatter failed");
-
-        self.gather_kernel
-            .encode(
-                root,
-                self.data_type,
-                MoeGatherArguments {
-                    x_buffer: &main_buf,
-                    bucketed_ids_buffer: &bucketed_ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t: suffix_length,
-                    k,
-                    d_model: self.model_dim,
-                },
-            )
-            .expect("MoE gather failed");
-
-        let gating_code = Self::gating_code_from_activation(
-            &self.moe_config.expert_config.activation,
-        );
-
-        // Compute clipping values and alpha for expert kernels
-        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0]
-            .unwrap_or(f32::NEG_INFINITY);
-        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1]
-            .unwrap_or(f32::INFINITY);
-        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
-        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
-        let silu_alpha = self.moe_config.expert_config.activation.alpha();
-
+        // Path selection:
+        // - suffix == 1: Single-token fused decode (no scatter/gather)
+        // - suffix <= 32: Indirect decode (GEMV)
+        // - suffix > 32: Indirect prefill (GEMM)
         if suffix_length == 1 {
-            let total_rows = suffix_length * k;
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-
-            self.experts_two_pass_decode_kernel
-                .encode(
-                    root,
-                    MoeExpertsTwoPassArguments {
-                        x_perm_buffer: &x_perm_buf,
-                        expert_offsets: &offsets_buf,
-                        row_expert_map: &row_expert_map_buf,
-                        hidden_buffer: &hidden_buf,
-                        output_buffer: &y_partial_buf,
-                        w13_all: &self.shared_weights.w13_buf,
-                        w2_all: &self.shared_weights.w2_buf,
-                        up_biases: &self.shared_weights.up_biases_buf,
-                        down_biases: &self.shared_weights.down_biases_buf,
-                        tile_counts: &tile_counts_buf,
-                        tile_offsets: &tile_offsets_buf,
-                        tile_map: &tile_map_buf,
-                        total_tiles: &total_tiles_buf,
-                        dispatch_args: &dispatch_args_buf,
-                        total_rows,
-                        d_model: self.model_dim,
-                        d_ff: self.hidden_dim,
-                        e,
-                        num_tiles_k,
-                        gating_code,
-                        gate_clip_min,
-                        gate_clip_max,
-                        up_clip_min,
-                        up_clip_max,
-                        silu_alpha,
-                        data_type: self.data_type,
-                    },
-                )
-                .expect("MoE experts two-pass failed");
+            // Single-token path: router -> fused decode
+            self.encode_router(root, &buffers, suffix_length);
+            self.encode_single_token_path(root, &buffers);
+        } else if suffix_length <= INDIRECT_DECODE_THRESHOLD {
+            // Indirect decode path: router -> setup -> decode experts -> finalize
+            self.clear_indirect_buffers(root, &buffers, suffix_length);
+            self.encode_router(root, &buffers, suffix_length);
+            self.encode_indirect_setup(root, &buffers, suffix_length);
+            self.encode_indirect_decode_path(root, &buffers, suffix_length);
         } else {
-            let total_rows = suffix_length * k;
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-
-            self.experts_two_pass_prefill_kernel
-                .encode(
-                    root,
-                    MoeExpertsTwoPassArguments {
-                        x_perm_buffer: &x_perm_buf,
-                        expert_offsets: &offsets_buf,
-                        row_expert_map: &row_expert_map_buf,
-                        hidden_buffer: &hidden_buf,
-                        output_buffer: &y_partial_buf,
-                        w13_all: &self.shared_weights.w13_buf,
-                        w2_all: &self.shared_weights.w2_buf,
-                        up_biases: &self.shared_weights.up_biases_buf,
-                        down_biases: &self.shared_weights.down_biases_buf,
-                        tile_counts: &tile_counts_buf,
-                        tile_offsets: &tile_offsets_buf,
-                        tile_map: &tile_map_buf,
-                        total_tiles: &total_tiles_buf,
-                        dispatch_args: &dispatch_args_buf,
-                        total_rows,
-                        d_model: self.model_dim,
-                        d_ff: self.hidden_dim,
-                        e,
-                        num_tiles_k,
-                        gating_code,
-                        gate_clip_min,
-                        gate_clip_max,
-                        up_clip_min,
-                        up_clip_max,
-                        silu_alpha,
-                        data_type: self.data_type,
-                    },
-                )
-                .expect("MoE experts two-pass prefill failed");
+            // Indirect prefill path: router -> setup -> prefill experts -> finalize
+            self.clear_indirect_buffers(root, &buffers, suffix_length);
+            self.encode_router(root, &buffers, suffix_length);
+            self.encode_indirect_setup(root, &buffers, suffix_length);
+            self.encode_indirect_prefill_path(root, &buffers, suffix_length);
         }
-
-        self.finalize_kernel
-            .encode(
-                root,
-                super::MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &main_buf,
-                    t: suffix_length,
-                    d_model: self.model_dim,
-                    k,
-                },
-                self.data_type,
-            )
-            .expect("MoE finalize failed");
 
         if parameters.wait_until_completed {
             command_buffer.commit_and_continue();
