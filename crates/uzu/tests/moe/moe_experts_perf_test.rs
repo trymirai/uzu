@@ -347,6 +347,7 @@ fn test_two_pass_prefill_speed() {
     let cases = vec![
         ("T32_E16_D1024_F4096", 32, 1024, 4096, 16, 4, 2, 10),
         ("T64_E16_D2048_F6144", 64, 2048, 6144, 16, 4, 2, 10),
+        ("T256_E16_D2048_F6144", 256, 2048, 6144, 16, 4, 2, 10),
     ];
 
     for (name, t, d_model, d_ff, e, k, warmup, iters) in cases {
