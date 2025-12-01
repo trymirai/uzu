@@ -383,20 +383,18 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel
-        .encode(
-            &compute_encoder,
-            RMSNormArguments {
-                input_buffer: &input_buffer,
-                scales_buffer: &scale_buffer,
-                output_buffer: &output_buffer,
-                batch_size,
-                model_dim,
-                epsilon,
-                scale_offset: 0.0,
-            },
-        )
-        .expect("Failed to encode RMS norm kernel");
+    kernel.encode(
+        &compute_encoder,
+        RMSNormArguments {
+            input_buffer: &input_buffer,
+            scales_buffer: &scale_buffer,
+            output_buffer: &output_buffer,
+            batch_size,
+            model_dim,
+            epsilon,
+            scale_offset: 0.0,
+        },
+    );
 
     compute_encoder.end_encoding();
     command_buffer_ref.commit();
@@ -516,20 +514,18 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel
-        .encode(
-            &compute_encoder,
-            RMSNormArguments {
-                input_buffer: &input_buffer,
-                scales_buffer: &scale_buffer,
-                output_buffer: &output_buffer,
-                batch_size,
-                model_dim,
-                epsilon,
-                scale_offset: 0.0,
-            },
-        )
-        .expect("Failed to encode RMS norm kernel");
+    kernel.encode(
+        &compute_encoder,
+        RMSNormArguments {
+            input_buffer: &input_buffer,
+            scales_buffer: &scale_buffer,
+            output_buffer: &output_buffer,
+            batch_size,
+            model_dim,
+            epsilon,
+            scale_offset: 0.0,
+        },
+    );
 
     compute_encoder.end_encoding();
     command_buffer_ref.commit();
@@ -857,20 +853,18 @@ fn perf_rms_norm_with_size(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel
-        .encode(
-            &compute_encoder,
-            RMSNormArguments {
-                input_buffer: &input_buffer,
-                scales_buffer: &scale_buffer,
-                output_buffer: &output_buffer,
-                batch_size,
-                model_dim,
-                epsilon: EPSILON,
-                scale_offset: 0.0,
-            },
-        )
-        .expect("Failed to encode RMS norm kernel");
+    kernel.encode(
+        &compute_encoder,
+        RMSNormArguments {
+            input_buffer: &input_buffer,
+            scales_buffer: &scale_buffer,
+            output_buffer: &output_buffer,
+            batch_size,
+            model_dim,
+            epsilon: EPSILON,
+            scale_offset: 0.0,
+        },
+    );
 
     compute_encoder.end_encoding();
 
@@ -1052,23 +1046,21 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.new_command_buffer();
         let compute_encoder = command_buffer.new_compute_command_encoder();
 
-        q_kernel
-            .encode_qk_norm(
-                &compute_encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: &q_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    num_q_heads, // Now correctly passes actual head count
-                    num_kv_heads, // Now correctly passes actual head count
-                    head_dim,
-                    epsilon,
-                    scale_offset: 0.0,
-                    target: QKNormTarget::QueryHeads, // Only process Q heads
-                },
-            )
-            .expect("Failed to encode Q norm");
+        q_kernel.encode_qk_norm(
+            &compute_encoder,
+            QKNormArguments {
+                qkv_input_buffer: &qkv_buffer,
+                scales_buffer: &q_scales_buffer,
+                qkv_output_buffer: &qkv_buffer,
+                batch_size,
+                num_q_heads, // Now correctly passes actual head count
+                num_kv_heads, // Now correctly passes actual head count
+                head_dim,
+                epsilon,
+                scale_offset: 0.0,
+                target: QKNormTarget::QueryHeads, // Only process Q heads
+            },
+        );
 
         compute_encoder.end_encoding();
         command_buffer.commit();
@@ -1120,23 +1112,21 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.new_command_buffer();
         let compute_encoder = command_buffer.new_compute_command_encoder();
 
-        k_kernel
-            .encode_qk_norm(
-                &compute_encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: &k_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    num_q_heads, // Now correctly passes actual head count
-                    num_kv_heads, // Now correctly passes actual head count
-                    head_dim,
-                    epsilon,
-                    scale_offset: 0.0,
-                    target: QKNormTarget::KeyHeads, // Only process K heads
-                },
-            )
-            .expect("Failed to encode K norm");
+        k_kernel.encode_qk_norm(
+            &compute_encoder,
+            QKNormArguments {
+                qkv_input_buffer: &qkv_buffer,
+                scales_buffer: &k_scales_buffer,
+                qkv_output_buffer: &qkv_buffer,
+                batch_size,
+                num_q_heads, // Now correctly passes actual head count
+                num_kv_heads, // Now correctly passes actual head count
+                head_dim,
+                epsilon,
+                scale_offset: 0.0,
+                target: QKNormTarget::KeyHeads, // Only process K heads
+            },
+        );
 
         compute_encoder.end_encoding();
         command_buffer.commit();

@@ -1291,6 +1291,7 @@ fn test_gumbel_gpu_cpu_match() {
         .encode_gumbel(
             &logits_buffer,
             &seeds_buffer,
+            0,
             &gumbel_logits_buffer,
             BATCH as u32,
             VOCAB as u32,

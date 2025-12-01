@@ -29,8 +29,8 @@ use crate::{
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{
-            ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize,
-            SamplingSeed,
+            AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode,
+            PrefillStepSize, SamplingSeed,
         },
     },
 };
@@ -153,6 +153,7 @@ impl Tracer {
             PrefillStepSize::Custom(prefill_step_size),
             SpeculatorConfig::default(),
             SamplingSeed::default(),
+            AsyncBatchSize::default(),
             false,
         );
         let mut generator_context =
@@ -183,6 +184,7 @@ impl Tracer {
             PrefillStepSize::Custom(prefill_step_size),
             SpeculatorConfig::default(),
             sampling_seed,
+            AsyncBatchSize::default(),
             false,
         );
         let mut generator_context =
