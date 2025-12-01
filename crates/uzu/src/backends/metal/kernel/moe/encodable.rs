@@ -550,6 +550,7 @@ impl MoeBlockEncodable {
         let gating_code = Self::gating_code_from_activation(
             &self.moe_config.expert_config.activation,
         );
+        let silu_alpha = self.moe_config.expert_config.activation.alpha();
 
         self.single_decode_kernel
             .encode(
@@ -568,6 +569,7 @@ impl MoeBlockEncodable {
                     d_ff: self.hidden_dim,
                     k,
                     gating_code,
+                    silu_alpha,
                     data_type: self.data_type,
                 },
             )

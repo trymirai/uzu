@@ -12,8 +12,8 @@ static inline float gelu_approx(float x) {
     return 0.5f * x * (1.0f + tanh(clamp(k0 * (x + k1 * x * x * x), -10.0f, 10.0f)));
 }
 
-static inline float silu(float x) {
-    return x / (1.0f + exp(-x));
+static inline float silu(float x, float alpha) {
+    return x / (1.0f + exp(-alpha * x));
 }
 
 // ============================================================================
@@ -33,6 +33,7 @@ inline void moe_experts_decode_single_pass_a_impl(
     uint d_model,
     uint d_ff,
     uint K,
+    float silu_alpha,
     uint k_slot,
     uint h_block_idx,
     uint simd_gid,
@@ -96,10 +97,10 @@ inline void moe_experts_decode_single_pass_a_impl(
 
         float activated;
         if (GATING_SEL <= 1) {
-            activated = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val);
+            activated = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
         } else {
             float gate_val = acc_gate + float(biases[bias_base + d_ff + h_idx]);
-            float gate_act = (GATING_SEL == 2) ? silu(gate_val) : gelu_approx(gate_val);
+            float gate_act = (GATING_SEL == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
             activated = gate_act * up_val;
         }
 
@@ -117,13 +118,14 @@ kernel void moe_experts_decode_single_pass_a_##SUFFIX( \
     constant uint& d_model [[buffer(5)]], \
     constant uint& d_ff [[buffer(6)]], \
     constant uint& K [[buffer(7)]], \
+    constant float& silu_alpha [[buffer(8)]], \
     uint2 tgpig [[threadgroup_position_in_grid]], \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
     moe_experts_decode_single_pass_a_impl<DTYPE, DTYPE4>( \
         x, topk_ids, W13_all, biases, hidden_out, \
-        d_model, d_ff, K, tgpig.y, tgpig.x, simd_gid, simd_lid); \
+        d_model, d_ff, K, silu_alpha, tgpig.y, tgpig.x, simd_gid, simd_lid); \
 }
 
 MOE_DECODE_SINGLE_PASS_A_KERNEL(half, half4, f16)

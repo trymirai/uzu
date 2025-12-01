@@ -996,6 +996,7 @@ fn test_fused_single_token_decode() {
                 d_ff,
                 k,
                 gating_code,
+                silu_alpha: 1.0, // Standard SiLU for testing
                 data_type: KernelDataType::BFloat16,
             },
         )
@@ -1131,6 +1132,7 @@ fn test_fused_single_token_k4() {
                 d_ff,
                 k,
                 gating_code,
+                silu_alpha: 1.0,
                 data_type: KernelDataType::BFloat16,
             },
         )

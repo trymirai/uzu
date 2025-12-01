@@ -568,6 +568,8 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
     pub k: usize,
     /// Gating activation: 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
     pub gating_code: u32,
+    /// SiLU activation alpha parameter
+    pub silu_alpha: f32,
     /// Data type
     pub data_type: KernelDataType,
 }
@@ -672,6 +674,11 @@ impl MoeExpertsSingleDecodeKernel {
                 7,
                 size_of::<u32>() as u64,
                 &k_u32 as *const u32 as *const _,
+            );
+            encoder.set_bytes(
+                8,
+                size_of::<f32>() as u64,
+                &args.silu_alpha as *const f32 as *const _,
             );
             encoder.dispatch_thread_groups(
                 MTLSize::new(h_blocks as u64, args.k as u64, 1),

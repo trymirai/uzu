@@ -427,6 +427,7 @@ fn run_fused_single_token_case(
         d_ff,
         k,
         gating_code: 2, // SwiGLU
+        silu_alpha: 1.0,
         data_type: KernelDataType::BFloat16,
     };
 
@@ -699,6 +700,7 @@ fn run_fused_decode_timed(
         d_ff,
         k,
         gating_code: 2,
+        silu_alpha: 1.0,
         data_type: KernelDataType::BFloat16,
     };
 
