@@ -641,15 +641,7 @@ impl Generator {
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
         let async_preconditions_buffer =
             self.context.async_buffers.preconditions.clone();
-        // Enable conditional execution via env var (default: enabled)
-        let use_conditional = std::env::var("UZU_CONDITIONAL_EXECUTION")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
-        let async_precondition = if use_conditional {
-            Some((&async_preconditions_buffer, pass_idx))
-        } else {
-            None
-        };
+        let async_precondition = Some((&async_preconditions_buffer, pass_idx));
 
         let mut state = ForwardPassState::new(
             self.context.mtl_context.clone(),
