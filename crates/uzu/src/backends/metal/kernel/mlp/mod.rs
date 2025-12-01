@@ -1,5 +1,6 @@
 use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState, MTLSize,
+    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
+    MTLSize,
 };
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 

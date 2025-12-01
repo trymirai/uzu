@@ -218,13 +218,13 @@ impl MoeBlockEncodable {
                     e
                 ))
             })?;
-        let single_decode_kernel =
-            MoeExpertsSingleDecodeKernel::new(context).map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Simple decode fused kernel error: {:?}",
-                    e
-                ))
-            })?;
+        let single_decode_kernel = MoeExpertsSingleDecodeKernel::new(context)
+            .map_err(|e| {
+            crate::backends::metal::MTLError::Generic(format!(
+                "Simple decode fused kernel error: {:?}",
+                e
+            ))
+        })?;
         let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Finalize kernel error: {:?}",

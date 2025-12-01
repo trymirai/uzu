@@ -13,17 +13,17 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
+        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
     },
 };
 
 #[path = "moe_test_utils.rs"]
 mod test_utils;
 use test_utils::{
-    alloc_buffer, alloc_buffer_with_data, assert_bf16_close,
-    cpu_tile_counts, cpu_tile_scan, create_ctx,
+    alloc_buffer, alloc_buffer_with_data, assert_bf16_close, cpu_tile_counts,
+    cpu_tile_scan, create_ctx,
 };
 
 /// Build expert segment offsets - distributes sum_k rows across e experts
@@ -201,8 +201,12 @@ fn cpu_moe_single_token(
     let gelu_approx = |x: f32| -> f32 {
         const K0: f32 = 0.7978845608;
         const K1: f32 = 0.044715;
-        if x > 10.0 { return x; }
-        if x < -10.0 { return 0.0; }
+        if x > 10.0 {
+            return x;
+        }
+        if x < -10.0 {
+            return 0.0;
+        }
         let x3 = x * x * x;
         let inner = x + K1 * x3;
         let tanh_arg = (K0 * inner).clamp(-10.0, 10.0);
@@ -214,7 +218,9 @@ fn cpu_moe_single_token(
     // Pass A: x @ W13[expert] -> hidden[k]
     for k_idx in 0..k {
         let expert_id = topk_ids[k_idx];
-        if expert_id < 0 { continue; }
+        if expert_id < 0 {
+            continue;
+        }
         let expert = expert_id as usize;
 
         let w13_base = expert * 2 * d_ff * d_model;
@@ -232,16 +238,25 @@ fn cpu_moe_single_token(
             // Gate projection (for SwiGLU/GEGLU)
             let activated = if gating_code <= 1 {
                 // GELU or SiLU on up
-                if gating_code == 0 { gelu_approx(acc_up) } else { silu(acc_up) }
+                if gating_code == 0 {
+                    gelu_approx(acc_up)
+                } else {
+                    silu(acc_up)
+                }
             } else {
                 // SwiGLU or GEGLU
                 let mut acc_gate = f32::from(up_biases[bias_base + d_ff + h]);
                 for d in 0..d_model {
                     let x_val = f32::from(x[d]);
-                    let w_val = f32::from(w13_all[w13_base + (d_ff + h) * d_model + d]);
+                    let w_val =
+                        f32::from(w13_all[w13_base + (d_ff + h) * d_model + d]);
                     acc_gate += x_val * w_val;
                 }
-                let gate_act = if gating_code == 2 { silu(acc_gate) } else { gelu_approx(acc_gate) };
+                let gate_act = if gating_code == 2 {
+                    silu(acc_gate)
+                } else {
+                    gelu_approx(acc_gate)
+                };
                 gate_act * acc_up
             };
 
@@ -255,7 +270,9 @@ fn cpu_moe_single_token(
 
         for k_idx in 0..k {
             let expert_id = topk_ids[k_idx];
-            if expert_id < 0 { continue; }
+            if expert_id < 0 {
+                continue;
+            }
             let expert = expert_id as usize;
             let prob = f32::from(topk_probs[k_idx]);
 
@@ -616,9 +633,17 @@ fn test_two_pass_decode_multi_token() {
     );
 
     let tolerance = 0.01;
-    assert_bf16_close(output_gpu, &expected, tolerance, "2-pass decode multi-token output");
+    assert_bf16_close(
+        output_gpu,
+        &expected,
+        tolerance,
+        "2-pass decode multi-token output",
+    );
 
-    eprintln!("[2-pass decode multi-token] ✓ PASSED (tolerance={:.4})", tolerance);
+    eprintln!(
+        "[2-pass decode multi-token] ✓ PASSED (tolerance={:.4})",
+        tolerance
+    );
 }
 
 #[test]
@@ -904,7 +929,8 @@ fn test_fused_single_token_decode() {
     let topk_ids: Vec<i32> = (0..k).map(|i| (i % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> =
+            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
@@ -925,9 +951,16 @@ fn test_fused_single_token_decode() {
     // CPU reference (gating_code=2 for SwiGLU)
     let gating_code = 2u32;
     let y_expected = cpu_moe_single_token(
-        &x, &topk_ids, &topk_probs,
-        &w13_all, &w2_all, &up_biases, &down_biases,
-        d_model, d_ff, gating_code,
+        &x,
+        &topk_ids,
+        &topk_probs,
+        &w13_all,
+        &w2_all,
+        &up_biases,
+        &down_biases,
+        d_model,
+        d_ff,
+        gating_code,
     );
 
     // GPU buffers
@@ -981,7 +1014,9 @@ fn test_fused_single_token_decode() {
     let mut sum_abs_error = 0.0f32;
     let mut max_idx = 0;
 
-    for (i, (&gpu_val, &cpu_val)) in y_gpu.iter().zip(y_expected.iter()).enumerate() {
+    for (i, (&gpu_val, &cpu_val)) in
+        y_gpu.iter().zip(y_expected.iter()).enumerate()
+    {
         let abs_error = (f32::from(gpu_val) - f32::from(cpu_val)).abs();
         sum_abs_error += abs_error;
         if abs_error > max_abs_error {
@@ -993,13 +1028,20 @@ fn test_fused_single_token_decode() {
 
     eprintln!(
         "[fused single-token] Max error: {:.6} at idx {} (GPU={:.6}, CPU={:.6}), Mean error: {:.6}",
-        max_abs_error, max_idx,
-        f32::from(y_gpu[max_idx]), f32::from(y_expected[max_idx]),
+        max_abs_error,
+        max_idx,
+        f32::from(y_gpu[max_idx]),
+        f32::from(y_expected[max_idx]),
         mean_abs_error
     );
 
     let tolerance = 0.02;
-    assert_bf16_close(y_gpu, &y_expected, tolerance, "fused single-token output");
+    assert_bf16_close(
+        y_gpu,
+        &y_expected,
+        tolerance,
+        "fused single-token output",
+    );
 
     eprintln!("[fused single-token] PASSED (tolerance={:.4})", tolerance);
 }
@@ -1026,7 +1068,8 @@ fn test_fused_single_token_k4() {
     let topk_ids: Vec<i32> = (0..k).map(|i| ((i * 2) % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> =
+            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
@@ -1046,9 +1089,16 @@ fn test_fused_single_token_k4() {
 
     let gating_code = 2u32;
     let y_expected = cpu_moe_single_token(
-        &x, &topk_ids, &topk_probs,
-        &w13_all, &w2_all, &up_biases, &down_biases,
-        d_model, d_ff, gating_code,
+        &x,
+        &topk_ids,
+        &topk_probs,
+        &w13_all,
+        &w2_all,
+        &up_biases,
+        &down_biases,
+        d_model,
+        d_ff,
+        gating_code,
     );
 
     let x_buf = alloc_buffer_with_data(&ctx, &x);
@@ -1061,25 +1111,29 @@ fn test_fused_single_token_k4() {
     let hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
-    let fused_kernel = MoeExpertsSingleDecodeKernel::new(&ctx).expect("fused kernel");
+    let fused_kernel =
+        MoeExpertsSingleDecodeKernel::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.new_command_buffer();
     fused_kernel
-        .encode(&cb, MoeExpertsSingleDecodeArguments {
-            x: &x_buf,
-            topk_ids: &topk_ids_buf,
-            topk_probs: &topk_probs_buf,
-            w13_all: &w13_buf,
-            w2_all: &w2_buf,
-            up_biases: &up_biases_buf,
-            down_biases: &down_biases_buf,
-            hidden: &hidden_buf,
-            y: &y_buf,
-            d_model,
-            d_ff,
-            k,
-            gating_code,
-            data_type: KernelDataType::BFloat16,
-        })
+        .encode(
+            &cb,
+            MoeExpertsSingleDecodeArguments {
+                x: &x_buf,
+                topk_ids: &topk_ids_buf,
+                topk_probs: &topk_probs_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                hidden: &hidden_buf,
+                y: &y_buf,
+                d_model,
+                d_ff,
+                k,
+                gating_code,
+                data_type: KernelDataType::BFloat16,
+            },
+        )
         .expect("fused encode");
     cb.commit();
     cb.wait_until_completed();
@@ -1093,7 +1147,9 @@ fn test_fused_single_token_k4() {
     let mut sum_abs_error = 0.0f32;
     let mut max_idx = 0;
 
-    for (i, (&gpu_val, &cpu_val)) in y_gpu.iter().zip(y_expected.iter()).enumerate() {
+    for (i, (&gpu_val, &cpu_val)) in
+        y_gpu.iter().zip(y_expected.iter()).enumerate()
+    {
         let abs_error = (f32::from(gpu_val) - f32::from(cpu_val)).abs();
         sum_abs_error += abs_error;
         if abs_error > max_abs_error {
@@ -1105,13 +1161,20 @@ fn test_fused_single_token_k4() {
 
     eprintln!(
         "[fused single-token K=4] Max error: {:.6} at idx {} (GPU={:.6}, CPU={:.6}), Mean error: {:.6}",
-        max_abs_error, max_idx,
-        f32::from(y_gpu[max_idx]), f32::from(y_expected[max_idx]),
+        max_abs_error,
+        max_idx,
+        f32::from(y_gpu[max_idx]),
+        f32::from(y_expected[max_idx]),
         mean_abs_error
     );
 
     let tolerance = 0.02;
-    assert_bf16_close(y_gpu, &y_expected, tolerance, "fused single-token K=4 output");
+    assert_bf16_close(
+        y_gpu,
+        &y_expected,
+        tolerance,
+        "fused single-token K=4 output",
+    );
 
     eprintln!("[fused single-token K=4] PASSED (tolerance={:.4})", tolerance);
 }

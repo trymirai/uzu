@@ -5,9 +5,9 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::moe::{
+        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
     },
 };
 
@@ -380,7 +380,8 @@ fn run_fused_single_token_case(
     let topk_ids: Vec<i32> = (0..k).map(|i| (i % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> =
+            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
@@ -398,7 +399,8 @@ fn run_fused_single_token_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+    let fused_kernel =
+        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -449,7 +451,8 @@ fn run_fused_single_token_case(
     let median = times[times.len() / 2];
     let min = times[0];
     let max = times[times.len() - 1];
-    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
+    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
+        / times.len() as f64;
     let std = var.sqrt();
 
     eprintln!(
@@ -471,7 +474,9 @@ fn test_fused_single_token_speed() {
     ];
 
     for (name, d_model, d_ff, e, k, warmup, iters) in cases {
-        run_fused_single_token_case(&ctx, name, d_model, d_ff, e, k, warmup, iters);
+        run_fused_single_token_case(
+            &ctx, name, d_model, d_ff, e, k, warmup, iters,
+        );
     }
 }
 
@@ -496,10 +501,13 @@ fn test_single_token_indirect_vs_fused() {
         eprintln!("[{}] D={}, FF={}, E={}, K={}", name, d_model, d_ff, e, k);
 
         // Run indirect decode (T=1)
-        let indirect_mean = run_indirect_decode_timed(&ctx, 1, d_model, d_ff, e, k, warmup, iters);
+        let indirect_mean = run_indirect_decode_timed(
+            &ctx, 1, d_model, d_ff, e, k, warmup, iters,
+        );
 
         // Run fused decode
-        let fused_mean = run_fused_decode_timed(&ctx, d_model, d_ff, e, k, warmup, iters);
+        let fused_mean =
+            run_fused_decode_timed(&ctx, d_model, d_ff, e, k, warmup, iters);
 
         let speedup = indirect_mean / fused_mean;
         eprintln!(
@@ -555,7 +563,8 @@ fn run_indirect_decode_timed(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(ctx).expect("decode kernel");
+    let experts_kernel =
+        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
@@ -643,7 +652,8 @@ fn run_fused_decode_timed(
     let topk_ids: Vec<i32> = (0..k).map(|i| (i % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> =
+            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
@@ -661,7 +671,8 @@ fn run_fused_decode_timed(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+    let fused_kernel =
+        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);

@@ -1,7 +1,3 @@
-// UZU MoE Experts Decode Single-Token
-// Optimized path for T=1: skips scatter/gather, fuses finalize into Pass B
-// Naming convention: moe_experts_decode_single_* (matches moe_experts_decode_*)
-
 #include <metal_stdlib>
 #include <metal_simdgroup>
 using namespace metal;

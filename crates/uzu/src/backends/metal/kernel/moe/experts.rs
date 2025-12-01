@@ -539,11 +539,6 @@ impl MoeExpertsTwoPassPrefillKernel {
     }
 }
 
-// =============================================================================
-// Single-Token Decode Kernel (T=1 optimization)
-// Skips scatter/gather/counts, fuses finalize into Pass B
-// =============================================================================
-
 /// Arguments for single-token MoE decode (T=1 optimized path)
 #[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a> {
@@ -604,13 +599,11 @@ impl MoeExpertsSingleDecodeKernel {
                 let kernel_name =
                     format!("moe_experts_decode_single_pass_a_{}", suffix);
                 let cache_key = format!("{}_gate_{}", kernel_name, gate);
-                pass_a[gate as usize].push(
-                    ctx.compute_pipeline_state_cached(
-                        &cache_key,
-                        &kernel_name,
-                        Some(&fcv),
-                    )?,
-                );
+                pass_a[gate as usize].push(ctx.compute_pipeline_state_cached(
+                    &cache_key,
+                    &kernel_name,
+                    Some(&fcv),
+                )?);
             }
         }
 
@@ -623,7 +616,10 @@ impl MoeExpertsSingleDecodeKernel {
             pass_b.push(ctx.compute_pipeline_state(&kernel_name, None)?);
         }
 
-        Ok(Self { pass_a, pass_b })
+        Ok(Self {
+            pass_a,
+            pass_b,
+        })
     }
 
     /// Encode the single-token decode pipeline
