@@ -570,6 +570,14 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
     pub gating_code: u32,
     /// SiLU activation alpha parameter
     pub silu_alpha: f32,
+    /// Gate clipping min
+    pub gate_clip_min: f32,
+    /// Gate clipping max
+    pub gate_clip_max: f32,
+    /// Up clipping min
+    pub up_clip_min: f32,
+    /// Up clipping max
+    pub up_clip_max: f32,
     /// Data type
     pub data_type: KernelDataType,
 }
@@ -679,6 +687,26 @@ impl MoeExpertsSingleDecodeKernel {
                 8,
                 size_of::<f32>() as u64,
                 &args.silu_alpha as *const f32 as *const _,
+            );
+            encoder.set_bytes(
+                9,
+                size_of::<f32>() as u64,
+                &args.gate_clip_min as *const f32 as *const _,
+            );
+            encoder.set_bytes(
+                10,
+                size_of::<f32>() as u64,
+                &args.gate_clip_max as *const f32 as *const _,
+            );
+            encoder.set_bytes(
+                11,
+                size_of::<f32>() as u64,
+                &args.up_clip_min as *const f32 as *const _,
+            );
+            encoder.set_bytes(
+                12,
+                size_of::<f32>() as u64,
+                &args.up_clip_max as *const f32 as *const _,
             );
             encoder.dispatch_thread_groups(
                 MTLSize::new(h_blocks as u64, args.k as u64, 1),

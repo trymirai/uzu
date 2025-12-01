@@ -428,6 +428,10 @@ fn run_fused_single_token_case(
         k,
         gating_code: 2, // SwiGLU
         silu_alpha: 1.0,
+        gate_clip_min: f32::NEG_INFINITY,
+        gate_clip_max: f32::INFINITY,
+        up_clip_min: f32::NEG_INFINITY,
+        up_clip_max: f32::INFINITY,
         data_type: KernelDataType::BFloat16,
     };
 
@@ -701,6 +705,10 @@ fn run_fused_decode_timed(
         k,
         gating_code: 2,
         silu_alpha: 1.0,
+        gate_clip_min: f32::NEG_INFINITY,
+        gate_clip_max: f32::INFINITY,
+        up_clip_min: f32::NEG_INFINITY,
+        up_clip_max: f32::INFINITY,
         data_type: KernelDataType::BFloat16,
     };
 

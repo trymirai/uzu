@@ -34,6 +34,10 @@ inline void moe_experts_decode_single_pass_a_impl(
     uint d_ff,
     uint K,
     float silu_alpha,
+    float gate_clip_min,
+    float gate_clip_max,
+    float up_clip_min,
+    float up_clip_max,
     uint k_slot,
     uint h_block_idx,
     uint simd_gid,
@@ -93,13 +97,13 @@ inline void moe_experts_decode_single_pass_a_impl(
     }
 
     if (simd_lid == 0) {
-        float up_val = acc_up + float(biases[bias_base + h_idx]);
+        float up_val = clamp(acc_up + float(biases[bias_base + h_idx]), up_clip_min, up_clip_max);
 
         float activated;
         if (GATING_SEL <= 1) {
             activated = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
         } else {
-            float gate_val = acc_gate + float(biases[bias_base + d_ff + h_idx]);
+            float gate_val = clamp(acc_gate + float(biases[bias_base + d_ff + h_idx]), gate_clip_min, gate_clip_max);
             float gate_act = (GATING_SEL == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
             activated = gate_act * up_val;
         }
@@ -119,13 +123,19 @@ kernel void moe_experts_decode_single_pass_a_##SUFFIX( \
     constant uint& d_ff [[buffer(6)]], \
     constant uint& K [[buffer(7)]], \
     constant float& silu_alpha [[buffer(8)]], \
+    constant float& gate_clip_min [[buffer(9)]], \
+    constant float& gate_clip_max [[buffer(10)]], \
+    constant float& up_clip_min [[buffer(11)]], \
+    constant float& up_clip_max [[buffer(12)]], \
     uint2 tgpig [[threadgroup_position_in_grid]], \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
     moe_experts_decode_single_pass_a_impl<DTYPE, DTYPE4>( \
         x, topk_ids, W13_all, biases, hidden_out, \
-        d_model, d_ff, K, silu_alpha, tgpig.y, tgpig.x, simd_gid, simd_lid); \
+        d_model, d_ff, K, silu_alpha, \
+        gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, \
+        tgpig.y, tgpig.x, simd_gid, simd_lid); \
 }
 
 MOE_DECODE_SINGLE_PASS_A_KERNEL(half, half4, f16)

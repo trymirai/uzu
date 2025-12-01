@@ -551,6 +551,12 @@ impl MoeBlockEncodable {
             &self.moe_config.expert_config.activation,
         );
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
+        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0]
+            .unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1]
+            .unwrap_or(f32::INFINITY);
+        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
+        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
 
         self.single_decode_kernel
             .encode(
@@ -570,6 +576,10 @@ impl MoeBlockEncodable {
                     k,
                     gating_code,
                     silu_alpha,
+                    gate_clip_min,
+                    gate_clip_max,
+                    up_clip_min,
+                    up_clip_max,
                     data_type: self.data_type,
                 },
             )
