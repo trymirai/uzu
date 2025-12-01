@@ -10,11 +10,11 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
     MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
+    MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
     MoeExpertsTwoPassPrefillKernel, MoeFinalizeArguments, MoeFinalizeKernel,
     MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
     MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
-    MoeSimpleDecodeFusedArguments, MoeSimpleDecodeFusedKernel,
 };
 use crate::{
     DataType,
@@ -92,7 +92,7 @@ pub struct MoeBlockEncodable {
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
 
     // Single-token decode path
-    simple_decode_fused_kernel: MoeSimpleDecodeFusedKernel,
+    single_decode_kernel: MoeExpertsSingleDecodeKernel,
 
     // Config and weights
     moe_config: MixtureOfExpertsConfig,
@@ -218,8 +218,8 @@ impl MoeBlockEncodable {
                     e
                 ))
             })?;
-        let simple_decode_fused_kernel =
-            MoeSimpleDecodeFusedKernel::new(context).map_err(|e| {
+        let single_decode_kernel =
+            MoeExpertsSingleDecodeKernel::new(context).map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
                     "Simple decode fused kernel error: {:?}",
                     e
@@ -325,7 +325,7 @@ impl MoeBlockEncodable {
             gather_kernel,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
-            simple_decode_fused_kernel,
+            single_decode_kernel,
             finalize_kernel,
             moe_config: moe_config.clone(),
             model_dim,
@@ -551,10 +551,10 @@ impl MoeBlockEncodable {
             &self.moe_config.expert_config.activation,
         );
 
-        self.simple_decode_fused_kernel
+        self.single_decode_kernel
             .encode(
                 root,
-                MoeSimpleDecodeFusedArguments {
+                MoeExpertsSingleDecodeArguments {
                     x: &buffers.main,
                     topk_ids: &buffers.topk_ids,
                     topk_probs: &buffers.topk_probs,

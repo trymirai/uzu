@@ -7,7 +7,7 @@ use uzu::backends::metal::{
     kernel::moe::{
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
-        MoeSimpleDecodeFusedArguments, MoeSimpleDecodeFusedKernel,
+        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
     },
 };
 
@@ -398,7 +398,7 @@ fn run_fused_single_token_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel = MoeSimpleDecodeFusedKernel::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -410,7 +410,7 @@ fn run_fused_single_token_case(
     let hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
     let y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
-    let make_args = || MoeSimpleDecodeFusedArguments {
+    let make_args = || MoeExpertsSingleDecodeArguments {
         x: &x_buf,
         topk_ids: &topk_ids_buf,
         topk_probs: &topk_probs_buf,
@@ -661,7 +661,7 @@ fn run_fused_decode_timed(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel = MoeSimpleDecodeFusedKernel::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -673,7 +673,7 @@ fn run_fused_decode_timed(
     let hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
     let y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
-    let make_args = || MoeSimpleDecodeFusedArguments {
+    let make_args = || MoeExpertsSingleDecodeArguments {
         x: &x_buf,
         topk_ids: &topk_ids_buf,
         topk_probs: &topk_probs_buf,

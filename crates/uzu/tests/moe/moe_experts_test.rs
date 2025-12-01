@@ -15,7 +15,7 @@ use uzu::backends::metal::{
     kernel::moe::{
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
-        MoeSimpleDecodeFusedArguments, MoeSimpleDecodeFusedKernel,
+        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
     },
 };
 
@@ -942,14 +942,14 @@ fn test_fused_single_token_decode() {
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     // Run fused decode kernel
-    let fused_kernel = MoeSimpleDecodeFusedKernel::new(&ctx)
-        .expect("MoeSimpleDecodeFusedKernel::new");
+    let fused_kernel = MoeExpertsSingleDecodeKernel::new(&ctx)
+        .expect("MoeExpertsSingleDecodeKernel::new");
     let cb = ctx.command_queue.new_command_buffer();
 
     fused_kernel
         .encode(
             &cb,
-            MoeSimpleDecodeFusedArguments {
+            MoeExpertsSingleDecodeArguments {
                 x: &x_buf,
                 topk_ids: &topk_ids_buf,
                 topk_probs: &topk_probs_buf,
@@ -1061,10 +1061,10 @@ fn test_fused_single_token_k4() {
     let hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
-    let fused_kernel = MoeSimpleDecodeFusedKernel::new(&ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernel::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.new_command_buffer();
     fused_kernel
-        .encode(&cb, MoeSimpleDecodeFusedArguments {
+        .encode(&cb, MoeExpertsSingleDecodeArguments {
             x: &x_buf,
             topk_ids: &topk_ids_buf,
             topk_probs: &topk_probs_buf,

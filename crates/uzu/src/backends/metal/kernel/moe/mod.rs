@@ -10,7 +10,6 @@ mod finalize;
 mod gather;
 mod router_topk;
 mod scatter;
-mod simple_decode_fused;
 mod tiles;
 
 // Re-export public items from submodules
@@ -19,7 +18,8 @@ pub use counts_offsets_fused::{
     MoeCountsOffsetsFusedKernel,
 };
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
+    MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };
@@ -31,9 +31,6 @@ pub use router_topk::{
 pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     MoeScatterWithMapArguments,
-};
-pub use simple_decode_fused::{
-    MoeSimpleDecodeFusedArguments, MoeSimpleDecodeFusedError, MoeSimpleDecodeFusedKernel,
 };
 pub use tiles::{
     MoePassARowMapArguments, MoePassATileBuildArguments,

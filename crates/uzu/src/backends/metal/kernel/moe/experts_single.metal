@@ -1,6 +1,6 @@
-// UZU MoE Simple Decode - Fused Variant
-// Fuses Pass B + Finalize into single kernel
-// Pass A unchanged, Pass B computes y directly (no y_partial)
+// UZU MoE Experts Decode Single-Token
+// Optimized path for T=1: skips scatter/gather, fuses finalize into Pass B
+// Naming convention: moe_experts_decode_single_* (matches moe_experts_decode_*)
 
 #include <metal_stdlib>
 #include <metal_simdgroup>
@@ -21,14 +21,14 @@ static inline float silu(float x) {
 }
 
 // ============================================================================
-// Pass A: x @ W13[expert] → hidden[k]  (unchanged from simple_decode.metal)
+// Pass A: x @ W13[expert] → hidden[k]
 // Each threadgroup: 4 simdgroups, outputs 4 elements (1 per simdgroup)
 // Each simdgroup: 32 threads reduce d_model with float4 vectorized loads
 // Grid: (ceil(d_ff/4), K)
 // ============================================================================
 
 template<typename T, typename T4>
-inline void simple_decode_pass_a_impl(
+inline void moe_experts_decode_single_pass_a_impl(
     device const T* x,
     device const int* topk_ids,
     device const T* W13_all,
@@ -111,8 +111,8 @@ inline void simple_decode_pass_a_impl(
     }
 }
 
-#define FUSED_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX) \
-kernel void moe_simple_decode_fused_pass_a_##SUFFIX( \
+#define MOE_DECODE_SINGLE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX) \
+kernel void moe_experts_decode_single_pass_a_##SUFFIX( \
     device const DTYPE* x [[buffer(0)]], \
     device const int* topk_ids [[buffer(1)]], \
     device const DTYPE* W13_all [[buffer(2)]], \
@@ -125,25 +125,25 @@ kernel void moe_simple_decode_fused_pass_a_##SUFFIX( \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    simple_decode_pass_a_impl<DTYPE, DTYPE4>( \
+    moe_experts_decode_single_pass_a_impl<DTYPE, DTYPE4>( \
         x, topk_ids, W13_all, biases, hidden_out, \
         d_model, d_ff, K, tgpig.y, tgpig.x, simd_gid, simd_lid); \
 }
 
-FUSED_PASS_A_KERNEL(half, half4, f16)
-FUSED_PASS_A_KERNEL(bfloat, bfloat4, bf16)
-FUSED_PASS_A_KERNEL(float, float4, f32)
+MOE_DECODE_SINGLE_PASS_A_KERNEL(half, half4, f16)
+MOE_DECODE_SINGLE_PASS_A_KERNEL(bfloat, bfloat4, bf16)
+MOE_DECODE_SINGLE_PASS_A_KERNEL(float, float4, f32)
 
 
 // ============================================================================
-// Fused Pass B: hidden[k] @ W2[expert] → y (directly, no y_partial)
+// Pass B (fused with finalize): hidden[k] @ W2[expert] → y (directly)
 // Computes: y[d] = Σ_k prob[k] * (hidden[k] @ W2[expert_k, d] + bias)
 // Each simdgroup computes one final output element
 // Grid: (ceil(d_model/8), 1)  - NOT per K!
 // ============================================================================
 
 template<typename T, typename T4>
-inline void simple_decode_fused_pass_b_impl(
+inline void moe_experts_decode_single_pass_b_impl(
     device const float* hidden,     // [K, d_ff]
     device const int* topk_ids,     // [K]
     device const T* topk_probs,     // [K]
@@ -206,8 +206,8 @@ inline void simple_decode_fused_pass_b_impl(
     }
 }
 
-#define FUSED_PASS_B_KERNEL(DTYPE, DTYPE4, SUFFIX) \
-kernel void moe_simple_decode_fused_pass_b_##SUFFIX( \
+#define MOE_DECODE_SINGLE_PASS_B_KERNEL(DTYPE, DTYPE4, SUFFIX) \
+kernel void moe_experts_decode_single_pass_b_##SUFFIX( \
     device const float* hidden [[buffer(0)]], \
     device const int* topk_ids [[buffer(1)]], \
     device const DTYPE* topk_probs [[buffer(2)]], \
@@ -221,11 +221,11 @@ kernel void moe_simple_decode_fused_pass_b_##SUFFIX( \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    simple_decode_fused_pass_b_impl<DTYPE, DTYPE4>( \
+    moe_experts_decode_single_pass_b_impl<DTYPE, DTYPE4>( \
         hidden, topk_ids, topk_probs, W2_all, biases, y, \
         d_model, d_ff, K, tgpig, simd_gid, simd_lid); \
 }
 
-FUSED_PASS_B_KERNEL(half, half4, f16)
-FUSED_PASS_B_KERNEL(bfloat, bfloat4, bf16)
-FUSED_PASS_B_KERNEL(float, float4, f32)
+MOE_DECODE_SINGLE_PASS_B_KERNEL(half, half4, f16)
+MOE_DECODE_SINGLE_PASS_B_KERNEL(bfloat, bfloat4, bf16)
+MOE_DECODE_SINGLE_PASS_B_KERNEL(float, float4, f32)
