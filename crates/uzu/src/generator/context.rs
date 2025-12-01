@@ -38,6 +38,10 @@ pub struct AsyncBuffers {
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
     pub seeds: metal::Buffer,
+    /// Preconditions buffer: [max_tokens] u32
+    /// Each element is 0 (should execute) or 1 (should skip).
+    /// CPU sets to 1 when stop condition detected to skip remaining batched work.
+    pub preconditions: metal::Buffer,
     /// Results buffer: [lookahead] u32
     /// Each pass writes its sampled token to results[pass_idx % lookahead]
     pub results: metal::Buffer,
@@ -65,6 +69,10 @@ impl AsyncBuffers {
             (max_tokens * std::mem::size_of::<u64>()) as u64,
             metal::MTLResourceOptions::StorageModeShared,
         );
+        let preconditions = device.new_buffer(
+            (max_tokens * std::mem::size_of::<u32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
         let results = device.new_buffer(
             (lookahead * std::mem::size_of::<u32>()) as u64,
             metal::MTLResourceOptions::StorageModeShared,
@@ -74,6 +82,7 @@ impl AsyncBuffers {
         Self {
             positions,
             seeds,
+            preconditions,
             results,
             event,
             counter: Cell::new(0),
@@ -109,6 +118,31 @@ impl AsyncBuffers {
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed_source.next();
+            }
+        }
+    }
+
+    pub fn prepare_preconditions(
+        &self,
+        tokens_to_generate: usize,
+    ) {
+        let ptr = self.preconditions.contents() as *mut u32;
+        for i in 0..tokens_to_generate {
+            unsafe {
+                *ptr.add(i) = 0; // 0 = should execute
+            }
+        }
+    }
+
+    pub fn invalidate_preconditions_from(
+        &self,
+        from_idx: usize,
+        tokens_to_generate: usize,
+    ) {
+        let ptr = self.preconditions.contents() as *mut u32;
+        for i in from_idx..tokens_to_generate {
+            unsafe {
+                *ptr.add(i) = 1; // 1 = should skip
             }
         }
     }

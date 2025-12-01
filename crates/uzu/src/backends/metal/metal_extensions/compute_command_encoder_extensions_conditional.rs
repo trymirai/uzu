@@ -22,8 +22,9 @@ fn invert_compare_fn(cmp: MTLCompareFunction) -> MTLCompareFunction {
 }
 
 /// Low-level, unsafe conditional control of Metal encoders.
-/// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.
-trait ComputeEncoderRawConditional {
+/// Users should prefer the safe `ComputeEncoderConditional::condition` when possible,
+/// but this trait is exposed for cases where conditional blocks need to span multiple encode calls.
+pub trait ComputeEncoderRawConditional {
     unsafe fn encode_start_if(
         &self,
         predicate: &BufferRef,

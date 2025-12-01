@@ -9,6 +9,8 @@ mod device_extensions_features;
 mod library_extensions_pipeline;
 
 pub mod command_buffer_extensions;
-pub use compute_command_encoder_extensions_conditional::ComputeEncoderConditional;
+pub use compute_command_encoder_extensions_conditional::{
+    ComputeEncoderConditional, ComputeEncoderRawConditional,
+};
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;

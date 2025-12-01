@@ -798,6 +798,11 @@ impl Session {
                 };
 
                 if should_stop {
+                    generator.invalidate_remaining_async(
+                        total_received,
+                        tokens_to_generate,
+                    );
+
                     let remaining = batch_submitted
                         - (total_received - (next_to_submit - batch_submitted));
                     for _ in 0..remaining {

@@ -135,6 +135,7 @@ impl DecoderTestContext {
             false,
             None,
             None,
+            None,
         );
 
         let executables = DecoderExecutables::new(

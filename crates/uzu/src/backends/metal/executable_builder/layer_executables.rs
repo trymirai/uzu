@@ -469,7 +469,10 @@ impl LayerExecutables {
             None
         };
 
-        let mut resolver = EncoderResolver::new(command_buffer);
+        let mut resolver = EncoderResolver::new(
+            command_buffer,
+            state.execution_precondition.clone(),
+        );
 
         if let Some(layer_traces) = layer_traces.clone() {
             state.copy_array(

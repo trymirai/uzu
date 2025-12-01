@@ -321,6 +321,7 @@ impl Tracer {
             false,
             None,
             None,
+            None,
         );
 
         let root_command_buffer = self

@@ -580,7 +580,18 @@ impl Generator {
         self.context
             .async_buffers
             .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.prepare_preconditions(tokens_to_generate);
         self.context.async_buffers.reset_counter();
+    }
+
+    pub fn invalidate_remaining_async(
+        &self,
+        from_idx: usize,
+        tokens_to_generate: usize,
+    ) {
+        self.context
+            .async_buffers
+            .invalidate_preconditions_from(from_idx, tokens_to_generate);
     }
 
     /// Submits a single async forward pass.
@@ -628,7 +639,17 @@ impl Generator {
 
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
-        // add async_condition_predicate buffer
+        let async_preconditions_buffer =
+            self.context.async_buffers.preconditions.clone();
+        // Enable conditional execution via env var (default: enabled)
+        let use_conditional = std::env::var("UZU_CONDITIONAL_EXECUTION")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        let async_precondition = if use_conditional {
+            Some((&async_preconditions_buffer, pass_idx))
+        } else {
+            None
+        };
 
         let mut state = ForwardPassState::new(
             self.context.mtl_context.clone(),
@@ -647,6 +668,7 @@ impl Generator {
             is_continuation, // skip_token_ids_copy for continuation passes
             async_positions,
             async_seeds,
+            async_precondition,
         );
         state.sampling_method = Some(sampling_method);
 

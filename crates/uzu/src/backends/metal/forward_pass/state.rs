@@ -925,7 +925,10 @@ pub struct ForwardPassState {
     pub traces: Option<Rc<RefCell<DecoderActivationTrace>>>,
     active_suffix_length: usize,
     is_prefilling: bool,
-    // add condition predicate buffer
+    /// Optional execution precondition buffer and offset for conditional GPU execution.
+    /// When Some, the GPU checks precondition[offset] == 0 before executing work.
+    /// CPU can set precondition[offset] = 1 to skip this pass when stop detected.
+    pub execution_precondition: Option<(metal::Buffer, usize)>,
 }
 
 impl ForwardPassState {
@@ -935,6 +938,8 @@ impl ForwardPassState {
     /// - `skip_token_ids_copy`: If true, don't copy token_ids from CPU (GPU handles it)
     /// - `async_positions`: If Some, use pre-allocated positions buffer at offset
     /// - `async_seeds`: If Some, use pre-allocated seeds buffer at offset
+    /// - `async_precondition`: If Some, use pre-allocated precondition buffer at offset
+    ///   for conditional GPU execution (skip work when precondition != 0)
     pub fn new(
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
@@ -952,6 +957,7 @@ impl ForwardPassState {
         skip_token_ids_copy: bool,
         async_positions: Option<(&metal::Buffer, usize)>,
         async_seeds: Option<(&metal::Buffer, usize)>,
+        async_precondition: Option<(&metal::Buffer, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -1125,6 +1131,10 @@ impl ForwardPassState {
             None
         };
 
+        // Execution precondition for conditional GPU execution
+        let execution_precondition =
+            async_precondition.map(|(buffer, offset)| (buffer.clone(), offset));
+
         Self {
             context,
             token_ids: token_ids_refcell,
@@ -1140,6 +1150,7 @@ impl ForwardPassState {
             traces,
             active_suffix_length,
             is_prefilling,
+            execution_precondition,
         }
     }
 
