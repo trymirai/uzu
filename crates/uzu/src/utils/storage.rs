@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use objc2::rc::Retained;
-use objc2_foundation::{NSHomeDirectory, NSString};
+use objc2_foundation::NSHomeDirectory;
 
 /// `NSSearchPathDirectory` values (Darwin) so they can be passed directly to
 /// `NSFileManager::URLsForDirectory:inDomains:` via an `as u64` cast.
@@ -102,11 +101,7 @@ pub fn storage_path() -> PathBuf {
         // `~/Library/Containers/<bundle-id>/Data`. Persist model files inside
         // the app-scoped caches directory to comply with sandbox rules:
         // `~/Library/Containers/<bundle-id>/Data/Library/Caches/…`.
-        let home: String = unsafe {
-            let ns_str: Retained<NSString> = NSHomeDirectory();
-            ns_str.to_string()
-        };
-
+        let home = NSHomeDirectory().to_string();
         PathBuf::from(&home).join("Library").join("Caches")
     };
 

@@ -157,59 +157,65 @@ impl Session {
     where
         F: Fn(Output) -> bool,
     {
-        let context_mode = self
-            .generator
-            .as_ref()
-            .ok_or(Error::GeneratorNotLoaded)?
-            .decoding_config
-            .context_mode
-            .clone();
+        autoreleasepool(|_| {
+            let context_mode = self
+                .generator
+                .as_ref()
+                .ok_or(Error::GeneratorNotLoaded)?
+                .decoding_config
+                .context_mode
+                .clone();
 
-        match &context_mode {
-            ContextMode::None => {
-                let generator =
-                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-                generator.reset_state();
-            },
-            ContextMode::Static {
-                input,
-            } => {
-                if self.static_context.is_none() {
-                    let mut prefill_config = config.clone();
-                    prefill_config.tokens_limit = 0;
-                    let (_out, run_context) =
-                        self.extend(input.clone(), None, prefill_config)?;
-                    self.static_context = Some(run_context);
-                }
-                let tmp = self.static_context.take();
-                if let Some(ref run_context) = tmp {
-                    self.reconfigure_generator(Some(run_context))?;
-                }
-                self.static_context = tmp;
-            },
-            ContextMode::Dynamic => {},
-        }
+            match &context_mode {
+                ContextMode::None => {
+                    let generator = self
+                        .generator
+                        .as_mut()
+                        .ok_or(Error::GeneratorNotLoaded)?;
+                    generator.reset_state();
+                },
+                ContextMode::Static {
+                    input,
+                } => {
+                    if self.static_context.is_none() {
+                        let mut prefill_config = config.clone();
+                        prefill_config.tokens_limit = 0;
+                        let (_out, run_context) =
+                            self.extend(input.clone(), None, prefill_config)?;
+                        self.static_context = Some(run_context);
+                    }
+                    let tmp = self.static_context.take();
+                    if let Some(ref run_context) = tmp {
+                        self.reconfigure_generator(Some(run_context))?;
+                    }
+                    self.static_context = tmp;
+                },
+                ContextMode::Dynamic => {},
+            }
 
-        let output = self.run_internal(input, config, progress)?;
+            let output = self.run_internal(input, config, progress)?;
 
-        match context_mode {
-            ContextMode::None
-            | ContextMode::Static {
-                ..
-            } => {
-                let generator =
-                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-                generator.reset_state();
-            },
-            ContextMode::Dynamic => {},
-        }
-        Ok(output)
+            match context_mode {
+                ContextMode::None
+                | ContextMode::Static {
+                    ..
+                } => {
+                    let generator = self
+                        .generator
+                        .as_mut()
+                        .ok_or(Error::GeneratorNotLoaded)?;
+                    generator.reset_state();
+                },
+                ContextMode::Dynamic => {},
+            }
+            Ok(output)
+        })
     }
 
     pub fn reset(&mut self) -> Result<(), Error> {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
+        autoreleasepool(|_| generator.reset_state());
         Ok(())
     }
 }
