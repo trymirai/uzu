@@ -25,7 +25,7 @@ void batched_topp(
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
         local_max = fmax(local_max, logit_value);
-        local_min = fmin(local_min, logit_value);
+        local_min = select(local_min, fmin(local_min, logit_value), logit_value > -INFINITY);
     }
     float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(local_max, shared_reduce_buffer, thread_idx);
     float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(local_min, shared_reduce_buffer, thread_idx);
@@ -35,7 +35,7 @@ void batched_topp(
     #pragma unroll(4)
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
         float logit_value = float(logits_data[batch_start + i]);
-        local_sum += fast::exp(logit_value - max_logit);
+        local_sum += select(0.0, fast::exp(logit_value - max_logit), logit_value > -INFINITY);
     }
     float total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(local_sum, shared_reduce_buffer, thread_idx);
 

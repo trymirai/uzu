@@ -3,7 +3,7 @@ use std::{
 };
 
 use block::ConcreteBlock;
-use itertools::izip;
+use itertools::{Either, Itertools, izip};
 use mpsgraph::CommandBuffer;
 
 use super::{
@@ -18,6 +18,7 @@ use crate::{
         ForwardPassState, INVALID_POSITION,
         encodable_with_state::{EncodableWithState, EncodingParameters},
     },
+    generator::grammar::CompiledGrammar,
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
@@ -68,6 +69,7 @@ impl Generator {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -91,6 +93,7 @@ impl Generator {
         let suffix_root = TrieNode::from_speculator(
             &tokens,
             &mut self.context.next_seed,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
             suffix_length + 1,
@@ -104,7 +107,7 @@ impl Generator {
             .take(tokens_length - 1)
             .chain(flat_trie.token_ids())
             .chain(repeat_n(0, suffix_length - active_suffix_length))
-            .collect::<Box<[u64]>>();
+            .chunks(prefill_step_size);
 
         let token_positions = (prefix_offset
             ..prefix_offset + tokens_length - 1)
@@ -115,27 +118,54 @@ impl Generator {
                 INVALID_POSITION,
                 suffix_length - active_suffix_length,
             ))
-            .collect::<Box<[usize]>>();
+            .chunks(prefill_step_size);
+
+        let single_token_bitmask_size =
+            self.context.model_shape.bitmask_shape(1)[1];
+        let token_bitmasks = repeat_n(None, tokens_length - 1)
+            .chain(flat_trie.token_masks())
+            .chain(repeat_n(None, suffix_length - active_suffix_length))
+            .chunks(prefill_step_size);
 
         let token_seeds = repeat_n(0, tokens_length - 1)
             .chain(flat_trie.token_seeds())
             .chain(repeat_n(0, suffix_length - active_suffix_length))
-            .collect::<Box<[u64]>>();
+            .chunks(prefill_step_size);
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
-        for (step, (step_token_ids, step_token_positions, step_token_seeds)) in
-            izip!(
-                token_ids.chunks(prefill_step_size),
-                token_positions.chunks(prefill_step_size),
-                token_seeds.chunks(prefill_step_size)
-            )
-            .enumerate()
+        for (
+            step,
+            (
+                step_token_ids,
+                step_token_positions,
+                step_token_bitmask,
+                step_token_seeds,
+            ),
+        ) in
+            izip!(&token_ids, &token_positions, &token_bitmasks, &token_seeds)
+                .enumerate()
         {
             let tokens_start_index = step * prefill_step_size;
             let tokens_end_index = tokens_start_index + prefill_step_size;
+
+            let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
+            let step_token_positions =
+                step_token_positions.collect::<Box<[usize]>>();
+            let step_token_bitmask = step_token_bitmask
+                .map(|mask| match mask {
+                    Some(mask) => Either::Left(mask.iter().copied()),
+                    None => Either::Right(repeat_n(
+                        u32::MAX,
+                        single_token_bitmask_size,
+                    )),
+                })
+                .flatten()
+                .collect::<Box<[u32]>>();
+            let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
+
             let active_suffix_length = step_token_positions
                 .iter()
                 .position(|&pos| pos == INVALID_POSITION)
@@ -158,9 +188,10 @@ impl Generator {
             });
 
             let task = GeneratorRunTask {
-                token_ids: step_token_ids,
-                token_positions: step_token_positions,
-                token_seeds: step_token_seeds,
+                token_ids: &step_token_ids,
+                token_positions: &step_token_positions,
+                token_bitmask: Some(&step_token_bitmask),
+                token_seeds: &step_token_seeds,
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
                 is_prefilling: !should_sample_after_step,
@@ -236,6 +267,12 @@ impl Generator {
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens[suffix_root_index..]);
 
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            for &token in &accepted_tokens {
+                compiled_grammar.accept_token(token);
+            }
+        }
+
         self.update_cache_layers(
             &accepted_token_indices
                 .into_iter()
@@ -256,6 +293,7 @@ impl Generator {
 
     pub fn generate(
         &mut self,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
@@ -264,6 +302,7 @@ impl Generator {
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &mut self.context.next_seed,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
             suffix_length,
@@ -276,6 +315,20 @@ impl Generator {
             .token_ids()
             .chain(repeat_n(0, suffix_length - active_suffix_length))
             .collect::<Box<[u64]>>();
+
+        let single_token_bitmask_size =
+            self.context.model_shape.bitmask_shape(1)[1];
+        let token_bitmask = flat_trie
+            .token_masks()
+            .chain(repeat_n(None, suffix_length - active_suffix_length))
+            .map(|mask| match mask {
+                Some(mask) => Either::Left(mask.iter().copied()),
+                None => {
+                    Either::Right(repeat_n(u32::MAX, single_token_bitmask_size))
+                },
+            })
+            .flatten()
+            .collect::<Box<[u32]>>();
 
         let start_position = self.tokens.len() - 1;
         let token_positions = flat_trie
@@ -295,6 +348,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: &token_ids,
             token_positions: &token_positions,
+            token_bitmask: Some(&token_bitmask),
             token_seeds: &token_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
@@ -312,6 +366,12 @@ impl Generator {
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens);
+
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            for &token in &accepted_tokens {
+                compiled_grammar.accept_token(token);
+            }
+        }
 
         self.update_cache_layers(&accepted_token_indices[1..], None, false);
 
@@ -349,6 +409,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: &repeat_n(0, suffix_length).collect::<Box<[u64]>>(),
             token_positions: &(0..suffix_length).collect::<Box<[usize]>>(),
+            token_bitmask: None,
             token_seeds: &repeat_n(0, suffix_length).collect::<Box<[u64]>>(),
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
@@ -574,6 +635,7 @@ impl Generator {
         let task = GeneratorRunTask {
             token_ids: &[last_token],
             token_positions: &[0], // Ignored, using async buffer
+            token_bitmask: None,   // Ignored, using async buffer
             token_seeds: &[0],     // Ignored, using async buffer
             expected_number_of_new_tokens: 1,
             active_suffix_length: 1,
@@ -592,6 +654,7 @@ impl Generator {
             self.context.shared_buffers.clone(),
             &task.token_ids,
             &task.token_positions,
+            task.token_bitmask,
             &task.token_seeds,
             task.active_suffix_length,
             task.is_prefilling,
