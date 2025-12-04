@@ -2,10 +2,12 @@
 #include "../definitions.metal"
 #include "../rng.metal"
 
-#define GRAIN_SIZE 64
 #define BLOCK_SIZE 1024
+#define GRAIN_SIZE 64
 
 #define WORDS_PER_OFFSET 4
+
+SPECIALIZE(T, float, half, bfloat)
 
 template <typename T>
 void batched_gumbel(
@@ -13,6 +15,7 @@ void batched_gumbel(
     device const uint64_t* batch_seeds,
     device T* processed_logits,
     constant uint& vocab_size,
+    constant uint& seeds_offset_elems,
     uint group_idx,
     uint batch_idx,
     uint thread_idx
@@ -24,7 +27,7 @@ void batched_gumbel(
 
     uint grain_offset = batch_start + grain_offset_in_batch;
 
-    uint64_t rng_seed = batch_seeds[batch_idx];
+    uint64_t rng_seed = batch_seeds[seeds_offset_elems + batch_idx];
     uint64_t rng_offset = (group_idx * BLOCK_SIZE + thread_idx) * (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET;
     PhiloxState rng;
     philox_init(&rng, rng_seed, rng_offset);
@@ -38,29 +41,27 @@ void batched_gumbel(
     }
 }
 
-#define outerArguments(T) \
-(device const T* logits_data [[ buffer(0) ]], \
-device const uint64_t* batch_seeds [[ buffer(1) ]], \
-device T* processed_logits [[ buffer(2) ]], \
-constant uint& vocab_size [[ buffer(3) ]], \
-uint3 threadgroup_idx [[ threadgroup_position_in_grid ]], \
-uint3 thread_idx [[ thread_position_in_threadgroup ]])
-
-#define innerArguments (logits_data, batch_seeds, processed_logits, vocab_size, threadgroup_idx.x, threadgroup_idx.y, thread_idx.x)
-
-#define generateGumbelKernel(functionName, scalarType, outerArgs, innerArgs) \
-[[max_total_threads_per_threadgroup(1024)]] kernel void functionName##_##scalarType outerArgs { \
-    functionName innerArgs; \
+KERNEL(Gumbel) (
+    device const T* logits_buffer,
+    device const uint64_t* batch_seeds,
+    device T* processed_logits_buffer,
+    constant uint& batch_size,
+    constant uint& vocab_size,
+    constant uint& seeds_offset_elems,
+    uint3 global_idx GLOBAL(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE), batch_size),
+    uint3 local_idx LOCAL(BLOCK_SIZE)
+) {
+    uint group_idx = global_idx.x;
+    uint batch_idx = global_idx.y;
+    uint thread_idx = local_idx.x;
+    batched_gumbel(
+        logits_buffer,
+        batch_seeds,
+        processed_logits_buffer,
+        vocab_size,
+        seeds_offset_elems,
+        group_idx,
+        batch_idx,
+        thread_idx
+    );
 }
-
-#define generateGumbelKernels(functionName) \
-generateGumbelKernel(functionName, float, outerArguments(float), innerArguments); \
-generateGumbelKernel(functionName, bfloat, outerArguments(bfloat), innerArguments); \
-generateGumbelKernel(functionName, half, outerArguments(half), innerArguments);
-
-generateGumbelKernels(batched_gumbel)
-
-#undef outerArguments
-#undef innerArguments
-#undef generateGumbelKernel
-#undef generateGumbelKernels

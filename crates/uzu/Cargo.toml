@@ -5,6 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
+dsl = { path = "../dsl" }
 xgrammar = { package = "xgrammar-rs", version = "0.1.27", features = ["hf"] }
 half = { version = "2.6.0", features = ["bytemuck", "num-traits"] }
 ndarray = "0.16.1"
