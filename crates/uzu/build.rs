@@ -119,6 +119,9 @@ fn find_metal_files(dir: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 files.extend(find_metal_files(&path));
             } else if path.extension().and_then(|s| s.to_str()) == Some("metal")
+                && !str::from_utf8(&std::fs::read(&path).unwrap())
+                    .unwrap()
+                    .contains("SPECIALIZE")
             {
                 files.push(path);
             }
