@@ -18,7 +18,8 @@ pub use counts_offsets_fused::{
     MoeCountsOffsetsFusedKernel,
 };
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
+    MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };

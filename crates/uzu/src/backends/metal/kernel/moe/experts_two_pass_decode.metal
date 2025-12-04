@@ -3,7 +3,6 @@
 using namespace metal;
 
 constant uint GATING_SEL [[function_constant(30)]]; // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
-constant uint TILE_H [[function_constant(32)]];    // tile size for hidden dimension in Pass A
 
 static inline float gelu_approx(float x) {
     const float k0 = 0.7978845608f;
@@ -17,35 +16,17 @@ static inline float silu(float x, float alpha) {
     return x / (1.0f + exp(-alpha * x));
 }
 
-#define MTL_CONST static constant constexpr const
-#define MTL_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
-
-// Tiling configuration (tunable)
-MTL_CONST uint BM = 1;   // Simdgroups in M dimension within threadgroup
-MTL_CONST uint BN = 4;   // Simdgroups in N dimension within threadgroup
-MTL_CONST uint SM = 1;   // Thread rows per simdgroup
-MTL_CONST uint SN = 32;  // Thread cols per simdgroup (full warp width)
-MTL_CONST uint TM = 4;   // Output elements per thread in M
-MTL_CONST uint TN = 4;   // Input elements per thread in N (per iteration)
-
-MTL_CONST uint THREADS_M = BM * SM;
-MTL_CONST uint THREADS_N = BN * SN;
-MTL_CONST uint BLOCK_M = THREADS_M * TM;
-MTL_CONST uint BLOCK_N = THREADS_N * TN;
-
-static_assert(SM * SN == 32, "simdgroup must have 32 threads");
-static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must be 4, 8, 16, or 32");
-
-// === Pass A: Optimized GEMV with hierarchical tiling ===
-// Computes: hidden[row, h] = activation(x[row, d] @ W13[d, 2*h])
-// AccumT is used for internal accumulations, output still stored as T
-template<typename T, typename AccumT>
+// === Pass A: Vectorized GEMV with float4 loads ===
+// Structure: 4 simdgroups (128 threads), each outputs 1 hidden element
+// Each simdgroup: 32 threads reduce d_model using float4 vectorized loads
+// Grid: (h_blocks, rows, 1) where h_blocks = ceil(d_ff/4)
+template<typename T, typename T4>
 void moe_experts_decode_pass_a_impl(
     device const T* X_perm,              // [total_rows, d_model]
     device const uint* expert_offsets,   // [E + 1]
-    device const T* W13_all,             // weights in layout [E, 2*d_ff, d_model]
+    device const T* W13_all,             // [E, 2*d_ff, d_model]
     device const T* up_biases,           // [E, 2*d_ff]
-    device float* hidden_out,            // [total_rows, d_ff] - f32 for activation precision
+    device float* hidden_out,            // [total_rows, d_ff]
     uint d_model,
     uint d_ff,
     uint E,
@@ -58,200 +39,90 @@ void moe_experts_decode_pass_a_impl(
     uint row_in_expert,
     uint h_block_idx,
     uint simd_gid,
-    uint simd_lid,
-    threadgroup float* tgp_memory
+    uint simd_lid
 ) {
-    // Thread position within simdgroup
-    const uint thrM = SN != 32 ? simd_lid / SN : 0;
-    const uint thrN = SN != 32 ? simd_lid % SN : uint(simd_lid);
-
-    // Simdgroup position within threadgroup
-    const uint sgN = BN != 1 ? (simd_gid % BN) : 0;
-    const uint simdM = BN != 1 ? SM * (simd_gid / BN) : uint(SM * simd_gid);
-    const uint simdN = BN != 1 ? SN * (simd_gid % BN) : 0;
-
-    // Thread's work block
-    int bm = (simdM + thrM) * TM;
-    int bn = (simdN + thrN) * TN;
-
-    // Output row position
+    // Validate row bounds
     const uint seg_start = expert_offsets[expert_idx];
     const uint seg_end = expert_offsets[expert_idx + 1];
-    uint global_row = seg_start + row_in_expert;
-
+    const uint global_row = seg_start + row_in_expert;
     if (global_row >= seg_end) return;
 
-    // Calculate output h index
-    int h_row = h_block_idx * BLOCK_M + bm;
+    // Each simdgroup outputs one hidden element
+    const uint h_idx = h_block_idx * 4 + simd_gid;
+    if (h_idx >= d_ff) return;
 
-    // Adjust tail block to ensure in-bounds reads
-    if (h_row + TM > d_ff) {
-        h_row = d_ff > TM ? int(d_ff - TM) : 0;
-        bm = h_row - int(h_block_idx * BLOCK_M);
-    }
-
-    if (h_row >= int(d_ff)) return;
-
-    // Accumulation arrays for up and gate projections
-    thread AccumT result_up[TM] = {0};
-    thread AccumT result_gate[TM] = {0};
-    thread T weights_up[TN];
-    thread T weights_gate[TN];
-    thread AccumT x_vals[TN];
-
-    // Expert weight base addresses
-    const ulong w13_base = (ulong)expert_idx * (ulong)d_model * (ulong)(2 * d_ff);
+    // Base addresses
+    const ulong w13_stride = (ulong)d_model * (ulong)(2 * d_ff);
+    const ulong w13_base = (ulong)expert_idx * w13_stride;
     const ulong bias_base = (ulong)expert_idx * (ulong)(2 * d_ff);
     const ulong x_row_base = (ulong)global_row * (ulong)d_model;
 
-    // Main accumulation loop over d_model in blocks of BLOCK_N
-    const uint n_iter = d_model / BLOCK_N;
-    const uint leftover = d_model - (n_iter * BLOCK_N);
+    device const T* x_ptr = X_perm + x_row_base;
+    device const T* w_up_row = W13_all + w13_base + (ulong)h_idx * (ulong)d_model;
+    device const T* w_gate_row = W13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
 
-    for (uint i = 0; i < n_iter; ++i) {
-        // Load x values for this block
-        MTL_PRAGMA_UNROLL
-        for (uint tn = 0; tn < TN; tn++) {
-            uint d_idx = bn + tn;
-            x_vals[tn] = AccumT(X_perm[x_row_base + d_idx]);
+    float acc_up = 0.0f;
+    float acc_gate = 0.0f;
+
+    // Vectorized reduction: 32 threads × 4 elements = 128 elements per iteration
+    const uint vec_iters = d_model / 128;
+
+    for (uint i = 0; i < vec_iters; ++i) {
+        uint base_idx = i * 128 + simd_lid * 4;
+
+        T4 x_vec = *reinterpret_cast<device const T4*>(x_ptr + base_idx);
+        T4 w_up_vec = *reinterpret_cast<device const T4*>(w_up_row + base_idx);
+
+        acc_up += float(x_vec.x) * float(w_up_vec.x);
+        acc_up += float(x_vec.y) * float(w_up_vec.y);
+        acc_up += float(x_vec.z) * float(w_up_vec.z);
+        acc_up += float(x_vec.w) * float(w_up_vec.w);
+
+        if (GATING_SEL > 1) {
+            T4 w_gate_vec = *reinterpret_cast<device const T4*>(w_gate_row + base_idx);
+            acc_gate += float(x_vec.x) * float(w_gate_vec.x);
+            acc_gate += float(x_vec.y) * float(w_gate_vec.y);
+            acc_gate += float(x_vec.z) * float(w_gate_vec.z);
+            acc_gate += float(x_vec.w) * float(w_gate_vec.w);
         }
-
-        // Accumulate for each output row
-        MTL_PRAGMA_UNROLL
-        for (uint tm = 0; tm < TM; tm++) {
-            uint h_idx = h_row + tm;
-
-            // Load weights for up projection
-            MTL_PRAGMA_UNROLL
-            for (uint tn = 0; tn < TN; tn++) {
-                uint d_idx = bn + tn;
-                ulong w_idx = w13_base + (ulong)h_idx * (ulong)d_model + (ulong)d_idx;
-                weights_up[tn] = W13_all[w_idx];
-            }
-
-            // Accumulate up projection
-            MTL_PRAGMA_UNROLL
-            for (uint tn = 0; tn < TN; tn++) {
-                result_up[tm] += x_vals[tn] * AccumT(weights_up[tn]);
-            }
-
-            // Load and accumulate gate projection if needed
-            if (GATING_SEL > 1) {
-                MTL_PRAGMA_UNROLL
-                for (uint tn = 0; tn < TN; tn++) {
-                    uint d_idx = bn + tn;
-                    ulong w_gate_idx = w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model + (ulong)d_idx;
-                    weights_gate[tn] = W13_all[w_gate_idx];
-                }
-
-                MTL_PRAGMA_UNROLL
-                for (uint tn = 0; tn < TN; tn++) {
-                    result_gate[tm] += x_vals[tn] * AccumT(weights_gate[tn]);
-                }
-            }
-        }
-
-        bn += BLOCK_N;
     }
 
     // Handle leftover elements
-    if (leftover > 0) {
-        MTL_PRAGMA_UNROLL
-        for (uint tn = 0; tn < TN; tn++) {
-            uint d_idx = bn + tn;
-            x_vals[tn] = (d_idx < d_model) ? AccumT(X_perm[x_row_base + d_idx]) : AccumT(0.0);
-        }
-
-        MTL_PRAGMA_UNROLL
-        for (uint tm = 0; tm < TM; tm++) {
-            uint h_idx = h_row + tm;
-
-            MTL_PRAGMA_UNROLL
-            for (uint tn = 0; tn < TN; tn++) {
-                uint d_idx = bn + tn;
-                if (d_idx < d_model) {
-                    ulong w_idx = w13_base + (ulong)h_idx * (ulong)d_model + (ulong)d_idx;
-                    weights_up[tn] = W13_all[w_idx];
-                    result_up[tm] += x_vals[tn] * AccumT(weights_up[tn]);
-
-                    if (GATING_SEL > 1) {
-                        ulong w_gate_idx = w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model + (ulong)d_idx;
-                        weights_gate[tn] = W13_all[w_gate_idx];
-                        result_gate[tm] += x_vals[tn] * AccumT(weights_gate[tn]);
-                    }
-                }
-            }
-        }
-    }
-
-    // Simdgroup reduction across thrN dimension
-    MTL_PRAGMA_UNROLL
-    for (uint tm = 0; tm < TM; tm++) {
-        result_up[tm] = simd_sum(result_up[tm]);
+    uint leftover_start = vec_iters * 128 + simd_lid;
+    for (uint idx = leftover_start; idx < d_model; idx += 32) {
+        float xv = float(x_ptr[idx]);
+        acc_up += xv * float(w_up_row[idx]);
         if (GATING_SEL > 1) {
-            result_gate[tm] = simd_sum(result_gate[tm]);
+            acc_gate += xv * float(w_gate_row[idx]);
         }
     }
 
-    // Threadgroup reduction if BN > 1
-    if (BN > 1) {
-        threadgroup float* tgp_up = tgp_memory;
-        threadgroup float* tgp_gate = tgp_memory + BN * (BLOCK_M + TM);
-
-        if (thrN == 0) {
-            MTL_PRAGMA_UNROLL
-            for (uint tm = 0; tm < TM; tm++) {
-                tgp_up[sgN * (BLOCK_M + TM) + bm + tm] = float(result_up[tm]);
-                if (GATING_SEL > 1) {
-                    tgp_gate[sgN * (BLOCK_M + TM) + bm + tm] = float(result_gate[tm]);
-                }
-            }
-
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-
-            if (sgN == 0) {
-                MTL_PRAGMA_UNROLL
-                for (uint sgn = 1; sgn < BN; sgn++) {
-                    MTL_PRAGMA_UNROLL
-                    for (uint tm = 0; tm < TM; tm++) {
-                        result_up[tm] += AccumT(tgp_up[sgn * (BLOCK_M + TM) + bm + tm]);
-                        if (GATING_SEL > 1) {
-                            result_gate[tm] += AccumT(tgp_gate[sgn * (BLOCK_M + TM) + bm + tm]);
-                        }
-                    }
-                }
-            }
-        }
+    // Simdgroup reduction
+    acc_up = simd_sum(acc_up);
+    if (GATING_SEL > 1) {
+        acc_gate = simd_sum(acc_gate);
     }
 
-    // Apply activation and write output (only first thread in simdgroup width)
-    if (simdN == 0 && thrN == 0) {
-        MTL_PRAGMA_UNROLL
-        for (uint tm = 0; tm < TM; tm++) {
-            uint h_idx = h_row + tm;
-            if (h_idx < d_ff) {
-                // Add bias and clip
-                AccumT up_val = result_up[tm] + AccumT(up_biases[bias_base + h_idx]);
-                up_val = AccumT(clamp(float(up_val), up_clip_min, up_clip_max));
+    // Lane 0 applies activation and writes result
+    if (simd_lid == 0) {
+        float up_val = acc_up + float(up_biases[bias_base + h_idx]);
+        up_val = clamp(up_val, up_clip_min, up_clip_max);
 
-                AccumT activated_val;
-                if (GATING_SEL <= 1) {
-                    activated_val = (GATING_SEL == 0) ? AccumT(gelu_approx(float(up_val))) : AccumT(silu(float(up_val), silu_alpha));
-                } else {
-                    AccumT gate_val = result_gate[tm] + AccumT(up_biases[bias_base + d_ff + h_idx]);
-                    gate_val = AccumT(clamp(float(gate_val), gate_clip_min, gate_clip_max));
-                    AccumT gate_activated = (GATING_SEL == 2) ? AccumT(silu(float(gate_val), silu_alpha)) : AccumT(gelu_approx(float(gate_val)));
-                    activated_val = gate_activated * up_val;
-                }
-
-                ulong hidden_idx = (ulong)global_row * (ulong)d_ff + (ulong)h_idx;
-                hidden_out[hidden_idx] = float(activated_val);
-            }
+        float activated;
+        if (GATING_SEL <= 1) {
+            activated = (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+        } else {
+            float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
+            gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
+            float gate_act = (GATING_SEL == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
+            activated = gate_act * up_val;
         }
+
+        hidden_out[(ulong)global_row * (ulong)d_ff + (ulong)h_idx] = activated;
     }
 }
 
-#define MOE_PASS_A_KERNEL(DTYPE, SUFFIX) \
+#define MOE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX) \
 kernel void moe_experts_decode_pass_a_##SUFFIX( \
     device const DTYPE* X_perm [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
@@ -270,21 +141,17 @@ kernel void moe_experts_decode_pass_a_##SUFFIX( \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    constexpr uint tgp_mem_size = (BN > 1) ? 2 * BN * (BLOCK_M + TM) : 1; \
-    threadgroup float tgp_memory[tgp_mem_size]; \
-    \
-    moe_experts_decode_pass_a_impl<DTYPE, float>( \
+    moe_experts_decode_pass_a_impl<DTYPE, DTYPE4>( \
         X_perm, expert_offsets, W13_all, up_biases, hidden_out, \
         d_model, d_ff, E, gate_clip_min, gate_clip_max, \
         up_clip_min, up_clip_max, silu_alpha, \
         tgpig.y, tgpig.z, tgpig.x, \
-        simd_gid, simd_lid, \
-        (BN > 1) ? tgp_memory : nullptr); \
+        simd_gid, simd_lid); \
 }
 
-MOE_PASS_A_KERNEL(bfloat, bf16)
-MOE_PASS_A_KERNEL(half, f16)
-MOE_PASS_A_KERNEL(float, f32)
+MOE_PASS_A_KERNEL(bfloat, bfloat4, bf16)
+MOE_PASS_A_KERNEL(half, half4, f16)
+MOE_PASS_A_KERNEL(float, float4, f32)
 
 // === Helper kernels for indirect dispatch of Pass A ===
 
@@ -325,7 +192,6 @@ kernel void moe_pass_a_tile_scan(
 
     // Kogge-Stone scan
     uint val = scratch[idx];
-    MTL_PRAGMA_UNROLL
     for (uint offset = 1; offset < 1024; offset *= 2) {
         uint temp = 0;
         if (idx >= offset && idx < E) {
@@ -419,7 +285,7 @@ kernel void moe_pass_a_write_dispatch_args(
 }
 
 // Modified Pass A that reads from tile map for indirect dispatch
-template<typename T>
+template<typename T, typename T4>
 void moe_experts_decode_pass_a_indirect_impl(
     device const T* X_perm,
     device const uint* expert_offsets,
@@ -437,8 +303,7 @@ void moe_experts_decode_pass_a_indirect_impl(
     float silu_alpha,
     uint tile_idx,                       // flat threadgroup index
     uint simd_gid,
-    uint simd_lid,
-    threadgroup float* tgp_memory
+    uint simd_lid
 ) {
     // Read tile descriptor
     const uint h_block_idx = tile_map[tile_idx * 3 + 0];
@@ -446,17 +311,17 @@ void moe_experts_decode_pass_a_indirect_impl(
     const uint row_in_expert = tile_map[tile_idx * 3 + 2];
 
     // Call original implementation
-    moe_experts_decode_pass_a_impl<T, float>(
+    moe_experts_decode_pass_a_impl<T, T4>(
         X_perm, expert_offsets, W13_all, up_biases, hidden_out,
         d_model, d_ff, E,
         gate_clip_min, gate_clip_max,
         up_clip_min, up_clip_max, silu_alpha,
         expert_idx, row_in_expert, h_block_idx,
-        simd_gid, simd_lid, tgp_memory
+        simd_gid, simd_lid
     );
 }
 
-#define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, SUFFIX) \
+#define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, DTYPE4, SUFFIX) \
 kernel void moe_experts_decode_pass_a_indirect_##SUFFIX( \
     device const DTYPE* X_perm [[buffer(0)]], \
     device const uint* expert_offsets [[buffer(1)]], \
@@ -476,20 +341,16 @@ kernel void moe_experts_decode_pass_a_indirect_##SUFFIX( \
     uint simd_gid [[simdgroup_index_in_threadgroup]], \
     uint simd_lid [[thread_index_in_simdgroup]]) \
 { \
-    constexpr uint tgp_mem_size = (BN > 1) ? 2 * BN * (BLOCK_M + TM) : 1; \
-    threadgroup float tgp_memory[tgp_mem_size]; \
-    \
-    moe_experts_decode_pass_a_indirect_impl<DTYPE>( \
+    moe_experts_decode_pass_a_indirect_impl<DTYPE, DTYPE4>( \
         X_perm, expert_offsets, W13_all, up_biases, hidden_out, tile_map, \
         d_model, d_ff, E, gate_clip_min, gate_clip_max, \
         up_clip_min, up_clip_max, silu_alpha, \
-        tgpig.x, simd_gid, simd_lid, \
-        (BN > 1) ? tgp_memory : nullptr); \
+        tgpig.x, simd_gid, simd_lid); \
 }
 
-MOE_PASS_A_INDIRECT_KERNEL(bfloat, bf16)
-MOE_PASS_A_INDIRECT_KERNEL(half, f16)
-MOE_PASS_A_INDIRECT_KERNEL(float, f32)
+MOE_PASS_A_INDIRECT_KERNEL(bfloat, bfloat4, bf16)
+MOE_PASS_A_INDIRECT_KERNEL(half, half4, f16)
+MOE_PASS_A_INDIRECT_KERNEL(float, float4, f32)
 
 
 // === Pass B: Simdgroup cooperation along K for coalescing ===
@@ -535,7 +396,6 @@ void moe_experts_decode_down_fused_2d_impl(
     const uint k_iters = d_ff / THREADS_PER_SIMD;
     const uint k_vec_iters = k_iters / 8;
 
-    MTL_PRAGMA_UNROLL
     for (uint iter = 0; iter < k_vec_iters; ++iter) {
         const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd_lid;
 
@@ -574,7 +434,6 @@ void moe_experts_decode_down_fused_2d_impl(
     acc += (acc0 + acc1);
 
     // Handle remaining full iterations
-    MTL_PRAGMA_UNROLL
     for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
         const uint k = iter * THREADS_PER_SIMD + simd_lid;
         acc = fma(AccumT(hidden[hidden_base + k]), AccumT(w2_all[w2_col_base + k]), acc);
