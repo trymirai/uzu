@@ -1,5 +1,5 @@
-#![allow(dead_code)]
-include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
+const MTLB: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
@@ -148,7 +148,7 @@ pub struct MTLContext {
     pub device: MTLDevice,
     pub command_queue: MTLCommandQueue,
     pub architecture: DeviceArchitecture,
-    library: MTLLibrary,
+    pub library: MTLLibrary,
     pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
 }
 
@@ -157,7 +157,7 @@ impl MTLContext {
         device: MTLDevice,
         command_queue: MTLCommandQueue,
     ) -> Result<Self, MTLError> {
-        let library = match device.new_library_with_data(METAL_LIBRARY_DATA) {
+        let library = match device.new_library_with_data(MTLB) {
             Ok(lib) => lib,
             Err(e) => {
                 return Err(MTLError::Generic(format!(
