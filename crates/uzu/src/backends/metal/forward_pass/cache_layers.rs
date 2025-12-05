@@ -189,6 +189,7 @@ impl CacheLayers {
         suffix_length: usize,
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        projection_step: usize,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
@@ -209,6 +210,7 @@ impl CacheLayers {
                         suffix_length,
                         context,
                         external_bias_fn,
+                        projection_step,
                     );
                 }
             }

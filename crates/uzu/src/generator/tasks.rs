@@ -89,6 +89,8 @@ impl<'a> GeneratorRunTask<'a> {
             false,
             None,
             None,
+            None,
+            false, // skip_attention_bias_fill
         );
 
         return state;

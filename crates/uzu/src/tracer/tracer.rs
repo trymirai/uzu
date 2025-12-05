@@ -324,6 +324,8 @@ impl Tracer {
             false,
             None,
             None,
+            None,
+            false, // skip_attention_bias_fill
         );
 
         let root_command_buffer = self

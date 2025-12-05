@@ -948,6 +948,8 @@ impl ForwardPassState {
         skip_token_ids_copy: bool,
         async_positions: Option<(&metal::Buffer, usize)>,
         async_seeds: Option<(&metal::Buffer, usize)>,
+        projection_step: Option<usize>,
+        skip_attention_bias_fill: bool,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -1096,13 +1098,16 @@ impl ForwardPassState {
                 })
                 .collect();
 
-        cache_layers.borrow().fill_attention_bias(
-            &mut attention_bias_map,
-            token_positions,
-            suffix_length,
-            &context,
-            external_bias_fn,
-        );
+        if !skip_attention_bias_fill {
+            cache_layers.borrow().fill_attention_bias(
+                &mut attention_bias_map,
+                token_positions,
+                suffix_length,
+                &context,
+                external_bias_fn,
+                projection_step.unwrap_or(0),
+            );
+        }
 
         let attention_bias: HashMap<Option<usize>, ArrayCell> =
             attention_bias_map

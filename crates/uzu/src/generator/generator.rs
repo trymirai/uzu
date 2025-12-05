@@ -582,6 +582,12 @@ impl Generator {
         }
     }
 
+    /// Syncs the cache state after async generation for transformer models.
+    /// Must be called after all async passes complete.
+    pub fn sync_transformer_cache_after_async(&mut self) {
+        self.sync_prefix();
+    }
+
     /// Prepares async buffers for generation.
     /// Must be called after prefill, before async_generate loop.
     pub fn prepare_async(
@@ -589,6 +595,19 @@ impl Generator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
+
+        // Initialize attention bias buffers to zero for async mode
+        // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
+        // rather than garbage (which could be -inf and mask incorrectly)
+        for (_, mask_buffer) in
+            &self.context.scratch_buffers.attention_window_size_to_bias
+        {
+            unsafe {
+                let ptr = mask_buffer.contents() as *mut u8;
+                std::ptr::write_bytes(ptr, 0, mask_buffer.length() as usize);
+            }
+        }
+
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
@@ -632,18 +651,28 @@ impl Generator {
 
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
+        // Compute token position for attention bias (same as async_positions[pass_idx])
+        let prefill_count = self.context.async_buffers.prefill_count.get();
+        let token_position = prefill_count.saturating_sub(1) + pass_idx;
+
         let task = GeneratorRunTask {
             token_ids: &[last_token],
-            token_positions: &[0], // Ignored, using async buffer
-            token_bitmask: None,   // Ignored, using async buffer
-            token_seeds: &[0],     // Ignored, using async buffer
+            token_positions: &[token_position],
+            token_bitmask: None,
+            token_seeds: &[0], // Ignored, using async buffer
             expected_number_of_new_tokens: 1,
             active_suffix_length: 1,
             is_prefilling: false,
         };
 
+        // Use async buffers for all passes (simpler, avoids per-pass allocation)
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
+
+        // For passes > 0 with attention layers, skip CPU mask fill
+        // (GPU mask update from previous pass handles it)
+        let skip_attention_bias_fill = pass_idx > 0
+            && self.context.model_config.decoder_config.has_attention_layers();
 
         let mut state = ForwardPassState::new(
             self.context.mtl_context.clone(),
@@ -663,6 +692,8 @@ impl Generator {
             is_continuation,
             async_positions,
             async_seeds,
+            Some(pass_idx),
+            skip_attention_bias_fill,
         );
         state.sampling_method = Some(sampling_method);
 
@@ -677,10 +708,27 @@ impl Generator {
         }
 
         // Encode forward pass
+        // For async, use projection_step to adjust sequence_length for growing KV cache
+        let projection_step = if self
+            .context
+            .model_config
+            .decoder_config
+            .has_attention_layers()
+        {
+            Some(pass_idx)
+        } else {
+            None
+        };
+        let params = match projection_step {
+            Some(s) => {
+                EncodingParameters::new(false, false, false).with_projection(s)
+            },
+            None => EncodingParameters::new(false, false, false),
+        };
         self.context.executables.encode(
             &mut state,
             &self.context.command_buffer,
-            &EncodingParameters::new(false, false, false),
+            &params,
         );
 
         // Encode sampling
@@ -712,6 +760,33 @@ impl Generator {
             slot,
             encoder,
         );
+
+        // Encode mask update for next pass (transformer async pipeline)
+        if let Some(mask_update) = &self.context.mask_update {
+            let prefill_count = self.context.async_buffers.prefill_count.get();
+            // After pass k, we prepare mask for pass k+1
+            // prefix_segment_length = prefill_count - 1
+            // seq_len at pass k = (prefill_count - 1 + k) + 1 = prefill_count + k
+            // Pass k+1 will attend to column (prefill_count + k) which is the suffix column of pass k
+            let unmask_col = (prefill_count + pass_idx) as i32;
+
+            // For each attention bias buffer, update the mask
+            for (window_size, mask_buffer) in
+                &self.context.scratch_buffers.attention_window_size_to_bias
+            {
+                // For full attention: no eviction, just unmask new column
+                // For sliding window: would also mask evicted column
+                let mask_col = if let Some(_window) = window_size {
+                    // TODO: compute evicted column for sliding window
+                    -1
+                } else {
+                    -1
+                };
+
+                mask_update.encode(encoder, mask_buffer, unmask_col, mask_col);
+            }
+        }
+
         encoder.end_encoding();
 
         // Signal event for next pass
@@ -742,5 +817,9 @@ impl Generator {
 
     pub fn has_attention_layers(&self) -> bool {
         self.context.model_config.decoder_config.has_attention_layers()
+    }
+
+    pub fn has_sliding_window_layers(&self) -> bool {
+        self.context.model_config.decoder_config.has_sliding_window_layers()
     }
 }

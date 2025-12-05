@@ -360,9 +360,14 @@ impl Session {
             }
         }
 
-        let can_use_async = generator.decoding_config.generate_suffix_length()
-            == 1
-            && !generator.has_attention_layers()
+        // Enable async pipeline for transformers without sliding window
+        // Set UZU_FORCE_SYNC=1 to disable async for debugging/comparison
+        let force_sync = std::env::var("UZU_FORCE_SYNC")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        let can_use_async = !force_sync
+            && generator.decoding_config.generate_suffix_length() == 1
+            && !generator.has_sliding_window_layers()
             && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
@@ -679,11 +684,15 @@ impl Session {
                         let _ = receiver.recv();
                         in_flight -= 1;
                     }
+                    // Sync transformer cache state after async generation
+                    generator.sync_transformer_cache_after_async();
                     return Ok((results, durations, finish_reason));
                 }
             }
         }
 
+        // Sync transformer cache state after async generation
+        generator.sync_transformer_cache_after_async();
         Ok((results, durations, finish_reason))
     }
 

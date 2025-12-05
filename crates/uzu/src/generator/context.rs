@@ -17,7 +17,7 @@ use crate::{
         MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
-        kernel::{SamplingKernelEncodable, TokenCopyKernel},
+        kernel::{MaskUpdateKernel, SamplingKernelEncodable, TokenCopyKernel},
     },
     config::{LanguageModelConfig, ModelMetadata},
     generator::rng::DerivableSeed,
@@ -145,6 +145,8 @@ pub struct GeneratorContext {
 
     /// Kernel for copying sampled tokens in async pipeline
     pub token_copy: TokenCopyKernel,
+    /// Kernel for updating attention mask between async passes
+    pub mask_update: Option<MaskUpdateKernel>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers,
 }
@@ -253,6 +255,16 @@ impl GeneratorContext {
         let token_copy = TokenCopyKernel::new(&mtl_context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
+        // Create mask update kernel if model has attention layers
+        let mask_update = if decoder_config.has_attention_layers() {
+            Some(
+                MaskUpdateKernel::new(&mtl_context, kernel_data_type)
+                    .map_err(|_| Error::UnableToCreateMetalContext)?,
+            )
+        } else {
+            None
+        };
+
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
@@ -277,6 +289,7 @@ impl GeneratorContext {
             gpu_sampler,
             next_seed,
             token_copy,
+            mask_update,
             async_buffers,
         };
 

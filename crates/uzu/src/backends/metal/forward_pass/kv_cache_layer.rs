@@ -91,8 +91,9 @@ impl KVCacheLayer {
         suffix_length: usize,
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        projection_step: usize,
     ) {
-        let prefix_segment_length = self.prefix_segment_length();
+        let prefix_segment_length = self.projected_segment_prefix_length(projection_step);
 
         context.fill_attention_bias(
             dst,
@@ -102,10 +103,11 @@ impl KVCacheLayer {
                 if let Some(bias_fn) = external_bias_fn {
                     bias_fn(row_index, column_index)
                 } else {
-                    let result = self.bias_should_be_neg_inf(
+                    let result = self.bias_should_be_neg_inf_with_projection(
                         row_index,
                         column_index,
                         suffix_token_positions,
+                        projection_step,
                     );
                     result
                 }
@@ -119,13 +121,29 @@ impl KVCacheLayer {
         column_index: usize,
         suffix_token_positions: &[usize],
     ) -> bool {
+        self.bias_should_be_neg_inf_with_projection(
+            row_index,
+            column_index,
+            suffix_token_positions,
+            0,
+        )
+    }
+
+    pub fn bias_should_be_neg_inf_with_projection(
+        &self,
+        row_index: usize,
+        column_index: usize,
+        suffix_token_positions: &[usize],
+        projection_step: usize,
+    ) -> bool {
         let query_position = suffix_token_positions[row_index];
         if query_position == INVALID_POSITION {
             return true;
         }
 
-        let key_position = if column_index >= self.prefix_segment_length() {
-            suffix_token_positions[column_index - self.prefix_segment_length()]
+        let projected_prefix_len = self.projected_segment_prefix_length(projection_step);
+        let key_position = if column_index >= projected_prefix_len {
+            suffix_token_positions[column_index - projected_prefix_len]
         } else {
             match &self.state {
                 KVCacheLayerState::Full {

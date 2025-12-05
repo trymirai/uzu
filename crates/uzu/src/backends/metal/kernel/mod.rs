@@ -3,6 +3,7 @@ mod data_type;
 pub mod embedding;
 pub mod kv_cache_update;
 pub mod linear;
+pub mod mask_update;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
@@ -44,6 +45,7 @@ pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 pub use token_copy::TokenCopyKernel;
+pub use mask_update::MaskUpdateKernel;
 
 use super::{MTLContext, metal_extensions};
 pub use crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock;
