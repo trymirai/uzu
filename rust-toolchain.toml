@@ -1,3 +1,5 @@
 [toolchain]
 channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
 targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "aarch64-apple-darwin"]
