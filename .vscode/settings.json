@@ -19,4 +19,23 @@
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml"
   }
+  // Treat Metal headers/sources as C++ for clang-format
+  "files.associations": {
+    "*.metal": "cpp",
+    "*.h": "cpp",
+    "*.hpp": "cpp"
+  },
+  // Use repository .clang-format
+  "clang-format.style": "file",
+  "C_Cpp.formatting": "clangFormat",
+  "C_Cpp.clang_format_style": "file",
+  // Default to MS C/C++ extension formatter for C/C++ (clang-format backend)
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools",
+    "editor.formatOnSave": true
+  },
+  "[c]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools",
+    "editor.formatOnSave": true
+  }
 }

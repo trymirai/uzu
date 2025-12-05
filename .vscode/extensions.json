@@ -3,6 +3,7 @@
         "vadimcn.vscode-lldb",
         "tamasfe.even-better-toml",
         "doublebuffer.metal-shader",
-        "rust-lang.rust-analyzer"
+        "rust-lang.rust-analyzer",
+        "xaver.clang-format"
     ]
 }
