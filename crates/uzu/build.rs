@@ -8,12 +8,48 @@ use std::{
 };
 
 fn main() {
+    // Generate Rust bindings from shared Metal/C headers
+    generate_metal_bindings();
+
     if cfg!(feature = "metal-shaders") {
         println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
         compile_metal_shaders();
     } else {
         write_empty_metallib();
     }
+}
+
+/// Generate Rust bindings from shared C headers using bindgen.
+/// These headers are also used by Metal shaders, ensuring type consistency.
+fn generate_metal_bindings() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let matmul_dir = manifest_dir.join("src/backends/metal/kernel/matmul");
+    let types_header = matmul_dir.join("shared_types.h");
+
+    // Only regenerate if header changed
+    println!("cargo:rerun-if-changed={}", types_header.display());
+
+    let bindings = bindgen::Builder::default()
+        .header(types_header.to_string_lossy())
+        // Generate for C mode (no Metal-specific stuff)
+        .clang_arg("-x")
+        .clang_arg("c")
+        // Derive common traits
+        .derive_default(true)
+        .derive_copy(true)
+        // Only generate types we care about
+        .allowlist_type("GEMMParams")
+        .allowlist_type("GEMMAddMMParams")
+        // Use core types
+        .use_core()
+        .generate()
+        .expect("Failed to generate bindings from shared_types.h");
+
+    // Write bindings to the source directory so it can be checked in
+    let bindings_path = matmul_dir.join("shared_types.rs");
+    bindings
+        .write_to_file(&bindings_path)
+        .expect("Failed to write shared_types.rs");
 }
 
 fn compile_metal_shaders() {
