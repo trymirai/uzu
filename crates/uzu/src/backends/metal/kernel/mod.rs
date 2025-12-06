@@ -3,6 +3,7 @@ mod data_type;
 pub mod embedding;
 pub mod kv_cache_update;
 pub mod linear;
+pub mod matmul;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
@@ -19,6 +20,7 @@ pub mod token_copy;
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
+pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
