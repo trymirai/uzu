@@ -19,7 +19,7 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
 #include <metal_simdgroup_matrix>
-#include "../quant_matmul/mma.h" 
+#include "../quant_matmul/mma.h"
 
 using namespace metal;
 
@@ -27,50 +27,52 @@ using namespace metal;
 static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
 
 static inline uint linear_tid(uint3 tid, uint3 tpg) {
-    return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x;
+  return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x;
 }
 
 static inline float gelu_approx(float x) {
-    const float k0 = 0.7978845608f;   // sqrt(2/pi)
-    const float k1 = 0.044715f;
-    if (x > 10.0f)  return x;
-    if (x < -10.0f) return 0.0f;
-    float x3 = x * x * x;
-    float t  = clamp(k0 * (x + k1 * x3), -10.0f, 10.0f);
-    return 0.5f * x * (1.0f + tanh(t));
+  const float k0 = 0.7978845608f; // sqrt(2/pi)
+  const float k1 = 0.044715f;
+  if (x > 10.0f)
+    return x;
+  if (x < -10.0f)
+    return 0.0f;
+  float x3 = x * x * x;
+  float t = clamp(k0 * (x + k1 * x3), -10.0f, 10.0f);
+  return 0.5f * x * (1.0f + tanh(t));
 }
 
 static inline float silu(float x, float alpha) {
-    // alpha=1 gives standard SiLU; keep alpha param for parity with your API
-    return x / (1.0f + exp(-alpha * x));
+  // alpha=1 gives standard SiLU; keep alpha param for parity with your API
+  return x / (1.0f + exp(-alpha * x));
 }
 
-template<typename T>
+template <typename T>
 inline void store_vec4(device T* dst, ulong base, float4 vals) {
-    dst[base + 0] = T(vals.x);
-    dst[base + 1] = T(vals.y);
-    dst[base + 2] = T(vals.z);
-    dst[base + 3] = T(vals.w);
+  dst[base + 0] = T(vals.x);
+  dst[base + 1] = T(vals.y);
+  dst[base + 2] = T(vals.z);
+  dst[base + 3] = T(vals.w);
 }
 
-template<>
+template <>
 inline void store_vec4<float>(device float* dst, ulong base, float4 vals) {
-    *reinterpret_cast<device float4*>(dst + base) = vals;
+  *reinterpret_cast<device float4*>(dst + base) = vals;
 }
 
-template<typename T>
+template <typename T>
 struct StageStorage {
-    using type = float;
+  using type = float;
 };
 
-template<>
+template <>
 struct StageStorage<half> {
-    using type = half;
+  using type = half;
 };
 
-template<>
+template <>
 struct StageStorage<bfloat> {
-    using type = bfloat;
+  using type = bfloat;
 };
 
 // 0=GELU(up), 1=SiLU(up), 2=SwiGLU(gate)*up, 3=GEGLU(gate)*up
@@ -85,7 +87,7 @@ constant uint PASSA_SG_BM = 8;
 constant uint PASSA_SG_BN = 16;
 constant uint PASSA_TG_PAD = 4;  // Padding to avoid bank conflicts
 
-template<typename T>
+template <typename T>
 inline void pass_a_impl(
     device const T* X_perm,
     device const uint* expert_offsets,
@@ -97,15 +99,20 @@ inline void pass_a_impl(
     float up_clip_min, float up_clip_max,
     float silu_alpha,
     // work partition
-    uint tile_seg_start, uint expert_idx, uint tile_m, uint tile_n,
+    uint tile_seg_start,
+    uint expert_idx,
+    uint tile_m,
+    uint tile_n,
     // per-thread info
-    uint sg_id, uint3 threads_per_tg, uint3 local_tid,
+    uint sg_id,
+    uint3 threads_per_tg,
+    uint3 local_tid,
     // TG storage
-    threadgroup typename StageStorage<T>::type* Xs,       // [BM,BK]
-    threadgroup typename StageStorage<T>::type* Wk_up,    // [BN,BK]
-    threadgroup typename StageStorage<T>::type* Wk_gate,  // [BN,BK]
-    threadgroup float* bias_up,       // [BN]
-    threadgroup float* bias_gate      // [BN]
+    threadgroup typename StageStorage<T>::type* Xs,      // [BM,BK]
+    threadgroup typename StageStorage<T>::type* Wk_up,   // [BN,BK]
+    threadgroup typename StageStorage<T>::type* Wk_gate, // [BN,BK]
+    threadgroup float* bias_up,                          // [BN]
+    threadgroup float* bias_gate                         // [BN]
 ) {
     using StageT = typename StageStorage<T>::type;
     using StageVec4 = metal::vec<StageT, 4>;
@@ -156,6 +163,7 @@ inline void pass_a_impl(
             OutGate[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
         }
     }
+  }
 
     const uint threads_total = threads_per_tg.x * threads_per_tg.y * threads_per_tg.z;
     const uint lin = linear_tid(local_tid, threads_per_tg);
@@ -280,6 +288,7 @@ UZU_PRAGMA_UNROLL
         if (GATING_SEL > 1u) {
             bias_gate[c_local] = (c_global < d_ff) ? float(up_biases[bias_base + d_ff + c_global]) : 0.0f;
         }
+      }
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -308,55 +317,178 @@ UZU_PRAGMA_UNROLL
             if (local_row >= m_rows || tile_col_base >= n_cols) {
                 continue;
             }
-
-            const auto up_frag = OutUp[tile].thread_elements();
-            float gate_frag_0 = 0.0f;
-            float gate_frag_1 = 0.0f;
-            if (GATING_SEL > 1u) {
-                const auto gate_frag = OutGate[tile].thread_elements();
-                gate_frag_0 = gate_frag[0];
-                gate_frag_1 = gate_frag[1];
+            if (base_vec + 1 < valid_k) {
+              up1 = float(W13_all[up_base + 1]);
+              gt1 = float(W13_all[gate_base + 1]);
             }
-
-            const uint col0 = tile_col_base + lane_col_base;
-            const uint col1 = col0 + 1;
-            const ulong out_row = seg_start + row_tg_off + local_row;
-
-            if (col0 < n_cols) {
-                float up_v = clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
-                float out_val;
-                if (GATING_SEL <= 1u) {
-                    out_val =
-                        (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
-                } else {
-                    float gate_v =
-                        clamp(gate_frag_0 + bias_gate[col0], gate_clip_min, gate_clip_max);
-                    const float gate_act =
-                        (GATING_SEL == 2u) ? silu(gate_v, silu_alpha) : gelu_approx(gate_v);
-                    out_val = gate_act * up_v;
-                }
-                const ulong out_col = col_tg_off + col0;
-                hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+            if (base_vec + 2 < valid_k) {
+              up2 = float(W13_all[up_base + 2]);
+              gt2 = float(W13_all[gate_base + 2]);
             }
-
-            if (col1 < n_cols) {
-                float up_v = clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
-                float out_val;
-                if (GATING_SEL <= 1u) {
-                    out_val =
-                        (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
-                } else {
-                    float gate_v =
-                        clamp(gate_frag_1 + bias_gate[col1], gate_clip_min, gate_clip_max);
-                    const float gate_act =
-                        (GATING_SEL == 2u) ? silu(gate_v, silu_alpha) : gelu_approx(gate_v);
-                    out_val = gate_act * up_v;
-                }
-                const ulong out_col = col_tg_off + col1;
-                hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+            if (base_vec + 3 < valid_k) {
+              up3 = float(W13_all[up_base + 3]);
+              gt3 = float(W13_all[gate_base + 3]);
             }
+            upv = StageVec4(StageT(up0), StageT(up1), StageT(up2), StageT(up3));
+            gtv = StageVec4(StageT(gt0), StageT(gt1), StageT(gt2), StageT(gt3));
+          }
+
+          *up4 = upv;
+          if (GATING_SEL > 1u)
+            *gt4 = gtv;
         }
+      }
     }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // ---- MMA across the BK tile (in simdgroup-sized chunks) ----
+    UZU_PRAGMA_UNROLL
+    for (uint kk = 0; kk < PASSA_BK; kk += SG_TILE) {
+      UZU_PRAGMA_UNROLL
+      for (uint m_sub = 0; m_sub < PASSA_SG_BM; m_sub += SG_TILE) {
+        const uint r_idx = m_sub / SG_TILE;
+        metal::simdgroup_matrix<StageT, 8, 8> lhs_frag;
+        simdgroup_load(lhs_frag, Xs, PASSA_BK, ulong2(kk, row_sg_off + m_sub));
+
+        UZU_PRAGMA_UNROLL
+        for (uint n_sub = 0; n_sub < PASSA_SG_BN; n_sub += SG_TILE) {
+          const uint c_idx = n_sub / SG_TILE;
+          const uint tile = r_idx * (PASSA_SG_BN / SG_TILE) + c_idx;
+          metal::simdgroup_matrix<StageT, 8, 8> rhs_up;
+          simdgroup_load(
+              rhs_up,
+              Wk_up,
+              PASSA_BK,
+              ulong2(kk, col_sg_off + n_sub),
+              true
+          );
+          simdgroup_multiply_accumulate(
+              OutUp[tile],
+              lhs_frag,
+              rhs_up,
+              OutUp[tile]
+          );
+
+          if (GATING_SEL > 1u) {
+            metal::simdgroup_matrix<StageT, 8, 8> rhs_gate;
+            simdgroup_load(
+                rhs_gate,
+                Wk_gate,
+                PASSA_BK,
+                ulong2(kk, col_sg_off + n_sub),
+                true
+            );
+            simdgroup_multiply_accumulate(
+                OutGate[tile],
+                lhs_frag,
+                rhs_gate,
+                OutGate[tile]
+            );
+          }
+        }
+      }
+    }
+  } // K loop
+
+  // ---- Bias tile [Bn] ----
+  // Note: bias layout is [up | gate] in contiguous FF chunks.
+  for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
+    const uint c_global = col_tg_off + c_local;
+    bias_up[c_local] =
+        (c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
+    if (GATING_SEL > 1u) {
+      bias_gate[c_local] = (c_global < d_ff)
+                               ? float(up_biases[bias_base + d_ff + c_global])
+                               : 0.0f;
+    }
+  }
+
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  // ---- Epilogue: activation/gating → hidden_out (f32) ----
+  const uint sg_lane_start = sg_id * 32;
+  const uint sg_lane_end = sg_lane_start + 32;
+  if (lin < sg_lane_start || lin >= sg_lane_end)
+    return;
+  const uint sg_lin = lin - sg_lane_start;
+  // Lane→(row,col) mapping for 8x8 simdgroup fragments, matches the fragment
+  // layout used above.
+  const uint lane_qid = sg_lin >> 2;
+  const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
+  const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
+
+  UZU_PRAGMA_UNROLL
+  for (uint n_sub = 0; n_sub < PASSA_SG_BN; n_sub += SG_TILE) {
+    const uint c_idx = n_sub / SG_TILE;
+    UZU_PRAGMA_UNROLL
+    for (uint m_sub = 0; m_sub < PASSA_SG_BM; m_sub += SG_TILE) {
+      const uint r_idx = m_sub / SG_TILE;
+      const uint tile = r_idx * (PASSA_SG_BN / SG_TILE) + c_idx;
+
+      const uint tile_row_base = row_sg_off + m_sub;
+      const uint tile_col_base = col_sg_off + n_sub;
+      const uint local_row = tile_row_base + lane_row;
+      if (local_row >= m_rows || tile_col_base >= n_cols) {
+        continue;
+      }
+
+      const auto up_frag = OutUp[tile].thread_elements();
+      float gate_frag_0 = 0.0f;
+      float gate_frag_1 = 0.0f;
+      if (GATING_SEL > 1u) {
+        const auto gate_frag = OutGate[tile].thread_elements();
+        gate_frag_0 = gate_frag[0];
+        gate_frag_1 = gate_frag[1];
+      }
+
+      const uint col0 = tile_col_base + lane_col_base;
+      const uint col1 = col0 + 1;
+      const ulong out_row = seg_start + row_tg_off + local_row;
+
+      if (col0 < n_cols) {
+        float up_v =
+            clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
+        float out_val;
+        if (GATING_SEL <= 1u) {
+          out_val =
+              (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+        } else {
+          float gate_v = clamp(
+              gate_frag_0 + bias_gate[col0],
+              gate_clip_min,
+              gate_clip_max
+          );
+          const float gate_act = (GATING_SEL == 2u) ? silu(gate_v, silu_alpha)
+                                                    : gelu_approx(gate_v);
+          out_val = gate_act * up_v;
+        }
+        const ulong out_col = col_tg_off + col0;
+        hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+      }
+
+      if (col1 < n_cols) {
+        float up_v =
+            clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
+        float out_val;
+        if (GATING_SEL <= 1u) {
+          out_val =
+              (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+        } else {
+          float gate_v = clamp(
+              gate_frag_1 + bias_gate[col1],
+              gate_clip_min,
+              gate_clip_max
+          );
+          const float gate_act = (GATING_SEL == 2u) ? silu(gate_v, silu_alpha)
+                                                    : gelu_approx(gate_v);
+          out_val = gate_act * up_v;
+        }
+        const ulong out_col = col_tg_off + col1;
+        hidden_out[out_row * (ulong)d_ff + out_col] = out_val;
+      }
+    }
+  }
 }
 
 // ----- Kernel entry points (Pass A) -----
@@ -400,7 +532,7 @@ MOE_PASS_A_KERNEL(half, f16)
 MOE_PASS_A_KERNEL(float, f32)
 
 // Indirect variant (consumes [expert, seg_start, tile_row_offset] triples)
-template<typename T>
+template <typename T>
 inline void pass_a_indirect_impl(
     device const T* X_perm,
     device const uint* expert_offsets,
@@ -412,29 +544,53 @@ inline void pass_a_indirect_impl(
     float gate_clip_min, float gate_clip_max,
     float up_clip_min, float up_clip_max,
     float silu_alpha,
-    uint row_tile_idx, uint n_tile_idx,
-    uint sg_id, uint3 threads_per_tg, uint3 local_tid,
+    uint row_tile_idx,
+    uint n_tile_idx,
+    uint sg_id,
+    uint3 threads_per_tg,
+    uint3 local_tid,
     threadgroup typename StageStorage<T>::type* Xs,
     threadgroup typename StageStorage<T>::type* Wk_up,
     threadgroup typename StageStorage<T>::type* Wk_gate,
     threadgroup float* bias_up,
-    threadgroup float* bias_gate)
-{
-    constexpr uint ROW_TILE = PASSA_BM;
-    const uint base = row_tile_idx * 3u;
-    const uint expert_idx = tile_map[base + 0u];
-    if (expert_idx >= E) return;
-    const uint tile_seg_start = tile_map[base + 1u];
-    const uint row_off_elems = tile_map[base + 2u];
-    const uint tile_m = row_off_elems / ROW_TILE;
+    threadgroup float* bias_gate
+) {
+  constexpr uint ROW_TILE = PASSA_BM;
+  const uint base = row_tile_idx * 3u;
+  const uint expert_idx = tile_map[base + 0u];
+  if (expert_idx >= E)
+    return;
+  const uint tile_seg_start = tile_map[base + 1u];
+  const uint row_off_elems = tile_map[base + 2u];
+  const uint tile_m = row_off_elems / ROW_TILE;
 
-    pass_a_impl<T>(
-        X_perm, expert_offsets, W13_all, up_biases, hidden_out,
-        d_model, d_ff, E,
-        gate_clip_min, gate_clip_max, up_clip_min, up_clip_max, silu_alpha,
-        tile_seg_start, expert_idx, tile_m, n_tile_idx,
-        sg_id, threads_per_tg, local_tid,
-        Xs, Wk_up, Wk_gate, bias_up, bias_gate);
+  pass_a_impl<T>(
+      X_perm,
+      expert_offsets,
+      W13_all,
+      up_biases,
+      hidden_out,
+      d_model,
+      d_ff,
+      E,
+      gate_clip_min,
+      gate_clip_max,
+      up_clip_min,
+      up_clip_max,
+      silu_alpha,
+      tile_seg_start,
+      expert_idx,
+      tile_m,
+      n_tile_idx,
+      sg_id,
+      threads_per_tg,
+      local_tid,
+      Xs,
+      Wk_up,
+      Wk_gate,
+      bias_up,
+      bias_gate
+  );
 }
 
 #define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, SUFFIX) \
@@ -486,7 +642,7 @@ constant uint PASSB_SG_BM = 8;   // Each simdgroup handles 8x32
 constant uint PASSB_SG_BN = 32;
 constant uint PASSB_TG_PAD = 4;  // Padding to avoid bank conflicts
 
-template<typename T>
+template <typename T>
 inline void pass_b_impl(
     device const float* hidden,
     device const uint* expert_offsets,
@@ -628,6 +784,7 @@ UZU_PRAGMA_UNROLL
             simdgroup_multiply_accumulate(Out[2], lhs, rhs2, Out[2]);
             simdgroup_multiply_accumulate(Out[3], lhs, rhs3, Out[3]);
         }
+      }
     }
 
     // ---- Bias tile (cooperative load) ----
@@ -662,7 +819,66 @@ UZU_PRAGMA_UNROLL
             const float val = accum[1] + bias_tile[local_col + 1];
             output[out_row * (ulong)d_model + out_col] = T(val);
         }
+      }
     }
+  }
+
+  // ---- Bias tile ----
+  for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
+    const uint c_global = col_tg_off + c_local;
+    bias_tile[c_local] =
+        (c_global < d_model) ? float(down_biases[bias_base + c_global]) : 0.0f;
+  }
+
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  // ---- Writeout ----
+  const uint sg_lane_start = sg_id * 32;
+  const uint sg_lane_end = sg_lane_start + 32;
+  if (lin < sg_lane_start || lin >= sg_lane_end)
+    return;
+  const uint sg_lin = lin - sg_lane_start;
+
+  // Lane→(row,col) mapping for 8x8 simdgroup fragments, matches PASSB fragment
+  // packing.
+  const uint lane_qid = sg_lin >> 2;
+  const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
+  const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
+
+  UZU_PRAGMA_UNROLL
+  for (uint n_sub = 0; n_sub < PASSB_SG_BN; n_sub += SG_TILE) {
+    const uint c_idx = n_sub / SG_TILE;
+    UZU_PRAGMA_UNROLL
+    for (uint m_sub = 0; m_sub < PASSB_SG_BM; m_sub += SG_TILE) {
+      const uint r_idx = m_sub / SG_TILE;
+      const uint tile = r_idx * (PASSB_SG_BN / SG_TILE) + c_idx;
+
+      const uint tile_row_base = row_sg_off + m_sub;
+      const uint tile_col_base = col_sg_off + n_sub;
+      const uint local_row = tile_row_base + lane_row;
+      if (local_row >= m_rows || tile_col_base >= n_cols) {
+        continue;
+      }
+
+      const auto accum = Out[tile].thread_elements();
+
+      const uint col0 = tile_col_base + lane_col_base;
+      const uint col1 = col0 + 1u;
+      const ulong out_row = seg_start + row_tg_off + local_row;
+
+      if (col0 < n_cols) {
+        const ulong out_col = col_tg_off + col0;
+        const float val = accum[0] + bias_tile[col0];
+        output[out_row * (ulong)d_model + out_col] = T(val);
+      }
+
+      if (col1 < n_cols) {
+        const ulong out_col = col_tg_off + col1;
+        const float val = accum[1] + bias_tile[col1];
+        output[out_row * (ulong)d_model + out_col] = T(val);
+      }
+    }
+  }
 }
 
 // ----- Kernel entry points (Pass B) -----
@@ -699,7 +915,7 @@ MOE_PASS_B_KERNEL(half, f16)
 MOE_PASS_B_KERNEL(float, f32)
 
 // Indirect variant
-template<typename T>
+template <typename T>
 inline void pass_b_indirect_impl(
     device const float* hidden,
     device const uint* expert_offsets,

@@ -16,12 +16,14 @@ fn nanos_to_secs(nanos: u64) -> f64 {
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
+use xgrammar::TokenizerInfo;
 
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
     config::{ModelMetadata, decoder_layer::MixerConfig},
     generator::{
         generator::Generator,
+        grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -55,6 +57,7 @@ pub struct Session {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
+    tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     generator: Option<Generator>,
@@ -122,6 +125,9 @@ impl Session {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        let tokenizer_info =
+            TokenizerInfo::from_huggingface(&tokenizer, None, None);
+
         let input_processor = InputProcessorDefault::new(
             model_metadata.model_config.message_processor_config.clone(),
         );
@@ -141,6 +147,7 @@ impl Session {
             model_path,
             model_metadata,
             tokenizer,
+            tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
             generator: Some(generator),
@@ -157,59 +164,65 @@ impl Session {
     where
         F: Fn(Output) -> bool,
     {
-        let context_mode = self
-            .generator
-            .as_ref()
-            .ok_or(Error::GeneratorNotLoaded)?
-            .decoding_config
-            .context_mode
-            .clone();
+        autoreleasepool(|_| {
+            let context_mode = self
+                .generator
+                .as_ref()
+                .ok_or(Error::GeneratorNotLoaded)?
+                .decoding_config
+                .context_mode
+                .clone();
 
-        match &context_mode {
-            ContextMode::None => {
-                let generator =
-                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-                generator.reset_state();
-            },
-            ContextMode::Static {
-                input,
-            } => {
-                if self.static_context.is_none() {
-                    let mut prefill_config = config.clone();
-                    prefill_config.tokens_limit = 0;
-                    let (_out, run_context) =
-                        self.extend(input.clone(), None, prefill_config)?;
-                    self.static_context = Some(run_context);
-                }
-                let tmp = self.static_context.take();
-                if let Some(ref run_context) = tmp {
-                    self.reconfigure_generator(Some(run_context))?;
-                }
-                self.static_context = tmp;
-            },
-            ContextMode::Dynamic => {},
-        }
+            match &context_mode {
+                ContextMode::None => {
+                    let generator = self
+                        .generator
+                        .as_mut()
+                        .ok_or(Error::GeneratorNotLoaded)?;
+                    generator.reset_state();
+                },
+                ContextMode::Static {
+                    input,
+                } => {
+                    if self.static_context.is_none() {
+                        let mut prefill_config = config.clone();
+                        prefill_config.tokens_limit = 0;
+                        let (_out, run_context) =
+                            self.extend(input.clone(), None, prefill_config)?;
+                        self.static_context = Some(run_context);
+                    }
+                    let tmp = self.static_context.take();
+                    if let Some(ref run_context) = tmp {
+                        self.reconfigure_generator(Some(run_context))?;
+                    }
+                    self.static_context = tmp;
+                },
+                ContextMode::Dynamic => {},
+            }
 
-        let output = self.run_internal(input, config, progress)?;
+            let output = self.run_internal(input, config, progress)?;
 
-        match context_mode {
-            ContextMode::None
-            | ContextMode::Static {
-                ..
-            } => {
-                let generator =
-                    self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-                generator.reset_state();
-            },
-            ContextMode::Dynamic => {},
-        }
-        Ok(output)
+            match context_mode {
+                ContextMode::None
+                | ContextMode::Static {
+                    ..
+                } => {
+                    let generator = self
+                        .generator
+                        .as_mut()
+                        .ok_or(Error::GeneratorNotLoaded)?;
+                    generator.reset_state();
+                },
+                ContextMode::Dynamic => {},
+            }
+            Ok(output)
+        })
     }
 
     pub fn reset(&mut self) -> Result<(), Error> {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
-        generator.reset_state();
+        autoreleasepool(|_| generator.reset_state());
         Ok(())
     }
 }
@@ -242,6 +255,17 @@ impl Session {
     {
         let generator =
             self.generator.as_mut().ok_or(Error::GeneratorNotLoaded)?;
+
+        let mut compiled_grammar: Option<CompiledGrammar> =
+            if let Some(ref grammar_config) = config.grammar_config {
+                Some(CompiledGrammar::from_config(
+                    grammar_config,
+                    None,
+                    &self.tokenizer_info,
+                )?)
+            } else {
+                None
+            };
 
         let run_start = Instant::now();
         let text =
@@ -282,6 +306,7 @@ impl Session {
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = generator.prefill(
             tokens.clone(),
+            compiled_grammar.as_mut(),
             sampling_method,
             prefix_offset,
             sample_suffix,
@@ -337,7 +362,8 @@ impl Session {
 
         let can_use_async = generator.decoding_config.generate_suffix_length()
             == 1
-            && !generator.has_attention_layers();
+            && !generator.has_attention_layers()
+            && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
             let batch_size = generator
@@ -371,6 +397,7 @@ impl Session {
                 &self.output_parser,
                 &run_context,
                 generator,
+                compiled_grammar.as_mut(),
                 sampling_method,
                 &progress,
             )?
@@ -666,6 +693,7 @@ impl Session {
         output_parser: &OutputParser,
         run_context: &RunContext,
         generator: &mut Generator,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         progress: &Option<F>,
     ) -> Result<Output, Error>
@@ -677,7 +705,8 @@ impl Session {
 
         loop {
             let start = Instant::now();
-            let result = generator.generate(sampling_method)?;
+            let result = generator
+                .generate(compiled_grammar.as_deref_mut(), sampling_method)?;
             let new_tokens = result.tokens.clone();
             let duration = start.elapsed().as_secs_f64();
 

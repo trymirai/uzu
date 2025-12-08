@@ -1,11 +1,11 @@
 pub mod backends;
 pub mod config;
 pub mod generator;
-pub mod linearizer;
 pub mod parameters;
 pub mod session;
 pub mod speculators;
 pub mod tracer;
+pub mod trie;
 pub mod utils;
 pub use utils::*;
 pub mod device;

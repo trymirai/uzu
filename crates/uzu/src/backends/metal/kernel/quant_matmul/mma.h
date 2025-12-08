@@ -12,37 +12,37 @@ using namespace metal;
 
 namespace matmul_utils {
 
-template<typename T>
+template <typename T>
 struct pointer_element_t_impl {
-    using type = T;
+  using type = T;
 };
-template<typename T>
+template <typename T>
 struct pointer_element_t_impl<device T*> {
-    using type = T;
+  using type = T;
 };
-template<typename T>
+template <typename T>
 struct pointer_element_t_impl<threadgroup T*> {
-    using type = T;
+  using type = T;
 };
-template<typename T>
+template <typename T>
 
 using pointer_element_t = typename pointer_element_t_impl<T>::type;
 
 template <typename T, typename U = T>
 struct TransformNone {
-  METAL_FUNC static U apply(U val) {
-    return val;
-  }
+  METAL_FUNC static U apply(U val) { return val; }
 };
 
 template <typename T, int kFragRows_, int kFragCols_>
 struct BaseMMAFrag {
   static_assert(
       kFragRows_ == 8,
-      "Only 8 x 8 fragment matrices are currently supported");
+      "Only 8 x 8 fragment matrices are currently supported"
+  );
   static_assert(
       kFragCols_ == 8,
-      "Only 8 x 8 fragment matrices are currently supported");
+      "Only 8 x 8 fragment matrices are currently supported"
+  );
 };
 
 template <typename T>
@@ -55,13 +55,15 @@ struct BaseMMAFrag<T, 8, 8> {
 
   static_assert(
       kElemRows * kElemCols == kElemsPerFrag,
-      "MMAFrag shape is not consistent with MMAFrag size");
+      "MMAFrag shape is not consistent with MMAFrag size"
+  );
 
   typedef metal::simdgroup_matrix<T, kFragRows, kFragCols> mat_type;
   typedef metal::vec<T, kElemsPerFrag> frag_type;
 
-  METAL_FUNC static constexpr short2 get_coord(ushort simd_lane_id
-                                               [[thread_index_in_simdgroup]]) {
+  METAL_FUNC static constexpr short2 get_coord(
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
     const short qid = simd_lane_id / 4;
     const short fm = (qid & 4) + ((simd_lane_id / 2) % 4);
     const short fn = (qid & 2) * 2 + (simd_lane_id % 2) * 2;
@@ -69,8 +71,12 @@ struct BaseMMAFrag<T, 8, 8> {
   }
 
   template <typename SrcPtrType, typename StrX, typename StrY>
-  METAL_FUNC static constexpr void
-  load(thread frag_type& dst, SrcPtrType src, StrX str_x, StrY str_y) {
+  METAL_FUNC static constexpr void load(
+      thread frag_type& dst,
+      SrcPtrType src,
+      StrX str_x,
+      StrY str_y
+  ) {
     UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
       UZU_PRAGMA_UNROLL
@@ -80,10 +86,13 @@ struct BaseMMAFrag<T, 8, 8> {
     }
   }
 
-
   template <typename DstPtrType, typename StrX, typename StrY>
-  METAL_FUNC static constexpr void
-  store(const thread frag_type& src, DstPtrType dst, StrX str_x, StrY str_y) {
+  METAL_FUNC static constexpr void store(
+      const thread frag_type& src,
+      DstPtrType dst,
+      StrX str_x,
+      StrY str_y
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     UZU_PRAGMA_UNROLL
@@ -111,7 +120,8 @@ struct BaseMMAFrag<T, 8, 8> {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = 0,
-      OffY off_y = 0) {
+      OffY off_y = 0
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     UZU_PRAGMA_UNROLL
@@ -126,12 +136,12 @@ struct BaseMMAFrag<T, 8, 8> {
     }
   }
 
-
   METAL_FUNC static constexpr void mma(
       thread frag_type& D,
       thread frag_type& A,
       thread frag_type& B,
-      thread frag_type& C) {
+      thread frag_type& C
+  ) {
     mat_type D_mat;
     mat_type A_mat;
     mat_type B_mat;
@@ -150,7 +160,8 @@ struct BaseMMAFrag<T, 8, 8> {
       thread mat_type& D,
       thread mat_type& A,
       thread mat_type& B,
-      thread mat_type& C) {
+      thread mat_type& C
+  ) {
     simdgroup_multiply_accumulate(D, A, B, C);
   }
 };
@@ -196,10 +207,10 @@ struct MMATile {
 
   METAL_FUNC constexpr const thread frag_type& frag_at(
       const short i,
-      const short j) const {
+      const short j
+  ) const {
     return val_frags[i * kTileCols + j];
   }
-
 
   METAL_FUNC thread elem_type* elems() {
     return reinterpret_cast<thread elem_type*>(val_frags);
@@ -219,13 +230,14 @@ struct MMATile {
             frag_at(i, j),
             &(
                 src[(i * kFragRows) * w_x * str_x +
-                    (j * kFragCols) * w_y * str_y]),
+                    (j * kFragCols) * w_y * str_y]
+            ),
             str_x,
-            str_y);
+            str_y
+        );
       }
     }
   }
-
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void store(device U* dst, const int ld) const {
@@ -237,7 +249,8 @@ struct MMATile {
             frag_at(i, j),
             &(dst[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
             ld,
-            1);
+            1
+        );
       }
     }
   }
@@ -253,14 +266,18 @@ struct MMATile {
             frag_at(i, j),
             &(dst[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
             ld,
-            1);
+            1
+        );
       }
     }
   }
 
   template <typename U, int w_x, int w_y>
-  METAL_FUNC void
-  store_safe(device U* dst, const int ld, const short2 dst_tile_dims) const {
+  METAL_FUNC void store_safe(
+      device U* dst,
+      const int ld,
+      const short2 dst_tile_dims
+  ) const {
     UZU_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       UZU_PRAGMA_UNROLL
@@ -273,11 +290,11 @@ struct MMATile {
             dst_tile_dims.y,
             dst_tile_dims.x,
             (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
+            (j * kFragCols) * w_y
+        );
       }
     }
   }
-
 };
 
 template <typename T, typename U, int M, int N, int K>
@@ -285,7 +302,8 @@ METAL_FUNC void tile_matmad(
     thread MMATile<T, M, N>& D,
     thread MMATile<U, M, K>& A,
     thread MMATile<U, K, N>& B,
-    thread MMATile<T, M, N>& C) {
+    thread MMATile<T, M, N>& C
+) {
   UZU_PRAGMA_UNROLL
   for (short m = 0; m < M; ++m) {
     UZU_PRAGMA_UNROLL
@@ -297,7 +315,8 @@ METAL_FUNC void tile_matmad(
             D.frag_at(m, n_serp),
             A.frag_at(m, k),
             B.frag_at(k, n_serp),
-            C.frag_at(m, n_serp));
+            C.frag_at(m, n_serp)
+        );
       }
     }
   }
@@ -359,7 +378,8 @@ struct BlockMMA {
   /* Constructor */
   METAL_FUNC BlockMMA(
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]) {
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
     // Determine thread position in simdgroup matrix
     short tm = kFragSize * (simd_group_id / WN);
     short tn = kFragSize * (simd_group_id % WN);
@@ -431,9 +451,11 @@ struct BlockMMA {
     Ctile.template store_tg<U, WM, WN>(D, ldd);
   }
 
-
-  METAL_FUNC void
-  store_result_safe(device U* D, const int ldd, short2 dst_tile_dims) {
+  METAL_FUNC void store_result_safe(
+      device U* D,
+      const int ldd,
+      short2 dst_tile_dims
+  ) {
     // Apply epilogue
     UZU_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
@@ -449,72 +471,69 @@ struct BlockMMA {
 
     Ctile.template store_safe<U, WM, WN>(D, ldd, dst_tile_dims);
   }
-
 };
 
 template <
     typename T,
     int BM,
-    int BK,  
+    int BK,
     int lda_tgp,
     int reduction_dim,
     int tgp_size,
     int align_M = 1,
     int align_K = 4>
 struct BlockLoader {
-    UZU_MTL_CONST short n_reads = (BM * BK < tgp_size) ? 1 : (BM * BK) / tgp_size;
-    
-    const int src_ld;
-    const short thread_idx;
-    const short bi;
-    const short bj;
-    
-    threadgroup T* dst;
-    const device T* src;
-    
-    BlockLoader(
-        const device T* src_,
-        const int src_ld_,
-        threadgroup T* dst_,
-        ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-        ushort simd_lane_id [[thread_index_in_simdgroup]])
-        : src_ld(src_ld_),
-          thread_idx(simd_group_id * 32 + simd_lane_id),
-          bi(n_reads * thread_idx / BK),
-          bj((n_reads * thread_idx) % BK),
-          dst(dst_ + bi * lda_tgp + bj),
-          src(src_ + bi * src_ld + bj) {}
-    
-    void load_unsafe() const {
-        if (BM * BK < tgp_size && bi >= BM) {
-            return;
-        }
-        
-        for (int i = 0; i < n_reads; i++) {
-            dst[i] = src[i];
-        }
+  UZU_MTL_CONST short n_reads = (BM * BK < tgp_size) ? 1 : (BM * BK) / tgp_size;
+
+  const int src_ld;
+  const short thread_idx;
+  const short bi;
+  const short bj;
+
+  threadgroup T* dst;
+  const device T* src;
+
+  BlockLoader(
+      const device T* src_,
+      const int src_ld_,
+      threadgroup T* dst_,
+      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  )
+      : src_ld(src_ld_), thread_idx(simd_group_id * 32 + simd_lane_id),
+        bi(n_reads * thread_idx / BK), bj((n_reads * thread_idx) % BK),
+        dst(dst_ + bi * lda_tgp + bj), src(src_ + bi * src_ld + bj) {}
+
+  void load_unsafe() const {
+    if (BM * BK < tgp_size && bi >= BM) {
+      return;
     }
-    
-    void load_safe(short2 src_tile_dim) const {
-        if (BM * BK < tgp_size && bi >= BM) {
-            return;
-        }
-        
-        if (bi >= src_tile_dim.y || bj >= src_tile_dim.x) {
-            for (int i = 0; i < n_reads; i++) {
-                dst[i] = T(0);
-            }
-            return;
-        }
-        
-        for (int i = 0; i < n_reads; i++) {
-            dst[i] = src[i];
-        }
+
+    for (int i = 0; i < n_reads; i++) {
+      dst[i] = src[i];
     }
-    
-    void next() {
-        src += BK;  // Advance by tile size
+  }
+
+  void load_safe(short2 src_tile_dim) const {
+    if (BM * BK < tgp_size && bi >= BM) {
+      return;
     }
+
+    if (bi >= src_tile_dim.y || bj >= src_tile_dim.x) {
+      for (int i = 0; i < n_reads; i++) {
+        dst[i] = T(0);
+      }
+      return;
+    }
+
+    for (int i = 0; i < n_reads; i++) {
+      dst[i] = src[i];
+    }
+  }
+
+  void next() {
+    src += BK; // Advance by tile size
+  }
 };
 
-} 
+} // namespace matmul_utils

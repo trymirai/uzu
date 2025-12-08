@@ -25,7 +25,8 @@ inline T gelu_approx(T x) {
 
 template <typename T>
 inline T activate(T x, ushort act) {
-  if (act == ACT_SILU) return silu(x);
+  if (act == ACT_SILU)
+    return silu(x);
   return gelu_approx(x);
 }
 
@@ -36,10 +37,12 @@ template <typename T>
     const constant int& H [[buffer(2)]],
     const constant int& M [[buffer(3)]],
     const constant ushort& act_type [[buffer(4)]],
-    uint2 tid [[thread_position_in_grid]]) {
+    uint2 tid [[thread_position_in_grid]]
+) {
   int row = tid.y;
   int j = tid.x;
-  if (row >= M || j >= H) return;
+  if (row >= M || j >= H)
+    return;
   int base = row * (2 * H);
   T up = fused_up[base + j];
   T gate = fused_up[base + H + j];
@@ -48,31 +51,32 @@ template <typename T>
 }
 
 // Explicit instantiations with stable host names
-template [[host_name("mlp_activation_mul_f16")]]
-[[kernel]] void mlp_activation_mul<half>(
+template [[host_name("mlp_activation_mul_f16")]] [[kernel]] void
+mlp_activation_mul<half>(
     const device half* fused_up [[buffer(0)]],
     device half* hidden [[buffer(1)]],
     const constant int& H [[buffer(2)]],
     const constant int& M [[buffer(3)]],
     const constant ushort& act_type [[buffer(4)]],
-    uint2 tid [[thread_position_in_grid]]);
+    uint2 tid [[thread_position_in_grid]]
+);
 
-template [[host_name("mlp_activation_mul_f32")]]
-[[kernel]] void mlp_activation_mul<float>(
+template [[host_name("mlp_activation_mul_f32")]] [[kernel]] void
+mlp_activation_mul<float>(
     const device float* fused_up [[buffer(0)]],
     device float* hidden [[buffer(1)]],
     const constant int& H [[buffer(2)]],
     const constant int& M [[buffer(3)]],
     const constant ushort& act_type [[buffer(4)]],
-    uint2 tid [[thread_position_in_grid]]);
+    uint2 tid [[thread_position_in_grid]]
+);
 
-template [[host_name("mlp_activation_mul_bf16")]]
-[[kernel]] void mlp_activation_mul<bfloat>(
+template [[host_name("mlp_activation_mul_bf16")]] [[kernel]] void
+mlp_activation_mul<bfloat>(
     const device bfloat* fused_up [[buffer(0)]],
     device bfloat* hidden [[buffer(1)]],
     const constant int& H [[buffer(2)]],
     const constant int& M [[buffer(3)]],
     const constant ushort& act_type [[buffer(4)]],
-    uint2 tid [[thread_position_in_grid]]);
-
-
+    uint2 tid [[thread_position_in_grid]]
+);

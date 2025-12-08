@@ -5,15 +5,18 @@ using namespace metal;
 constant uint GATING_SEL [[function_constant(30)]]; // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
 
 static inline float gelu_approx(float x) {
-    const float k0 = 0.7978845608f;
-    const float k1 = 0.044715f;
-    if (x > 10.0f) return x;
-    if (x < -10.0f) return 0.0f;
-    return 0.5f * x * (1.0f + tanh(clamp(k0 * (x + k1 * x * x * x), -10.0f, 10.0f)));
+  const float k0 = 0.7978845608f;
+  const float k1 = 0.044715f;
+  if (x > 10.0f)
+    return x;
+  if (x < -10.0f)
+    return 0.0f;
+  return 0.5f * x *
+         (1.0f + tanh(clamp(k0 * (x + k1 * x * x * x), -10.0f, 10.0f)));
 }
 
 static inline float silu(float x, float alpha) {
-    return x / (1.0f + exp(-alpha * x));
+  return x / (1.0f + exp(-alpha * x));
 }
 
 // === Pass A: Vectorized GEMV with float4 loads ===
@@ -95,7 +98,18 @@ void moe_experts_decode_pass_a_impl(
         if (GATING_SEL > 1) {
             acc_gate += xv * float(w_gate_row[idx]);
         }
+      }
     }
+  }
+
+  // Simdgroup reduction across thrN dimension
+  MTL_PRAGMA_UNROLL
+  for (uint tm = 0; tm < TM; tm++) {
+    result_up[tm] = simd_sum(result_up[tm]);
+    if (GATING_SEL > 1) {
+      result_gate[tm] = simd_sum(result_gate[tm]);
+    }
+  }
 
     // Simdgroup reduction
     acc_up = simd_sum(acc_up);
@@ -120,7 +134,7 @@ void moe_experts_decode_pass_a_impl(
 
         hidden_out[(ulong)global_row * (ulong)d_ff + (ulong)h_idx] = activated;
     }
-}
+  }
 
 #define MOE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX) \
 kernel void moe_experts_decode_pass_a_##SUFFIX( \
@@ -157,36 +171,47 @@ MOE_PASS_A_KERNEL(float, float4, f32)
 
 // Count tiles per expert: tiles = (num_rows > 0) ? num_rows * h_blocks : 0
 kernel void moe_pass_a_tile_counts(
-    device const uint* expert_offsets [[buffer(0)]],  // [E+1]
-    device uint* tile_counts [[buffer(1)]],           // [E]
+    device const uint* expert_offsets [[buffer(0)]], // [E+1]
+    device uint* tile_counts [[buffer(1)]],          // [E]
     constant uint& E [[buffer(2)]],
     constant uint& h_blocks [[buffer(3)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    if (tid >= E) return;
-    const uint start = expert_offsets[tid];
-    const uint end = expert_offsets[tid + 1];
-    const uint num_rows = end - start;
-    tile_counts[tid] = (num_rows > 0) ? (num_rows * h_blocks) : 0;
+  if (tid >= E)
+    return;
+  const uint start = expert_offsets[tid];
+  const uint end = expert_offsets[tid + 1];
+  const uint num_rows = end - start;
+  tile_counts[tid] = (num_rows > 0) ? (num_rows * h_blocks) : 0;
 }
 
 // Exclusive scan of tile_counts to get tile_offsets and total_tiles
 kernel void moe_pass_a_tile_scan(
-    device const uint* tile_counts [[buffer(0)]],   // [E]
-    device uint* tile_offsets [[buffer(1)]],        // [E+1]
-    device uint* total_tiles [[buffer(2)]],         // [1]
+    device const uint* tile_counts [[buffer(0)]], // [E]
+    device uint* tile_offsets [[buffer(1)]],      // [E+1]
+    device uint* total_tiles [[buffer(2)]],       // [1]
     constant uint& E [[buffer(3)]],
     uint lid [[thread_index_in_threadgroup]],
     threadgroup uint* scratch [[threadgroup(0)]]
 ) {
-    // Simple single-threadgroup scan (works for E <= 1024)
-    const uint idx = lid;
+  // Simple single-threadgroup scan (works for E <= 1024)
+  const uint idx = lid;
 
-    // Load into threadgroup memory
-    if (idx < E) {
-        scratch[idx] = tile_counts[idx];
-    } else {
-        scratch[idx] = 0;
+  // Load into threadgroup memory
+  if (idx < E) {
+    scratch[idx] = tile_counts[idx];
+  } else {
+    scratch[idx] = 0;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  // Kogge-Stone scan
+  uint val = scratch[idx];
+  MTL_PRAGMA_UNROLL
+  for (uint offset = 1; offset < 1024; offset *= 2) {
+    uint temp = 0;
+    if (idx >= offset && idx < E) {
+      temp = scratch[idx - offset];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -204,84 +229,92 @@ kernel void moe_pass_a_tile_scan(
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
 
-    // Write exclusive scan (shift right by 1)
-    if (idx == 0) {
-        tile_offsets[0] = 0;
+  // Write exclusive scan (shift right by 1)
+  if (idx == 0) {
+    tile_offsets[0] = 0;
+  }
+  if (idx < E) {
+    tile_offsets[idx + 1] = scratch[idx];
+    if (idx == E - 1) {
+      total_tiles[0] = scratch[idx];
     }
-    if (idx < E) {
-        tile_offsets[idx + 1] = scratch[idx];
-        if (idx == E - 1) {
-            total_tiles[0] = scratch[idx];
-        }
-    }
+  }
 }
 
 // Build row→expert map: one thread per routed row
 kernel void moe_pass_a_build_row_map(
-    device const uint* expert_offsets [[buffer(0)]] , // [E+1]
-    device uint* row_expert_map [[buffer(1)]] ,       // [total_rows]
+    device const uint* expert_offsets [[buffer(0)]], // [E+1]
+    device uint* row_expert_map [[buffer(1)]],       // [total_rows]
     constant uint& total_rows [[buffer(2)]],
     constant uint& E [[buffer(3)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    if (tid >= total_rows) return;
+  if (tid >= total_rows)
+    return;
 
-    uint left = 0u;
-    uint right = E;
-    const uint row = tid;
+  uint left = 0u;
+  uint right = E;
+  const uint row = tid;
 
-    while (left + 1u < right) {
-        const uint mid = (left + right) >> 1;
-        if (row < expert_offsets[mid]) {
-            right = mid;
-        } else {
-            left = mid;
-        }
+  while (left + 1u < right) {
+    const uint mid = (left + right) >> 1;
+    if (row < expert_offsets[mid]) {
+      right = mid;
+    } else {
+      left = mid;
     }
+  }
 
-    row_expert_map[row] = left;
+  row_expert_map[row] = left;
 }
 
 // Build tile map entries from row→expert map
 kernel void moe_pass_a_build_tile_map(
-    device const uint* expert_offsets [[buffer(0)]],  // [E+1]
-    device const uint* tile_offsets [[buffer(1)]],    // [E+1]
-    device const uint* row_expert_map [[buffer(2)]],  // [total_rows]
-    device uint* tile_map [[buffer(3)]],              // [total_tiles * 3]
+    device const uint* expert_offsets [[buffer(0)]], // [E+1]
+    device const uint* tile_offsets [[buffer(1)]],   // [E+1]
+    device const uint* row_expert_map [[buffer(2)]], // [total_rows]
+    device uint* tile_map [[buffer(3)]],             // [total_tiles * 3]
     constant uint& total_rows [[buffer(4)]],
     constant uint& h_blocks [[buffer(5)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    const uint total_tiles = total_rows * h_blocks;
-    if (tid >= total_tiles) return;
+  const uint total_tiles = total_rows * h_blocks;
+  if (tid >= total_tiles)
+    return;
 
-    const uint row_idx = tid / h_blocks;
-    const uint h_block = tid % h_blocks;
+  const uint row_idx = tid / h_blocks;
+  const uint h_block = tid % h_blocks;
 
-    if (row_idx >= total_rows) return;
+  if (row_idx >= total_rows)
+    return;
 
-    const uint expert_idx = row_expert_map[row_idx];
-    const uint row_start = expert_offsets[expert_idx];
-    const uint row_in_expert = row_idx - row_start;
-    const uint tile_base = tile_offsets[expert_idx] + row_in_expert * h_blocks + h_block;
+  const uint expert_idx = row_expert_map[row_idx];
+  const uint row_start = expert_offsets[expert_idx];
+  const uint row_in_expert = row_idx - row_start;
+  const uint tile_base =
+      tile_offsets[expert_idx] + row_in_expert * h_blocks + h_block;
 
-    tile_map[tile_base * 3 + 0] = h_block;
-    tile_map[tile_base * 3 + 1] = expert_idx;
-    tile_map[tile_base * 3 + 2] = row_in_expert;
+  tile_map[tile_base * 3 + 0] = h_block;
+  tile_map[tile_base * 3 + 1] = expert_idx;
+  tile_map[tile_base * 3 + 2] = row_in_expert;
 }
 
 // Write dispatch args for indirect dispatch (reusable from tiled version)
 kernel void moe_pass_a_write_dispatch_args(
-    device const uint* total_tiles [[buffer(0)]],  // [1]
-    device uint* dispatch_args [[buffer(1)]],      // [3] - MTLDispatchThreadgroupsIndirectArguments
-    constant uint& num_tiles_y [[buffer(2)]],      // usually 1 for Pass A
+    device const uint* total_tiles [[buffer(0)]], // [1]
+    device uint* dispatch_args
+    [[buffer(1)]], // [3] - MTLDispatchThreadgroupsIndirectArguments
+    constant uint& num_tiles_y [[buffer(2)]], // usually 1 for Pass A
     uint tid [[thread_position_in_grid]]
 ) {
-    if (tid > 0) return;
-    dispatch_args[0] = total_tiles[0];  // x dimension = total tiles
-    dispatch_args[1] = num_tiles_y;     // y dimension
-    dispatch_args[2] = 1;               // z dimension
+  if (tid > 0)
+    return;
+  dispatch_args[0] = total_tiles[0]; // x dimension = total tiles
+  dispatch_args[1] = num_tiles_y;    // y dimension
+  dispatch_args[2] = 1;              // z dimension
 }
 
 // Modified Pass A that reads from tile map for indirect dispatch
@@ -292,7 +325,7 @@ void moe_experts_decode_pass_a_indirect_impl(
     device const T* W13_all,
     device const T* up_biases,
     device float* hidden_out,
-    device const uint* tile_map,         // [total_tiles * 3]
+    device const uint* tile_map, // [total_tiles * 3]
     uint d_model,
     uint d_ff,
     uint E,
@@ -301,7 +334,7 @@ void moe_experts_decode_pass_a_indirect_impl(
     float up_clip_min,
     float up_clip_max,
     float silu_alpha,
-    uint tile_idx,                       // flat threadgroup index
+    uint tile_idx, // flat threadgroup index
     uint simd_gid,
     uint simd_lid
 ) {
@@ -352,17 +385,18 @@ MOE_PASS_A_INDIRECT_KERNEL(bfloat, bfloat4, bf16)
 MOE_PASS_A_INDIRECT_KERNEL(half, half4, f16)
 MOE_PASS_A_INDIRECT_KERNEL(float, float4, f32)
 
-
 // === Pass B: Simdgroup cooperation along K for coalescing ===
-// W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading consecutive K elements
+// W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading
+// consecutive K elements
 
-template<typename T, typename AccumT>
+template <typename T, typename AccumT>
 void moe_experts_decode_down_fused_2d_impl(
-    device const float* hidden,           // [total_rows, d_ff] - f32 from Pass A
-    device const uint* row_expert_map,    // [total_rows] - direct row->expert lookup
-    device const T* w2_all,               // [E, d_model, d_ff] - layout
-    device const T* down_biases,          // [E, d_model]
-    device T* y_out,                      // [total_rows, d_model]
+    device const float* hidden, // [total_rows, d_ff] - f32 from Pass A
+    device const uint*
+        row_expert_map,          // [total_rows] - direct row->expert lookup
+    device const T* w2_all,      // [E, d_model, d_ff] - layout
+    device const T* down_biases, // [E, d_model]
+    device T* y_out,             // [total_rows, d_model]
     uint total_rows,
     uint d_model,
     uint d_ff,
@@ -459,26 +493,36 @@ void moe_experts_decode_down_fused_2d_impl(
     }
 }
 
-#define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX) \
-kernel void moe_experts_decode_down_fused_2d_##SUFFIX( \
-    device const float* hidden [[buffer(0)]], \
-    device const uint* row_expert_map [[buffer(1)]], \
-    device const DTYPE* w2_all [[buffer(2)]], \
-    device const DTYPE* down_biases [[buffer(3)]], \
-    device DTYPE* y_out [[buffer(4)]], \
-    constant uint& total_rows [[buffer(5)]], \
-    constant uint& d_model [[buffer(6)]], \
-    constant uint& d_ff [[buffer(7)]], \
-    constant uint& E [[buffer(8)]], \
-    uint2 tgpig [[threadgroup_position_in_grid]], \
-    uint simd_gid [[simdgroup_index_in_threadgroup]], \
-    uint simd_lid [[thread_index_in_simdgroup]]) \
-{ \
-    moe_experts_decode_down_fused_2d_impl<DTYPE, float>( \
-        hidden, row_expert_map, w2_all, down_biases, y_out, \
-        total_rows, d_model, d_ff, E, \
-        tgpig, simd_gid, simd_lid); \
-}
+#define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX)                              \
+  kernel void moe_experts_decode_down_fused_2d_##SUFFIX(                       \
+      device const float* hidden [[buffer(0)]],                                \
+      device const uint* row_expert_map [[buffer(1)]],                         \
+      device const DTYPE* w2_all [[buffer(2)]],                                \
+      device const DTYPE* down_biases [[buffer(3)]],                           \
+      device DTYPE* y_out [[buffer(4)]],                                       \
+      constant uint& total_rows [[buffer(5)]],                                 \
+      constant uint& d_model [[buffer(6)]],                                    \
+      constant uint& d_ff [[buffer(7)]],                                       \
+      constant uint& E [[buffer(8)]],                                          \
+      uint2 tgpig [[threadgroup_position_in_grid]],                            \
+      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
+      uint simd_lid [[thread_index_in_simdgroup]]                              \
+  ) {                                                                          \
+    moe_experts_decode_down_fused_2d_impl<DTYPE, float>(                       \
+        hidden,                                                                \
+        row_expert_map,                                                        \
+        w2_all,                                                                \
+        down_biases,                                                           \
+        y_out,                                                                 \
+        total_rows,                                                            \
+        d_model,                                                               \
+        d_ff,                                                                  \
+        E,                                                                     \
+        tgpig,                                                                 \
+        simd_gid,                                                              \
+        simd_lid                                                               \
+    );                                                                         \
+  }
 
 MOE_PASS_B_FUSED_2D_KERNEL(bfloat, bf16)
 MOE_PASS_B_FUSED_2D_KERNEL(half, f16)
