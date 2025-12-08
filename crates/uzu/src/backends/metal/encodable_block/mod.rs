@@ -40,7 +40,7 @@ pub use embedding::{
 };
 pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
-pub use linear::QuantizedLinear;
+pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::MlpBlock;
 pub use moe_block::{MoeBlock, SharedMoeWeights};

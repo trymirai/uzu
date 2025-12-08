@@ -27,3 +27,4 @@ target/
 # Models
 models/
 external/
+.github/*.md
