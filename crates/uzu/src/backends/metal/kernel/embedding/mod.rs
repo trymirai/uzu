@@ -1,14 +1,20 @@
-use std::mem::size_of;
+use std::{mem::size_of, rc::Rc};
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, MTLSize,
 };
 
-use super::super::MTLContext;
+use super::super::{MTLContext, kernel::matmul::MatmulArguments};
 use crate::{
-    DataType, backends::metal::encodable_block::QuantizedEmbeddingError,
+    DataType,
+    backends::metal::{
+        ForwardPassState, MTLError, encodable_block::QuantizedEmbeddingError,
+        forward_pass::ArrayId,
+    },
     config::QuantizationMode,
+    device::array::Array,
+    parameters::ParameterTree,
 };
 
 pub struct QuantizedEmbeddingLookupKernel {
@@ -117,5 +123,104 @@ impl QuantizedEmbeddingLookupKernel {
         );
 
         Ok(())
+    }
+}
+
+pub struct FullPrecisionReadoutKernelBlock {
+    kernel: std::cell::RefCell<super::super::kernel::matmul::MatmulKernel>,
+    weights_buffer: MTLBuffer,
+    vocab_size: usize,
+    model_dim: usize,
+}
+
+impl FullPrecisionReadoutKernelBlock {
+    pub fn new(
+        mtl_context: &MTLContext,
+        data_type: DataType,
+        vocab_size: usize,
+        model_dim: usize,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    ) -> Result<Self, MTLError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
+        {
+            return Err(MTLError::Generic(format!(
+                "Unsupported data type for full precision readout: {:?}",
+                data_type
+            )));
+        }
+
+        let mut weights = match parameter_tree.leaf("weights") {
+            Ok(weights) => weights,
+            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
+                MTLError::Generic(format!("Failed to load weights: {:?}", e))
+            })?,
+        };
+
+        if weights.shape() != [vocab_size, model_dim] {
+            return Err(MTLError::Generic(format!(
+                "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
+                weights.shape(),
+                vocab_size,
+                model_dim
+            )));
+        }
+
+        if weights.data_type() != data_type {
+            return Err(MTLError::Generic(format!(
+                "Weights dtype mismatch: got {:?}, expected {:?}",
+                weights.data_type(),
+                data_type
+            )));
+        }
+
+        let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
+
+        let kernel = super::super::kernel::matmul::MatmulKernel::new(
+            mtl_context,
+            data_type,
+            false,
+            true,
+        )?;
+
+        Ok(Self {
+            kernel: std::cell::RefCell::new(kernel),
+            weights_buffer,
+            vocab_size,
+            model_dim,
+        })
+    }
+}
+
+impl FullPrecisionReadoutKernelBlock {
+    fn encode_impl(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) {
+        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
+        let batch_size = state.active_suffix_length();
+        let mut input_array_mut = arrays[0].borrow_mut();
+        let mut output_array_mut = arrays[1].borrow_mut();
+
+        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
+        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+
+        let args = MatmulArguments {
+            a: input_buffer,
+            b: &self.weights_buffer,
+            d: output_buffer,
+            batch: batch_size as i32,
+            input_dim: self.model_dim as i32,
+            output_dim: self.vocab_size as i32,
+            lda: self.model_dim as i32,
+            ldb: self.model_dim as i32, // B is [vocab_size, model_dim], stride is model_dim
+            ldd: self.vocab_size as i32,
+            batch_count: 1,
+        };
+
+        self.kernel
+            .borrow_mut()
+            .encode(state.mtl_context(), encoder, args)
+            .expect("Failed to encode full precision readout kernel");
     }
 }

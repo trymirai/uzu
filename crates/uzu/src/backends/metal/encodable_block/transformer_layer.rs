@@ -7,8 +7,8 @@ use mpsgraph::{
 use objc2::rc::{Retained, autoreleasepool};
 
 use super::{
-    EncodableBlock, MlpBlock, MoeBlock, QuantizedEmbeddingLookup,
-    QuantizedEmbeddingReadout, QuantizedLinear,
+    EncodableBlock, FullPrecisionLinear, MlpBlock, MoeBlock,
+    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
@@ -37,7 +37,7 @@ fn make_execution_descriptor() -> Retained<ExecutableExecutionDescriptor> {
 
 pub fn linear_block<const N: usize>(
     config: &LinearConfig,
-    has_biases: bool,
+    _has_biases: bool,
     input_dim: usize,
     output_dims: [usize; N],
     context: &MTLContext,
@@ -46,31 +46,39 @@ pub fn linear_block<const N: usize>(
     output_array_id: ArrayId,
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn EncodableBlock> {
-    if let LinearConfig::Quantized(quant_config) = config {
-        let out_sum: usize = output_dims.iter().sum();
-        return quantized_linear_block_custom(
-            quant_config,
-            input_dim,
-            out_sum,
-            context,
-            parameter_tree,
-            input_array_id,
-            output_array_id,
-        )
-        .unwrap();
-    }
-    if let LinearConfig::MLXQuantized(quant_config) = config {
-        let out_sum: usize = output_dims.iter().sum();
-        return quantized_linear_block_custom(
-            quant_config,
-            input_dim,
-            out_sum,
-            context,
-            parameter_tree,
-            input_array_id,
-            output_array_id,
-        )
-        .unwrap();
+    let out_sum: usize = output_dims.iter().sum();
+    match config {
+        LinearConfig::Quantized(quant_config)
+        | LinearConfig::MLXQuantized(quant_config) => {
+            return quantized_linear_block_custom(
+                quant_config,
+                input_dim,
+                out_sum,
+                context,
+                parameter_tree,
+                input_array_id,
+                output_array_id,
+            )
+            .unwrap();
+        },
+        LinearConfig::FullPrecision {
+            precision,
+        } => {
+            let block = FullPrecisionLinear::new(
+                context,
+                (*precision).into(),
+                input_dim,
+                out_sum,
+                parameter_tree,
+                input_array_id,
+                output_array_id,
+            )
+            .expect("Failed to create full precision linear kernel block");
+            return Box::new(block);
+        },
+        LinearConfig::QLoRA {
+            ..
+        } => {},
     }
 
     autoreleasepool(|_| {
@@ -86,7 +94,7 @@ pub fn linear_block<const N: usize>(
             config,
             input_dim,
             output_dims,
-            has_biases,
+            true,
             &input_placeholder,
             parameter_tree,
         )
@@ -543,6 +551,10 @@ pub fn readout_block(
             precision,
             ..
         } => {
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
             let weights_data_type: DataType = precision.into();
@@ -553,6 +565,13 @@ pub fn readout_block(
 
             let weights_transposed =
                 graph.transpose(&weights_placeholder, &[1, 0], None);
+            let input_shape = [-1 as isize, config.model_dim as isize];
+            let input_data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+            let input_placeholder =
+                placeholder(&graph, &input_shape, input_data_type);
+            let input_shaped_type = shaped_type(&input_shape, input_data_type);
+
             let output = embeddings_readout_subgraph(
                 &graph,
                 &input_placeholder,
@@ -570,7 +589,7 @@ pub fn readout_block(
                 &feeds,
                 &[&output],
                 None,
-                Some(&compilation_descriptor),
+                Some(compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -589,6 +608,10 @@ pub fn readout_block(
             precision,
             ..
         } => {
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
+            // Use MPSGraph readout path
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
             let weights_data_type: DataType = precision.into();
@@ -599,6 +622,13 @@ pub fn readout_block(
 
             let weights_transposed =
                 graph.transpose(&weights_placeholder, &[1, 0], None);
+            let input_shape = [-1 as isize, config.model_dim as isize];
+            let input_data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+            let input_placeholder =
+                placeholder(&graph, &input_shape, input_data_type);
+            let input_shaped_type = shaped_type(&input_shape, input_data_type);
+
             let output = embeddings_readout_subgraph(
                 &graph,
                 &input_placeholder,
@@ -616,7 +646,7 @@ pub fn readout_block(
                 &feeds,
                 &[&output],
                 None,
-                Some(&compilation_descriptor),
+                Some(compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(
@@ -659,7 +689,15 @@ pub fn readout_block(
             embedding_quantization_mode: _,
             ..
         } => {
-            // Packed U8 weights with shape [vocab_size, model_dim / 2]
+            let graph = Graph::new();
+
+            let input_shape = [-1 as isize, config.model_dim as isize];
+            let input_data_type: DataType =
+                config.output_norm_config.scale_precision.into();
+            let input_placeholder =
+                placeholder(&graph, &input_shape, input_data_type);
+            let input_shaped_type = shaped_type(&input_shape, input_data_type);
+
             let weights_shape =
                 [config.vocab_size as isize, (config.model_dim / 2) as isize];
             let weights_data_type = DataType::U8;
@@ -701,7 +739,7 @@ pub fn readout_block(
                 &feeds,
                 &[&output],
                 None,
-                Some(&compilation_descriptor),
+                Some(compilation_descriptor),
             );
 
             let block = MPSGraphBlock::new(

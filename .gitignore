@@ -28,8 +28,9 @@ target/
 models/
 external/
 
-# Local-only dev example
-crates/uzu/examples/quick_chat.rs
+# GH
+.github/*.md
 
-# Local-only dev example: structured chat output validator
+# Local-only dev examples
+crates/uzu/examples/quick_chat.rs
 crates/uzu/examples/chat_output_validator.rs
