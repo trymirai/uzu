@@ -283,9 +283,13 @@ impl TraceValidator {
             ctx.shared_buffers.clone(),
             &token_ids,
             &token_positions,
+            None,
+            &token_seeds,
             token_ids.len(),
             false,
-            &token_seeds,
+            None,
+            false,
+            None,
             None,
         );
 

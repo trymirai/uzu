@@ -42,6 +42,7 @@ pub struct ForwardPassState {
     context: Rc<MTLContext>,
     token_ids: ArrayCell,
     token_positions: ArrayCell,
+    token_bitmask: Option<ArrayCell>,
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     common_aux: CommonAuxBuffers,
@@ -108,10 +109,14 @@ impl ForwardPassState {
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
+        token_bitmask: Option<&[u32]>,
+        token_seeds: &[u64],
         active_suffix_length: usize,
         is_prefilling: bool,
-        token_seeds: &[u64],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        skip_token_ids_copy: bool,
+        async_positions: Option<(&metal::Buffer, usize)>,
+        async_seeds: Option<(&metal::Buffer, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -124,20 +129,71 @@ impl ForwardPassState {
             "Suffix length exceeds KV cache capacity"
         );
 
-        let token_ids_cell = Self::init_token_ids(&context, scratch, token_ids);
-        let token_positions_cell =
-            Self::init_token_positions(&context, scratch, token_positions);
-
-        // Token seeds
-        let mut token_seeds_array = unsafe {
-            MetalArray::new(
-                scratch.token_seeds.clone(),
-                &[suffix_length],
-                DataType::U64,
-            )
+        // Token IDs - optionally skip copy for async path
+        let token_ids_cell = if skip_token_ids_copy {
+            RefCell::new(unsafe {
+                MetalArray::new(
+                    scratch.token_ids.clone(),
+                    &[suffix_length],
+                    DataType::U64,
+                )
+            })
+        } else {
+            Self::init_token_ids(&context, scratch, token_ids)
         };
-        context.copy_from_view(&mut token_seeds_array, token_seeds.into());
-        let token_seeds_cell = RefCell::new(token_seeds_array);
+
+        // Token positions - use async buffer if provided
+        let token_positions_cell =
+            if let Some((async_buf, offset)) = async_positions {
+                let array = unsafe {
+                    MetalArray::new_with_offset(
+                        async_buf.clone(),
+                        &[suffix_length],
+                        DataType::I32,
+                        offset * std::mem::size_of::<i32>(),
+                    )
+                };
+                RefCell::new(array)
+            } else {
+                Self::init_token_positions(&context, scratch, token_positions)
+            };
+
+        // Token bitmask
+        let token_bitmask_cell = token_bitmask.map(|bitmask| {
+            let bitmask_shape = model_shape.bitmask_shape(suffix_length);
+            let mut bitmask_array = unsafe {
+                MetalArray::new(
+                    scratch.token_bitmask.clone(),
+                    &bitmask_shape,
+                    DataType::U32,
+                )
+            };
+            context.copy_from_view(&mut bitmask_array, bitmask.into());
+            RefCell::new(bitmask_array)
+        });
+
+        // Token seeds - use async buffer if provided
+        let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
+            let array = unsafe {
+                MetalArray::new_with_offset(
+                    async_buf.clone(),
+                    &[suffix_length],
+                    DataType::U64,
+                    offset * std::mem::size_of::<u64>(),
+                )
+            };
+            RefCell::new(array)
+        } else {
+            let mut token_seeds_array = unsafe {
+                MetalArray::new(
+                    scratch.token_seeds.clone(),
+                    &[suffix_length],
+                    DataType::U64,
+                )
+            };
+            context.copy_from_view(&mut token_seeds_array, token_seeds.into());
+            RefCell::new(token_seeds_array)
+        };
 
         // Logits
         let logits_cell = RefCell::new(unsafe {
@@ -205,6 +261,7 @@ impl ForwardPassState {
             context,
             token_ids: token_ids_cell,
             token_positions: token_positions_cell,
+            token_bitmask: token_bitmask_cell,
             attention_bias,
             shared_buffers,
             common_aux,
@@ -329,6 +386,7 @@ impl ForwardPassState {
             context,
             token_ids: token_ids_cell,
             token_positions: token_positions_cell,
+            token_bitmask: None,
             attention_bias,
             shared_buffers,
             common_aux,
@@ -502,6 +560,11 @@ impl ForwardPassState {
         matches!(self.mode, ForwardPassMode::Classifier(_))
     }
 
+    /// Get token bitmask if available.
+    pub fn token_bitmask(&self) -> Option<&ArrayCell> {
+        self.token_bitmask.as_ref()
+    }
+
     /// Get LLM-specific state (panics if not in LLM mode).
     pub fn llm_state(&self) -> &LLMModeState {
         match &self.mode {
@@ -535,6 +598,9 @@ impl ForwardPassState {
             // Common arrays
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
+            ArrayId::TokenBitmask => {
+                self.token_bitmask.clone().expect("Token bitmask not available")
+            },
             ArrayId::Main => self.common_aux.main.clone(),
             ArrayId::Shortcut => self.common_aux.shortcut.clone(),
             ArrayId::QKV => self.common_aux.qkv.clone(),

@@ -20,6 +20,7 @@ use super::RopeType;
 pub enum ArrayId {
     TokenIds,
     TokenPositions,
+    TokenBitmask,
     Logits,
     TokenSeeds,
 

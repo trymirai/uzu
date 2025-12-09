@@ -1,10 +1,15 @@
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
+use block::ConcreteBlock;
+use itertools::{Either, Itertools, izip};
 use mpsgraph::CommandBuffer;
 
 use super::{
     LLMContext,
     gpu_capture::GpuCaptureManager,
+    grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
     tasks::{LLMEncodedTask, LLMRunTask},
 };
@@ -13,12 +18,12 @@ use crate::{
     backends::metal::forward_pass::{
         EncodableBlock, EncodingParameters, ForwardPassState, INVALID_POSITION,
     },
-    linearizer::trie::{TokenTrie, TrieCreationConfig},
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, SamplingMethod},
         types::Error,
     },
+    trie::{TrieCreationConfig, TrieNode},
     utils::env_utils::MetalEnvVar,
 };
 
@@ -63,6 +68,7 @@ impl LLM {
     pub fn prefill(
         &mut self,
         tokens: Vec<u64>,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -71,86 +77,104 @@ impl LLM {
 
         self.tokens.extend(tokens.clone());
 
+        let tokens_length = tokens.len();
+
         let prefill_step_size = self
             .decoding_config
             .prefill_step_size
             .resolve(&self.context.model_config);
-
-        let tokens_length = tokens.len();
-        let number_of_prefill_steps =
-            (tokens_length as f32 / prefill_step_size as f32).ceil() as usize;
-        let total_prefill_tokens_count =
-            number_of_prefill_steps * prefill_step_size;
-        let unused_tokens_count = total_prefill_tokens_count - tokens_length;
+        let prefill_steps = tokens_length.div_ceil(prefill_step_size);
+        let prefill_size = prefill_steps * prefill_step_size;
 
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let speculated_suffix = TokenTrie::from_speculator(
+
+        let suffix_length = prefill_size - tokens_length;
+        let suffix_root = TrieNode::from_speculator(
             &tokens,
             &mut self.context.next_seed,
-            false,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
-            unused_tokens_count,
-        )
-        .linearize(0, unused_tokens_count);
-
-        let zero_padding_tokens: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.tokens.len()];
-
-        let padded_tokens = [
-            &tokens[..],
-            &speculated_suffix.tokens[..],
-            &zero_padding_tokens[..],
-        ]
-        .concat();
-
-        let mut padded_positions: Vec<usize> =
-            (prefix_offset..prefix_offset + tokens_length).collect();
-        padded_positions.extend(
-            speculated_suffix
-                .indices
-                .iter()
-                .map(|index| index + prefix_offset + tokens_length),
+            suffix_length + 1,
         );
-        let padding_count =
-            unused_tokens_count - speculated_suffix.tokens.len();
-        padded_positions
-            .extend(std::iter::repeat(INVALID_POSITION).take(padding_count));
+        let flat_trie = suffix_root.linearize();
+        let active_suffix_length = flat_trie.len() - 1;
 
-        let zero_padding_left_seeds: Vec<u64> = vec![0; tokens_length];
-        let zero_padding_right_seeds: Vec<u64> =
-            vec![0; unused_tokens_count - speculated_suffix.seeds.len()];
-        let padded_seeds = [
-            &zero_padding_left_seeds[..],
-            &speculated_suffix.seeds[..],
-            &zero_padding_right_seeds[..],
-        ]
-        .concat();
+        let token_ids = tokens
+            .iter()
+            .copied()
+            .take(tokens_length - 1)
+            .chain(flat_trie.token_ids())
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .chunks(prefill_step_size);
+
+        let token_positions = (prefix_offset
+            ..prefix_offset + tokens_length - 1)
+            .chain(flat_trie.token_positions().map(|trie_position| {
+                prefix_offset + tokens_length - 1 + trie_position
+            }))
+            .chain(repeat_n(
+                INVALID_POSITION,
+                suffix_length - active_suffix_length,
+            ))
+            .chunks(prefill_step_size);
+
+        let single_token_bitmask_size =
+            self.context.model_shape.bitmask_shape(1)[1];
+        let token_bitmasks = repeat_n(None, tokens_length - 1)
+            .chain(flat_trie.token_masks())
+            .chain(repeat_n(None, suffix_length - active_suffix_length))
+            .chunks(prefill_step_size);
+
+        let token_seeds = repeat_n(0, tokens_length - 1)
+            .chain(flat_trie.token_seeds())
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .chunks(prefill_step_size);
 
         let mut last_state: Option<ForwardPassState> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
-        for step in 0..number_of_prefill_steps {
+        for (
+            step,
+            (
+                step_token_ids,
+                step_token_positions,
+                step_token_bitmask,
+                step_token_seeds,
+            ),
+        ) in
+            izip!(&token_ids, &token_positions, &token_bitmasks, &token_seeds)
+                .enumerate()
+        {
             let tokens_start_index = step * prefill_step_size;
             let tokens_end_index = tokens_start_index + prefill_step_size;
-            let tokens_for_step =
-                &padded_tokens[tokens_start_index..tokens_end_index];
-            let positions_for_step =
-                &padded_positions[tokens_start_index..tokens_end_index];
-            let active_suffix_length = positions_for_step
+
+            let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
+            let step_token_positions =
+                step_token_positions.collect::<Box<[usize]>>();
+            let step_token_bitmask = step_token_bitmask
+                .map(|mask| match mask {
+                    Some(mask) => Either::Left(mask.iter().copied()),
+                    None => Either::Right(repeat_n(
+                        u32::MAX,
+                        single_token_bitmask_size,
+                    )),
+                })
+                .flatten()
+                .collect::<Box<[u32]>>();
+            let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
+
+            let active_suffix_length = step_token_positions
                 .iter()
                 .position(|&pos| pos == INVALID_POSITION)
                 .unwrap_or(prefill_step_size);
-            let seeds_for_step =
-                &padded_seeds[tokens_start_index..tokens_end_index];
-            let is_last_prefill_step = step == number_of_prefill_steps - 1;
+            let is_last_prefill_step = step == prefill_steps - 1;
             let should_sample_after_step =
                 sample_suffix && is_last_prefill_step;
 
-            let is_first_prefill = step == 0;
             let should_capture =
-                self.gpu_capture.should_capture_prefill(is_first_prefill);
+                self.gpu_capture.should_capture_prefill(step == 0);
 
             if should_capture {
                 let _ = self
@@ -163,9 +187,10 @@ impl LLM {
             });
 
             let task = LLMRunTask {
-                token_ids: tokens_for_step.to_vec(),
-                token_positions: positions_for_step.to_vec(),
-                token_seeds: seeds_for_step.to_vec(),
+                token_ids: &step_token_ids,
+                token_positions: &step_token_positions,
+                token_bitmask: Some(&step_token_bitmask),
+                token_seeds: &step_token_seeds,
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
                 is_prefilling: !should_sample_after_step,
@@ -194,7 +219,7 @@ impl LLM {
                     ..step_end_token_index)
                     .map(|idx| idx + prefix_offset)
                     .collect();
-                if step == number_of_prefill_steps - 1 && sample_suffix {
+                if step == prefill_steps - 1 && sample_suffix {
                     // Exclude the last token because it belongs to the suffix for sampling.
                     positions_for_step.pop();
                 }
@@ -235,42 +260,28 @@ impl LLM {
         }
         let sampled_tokens = self.sample(&mut final_state)?;
 
-        let last_suffix_start =
-            prefill_step_size * (number_of_prefill_steps - 1);
+        let last_suffix_start = prefill_step_size * (prefill_steps - 1);
+        let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let sampling_row = (tokens_length - last_suffix_start) - 1;
-        let mut current_token_index: isize = -1;
-        let mut accepted_token_indices: Vec<usize> = vec![sampling_row];
-        let mut accepted_tokens: Vec<u64> = Vec::new();
-        loop {
-            let current_index_in_window =
-                ((current_token_index + tokens_length as isize)
-                    % prefill_step_size as isize) as usize;
-            let new_token = sampled_tokens[current_index_in_window];
-            accepted_tokens.push(new_token);
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens[suffix_root_index..]);
 
-            if let Some(map) =
-                speculated_suffix.transition_map.get(&current_token_index)
-            {
-                if let Some(&next_token_index) = map.get(&new_token) {
-                    accepted_token_indices.push(next_token_index as usize);
-                    current_token_index = next_token_index;
-                } else {
-                    break;
-                }
-            } else {
-                break;
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            for &token in &accepted_tokens {
+                compiled_grammar.accept_token(token);
             }
         }
 
         self.update_cache_layers(
-            &accepted_token_indices,
+            &accepted_token_indices
+                .into_iter()
+                .map(|p| suffix_root_index + p)
+                .collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             false,
         );
 
         self.tokens.extend(accepted_tokens.clone());
-
         self.sync_prefix();
 
         Ok(PrefillResult {
@@ -281,48 +292,63 @@ impl LLM {
 
     pub fn generate(
         &mut self,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
-        let speculated_suffix = TokenTrie::from_speculator(
+
+        let suffix_length = self.decoding_config.generate_suffix_length();
+        let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &mut self.context.next_seed,
-            true,
+            compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
-            self.decoding_config.generate_suffix_length(),
-        )
-        .linearize(0, self.decoding_config.generate_suffix_length());
+            suffix_length,
+        );
 
-        let expected_suffix_length =
-            self.decoding_config.generate_suffix_length();
-        let unused_tokens_count =
-            expected_suffix_length - speculated_suffix.tokens.len();
+        let flat_trie = suffix_root.linearize();
+        let active_suffix_length = flat_trie.len();
 
-        let zero_padding_tokens: Vec<u64> = vec![0; unused_tokens_count];
-        let padded_tokens =
-            [speculated_suffix.tokens.clone(), zero_padding_tokens].concat();
+        let token_ids = flat_trie
+            .token_ids()
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
 
-        let zero_padding_seeds: Vec<u64> = vec![0; unused_tokens_count];
-        let padded_seeds =
-            [speculated_suffix.seeds.clone(), zero_padding_seeds].concat();
+        let single_token_bitmask_size =
+            self.context.model_shape.bitmask_shape(1)[1];
+        let token_bitmask = flat_trie
+            .token_masks()
+            .chain(repeat_n(None, suffix_length - active_suffix_length))
+            .map(|mask| match mask {
+                Some(mask) => Either::Left(mask.iter().copied()),
+                None => {
+                    Either::Right(repeat_n(u32::MAX, single_token_bitmask_size))
+                },
+            })
+            .flatten()
+            .collect::<Box<[u32]>>();
 
         let start_position = self.tokens.len() - 1;
+        let token_positions = flat_trie
+            .token_positions()
+            .map(|trie_position| start_position + trie_position)
+            .chain(repeat_n(
+                INVALID_POSITION,
+                suffix_length - active_suffix_length,
+            ))
+            .collect::<Box<[usize]>>();
 
-        let padded_positions: Vec<usize> = speculated_suffix
-            .indices
-            .iter()
-            .map(|idx| idx + start_position)
-            .chain(
-                std::iter::repeat(INVALID_POSITION).take(unused_tokens_count),
-            )
-            .collect();
-        let active_suffix_length = speculated_suffix.tokens.len();
+        let token_seeds = flat_trie
+            .token_seeds()
+            .chain(repeat_n(0, suffix_length - active_suffix_length))
+            .collect::<Box<[u64]>>();
 
         let task = LLMRunTask {
-            token_ids: padded_tokens,
-            token_positions: padded_positions,
-            token_seeds: padded_seeds,
+            token_ids: &token_ids,
+            token_positions: &token_positions,
+            token_bitmask: Some(&token_bitmask),
+            token_seeds: &token_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
             is_prefilling: false,
@@ -337,27 +363,16 @@ impl LLM {
 
         let sampled_tokens = self.sample(&mut state)?;
 
-        let mut accepted_token_indices = Vec::new();
-        let mut accepted_tokens = Vec::new();
-        let mut current_token_index: isize = 0;
-        loop {
-            let new_token = sampled_tokens[current_token_index as usize];
-            accepted_tokens.push(new_token);
-            if let Some(map) =
-                speculated_suffix.transition_map.get(&(current_token_index))
-            {
-                if let Some(&next_token_index) = map.get(&new_token) {
-                    accepted_token_indices.push(next_token_index as usize);
-                    current_token_index = next_token_index;
-                } else {
-                    break;
-                }
-            } else {
-                break;
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens);
+
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            for &token in &accepted_tokens {
+                compiled_grammar.accept_token(token);
             }
         }
 
-        self.update_cache_layers(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices[1..], None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -366,6 +381,162 @@ impl LLM {
             tokens: accepted_tokens,
             forwardpass_duration: run_time,
         })
+    }
+
+    /// Prepares async buffers for generation.
+    /// Must be called after prefill, before async_generate loop.
+    pub fn prepare_async(
+        &mut self,
+        tokens_to_generate: usize,
+    ) {
+        let prefill_count = self.tokens.len();
+        self.context
+            .async_buffers
+            .prepare_positions(prefill_count, tokens_to_generate);
+        self.context
+            .async_buffers
+            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.reset_counter();
+    }
+
+    /// Submits a single async forward pass.
+    /// Does NOT block. Callback fires when GPU completes.
+    ///
+    /// - `pass_idx`: Index of this pass (0, 1, 2, ...)
+    /// - `sampling_method`: Sampling configuration
+    /// - `on_complete`: Callback receiving sampled token as u64
+    pub fn async_generate<F>(
+        &mut self,
+        pass_idx: usize,
+        sampling_method: SamplingMethod,
+        on_complete: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(u64) + Send + 'static,
+    {
+        assert_eq!(
+            self.decoding_config.generate_suffix_length(),
+            1,
+            "async_generate only supports suffix_length=1"
+        );
+
+        // Extract values from async_buffers before mutable borrow
+        let current_counter = self.context.async_buffers.counter.get();
+        let is_continuation = current_counter > 0;
+        let batch_size = self.context.async_buffers.batch_size;
+        let slot = pass_idx % batch_size;
+        let async_event = self.context.async_buffers.event.clone();
+        let results_buffer = self.context.async_buffers.results.clone();
+        let async_positions_buffer =
+            self.context.async_buffers.positions.clone();
+        let async_seeds_buffer = self.context.async_buffers.seeds.clone();
+
+        let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
+
+        let token_ids: [u64; 1] = [last_token];
+        let token_positions: [usize; 1] = [0]; // Ignored, using async buffer
+        let token_seeds: [u64; 1] = [0]; // Ignored, using async buffer
+
+        let async_positions = Some((&async_positions_buffer, pass_idx));
+        let async_seeds = Some((&async_seeds_buffer, pass_idx));
+
+        let mut state = ForwardPassState::new_llm(
+            self.context.mtl_context.clone(),
+            &self.context.model_config.decoder_config,
+            &self.context.model_shape,
+            &self.context.scratch_buffers,
+            self.context.cache_layers.clone(),
+            self.context.shared_buffers.clone(),
+            &token_ids,
+            &token_positions,
+            None, // token_bitmask - ignored, using async buffer
+            &token_seeds,
+            1,     // active_suffix_length
+            false, // is_prefilling
+            None,  // external_bias_fn
+            is_continuation,
+            async_positions,
+            async_seeds,
+        );
+        if let Some(method) = state.sampling_method_mut() {
+            *method = Some(sampling_method);
+        }
+
+        self.context.reset_command_buffer();
+        let root_command_buffer =
+            self.context.command_buffer.root_command_buffer();
+
+        // Wait on previous pass if this is a continuation
+        if is_continuation {
+            root_command_buffer
+                .encode_wait_for_event(&async_event, current_counter);
+        }
+
+        // Encode forward pass
+        self.context.executables.encode(
+            &mut state,
+            &self.context.command_buffer,
+            &EncodingParameters::new(false, false, false),
+        );
+
+        // Encode sampling
+        self.context.gpu_sampler.encode(
+            &mut state,
+            &self.context.command_buffer,
+            &EncodingParameters::new(false, false, false),
+        );
+
+        // Copy sampled token: sampling_output → token_ids (for next pass)
+        // and sampling_output → results[slot] (for callback)
+        let sampling_output = state
+            .sampling_output()
+            .expect("sampling_output must exist after sampling encode");
+        let sampling_output_buffer =
+            unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
+        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+
+        let encoder = root_command_buffer.new_compute_command_encoder();
+        self.context.token_copy.encode_to_token_ids(
+            &sampling_output_buffer,
+            &token_ids_buffer,
+            encoder,
+        );
+        self.context.token_copy.encode_to_results(
+            &sampling_output_buffer,
+            &results_buffer,
+            slot,
+            encoder,
+        );
+        encoder.end_encoding();
+
+        // Signal event for next pass
+        let next_counter = current_counter + 1;
+        root_command_buffer.encode_signal_event(&async_event, next_counter);
+        self.context.async_buffers.counter.set(next_counter);
+
+        // Add completion handler
+        let results_buffer_clone = results_buffer.clone();
+        let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
+
+        let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+            let token = {
+                let ptr = results_buffer_clone.contents() as *const u32;
+                unsafe { *ptr.add(slot) as u64 }
+            };
+            if let Some(cb) = callback.lock().unwrap().take() {
+                cb(token);
+            }
+        });
+        let block = block.copy();
+
+        root_command_buffer.add_completed_handler(&block);
+        self.context.command_buffer.commit_and_continue();
+
+        Ok(())
+    }
+
+    pub fn has_attention_layers(&self) -> bool {
+        self.context.model_config.decoder_config.has_attention_layers()
     }
 
     pub fn clear_cache(&mut self) {
@@ -390,10 +561,15 @@ impl LLM {
         &mut self,
         suffix_length: usize,
     ) {
+        let token_ids: Vec<u64> = vec![0; suffix_length];
+        let token_positions: Vec<usize> = (0..suffix_length).collect();
+        let token_seeds: Vec<u64> = vec![0; suffix_length];
+
         let task = LLMRunTask {
-            token_ids: vec![0; suffix_length],
-            token_positions: (0..suffix_length).collect::<Vec<usize>>(),
-            token_seeds: vec![0; suffix_length],
+            token_ids: &token_ids,
+            token_positions: &token_positions,
+            token_bitmask: None,
+            token_seeds: &token_seeds,
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
             is_prefilling: false,

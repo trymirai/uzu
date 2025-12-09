@@ -2,11 +2,13 @@ use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
+use xgrammar::TokenizerInfo;
 
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
     config::{MixerConfig, ModelMetadata},
     llm::{
+        grammar::CompiledGrammar,
         llm::LLM,
         result::{GenerateResult, PrefillResult},
     },
@@ -29,6 +31,7 @@ pub struct ChatSession {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
+    tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     llm: Option<LLM>,
@@ -98,6 +101,10 @@ impl ChatSession {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        // Create TokenizerInfo for grammar support
+        let tokenizer_info =
+            TokenizerInfo::from_huggingface(&tokenizer, None, None);
+
         // Extract language model config
         let language_model_config = model_metadata
             .model_config
@@ -122,6 +129,7 @@ impl ChatSession {
             model_path,
             model_metadata,
             tokenizer,
+            tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
             llm: Some(llm),
@@ -295,12 +303,25 @@ impl ChatSession {
         let sampling_method =
             config.sampling_policy.resolve(language_model_config_for_sampling);
 
+        // Create grammar from config if provided
+        let mut compiled_grammar: Option<CompiledGrammar> =
+            if let Some(ref grammar_config) = config.grammar_config {
+                Some(CompiledGrammar::from_config(
+                    grammar_config,
+                    None,
+                    &self.tokenizer_info,
+                )?)
+            } else {
+                None
+            };
+
         let prefill_start = Instant::now();
         let prefix_offset = llm.tokens.len();
 
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = llm.prefill(
             tokens.clone(),
+            compiled_grammar.as_mut(),
             sampling_method,
             prefix_offset,
             sample_suffix,
@@ -361,7 +382,8 @@ impl ChatSession {
         let mut generate_durations: Vec<f64> = Vec::new();
         let generate_output = loop {
             let generate_start = Instant::now();
-            let generate_result = llm.generate(sampling_method)?;
+            let generate_result =
+                llm.generate(compiled_grammar.as_mut(), sampling_method)?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);

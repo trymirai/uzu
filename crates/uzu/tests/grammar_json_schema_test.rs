@@ -29,7 +29,7 @@ struct Person {
 }
 
 #[test]
-#[ignore = "Grammar support needs to be ported from main"]
+#[ignore = "Test requires model; run manually with RUST_TEST_THREADS=1"]
 fn test_grammar_json_schema() {
     let crate_version = env!("CARGO_PKG_VERSION");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

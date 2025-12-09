@@ -1,13 +1,22 @@
-use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fs::File,
+    io::BufReader,
+    path::Path,
+    rc::Rc,
+};
 
+use metal::Event as MTLEvent;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::Retained;
 
 use super::{
-    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, ModelShape,
+    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
+    ModelShape,
     compilation_parameters::CompilationConfig,
     encodable_block::Sampling,
     forward_pass::{ScratchBuffers, SharedBuffers},
+    kernel::TokenCopyKernel,
 };
 use crate::{
     DataType,
@@ -20,6 +29,105 @@ use crate::{
         types::Error,
     },
 };
+
+/// Pre-allocated buffers for async generation pipeline.
+/// Indexed by pass_idx to avoid race conditions between GPU passes.
+pub struct AsyncBuffers {
+    /// Positions buffer: [max_tokens] i32
+    /// Pre-populated with [prefill_count, prefill_count+1, ...]
+    pub positions: metal::Buffer,
+    /// Seeds buffer: [max_tokens] u64
+    /// Pre-populated with deterministic seed sequence
+    pub seeds: metal::Buffer,
+    /// Results buffer: [batch_size] u32
+    /// Each pass writes its sampled token to results[pass_idx % batch_size]
+    pub results: metal::Buffer,
+    /// Metal event for GPU-side synchronization between passes
+    pub event: MTLEvent,
+    /// Current event counter (pass N waits on N, signals N+1)
+    pub counter: Cell<u64>,
+    /// Number of tokens after prefill (base for position calculation)
+    pub prefill_count: Cell<usize>,
+    /// Batch size (number of passes to keep in flight)
+    pub batch_size: usize,
+}
+
+impl AsyncBuffers {
+    pub fn new(
+        device: &metal::DeviceRef,
+        max_tokens: usize,
+        batch_size: usize,
+    ) -> Self {
+        let positions = device.new_buffer(
+            (max_tokens * std::mem::size_of::<i32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let seeds = device.new_buffer(
+            (max_tokens * std::mem::size_of::<u64>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let results = device.new_buffer(
+            (batch_size * std::mem::size_of::<u32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let event = device.new_event();
+
+        Self {
+            positions,
+            seeds,
+            results,
+            event,
+            counter: Cell::new(0),
+            prefill_count: Cell::new(0),
+            batch_size,
+        }
+    }
+
+    /// Prepare positions buffer: [prefill_count-1, prefill_count, ...]
+    /// Uses prefill_count-1 to match sync path which uses self.tokens.len()-1
+    pub fn prepare_positions(
+        &self,
+        prefill_count: usize,
+        tokens_to_generate: usize,
+    ) {
+        self.prefill_count.set(prefill_count);
+        let base_position = prefill_count.saturating_sub(1);
+        let ptr = self.positions.contents() as *mut i32;
+        for i in 0..tokens_to_generate {
+            unsafe {
+                *ptr.add(i) = (base_position + i) as i32;
+            }
+        }
+    }
+
+    /// Prepare seeds buffer with deterministic sequence
+    pub fn prepare_seeds(
+        &self,
+        seed_source: &mut DerivableSeed,
+        tokens_to_generate: usize,
+    ) {
+        let ptr = self.seeds.contents() as *mut u64;
+        for i in 0..tokens_to_generate {
+            unsafe {
+                *ptr.add(i) = seed_source.next();
+            }
+        }
+    }
+
+    /// Reset event counter before async generation
+    pub fn reset_counter(&self) {
+        self.counter.set(0);
+    }
+
+    /// Read sampled token from results buffer at given pass index
+    pub fn read_result(
+        &self,
+        pass_idx: usize,
+    ) -> u32 {
+        let ptr = self.results.contents() as *const u32;
+        unsafe { *ptr.add(pass_idx % self.batch_size) }
+    }
+}
 
 pub struct LLMContext {
     pub mtl_context: Rc<MTLContext>,
@@ -35,6 +143,11 @@ pub struct LLMContext {
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: Sampling,
     pub next_seed: DerivableSeed,
+
+    /// Kernel for copying sampled tokens in async pipeline
+    pub token_copy: TokenCopyKernel,
+    /// Pre-allocated buffers for async generation
+    pub async_buffers: AsyncBuffers,
 }
 
 impl LLMContext {
@@ -143,6 +256,17 @@ impl LLMContext {
         )
         .map_err(|_| Error::UnableToCreateMetalContext)?;
 
+        let token_copy = TokenCopyKernel::new(&mtl_context)
+            .map_err(|_| Error::UnableToCreateMetalContext)?;
+
+        let async_batch_size =
+            decoding_config.async_batch_size.resolve(model_path);
+        let async_buffers = AsyncBuffers::new(
+            &mtl_context.device,
+            max_prefix_length,
+            async_batch_size,
+        );
+
         let base_seed = decoding_config.sampling_seed.resolve();
         let next_seed = DerivableSeed::new(base_seed);
 
@@ -158,6 +282,8 @@ impl LLMContext {
             kv_cache_update,
             gpu_sampler,
             next_seed,
+            token_copy,
+            async_buffers,
         };
 
         return Ok(context);
