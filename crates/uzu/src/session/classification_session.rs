@@ -41,7 +41,10 @@ impl ClassificationSession {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|_| Error::UnableToLoadTokenizer)?;
 
-        let classifier_model_config = model_metadata.model_config.as_classifier().ok_or(Error::UnableToLoadConfig)?;
+        let classifier_model_config = model_metadata
+            .model_config
+            .as_classifier()
+            .ok_or(Error::UnableToLoadConfig)?;
         let input_processor = Box::new(InputProcessorDefault::new(
             classifier_model_config.message_processor_config.clone(),
         )) as Box<dyn InputProcessor>;

@@ -5,7 +5,6 @@
 
 // Constants & Utilities
 // Linearizer
-pub use crate::linearizer::trie::TokenTrie;
 // Session Core
 pub use crate::session::ChatSession;
 // Session Config
@@ -23,7 +22,6 @@ pub use crate::session::types::{
 // Speculators
 pub use crate::speculators::speculator::Speculator;
 pub use crate::{
-    VERSION, session::ClassificationSession,
+    VERSION, linearizer::trie::TokenTrie, session::ClassificationSession,
     speculators::empty_speculator::EmptySpeculator, storage_path,
 };
-

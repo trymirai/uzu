@@ -5,6 +5,5 @@ pub mod helpers;
 pub mod parameter;
 pub mod types;
 
-pub use chat_session::ChatSession;
-pub use chat_session::ChatSession as Session;
+pub use chat_session::{ChatSession, ChatSession as Session};
 pub use classification_session::ClassificationSession;
