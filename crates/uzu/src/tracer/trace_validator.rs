@@ -28,7 +28,7 @@ use crate::{
     classifier::Classifier,
     config::ModelMetadata,
     llm::{
-        LLMContext,
+        LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
     parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
@@ -156,7 +156,7 @@ pub enum ArrayTransform {
 // ============================================================================
 
 enum ModelContext {
-    LLM(LLMContext),
+    LanguageModelGenerator(LanguageModelGeneratorContext),
     Classifier(Classifier),
 }
 
@@ -204,8 +204,10 @@ impl TraceValidator {
                 AsyncBatchSize::default(),
                 false,
             );
-            let mut llm_context =
-                LLMContext::new(model_path, &decoding_config)?;
+            let mut llm_context = LanguageModelGeneratorContext::new(
+                model_path,
+                &decoding_config,
+            )?;
             let desired_suffix_length =
                 prefill_step_size.max(decoding_config.generate_suffix_length());
             Self::ensure_llm_context_capacity(
@@ -213,7 +215,7 @@ impl TraceValidator {
                 desired_suffix_length,
                 &mut llm_context,
             );
-            ModelContext::LLM(llm_context)
+            ModelContext::LanguageModelGenerator(llm_context)
         };
 
         Ok(Self {
@@ -230,7 +232,7 @@ impl TraceValidator {
         }
 
         match &mut self.context {
-            ModelContext::LLM(ctx) => {
+            ModelContext::LanguageModelGenerator(ctx) => {
                 Self::run_llm_validation(ctx, &traces_path)
             },
             ModelContext::Classifier(classifier) => {
@@ -244,9 +246,9 @@ impl TraceValidator {
         matches!(self.context, ModelContext::Classifier(_))
     }
 
-    /// Check if this is an LLM model.
-    pub fn is_llm(&self) -> bool {
-        matches!(self.context, ModelContext::LLM(_))
+    /// Check if this is a language model generator.
+    pub fn is_language_model_generator(&self) -> bool {
+        matches!(self.context, ModelContext::LanguageModelGenerator(_))
     }
 
     // ========================================================================
@@ -254,7 +256,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn run_llm_validation(
-        ctx: &LLMContext,
+        ctx: &LanguageModelGeneratorContext,
         traces_path: &Path,
     ) -> Result<TracerValidationResults, Error> {
         let traces_file =
@@ -979,7 +981,7 @@ impl TraceValidator {
     fn ensure_llm_context_capacity(
         decoding_config: &DecodingConfig,
         desired_suffix_length: usize,
-        context: &mut LLMContext,
+        context: &mut LanguageModelGeneratorContext,
     ) {
         let resolved_prefix_length =
             decoding_config.context_length.resolve(&context.model_config);

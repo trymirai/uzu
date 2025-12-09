@@ -19,8 +19,8 @@ pub use ssm_layer::SSMLayer;
 pub use state::{
     ArrayCell, ArrayId, ClassifierModeState, CommonAuxBuffers,
     EmbeddingsBuffers, ForwardPassMode, ForwardPassState, HashMapId,
-    LLMAuxBuffers, LLMModeState, MoeExpertWeights, RopeBuffers, RopeType,
-    SharedBuffers,
+    LanguageModelGeneratorAuxBuffers, LanguageModelGeneratorModeState,
+    MoeExpertWeights, RopeBuffers, RopeType, SharedBuffers,
 };
 
 pub use super::encodable_block::{EncodableBlock, EncodingParameters};

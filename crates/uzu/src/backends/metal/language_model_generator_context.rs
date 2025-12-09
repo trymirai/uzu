@@ -129,7 +129,7 @@ impl AsyncBuffers {
     }
 }
 
-pub struct LLMContext {
+pub struct LanguageModelGeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<MPSCommandBuffer>,
 
@@ -150,7 +150,7 @@ pub struct LLMContext {
     pub async_buffers: AsyncBuffers,
 }
 
-impl LLMContext {
+impl LanguageModelGeneratorContext {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,

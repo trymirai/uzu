@@ -1,4 +1,4 @@
-//! Forward pass mode types for LLM and classifier models.
+//! Forward pass mode types for language model generator and classifier models.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -11,14 +11,14 @@ type ArrayCell = RefCell<MetalArray>;
 
 /// Mode-specific configuration and state.
 pub enum ForwardPassMode {
-    /// LLM (autoregressive generation) mode.
-    LLM(LLMModeState),
+    /// Language model generator (autoregressive generation) mode.
+    LanguageModelGenerator(LanguageModelGeneratorModeState),
     /// Classifier (bidirectional) mode.
     Classifier(ClassifierModeState),
 }
 
-/// LLM-specific state.
-pub struct LLMModeState {
+/// Language model generator specific state.
+pub struct LanguageModelGeneratorModeState {
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub token_seeds: ArrayCell,
     pub logits: ArrayCell,

@@ -2,17 +2,17 @@ use std::mem::size_of;
 
 use metal::{Buffer, MTLResourceOptions};
 
-use super::LLMContext;
+use super::LanguageModelGeneratorContext;
 use crate::backends::metal::forward_pass::{
     EncodableBlock, EncodingParameters, ForwardPassState,
 };
 
-pub struct LLMEncodedTask {
+pub struct LanguageModelGeneratorEncodedTask {
     pub key: String,
     predicate_buffer: Buffer,
 }
 
-impl LLMEncodedTask {
+impl LanguageModelGeneratorEncodedTask {
     pub fn predicate_buffer(&self) -> &Buffer {
         &self.predicate_buffer
     }
@@ -30,7 +30,7 @@ impl LLMEncodedTask {
 }
 
 #[derive(Debug, Clone)]
-pub struct LLMRunTask<'a> {
+pub struct LanguageModelGeneratorRunTask<'a> {
     pub token_ids: &'a [u64],
     pub token_positions: &'a [usize],
     pub token_bitmask: Option<&'a [u32]>,
@@ -40,9 +40,9 @@ pub struct LLMRunTask<'a> {
     pub is_prefilling: bool,
 }
 
-impl<'a> LLMRunTask<'a> {
+impl<'a> LanguageModelGeneratorRunTask<'a> {
     pub fn speculate_next_task(&self) -> Self {
-        LLMRunTask {
+        LanguageModelGeneratorRunTask {
             token_ids: self.token_ids,
             token_positions: self.token_positions,
             token_bitmask: self.token_bitmask,
@@ -65,7 +65,7 @@ impl<'a> LLMRunTask<'a> {
 
     pub fn create_state(
         &self,
-        context: &mut LLMContext,
+        context: &mut LanguageModelGeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> ForwardPassState {
         ForwardPassState::new_llm(
@@ -90,14 +90,14 @@ impl<'a> LLMRunTask<'a> {
 
     pub fn build_encoded_task(
         &self,
-        context: &LLMContext,
+        context: &LanguageModelGeneratorContext,
         state: &mut ForwardPassState,
         parameters: &EncodingParameters,
         key: String,
-    ) -> LLMEncodedTask {
+    ) -> LanguageModelGeneratorEncodedTask {
         context.executables.encode(state, &context.command_buffer, parameters);
 
-        LLMEncodedTask {
+        LanguageModelGeneratorEncodedTask {
             key,
             predicate_buffer: context.mtl_context.device.new_buffer(
                 size_of::<u32>() as u64,

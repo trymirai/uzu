@@ -9,7 +9,7 @@ pub mod forward_pass;
 pub mod graph;
 pub mod image;
 pub mod kernel;
-mod llm_context;
+mod language_model_generator_context;
 pub mod media_utils;
 pub mod metal_extensions;
 pub mod placement_analysis;
@@ -23,7 +23,7 @@ pub use encodable_block::Decoder;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
-pub use llm_context::LLMContext;
+pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,
     MetalImagePreprocessor,

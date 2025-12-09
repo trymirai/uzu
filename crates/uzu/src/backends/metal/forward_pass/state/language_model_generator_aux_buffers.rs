@@ -1,4 +1,4 @@
-//! LLM-specific auxiliary buffers (SSM, MoE).
+//! Language model generator specific auxiliary buffers (SSM, MoE).
 
 use std::cell::RefCell;
 
@@ -9,8 +9,8 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// LLM-specific auxiliary buffers (SSM, MoE).
-pub struct LLMAuxBuffers {
+/// Language model generator specific auxiliary buffers (SSM, MoE).
+pub struct LanguageModelGeneratorAuxBuffers {
     pub ssm_inproj: Option<ArrayCell>,
     pub ssm_packed: Option<ArrayCell>,
     pub ssm_conv_padded: Option<ArrayCell>,
@@ -41,7 +41,7 @@ pub struct LLMAuxBuffers {
     pub moe_block_alloc: Option<ArrayCell>,
 }
 
-impl LLMAuxBuffers {
+impl LanguageModelGeneratorAuxBuffers {
     pub fn new(
         scratch: &ScratchBuffers,
         decoder_config: &DecoderConfig,

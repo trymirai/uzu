@@ -7,11 +7,11 @@ use itertools::{Either, Itertools, izip};
 use mpsgraph::CommandBuffer;
 
 use super::{
-    LLMContext,
+    LanguageModelGeneratorContext,
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
-    tasks::{LLMEncodedTask, LLMRunTask},
+    tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
     Array,
@@ -27,24 +27,25 @@ use crate::{
     utils::env_utils::MetalEnvVar,
 };
 
-pub struct LLM {
+pub struct LanguageModelGenerator {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
-    pub context: LLMContext,
-    encoded_tasks: HashMap<String, LLMEncodedTask>,
+    pub context: LanguageModelGeneratorContext,
+    encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager,
 }
 
-impl LLM {
+impl LanguageModelGenerator {
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
         let gpu_capture = GpuCaptureManager::new();
 
-        let context = LLMContext::new(model_path, &decoding_config)?;
+        let context =
+            LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
         let prefill_step_size =
             decoding_config.prefill_step_size.resolve(&context.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
@@ -186,7 +187,7 @@ impl LLM {
                 let _ = last_state.take();
             });
 
-            let task = LLMRunTask {
+            let task = LanguageModelGeneratorRunTask {
                 token_ids: &step_token_ids,
                 token_positions: &step_token_positions,
                 token_bitmask: Some(&step_token_bitmask),
@@ -344,7 +345,7 @@ impl LLM {
             .chain(repeat_n(0, suffix_length - active_suffix_length))
             .collect::<Box<[u64]>>();
 
-        let task = LLMRunTask {
+        let task = LanguageModelGeneratorRunTask {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: Some(&token_bitmask),
@@ -565,7 +566,7 @@ impl LLM {
         let token_positions: Vec<usize> = (0..suffix_length).collect();
         let token_seeds: Vec<u64> = vec![0; suffix_length];
 
-        let task = LLMRunTask {
+        let task = LanguageModelGeneratorRunTask {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: None,
@@ -581,7 +582,7 @@ impl LLM {
 
     fn run_model(
         &mut self,
-        task: LLMRunTask,
+        task: LanguageModelGeneratorRunTask,
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,

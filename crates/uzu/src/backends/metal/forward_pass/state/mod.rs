@@ -7,7 +7,7 @@ mod array_id;
 mod common_aux_buffers;
 mod embeddings_buffers;
 mod hash_map_id;
-mod llm_aux_buffers;
+mod language_model_generator_aux_buffers;
 mod mode;
 mod rope_buffers;
 mod rope_type;
@@ -19,8 +19,10 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use embeddings_buffers::EmbeddingsBuffers;
 pub use hash_map_id::HashMapId;
-pub use llm_aux_buffers::LLMAuxBuffers;
-pub use mode::{ClassifierModeState, ForwardPassMode, LLMModeState};
+pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
+pub use mode::{
+    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
+};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -46,7 +48,7 @@ pub struct ForwardPassState {
     attention_bias: HashMap<Option<usize>, ArrayCell>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     common_aux: CommonAuxBuffers,
-    llm_aux: Option<LLMAuxBuffers>,
+    llm_aux: Option<LanguageModelGeneratorAuxBuffers>,
     mode: ForwardPassMode,
 }
 
@@ -230,7 +232,7 @@ impl ForwardPassState {
             CommonAuxBuffers::new(scratch, model_shape, suffix_length);
 
         // LLM-specific aux buffers
-        let llm_aux = Some(LLMAuxBuffers::new(
+        let llm_aux = Some(LanguageModelGeneratorAuxBuffers::new(
             scratch,
             decoder_config,
             model_shape,
@@ -245,17 +247,19 @@ impl ForwardPassState {
             suffix_length,
         )));
 
-        let mode = ForwardPassMode::LLM(LLMModeState {
-            cache_layers,
-            token_seeds: token_seeds_cell,
-            logits: logits_cell,
-            sampling_output,
-            sampling_method: None,
-            #[cfg(feature = "tracing")]
-            traces,
-            active_suffix_length,
-            is_prefilling,
-        });
+        let mode = ForwardPassMode::LanguageModelGenerator(
+            LanguageModelGeneratorModeState {
+                cache_layers,
+                token_seeds: token_seeds_cell,
+                logits: logits_cell,
+                sampling_output,
+                sampling_method: None,
+                #[cfg(feature = "tracing")]
+                traces,
+                active_suffix_length,
+                is_prefilling,
+            },
+        );
 
         Self {
             context,
@@ -553,7 +557,7 @@ impl ForwardPassState {
     }
 
     pub fn is_llm(&self) -> bool {
-        matches!(self.mode, ForwardPassMode::LLM(_))
+        matches!(self.mode, ForwardPassMode::LanguageModelGenerator(_))
     }
 
     pub fn is_classifier(&self) -> bool {
@@ -566,17 +570,17 @@ impl ForwardPassState {
     }
 
     /// Get LLM-specific state (panics if not in LLM mode).
-    pub fn llm_state(&self) -> &LLMModeState {
+    pub fn llm_state(&self) -> &LanguageModelGeneratorModeState {
         match &self.mode {
-            ForwardPassMode::LLM(state) => state,
+            ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
     }
 
     /// Get mutable LLM-specific state (panics if not in LLM mode).
-    pub fn llm_state_mut(&mut self) -> &mut LLMModeState {
+    pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState {
         match &mut self.mode {
-            ForwardPassMode::LLM(state) => state,
+            ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
     }
@@ -940,7 +944,9 @@ impl ForwardPassState {
     /// Get the active suffix length (number of tokens to process).
     pub fn active_suffix_length(&self) -> usize {
         match &self.mode {
-            ForwardPassMode::LLM(state) => state.active_suffix_length,
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.active_suffix_length
+            },
             ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
         }
     }
@@ -948,7 +954,9 @@ impl ForwardPassState {
     /// Check if the current pass is a prefill pass.
     pub fn is_prefilling(&self) -> bool {
         match &self.mode {
-            ForwardPassMode::LLM(state) => state.is_prefilling,
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.is_prefilling
+            },
             ForwardPassMode::Classifier(_) => true,
         }
     }
@@ -956,7 +964,9 @@ impl ForwardPassState {
     /// Get cache layers (LLM only - returns None for classifiers).
     pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
         match &self.mode {
-            ForwardPassMode::LLM(state) => Some(&state.cache_layers),
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                Some(&state.cache_layers)
+            },
             ForwardPassMode::Classifier(_) => None,
         }
     }
@@ -964,7 +974,9 @@ impl ForwardPassState {
     /// Get sampling output buffer (LLM only - returns None for classifiers).
     pub fn sampling_output(&self) -> Option<&ArrayCell> {
         match &self.mode {
-            ForwardPassMode::LLM(state) => state.sampling_output.as_ref(),
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_output.as_ref()
+            },
             ForwardPassMode::Classifier(_) => None,
         }
     }
@@ -973,7 +985,7 @@ impl ForwardPassState {
     #[cfg(feature = "tracing")]
     pub fn traces(&self) -> &Rc<RefCell<ActivationTrace>> {
         match &self.mode {
-            ForwardPassMode::LLM(state) => &state.traces,
+            ForwardPassMode::LanguageModelGenerator(state) => &state.traces,
             ForwardPassMode::Classifier(state) => &state.traces,
         }
     }
@@ -983,7 +995,9 @@ impl ForwardPassState {
         &mut self
     ) -> Option<&mut Option<SamplingMethod>> {
         match &mut self.mode {
-            ForwardPassMode::LLM(state) => Some(&mut state.sampling_method),
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                Some(&mut state.sampling_method)
+            },
             ForwardPassMode::Classifier(_) => None,
         }
     }
@@ -991,7 +1005,9 @@ impl ForwardPassState {
     /// Get sampling method (LLM only).
     pub fn sampling_method(&self) -> Option<SamplingMethod> {
         match &self.mode {
-            ForwardPassMode::LLM(state) => state.sampling_method,
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_method
+            },
             ForwardPassMode::Classifier(_) => None,
         }
     }
