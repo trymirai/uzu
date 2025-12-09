@@ -142,6 +142,14 @@ impl ModelShape {
         [suffix_length, self.model_dim]
     }
 
+    pub fn bitmask_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        let bitmask_size = (self.vocabulary_size + 31) / 32;
+        [suffix_length, bitmask_size]
+    }
+
     pub fn mlp_hidden_shape(
         &self,
         suffix_length: usize,

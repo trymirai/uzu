@@ -229,6 +229,20 @@ impl DecoderConfig {
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
     }
+
+    pub fn has_attention_layers(&self) -> bool {
+        self.layer_configs
+            .as_ref()
+            .map(|configs| {
+                configs.iter().any(|config| {
+                    matches!(
+                        config.mixer_config,
+                        crate::config::MixerConfig::Attention(_)
+                    )
+                })
+            })
+            .unwrap_or(true)
+    }
 }
 
 #[cfg(test)]

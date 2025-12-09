@@ -1,5 +1,5 @@
 use crate::{
-    generator::{
+    llm::{
         grammar::CompiledGrammar, gumbel::speculator_sample, rng::DerivableSeed,
     },
     speculators::speculator::Speculator,
