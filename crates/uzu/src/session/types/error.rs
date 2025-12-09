@@ -16,8 +16,8 @@ pub enum Error {
     UnsupportedContextModeForModel,
     #[error("Unsupported speculator config for model")]
     UnsupportedSpeculatorConfigForModel,
-    #[error("Generator not loaded")]
-    GeneratorNotLoaded,
+    #[error("LLM not loaded")]
+    LLMNotLoaded,
     #[error("Unable to load prompt template")]
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]

@@ -170,13 +170,6 @@ impl ModelShape {
         [suffix_length, self.vocabulary_size]
     }
 
-    pub fn bitmask_shape(
-        &self,
-        suffix_length: usize,
-    ) -> [usize; 2] {
-        [suffix_length, self.vocabulary_size.div_ceil(32)]
-    }
-
     pub fn embeddings_input_shape(&self) -> [usize; 2] {
         [self.vocabulary_size, self.model_dim]
     }
@@ -211,6 +204,14 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 3] {
+        [self.num_groups, suffix_length, self.head_dim]
+    }
+
+    pub fn extracted_values_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 3] {
+        // Values share the same grouping as keys (grouped by num_groups)
         [self.num_groups, suffix_length, self.head_dim]
     }
 

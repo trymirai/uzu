@@ -38,6 +38,7 @@ schemars = { version = "1.0.5", features = ["derive"] }
 [features]
 default = ["metal-shaders"]
 metal-shaders = []
+tracing = []
 
 [[test]]
 name = "moe"

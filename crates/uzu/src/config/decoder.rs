@@ -6,7 +6,7 @@ use serde::{
 use super::{
     decoder_layer::{DecoderLayerConfig, MixerConfig},
     embedding::EmbeddingConfig,
-    normalization::RMSNormConfig,
+    normalization::NormalizationConfig,
     rope::RoPEConfig,
 };
 
@@ -32,7 +32,7 @@ pub struct DecoderConfig {
     pub local_rope_config: Option<RoPEConfig>,
     pub layer_config: DecoderLayerConfig,
     pub layer_configs: Option<Box<[DecoderLayerConfig]>>,
-    pub output_norm_config: RMSNormConfig,
+    pub output_norm_config: NormalizationConfig,
 
     pub vocab_size: usize,
     pub model_dim: usize,
@@ -181,7 +181,7 @@ struct RawDecoderConfig {
     layer_config: Option<DecoderLayerConfig>,
     #[serde(default)]
     layer_configs: Option<Vec<DecoderLayerConfig>>,
-    output_norm_config: RMSNormConfig,
+    output_norm_config: NormalizationConfig,
     vocab_size: usize,
     model_dim: usize,
     hidden_dim: usize,
@@ -228,16 +228,6 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
 impl DecoderConfig {
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
-    }
-
-    pub fn has_attention_layers(&self) -> bool {
-        if let Some(layer_types) = &self.layer_types {
-            layer_types
-                .iter()
-                .any(|lt| matches!(lt, DecoderLayerType::Transformer))
-        } else {
-            matches!(self.layer_config.mixer_config, MixerConfig::Attention(_))
-        }
     }
 }
 
@@ -309,6 +299,14 @@ mod tests {
                             "lora_rank": 16,
                             "lora_scale": 2.0
                         },
+                        "query_norm_config": null,
+                        "key_norm_config": null,
+                        "num_heads": 12,
+                        "num_groups": 12,
+                        "head_dim": 64,
+                        "is_causal": true,
+                        "scale": null,
+                        "sliding_window_size": null,
                         "logit_soft_cap": null,
                         "has_sinks": false,
                         "has_qkv_biases": false,
@@ -380,19 +378,21 @@ mod tests {
             }),
             local_rope_config: None,
             layer_config: DecoderLayerConfig {
-                pre_attention_norm_config: RMSNormConfig {
+                pre_attention_norm_config: NormalizationConfig {
                     scale_precision: ConfigDataType::BFloat16,
                     accumulation_precision: ConfigDataType::Float32,
                     epsilon: 1e-5,
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
+                    subtract_mean: false,
                 },
-                pre_mlp_norm_config: RMSNormConfig {
+                pre_mlp_norm_config: NormalizationConfig {
                     scale_precision: ConfigDataType::BFloat16,
                     accumulation_precision: ConfigDataType::Float32,
                     epsilon: 1e-5,
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
+                    subtract_mean: false,
                 },
                 mixer_config: MixerConfig::Attention(AttentionConfig {
                     qkv_projection_config: LinearConfig::QLoRA {
@@ -421,10 +421,10 @@ mod tests {
                     },
                     query_norm_config: None,
                     key_norm_config: None,
-                    num_heads: None,
-                    num_groups: None,
-                    head_dim: None,
-                    is_causal: None,
+                    num_heads: Some(12),
+                    num_groups: Some(12),
+                    head_dim: Some(64),
+                    is_causal: Some(true),
                     scale: None,
                     sliding_window_size: None,
                     logit_soft_cap: None,
@@ -448,16 +448,22 @@ mod tests {
                     activation: Activation::SiLU {
                         alpha: 1.0,
                     },
+                    has_up_biases: false,
+                    has_down_biases: false,
+                    gate_clipping: None,
+                    up_clipping: None,
+                    activation_to_gate: true,
                 }),
                 post_attention_norm_config: None,
                 post_mlp_norm_config: None,
             },
-            output_norm_config: RMSNormConfig {
+            output_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
                 accumulation_precision: ConfigDataType::Float32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
+                subtract_mean: false,
             },
             layer_configs: None,
             vocab_size: 128256,

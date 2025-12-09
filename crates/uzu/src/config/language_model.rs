@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{DecoderConfig, GenerationConfig, MessageProcessorConfig};
+use crate::{DecoderConfig, GenerationConfig, MessageProcessorConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LanguageModelConfig {
