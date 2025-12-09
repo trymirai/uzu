@@ -35,8 +35,8 @@ use crate::{
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{
-            ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize,
-            SamplingSeed,
+            AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode,
+            PrefillStepSize, SamplingSeed,
         },
         types::Error,
     },
@@ -201,6 +201,7 @@ impl TraceValidator {
                 PrefillStepSize::Custom(prefill_step_size),
                 SpeculatorConfig::default(),
                 SamplingSeed::default(),
+                AsyncBatchSize::default(),
                 false,
             );
             let mut llm_context =
