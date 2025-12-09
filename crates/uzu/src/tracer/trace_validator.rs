@@ -27,7 +27,7 @@ use crate::{
     },
     classifier::Classifier,
     config::ModelMetadata,
-    llm::{
+    language_model::{
         LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
@@ -278,7 +278,7 @@ impl TraceValidator {
 
         let mut state = ForwardPassState::new_llm(
             ctx.mtl_context.clone(),
-            &ctx.model_config.decoder_config,
+            &ctx.decoder_config,
             &ctx.model_shape,
             &ctx.scratch_buffers,
             ctx.cache_layers.clone(),
@@ -994,7 +994,7 @@ impl TraceValidator {
             return;
         }
 
-        let decoder_config = &context.model_config.decoder_config;
+        let decoder_config = &context.decoder_config;
         context.scratch_buffers = ScratchBuffers::new(
             &context.mtl_context,
             decoder_config,

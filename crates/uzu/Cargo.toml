@@ -1,6 +1,6 @@
 [package]
 name = "uzu"
-version = "0.1.6"
+version.workspace = true
 edition = "2024"
 build = "build.rs"
 

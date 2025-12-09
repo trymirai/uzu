@@ -8,7 +8,7 @@ use uzu::{
         kernel::{SamplingKernel, sampling::ArgmaxStrategy},
         metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
     },
-    llm::gumbel::{gumbel_float, revidx},
+    language_model::gumbel::{gumbel_float, revidx},
     session::parameter::SamplingMethod,
 };
 

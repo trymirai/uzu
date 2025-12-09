@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use super::{node::Node, speculated_suffix::SpeculatedSuffix};
-use crate::{llm::rng::DerivableSeed, speculators::speculator::Speculator};
+use crate::{
+    language_model::rng::DerivableSeed, speculators::speculator::Speculator,
+};
 
 pub struct TrieCreationConfig {
     pub top_k: usize,

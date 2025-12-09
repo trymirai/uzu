@@ -1,3 +1,5 @@
+#![cfg(feature = "tracing")]
+
 mod common;
 use std::path::PathBuf;
 

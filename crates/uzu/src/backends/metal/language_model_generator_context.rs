@@ -19,9 +19,9 @@ use super::{
     kernel::TokenCopyKernel,
 };
 use crate::{
-    DataType,
+    DataType, DecoderConfig,
     config::{LanguageModelConfig, ModelMetadata},
-    llm::rng::DerivableSeed,
+    language_model::rng::DerivableSeed,
     parameters::ParameterLoader,
     session::{
         config::DecodingConfig,
@@ -138,6 +138,7 @@ pub struct LanguageModelGeneratorContext {
     pub scratch_buffers: ScratchBuffers,
 
     pub model_config: LanguageModelConfig,
+    pub decoder_config: Rc<DecoderConfig>,
     pub model_shape: ModelShape,
     pub executables: Decoder,
     pub kv_cache_update: Box<KVCacheUpdate>,
@@ -179,8 +180,7 @@ impl LanguageModelGeneratorContext {
             .as_language_model()
             .ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config =
-            Rc::new(language_model_config.decoder_config.clone());
+        let decoder_config = Rc::new(language_model_config.decoder_config());
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let prefill_step_size =
@@ -277,6 +277,7 @@ impl LanguageModelGeneratorContext {
             shared_buffers,
             scratch_buffers,
             model_config: language_model_config.clone(),
+            decoder_config,
             model_shape,
             executables,
             kv_cache_update,

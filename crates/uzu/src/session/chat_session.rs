@@ -7,7 +7,7 @@ use xgrammar::TokenizerInfo;
 use crate::{
     backends::metal::forward_pass::cache_layers::CacheLayer,
     config::{MixerConfig, ModelMetadata},
-    llm::{
+    language_model::{
         LanguageModelGenerator,
         grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
@@ -68,11 +68,16 @@ impl ChatSession {
         let is_ssm = model_metadata
             .model_config
             .as_language_model()
-            .and_then(|lm| lm.decoder_config.layer_configs.as_ref())
-            .map(|layers| {
-                layers.iter().any(|layer| {
-                    matches!(layer.mixer_config, MixerConfig::Mamba(_))
-                })
+            .map(|lm| {
+                lm.decoder_config()
+                    .layer_configs
+                    .as_ref()
+                    .map(|layers| {
+                        layers.iter().any(|layer| {
+                            matches!(layer.mixer_config, MixerConfig::Mamba(_))
+                        })
+                    })
+                    .unwrap_or(false)
             })
             .unwrap_or(false);
         if is_ssm {

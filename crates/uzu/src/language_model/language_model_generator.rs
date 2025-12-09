@@ -443,7 +443,7 @@ impl LanguageModelGenerator {
 
         let mut state = ForwardPassState::new_llm(
             self.context.mtl_context.clone(),
-            &self.context.model_config.decoder_config,
+            &self.context.decoder_config,
             &self.context.model_shape,
             &self.context.scratch_buffers,
             self.context.cache_layers.clone(),
@@ -537,7 +537,7 @@ impl LanguageModelGenerator {
     }
 
     pub fn has_attention_layers(&self) -> bool {
-        self.context.model_config.decoder_config.has_attention_layers()
+        self.context.decoder_config.has_attention_layers()
     }
 
     pub fn clear_cache(&mut self) {

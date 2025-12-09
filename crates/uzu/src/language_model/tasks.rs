@@ -70,7 +70,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
     ) -> ForwardPassState {
         ForwardPassState::new_llm(
             context.mtl_context.clone(),
-            &context.model_config.decoder_config,
+            &context.decoder_config,
             &context.model_shape,
             &context.scratch_buffers,
             context.cache_layers.clone(),

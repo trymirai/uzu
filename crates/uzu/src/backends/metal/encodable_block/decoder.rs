@@ -33,9 +33,15 @@ impl Decoder {
     pub fn new(
         mtl_context: Rc<MTLContext>,
         decoder_config: Rc<DecoderConfig>,
-        decoder_weight_loader: &ParameterTree<Rc<MTLContext>>,
+        root_weight_loader: &ParameterTree<Rc<MTLContext>>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
+        // Try to get the transformer subtree (new lalamo format), fall back to root (old format)
+        let transformer_subtree = root_weight_loader.subtree("transformer").ok();
+        let decoder_weight_loader = transformer_subtree
+            .as_ref()
+            .unwrap_or(root_weight_loader);
+
         let embed = embed_block(
             &decoder_config,
             &mtl_context,

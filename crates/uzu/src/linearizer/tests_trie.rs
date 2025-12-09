@@ -3,8 +3,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
+        language_model::rng::DerivableSeed,
         linearizer::trie::{TokenTrie, TrieCreationConfig},
-        llm::rng::DerivableSeed,
         speculators::speculator::Speculator,
     };
 

@@ -1,8 +1,8 @@
 pub mod backends;
 pub mod classifier;
 pub mod config;
+pub mod language_model;
 pub mod linearizer;
-pub mod llm;
 pub mod parameters;
 pub mod prelude;
 pub mod session;
