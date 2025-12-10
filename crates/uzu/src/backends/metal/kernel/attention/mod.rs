@@ -132,15 +132,15 @@ fn make_function_constants(
         24,
     ); // float_mask
     function_constants.set_constant_value_at_index(
+        &is_causal_value as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        22,
+    ); // do_causal
+    function_constants.set_constant_value_at_index(
         &has_sinks_value as *const bool as *const std::ffi::c_void,
         MTLDataType::Bool,
         25,
     ); // has_sinks
-    function_constants.set_constant_value_at_index(
-        &is_causal_value as *const bool as *const std::ffi::c_void,
-        MTLDataType::Bool,
-        26,
-    ); // is_causal
 
     function_constants
 }
