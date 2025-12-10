@@ -3,7 +3,7 @@ members = ["crates/cli", "crates/uzu"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT"

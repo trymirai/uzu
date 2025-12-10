@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use uzu::{
-    generator::rng::DerivableSeed,
+    language_model::rng::DerivableSeed,
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
     trie::{TrieCreationConfig, TrieNode},
 };

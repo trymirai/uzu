@@ -1,23 +1,13 @@
-use std::{mem::size_of, rc::Rc};
+use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState, MTLSize,
 };
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use crate::{
-    Array, DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-        },
-        metal_extensions::ComputeEncoderConditional,
-    },
-    config::{RMSNormConfig, UpcastMode},
-    parameters::ParameterTree,
+    DataType,
+    backends::metal::{MTLContext, MTLError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -209,12 +199,10 @@ impl RMSNormKernel {
         &self,
         compute_encoder: &ComputeCommandEncoderRef,
         args: RMSNormArguments,
-    ) {
-        assert_eq!(
-            self.kernel_type,
-            RMSNormKernelType::Standard,
-            "Invalid kernel type for standard RMS norm operation"
-        );
+    ) -> Result<(), RMSNormError> {
+        if self.kernel_type != RMSNormKernelType::Standard {
+            return Err(RMSNormError::InvalidKernelType);
+        }
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
@@ -261,18 +249,18 @@ impl RMSNormKernel {
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
+
+        Ok(())
     }
 
     pub fn encode_qk_norm(
         &self,
         compute_encoder: &ComputeCommandEncoderRef,
         args: QKNormArguments,
-    ) {
-        assert_eq!(
-            self.kernel_type,
-            RMSNormKernelType::QueryKey,
-            "Invalid kernel type for QK norm operation"
-        );
+    ) -> Result<(), RMSNormError> {
+        if self.kernel_type != RMSNormKernelType::QueryKey {
+            return Err(RMSNormError::InvalidKernelType);
+        }
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
@@ -353,417 +341,7 @@ impl RMSNormKernel {
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
-    }
-}
 
-pub struct RMSNormKernelEncodable {
-    kernel: RMSNormKernel,
-    config: RMSNormConfig,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-    scales_buffer: MTLBuffer,
-}
-
-impl RMSNormKernelEncodable {
-    pub fn new(
-        context: &MTLContext,
-        intermediate_data_type: DataType,
-        config: RMSNormConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, RMSNormError> {
-        // Load scales from parameter tree
-        let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            RMSNormError::MetalError(MTLError::Library(
-                crate::backends::metal::error::LibraryError::Custom(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )),
-            ))
-        })?;
-
-        // TODO: Don't create buffers dynamically, we need to use forward pass storage for thing like this
-        let scales_data = scales_param.buffer();
-        let scales_buffer = context.device.new_buffer_with_data(
-            scales_data.as_ptr() as *const _,
-            scales_data.len() as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-
-        let accumulation_data_type: DataType =
-            config.accumulation_precision.into();
-        let scale_data_type: DataType = config.scale_precision.into();
-
-        let (input_type, scales_type, output_type) = match config.upcast_mode {
-            UpcastMode::OnlyNormalization => {
-                // Input stays as pipeline type, scales stay scale precision, output is scale precision
-                (intermediate_data_type, scale_data_type, scale_data_type)
-            },
-            UpcastMode::FullLayer => {
-                // Input stays as pipeline type, scales stay in original precision (will be cast to AccumT inside kernel), output is scale precision
-                (intermediate_data_type, scale_data_type, scale_data_type)
-            },
-        };
-
-        let kernel = RMSNormKernel::new_with_mode(
-            context,
-            input_type,
-            scales_type,
-            output_type,
-            accumulation_data_type,
-            RMSNormKernelType::Standard,
-            config.upcast_mode == UpcastMode::FullLayer,
-        )?;
-
-        Ok(Self {
-            kernel,
-            config,
-            input_array_id,
-            output_array_id,
-            scales_buffer,
-        })
-    }
-}
-
-impl EncodableWithState for RMSNormKernelEncodable {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        parameters: &EncodingParameters,
-    ) {
-        let input_binding = state.arrays(&[self.input_array_id]);
-        let output_binding = state.arrays(&[self.output_array_id]);
-
-        let input_shape = {
-            let input_array = input_binding[0].borrow();
-            input_array.shape().to_vec()
-        };
-
-        let mut input_array = input_binding[0].borrow_mut();
-        let mut output_array = output_binding[0].borrow_mut();
-
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
-
-        let batch_size = input_shape[0] as i32;
-        let model_dim = input_shape[1] as i32;
-
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
-        compute_encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.kernel.encode(
-                    &compute_encoder,
-                    RMSNormArguments {
-                        input_buffer: &input_buffer,
-                        scales_buffer: &self.scales_buffer,
-                        output_buffer: &output_buffer,
-                        batch_size,
-                        model_dim,
-                        epsilon: self.config.epsilon,
-                        scale_offset: self.config.scale_offset.unwrap_or(0.0),
-                    },
-                );
-            },
-            None::<fn()>,
-        );
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
-        _parameters: &EncodingParameters,
-    ) {
-        let input_binding = state.arrays(&[self.input_array_id]);
-        let output_binding = state.arrays(&[self.output_array_id]);
-
-        let input_shape = {
-            let input_array = input_binding[0].borrow();
-            input_array.shape().to_vec()
-        };
-
-        let mut input_array = input_binding[0].borrow_mut();
-        let mut output_array = output_binding[0].borrow_mut();
-
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
-
-        let batch_size = input_shape[0] as i32;
-        let model_dim = input_shape[1] as i32;
-
-        self.kernel.encode(
-            encoder,
-            RMSNormArguments {
-                input_buffer: &input_buffer,
-                scales_buffer: &self.scales_buffer,
-                output_buffer: &output_buffer,
-                batch_size,
-                model_dim,
-                epsilon: self.config.epsilon,
-                scale_offset: self.config.scale_offset.unwrap_or(0.0),
-            },
-        );
-    }
-}
-
-pub struct QKNormKernelEncodable {
-    query_kernel: Option<RMSNormKernel>,
-    key_kernel: Option<RMSNormKernel>,
-    query_config: Option<RMSNormConfig>,
-    key_config: Option<RMSNormConfig>,
-    qkv_array_id: ArrayId,
-    query_scales_buffer: Option<MTLBuffer>,
-    key_scales_buffer: Option<MTLBuffer>,
-    num_q_heads: usize,
-    num_kv_heads: usize,
-    head_dim: usize,
-}
-
-impl QKNormKernelEncodable {
-    pub fn new(
-        context: &MTLContext,
-        intermediate_data_type: DataType,
-        query_config: Option<RMSNormConfig>,
-        key_config: Option<RMSNormConfig>,
-        qkv_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
-        num_q_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-    ) -> Result<Self, RMSNormError> {
-        let mut query_kernel = None;
-        let mut key_kernel = None;
-        let mut query_scales_buffer = None;
-        let mut key_scales_buffer = None;
-
-        // Setup query normalization if configured
-        if let Some(ref q_config) = query_config {
-            let scales_param =
-                parameter_tree.leaf("query_norm.scales").map_err(|e| {
-                    RMSNormError::MetalError(MTLError::Library(
-                        crate::backends::metal::error::LibraryError::Custom(
-                            format!("Failed to load query scales: {:?}", e),
-                        ),
-                    ))
-                })?;
-
-            let scales_data = scales_param.buffer();
-            let scales_buffer = context.device.new_buffer_with_data(
-                scales_data.as_ptr() as *const _,
-                scales_data.len() as u64,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
-
-            let accumulation_data_type: DataType =
-                q_config.accumulation_precision.into();
-            let scale_data_type: DataType = q_config.scale_precision.into();
-
-            let (input_type, scales_type, output_type) = match q_config
-                .upcast_mode
-            {
-                UpcastMode::OnlyNormalization => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-                UpcastMode::FullLayer => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-            };
-
-            let kernel = RMSNormKernel::new_with_mode(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                RMSNormKernelType::QueryKey,
-                q_config.upcast_mode == UpcastMode::FullLayer,
-            )?;
-
-            query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales_buffer);
-        }
-
-        // Setup key normalization if configured
-        if let Some(ref k_config) = key_config {
-            let scales_param =
-                parameter_tree.leaf("key_norm.scales").map_err(|e| {
-                    RMSNormError::MetalError(MTLError::Library(
-                        crate::backends::metal::error::LibraryError::Custom(
-                            format!("Failed to load key scales: {:?}", e),
-                        ),
-                    ))
-                })?;
-
-            let scales_data = scales_param.buffer();
-            let scales_buffer = context.device.new_buffer_with_data(
-                scales_data.as_ptr() as *const _,
-                scales_data.len() as u64,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
-
-            let accumulation_data_type: DataType =
-                k_config.accumulation_precision.into();
-            let scale_data_type: DataType = k_config.scale_precision.into();
-
-            let (input_type, scales_type, output_type) = match k_config
-                .upcast_mode
-            {
-                UpcastMode::OnlyNormalization => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-                UpcastMode::FullLayer => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-            };
-
-            let kernel = RMSNormKernel::new_with_mode(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                RMSNormKernelType::QueryKey,
-                k_config.upcast_mode == UpcastMode::FullLayer,
-            )?;
-
-            key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales_buffer);
-        }
-
-        Ok(Self {
-            query_kernel,
-            key_kernel,
-            query_config,
-            key_config,
-            qkv_array_id,
-            query_scales_buffer,
-            key_scales_buffer,
-            num_q_heads,
-            num_kv_heads,
-            head_dim,
-        })
-    }
-}
-
-impl EncodableWithState for QKNormKernelEncodable {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        parameters: &EncodingParameters,
-    ) {
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
-        compute_encoder.condition(
-            parameters.predicate_ref(),
-            || {
-                self.encode_with_encoder_impl(state, compute_encoder);
-            },
-            None::<fn()>,
-        );
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
-        _parameters: &EncodingParameters,
-    ) {
-        self.encode_with_encoder_impl(state, encoder);
-    }
-}
-
-impl QKNormKernelEncodable {
-    fn encode_with_encoder_impl(
-        &self,
-        state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
-    ) {
-        let qkv_binding = state.arrays(&[self.qkv_array_id]);
-        let qkv_shape = {
-            let qkv_array = qkv_binding[0].borrow();
-            qkv_array.shape().to_vec()
-        };
-
-        let mut qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
-
-        let batch_size = qkv_shape[0] as i32;
-        let head_dim = self.head_dim as i32;
-
-        // Process query normalization if configured
-        if let (
-            Some(query_kernel),
-            Some(query_scales_buffer),
-            Some(query_config),
-        ) =
-            (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
-        {
-            query_kernel.encode_qk_norm(
-                encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: query_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    num_q_heads: self.num_q_heads as i32,
-                    num_kv_heads: self.num_kv_heads as i32,
-                    head_dim,
-                    epsilon: query_config.epsilon,
-                    scale_offset: query_config.scale_offset.unwrap_or(0.0),
-                    target: QKNormTarget::QueryHeads,
-                },
-            );
-        }
-
-        if let (Some(key_kernel), Some(key_scales_buffer), Some(key_config)) =
-            (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
-        {
-            key_kernel.encode_qk_norm(
-                encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: key_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    num_q_heads: self.num_q_heads as i32,
-                    num_kv_heads: self.num_kv_heads as i32,
-                    head_dim,
-                    epsilon: key_config.epsilon,
-                    scale_offset: key_config.scale_offset.unwrap_or(0.0),
-                    target: QKNormTarget::KeyHeads,
-                },
-            );
-        }
+        Ok(())
     }
 }

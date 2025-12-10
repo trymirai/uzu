@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::common::ConfigDataType;
+use crate::ConfigDataType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct RopeConfigCommon {

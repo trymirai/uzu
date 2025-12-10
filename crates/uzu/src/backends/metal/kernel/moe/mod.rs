@@ -1,8 +1,5 @@
 use crate::backends::metal::KernelDataType;
 
-mod encodable;
-pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
-
 // Submodules
 mod counts_offsets_fused;
 mod experts;

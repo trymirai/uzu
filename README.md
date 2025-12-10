@@ -32,7 +32,7 @@ For a detailed explanation of the architecture, please refer to the [documentati
 ```bash
 git clone https://github.com/trymirai/lalamo.git
 cd lalamo
-git checkout v0.5.2
+git checkout v0.5.15
 ```
 
 After that, you can retrieve the list of supported models:

@@ -8,16 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::metal::{
-        CacheLayers, DecoderExecutables, ForwardPassState, MTLContext,
-        ModelShape,
+        CacheLayers, Decoder, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{
-            ForwardPassBuffers, SharedBuffers,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
+            EncodableBlock, EncodingParameters, ForwardPassState,
+            ScratchBuffers, SharedBuffers,
         },
         utils::{CaptureOptions, StdoutCapture},
     },
-    config::{ModelMetadata, decoder::DecoderConfig},
+    config::{DecoderConfig, ModelMetadata},
     parameters::ParameterLoader,
 };
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +33,9 @@ struct DecoderTestContext {
     mtl_context: Rc<MTLContext>,
     mtl_command_queue: metal::CommandQueue,
     state: ForwardPassState,
-    executables: DecoderExecutables,
+    executables: Decoder,
     suffix_length: usize,
-    _scratch: ForwardPassBuffers,
+    _scratch: ScratchBuffers,
 }
 
 impl DecoderTestContext {
@@ -54,8 +53,13 @@ impl DecoderTestContext {
         let model_metadata: ModelMetadata =
             serde_json::from_reader(BufReader::new(config_file))
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        let language_model_config = model_metadata
+            .model_config
+            .as_language_model()
+            .ok_or("Model is not a language model".to_string())?;
         let decoder_config =
-            Rc::new(model_metadata.model_config.decoder_config.clone());
+            Rc::new(language_model_config.decoder_config());
         let mtl_device = metal::Device::system_default()
             .ok_or("No Metal device available".to_string())?;
         let mtl_command_queue = mtl_device.new_command_queue();
@@ -110,7 +114,7 @@ impl DecoderTestContext {
         let token_seeds: Vec<u64> = (0_u64..max_suffix_length as u64).collect();
 
         // Scratch buffers sized for the maximum prefix/suffix lengths in this test
-        let scratch_buffers = ForwardPassBuffers::new(
+        let scratch_buffers = ScratchBuffers::new(
             &mtl_context,
             &decoder_config,
             &model_shape,
@@ -118,7 +122,7 @@ impl DecoderTestContext {
             max_suffix_length,
         );
 
-        let state = ForwardPassState::new(
+        let state = ForwardPassState::new_llm(
             mtl_context.clone(),
             &decoder_config,
             &model_shape,
@@ -131,14 +135,13 @@ impl DecoderTestContext {
             &token_seeds,
             token_ids.len(),
             false,
-            false,
             None,
             false,
             None,
             None,
         );
 
-        let executables = DecoderExecutables::new(
+        let executables = Decoder::new(
             mtl_context.clone(),
             decoder_config.clone(),
             &root_loader_view,
