@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-xgrammar = { package = "xgrammar-rs", version = "0.1.27", features = ["hf"] }
+xgrammar = { package = "xgrammar-rs", version = "0.1.28", features = ["hf"] }
 half = { version = "2.6.0", features = ["bytemuck", "num-traits"] }
 ndarray = "0.16.1"
 serde = { version = "1.0.219", features = ["derive"] }
