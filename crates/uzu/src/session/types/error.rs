@@ -1,3 +1,5 @@
+use crate::backends::metal::error::ClassifierError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Model folder not found")]
@@ -40,4 +42,6 @@ pub enum Error {
     SamplingFailed,
     #[error("Grammar error")]
     GrammarError,
+    #[error("Classifier error: {0}")]
+    Classifier(#[from] ClassifierError),
 }

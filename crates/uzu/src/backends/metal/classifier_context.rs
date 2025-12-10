@@ -23,6 +23,7 @@ use super::{
 };
 use crate::{
     DataType,
+    backends::metal::error::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     parameters::ParameterLoader,
     session::types::Error,
@@ -76,8 +77,12 @@ impl ClassifierContext {
             .as_classifier()
             .ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config =
-            Rc::new(classifier_model_config.model_config.to_decoder_config());
+        let decoder_config = Rc::new(
+            classifier_model_config
+                .model_config
+                .to_decoder_config()
+                .map_err(|_| Error::UnableToLoadConfig)?,
+        );
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let mtl_context = Rc::new(
@@ -101,11 +106,16 @@ impl ClassifierContext {
             &decoder_config,
             &model_shape,
         )));
+        let transformer_tree =
+            root_loader_view.subtree("transformer").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "transformer".to_string(),
+                ))
+            })?;
+
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
             shared_bufs.embeddings.update_data(&root_loader_view);
-            let transformer_tree =
-                root_loader_view.subtree("transformer").unwrap();
             if let Some(global_rope) = &mut shared_bufs.global_rope {
                 global_rope.update_data(
                     &transformer_tree,
@@ -122,13 +132,10 @@ impl ClassifierContext {
             .layer_config
             .mixer_config
             .as_attention()
-            .expect("Classifier only supports Attention layers")
+            .ok_or(Error::Classifier(ClassifierError::NonAttentionMixer))?
             .qkv_projection_config
             .activation_precision()
             .into();
-
-        let transformer_loader =
-            root_loader_view.subtree("transformer").unwrap();
 
         let embed = embed_block(
             &decoder_config,
@@ -138,7 +145,8 @@ impl ClassifierContext {
         );
 
         let global_rope =
-            Self::create_rope_block(&mtl_context, data_type, RopeType::Global);
+            Self::create_rope_block(&mtl_context, data_type, RopeType::Global)
+                .map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
             .model_config
             .transformer_config
@@ -150,7 +158,9 @@ impl ClassifierContext {
                     data_type,
                     RopeType::Local,
                 )
-            });
+            })
+            .transpose()
+            .map_err(Error::Classifier)?;
 
         let layers = classifier_model_config
             .model_config
@@ -160,15 +170,45 @@ impl ClassifierContext {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let mut rope = global_rope.clone();
-                let mixer = &layer_config.mixer_config;
+                let attn = layer_config
+                    .attention_config()
+                    .ok_or(ClassifierError::NonAttentionMixer)?;
 
-                if mixer.sliding_window_size().is_some() {
+                if attn.sliding_window_size.is_some() {
                     if let Some(local_rope_block) = local_rope.clone() {
                         rope = local_rope_block;
                     }
                 }
 
-                ClassifierLayer::new(
+                let num_heads = attn.num_heads.ok_or_else(|| {
+                    ClassifierError::MissingConfigField(format!(
+                        "num_heads in layer {}",
+                        layer_index
+                    ))
+                })?;
+                let head_dim = attn.head_dim.ok_or_else(|| {
+                    ClassifierError::MissingConfigField(format!(
+                        "head_dim in layer {}",
+                        layer_index
+                    ))
+                })?;
+                let num_groups = attn.num_groups.ok_or_else(|| {
+                    ClassifierError::MissingConfigField(format!(
+                        "num_groups in layer {}",
+                        layer_index
+                    ))
+                })?;
+
+                let layer_tree = transformer_tree
+                    .subtree(&format!("layers.{}", layer_index))
+                    .map_err(|_| {
+                        ClassifierError::WeightSubtreeNotFound(format!(
+                            "layers.{}",
+                            layer_index
+                        ))
+                    })?;
+
+                Ok(ClassifierLayer::new(
                     &mtl_context,
                     layer_config,
                     compilation_config.clone(),
@@ -178,19 +218,24 @@ impl ClassifierContext {
                         .model_config
                         .transformer_config
                         .hidden_dim,
-                    mixer.num_heads().unwrap_or(12),
-                    mixer.head_dim().unwrap_or(64),
-                    mixer.num_groups().unwrap_or(12),
-                    mixer.attention_scale(),
-                    &transformer_loader
-                        .subtree(&format!("layers.{}", layer_index))
-                        .unwrap(),
+                    num_heads,
+                    head_dim,
+                    num_groups,
+                    attn.scale,
+                    &layer_tree,
                     rope,
-                )
+                ))
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, ClassifierError>>()
+            .map_err(Error::Classifier)?
             .into_boxed_slice();
 
+        let output_norm_tree =
+            transformer_tree.subtree("output_norm").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "output_norm".to_string(),
+                ))
+            })?;
         let output_norm = Normalization::new(
             &mtl_context,
             data_type,
@@ -201,9 +246,14 @@ impl ClassifierContext {
                 .clone(),
             ArrayId::Main,
             ArrayId::Main,
-            &transformer_loader.subtree("output_norm").unwrap(),
+            &output_norm_tree,
         )
-        .expect("Failed to create output norm kernel");
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!(
+                "output norm: {:?}",
+                e
+            )))
+        })?;
 
         let context_length =
             classifier_model_config.model_config.context_length;
@@ -215,33 +265,54 @@ impl ClassifierContext {
             context_length,
         );
 
+        let embedding_norm_tree =
+            root_loader_view.subtree("embedding_norm").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "embedding_norm".to_string(),
+                ))
+            })?;
         let embedding_norm = Normalization::new(
             &mtl_context,
             data_type,
             classifier_model_config.model_config.embedding_norm_config.clone(),
             ArrayId::Main,
             ArrayId::Main,
-            &root_loader_view.subtree("embedding_norm").unwrap(),
+            &embedding_norm_tree,
         )
-        .expect("Failed to create embedding norm kernel");
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!(
+                "embedding norm: {:?}",
+                e
+            )))
+        })?;
 
         let model_dim = classifier_model_config.model_config.model_dim;
         let num_labels = classifier_model_config.model_config.num_labels;
         let prediction_head_config =
             &classifier_model_config.model_config.prediction_head_config;
         let prediction_head_tree =
-            root_loader_view.subtree("prediction_head").unwrap();
+            root_loader_view.subtree("prediction_head").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "prediction_head".to_string(),
+                ))
+            })?;
 
         let prediction_head_data_type: DataType =
             prediction_head_config.dense_config.activation_precision().into();
 
+        let prediction_head_dense_tree =
+            prediction_head_tree.subtree("dense").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "prediction_head.dense".to_string(),
+                ))
+            })?;
         let prediction_head_dense = linear_block::<1>(
             &prediction_head_config.dense_config,
             prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
             &mtl_context,
-            &prediction_head_tree.subtree("dense").unwrap(),
+            &prediction_head_dense_tree,
             ArrayId::ClassifierPooling,
             ArrayId::ClassifierPredictionHeadDense,
             &compilation_config.descriptor_general,
@@ -289,23 +360,40 @@ impl ClassifierContext {
             )) as Box<dyn EncodableBlock>
         });
 
+        let prediction_head_norm_tree =
+            prediction_head_tree.subtree("norm").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "prediction_head.norm".to_string(),
+                ))
+            })?;
         let prediction_head_norm = Normalization::new(
             &mtl_context,
             prediction_head_data_type,
             prediction_head_config.normalization_config.clone(),
             ArrayId::ClassifierPredictionHeadDense,
             ArrayId::ClassifierPredictionHeadNorm,
-            &prediction_head_tree.subtree("norm").unwrap(),
+            &prediction_head_norm_tree,
         )
-        .expect("Failed to create prediction head norm kernel");
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!(
+                "prediction head norm: {:?}",
+                e
+            )))
+        })?;
 
+        let prediction_head_readout_tree =
+            prediction_head_tree.subtree("readout").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound(
+                    "prediction_head.readout".to_string(),
+                ))
+            })?;
         let prediction_head_final_linear = linear_block::<1>(
             &prediction_head_config.readout_config,
             true,
             model_dim,
             [num_labels],
             &mtl_context,
-            &prediction_head_tree.subtree("readout").unwrap(),
+            &prediction_head_readout_tree,
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
             &compilation_config.descriptor_general,
@@ -359,14 +447,20 @@ impl ClassifierContext {
         mtl_context: &MTLContext,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Rc<Box<dyn EncodableBlock>> {
+    ) -> Result<Rc<Box<dyn EncodableBlock>>, ClassifierError> {
         let kernel_data_type: KernelDataType = data_type.into();
 
         let rotation: Box<dyn EncodableBlock> = Box::new(
-            Rope::new(mtl_context, kernel_data_type, rope_type)
-                .expect("Failed to create Rope"),
+            Rope::new(mtl_context, kernel_data_type, rope_type).map_err(
+                |e| {
+                    ClassifierError::KernelCreationFailed(format!(
+                        "RoPE: {:?}",
+                        e
+                    ))
+                },
+            )?,
         );
-        Rc::new(rotation)
+        Ok(Rc::new(rotation))
     }
 
     pub fn reset_command_buffer(&mut self) {

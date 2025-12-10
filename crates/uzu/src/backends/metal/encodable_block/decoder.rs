@@ -36,11 +36,9 @@ impl Decoder {
         root_weight_loader: &ParameterTree<Rc<MTLContext>>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
-        // Try to get the transformer subtree (new lalamo format), fall back to root (old format)
-        let transformer_subtree = root_weight_loader.subtree("transformer").ok();
-        let decoder_weight_loader = transformer_subtree
-            .as_ref()
-            .unwrap_or(root_weight_loader);
+        let decoder_weight_loader = root_weight_loader
+            .subtree("transformer")
+            .expect("transformer subtree not found");
 
         // Embeddings are at root level in new lalamo format
         let embed = embed_block(

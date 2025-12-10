@@ -59,7 +59,9 @@ impl DecoderTestContext {
             .as_language_model()
             .ok_or("Model is not a language model".to_string())?;
         let decoder_config =
-            Rc::new(language_model_config.decoder_config());
+            Rc::new(language_model_config.decoder_config().map_err(|e| {
+                format!("Failed to parse decoder config: {}", e)
+            })?);
         let mtl_device = metal::Device::system_default()
             .ok_or("No Metal device available".to_string())?;
         let mtl_command_queue = mtl_device.new_command_queue();

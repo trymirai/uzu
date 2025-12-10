@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{MLPConfig, MixerConfig, NormalizationConfig};
+use crate::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
@@ -12,6 +12,12 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+}
+
+impl TransformerLayerConfig {
+    pub fn attention_config(&self) -> Option<&AttentionConfig> {
+        self.mixer_config.as_attention()
+    }
 }
 
 #[cfg(test)]

@@ -180,7 +180,11 @@ impl LanguageModelGeneratorContext {
             .as_language_model()
             .ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config = Rc::new(language_model_config.decoder_config());
+        let decoder_config = Rc::new(
+            language_model_config
+                .decoder_config()
+                .map_err(|_| Error::UnableToLoadConfig)?,
+        );
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let prefill_step_size =

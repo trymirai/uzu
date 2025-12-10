@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig,
     GenerationConfig, MessageProcessorConfig, MixerConfig, TransformerConfig,
+    config::ConfigError,
 };
 
 /// Inner model config matching the new lalamo export format.
@@ -16,14 +17,12 @@ pub struct InnerModelConfig {
 
 impl InnerModelConfig {
     /// Convert to DecoderConfig for backward compatibility with the rest of the codebase.
-    pub fn to_decoder_config(&self) -> DecoderConfig {
+    pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         let tf = &self.transformer_config;
 
         // Get the first layer config as the template for layer_config
-        let first_layer = tf
-            .layer_configs
-            .first()
-            .expect("transformer_config must have at least one layer");
+        let first_layer =
+            tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
         let layer_config = DecoderLayerConfig {
             pre_attention_norm_config: first_layer
@@ -41,10 +40,16 @@ impl InnerModelConfig {
 
         // Derive head parameters from the first layer's mixer config
         let mixer = &first_layer.mixer_config;
-        let num_heads = tf.num_heads.or(mixer.num_heads()).unwrap_or(32);
+        let num_heads =
+            tf.num_heads.or(mixer.num_heads()).ok_or_else(|| {
+                ConfigError::MissingField("num_heads".to_string())
+            })?;
         let num_groups =
             tf.num_groups.or(mixer.num_groups()).unwrap_or(num_heads);
-        let head_dim = tf.head_dim.or(mixer.head_dim()).unwrap_or(64);
+        let head_dim = tf
+            .head_dim
+            .or(mixer.head_dim())
+            .ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
         let attention_scale = tf.attention_scale.or(mixer.attention_scale());
         let num_layers = tf.num_layers.unwrap_or(tf.layer_configs.len());
 
@@ -84,7 +89,7 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        DecoderConfig {
+        Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
             global_rope_config: tf.global_rope_config.clone(),
             local_rope_config: tf.local_rope_config.clone(),
@@ -102,7 +107,7 @@ impl InnerModelConfig {
             sliding_window_sizes: Some(sliding_window_sizes),
             layer_types: Some(layer_types),
             context_length: tf.context_length,
-        }
+        })
     }
 
     fn layer_type_from_mixer(mixer: &MixerConfig) -> DecoderLayerType {
@@ -130,7 +135,7 @@ pub struct LanguageModelConfig {
 impl LanguageModelConfig {
     /// Get the decoder config for backward compatibility.
     /// This converts the new format to the old DecoderConfig format.
-    pub fn decoder_config(&self) -> DecoderConfig {
+    pub fn decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         self.model_config.to_decoder_config()
     }
 }

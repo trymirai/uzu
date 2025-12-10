@@ -68,16 +68,12 @@ impl ChatSession {
         let is_ssm = model_metadata
             .model_config
             .as_language_model()
-            .map(|lm| {
-                lm.decoder_config()
-                    .layer_configs
-                    .as_ref()
-                    .map(|layers| {
-                        layers.iter().any(|layer| {
-                            matches!(layer.mixer_config, MixerConfig::Mamba(_))
-                        })
-                    })
-                    .unwrap_or(false)
+            .and_then(|lm| lm.decoder_config().ok())
+            .and_then(|dc| dc.layer_configs)
+            .map(|layers| {
+                layers.iter().any(|layer| {
+                    matches!(layer.mixer_config, MixerConfig::Mamba(_))
+                })
             })
             .unwrap_or(false);
         if is_ssm {
