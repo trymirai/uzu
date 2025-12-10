@@ -215,7 +215,7 @@ impl ForwardPassState {
             )
         }));
 
-        // Attention bias (causal)
+        // Attention bias (causal + sliding window)
         let act_dtype = model_shape.activation_data_type();
         let attention_bias = Self::init_llm_attention_bias(
             &context,
@@ -223,7 +223,7 @@ impl ForwardPassState {
             &cache_layers,
             suffix_length,
             act_dtype,
-            is_prefilling,
+            token_positions,
             external_bias_fn,
         );
 
@@ -280,7 +280,7 @@ impl ForwardPassState {
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
         act_dtype: DataType,
-        is_prefilling: bool,
+        token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> HashMap<Option<usize>, ArrayCell> {
         let cache_ref = cache_layers.borrow();
@@ -305,31 +305,15 @@ impl ForwardPassState {
                 .collect();
         drop(cache_ref);
 
-        let cache_ref = cache_layers.borrow();
-        for (window, bias_array) in attention_bias_map.iter_mut() {
-            let prefix_length = window.unwrap_or(cache_ref.max_prefix_length());
-            if let Some(bias_fn) = external_bias_fn {
-                context.fill_attention_bias(
-                    bias_array,
-                    suffix_length,
-                    prefix_length,
-                    bias_fn,
-                );
-            } else {
-                context.fill_attention_bias(
-                    bias_array,
-                    suffix_length,
-                    prefix_length,
-                    |row, col| {
-                        if is_prefilling {
-                            row + prefix_length < col
-                        } else {
-                            prefix_length < col
-                        }
-                    },
-                );
-            }
-        }
+        // Use cache_layers' fill_attention_bias which properly handles
+        // both causal masking and sliding window constraints
+        cache_layers.borrow().fill_attention_bias(
+            &mut attention_bias_map,
+            token_positions,
+            suffix_length,
+            context,
+            external_bias_fn,
+        );
 
         attention_bias_map
             .into_iter()
