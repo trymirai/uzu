@@ -4,13 +4,12 @@ use std::{cell::RefCell, rc::Rc};
 
 use half::{bf16, f16};
 
+use super::{super::ModelShape, EmbeddingsBuffers, RopeBuffers};
 use crate::{
     Array, DataType, DeviceContext,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
 };
-
-use super::{EmbeddingsBuffers, RopeBuffers, super::ModelShape};
 
 type ArrayCell = RefCell<MetalArray>;
 
@@ -98,18 +97,25 @@ impl SharedBuffers {
         &mut self,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) {
+        // Embeddings are at root level
         self.embeddings.update_data(parameter_tree);
+
+        // RoPE and layers are under "transformer" subtree (new lalamo format)
+        // or at root level (old format)
+        let transformer_subtree = parameter_tree.subtree("transformer").ok();
+        let decoder_tree =
+            transformer_subtree.as_ref().unwrap_or(parameter_tree);
+
         if let Some(global_rope) = &mut self.global_rope {
-            global_rope
-                .update_data(parameter_tree, String::from("global_rope"));
+            global_rope.update_data(decoder_tree, String::from("global_rope"));
         }
         if let Some(local_rope) = &mut self.local_rope {
-            local_rope.update_data(parameter_tree, String::from("local_rope"));
+            local_rope.update_data(decoder_tree, String::from("local_rope"));
         }
 
         if let Some(sinks_vec) = &mut self.attention_sinks {
             for (layer_idx, sink_cell) in sinks_vec.iter_mut().enumerate() {
-                let layer_tree = parameter_tree
+                let layer_tree = decoder_tree
                     .subtree(&format!("layers.{}", layer_idx))
                     .unwrap();
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
@@ -149,4 +155,3 @@ impl SharedBuffers {
         }
     }
 }
-

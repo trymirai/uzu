@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DecoderConfig, DecoderLayerConfig, EmbeddingConfig, GenerationConfig,
-    MessageProcessorConfig, MixerConfig, TransformerConfig,
+    DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig,
+    GenerationConfig, MessageProcessorConfig, MixerConfig, TransformerConfig,
 };
 
 /// Inner model config matching the new lalamo export format.
@@ -30,26 +30,37 @@ impl InnerModelConfig {
                 .pre_attention_norm_config
                 .clone()
                 .unwrap_or_else(|| tf.output_norm_config.clone()),
-            mixer_config: MixerConfig::Attention(first_layer.attention_config.clone()),
-            post_attention_norm_config: first_layer.post_attention_norm_config.clone(),
+            mixer_config: first_layer.mixer_config.clone(),
+            post_attention_norm_config: first_layer
+                .post_attention_norm_config
+                .clone(),
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
         };
 
-        // Derive head parameters from the first attention config
-        let attn = &first_layer.attention_config;
-        let num_heads = tf.num_heads.or(attn.num_heads).unwrap_or(32);
-        let num_groups = tf.num_groups.or(attn.num_groups).unwrap_or(num_heads);
-        let head_dim = tf.head_dim.or(attn.head_dim).unwrap_or(64);
-        let attention_scale = tf.attention_scale.or(attn.scale);
+        // Derive head parameters from the first layer's mixer config
+        let mixer = &first_layer.mixer_config;
+        let num_heads = tf.num_heads.or(mixer.num_heads()).unwrap_or(32);
+        let num_groups =
+            tf.num_groups.or(mixer.num_groups()).unwrap_or(num_heads);
+        let head_dim = tf.head_dim.or(mixer.head_dim()).unwrap_or(64);
+        let attention_scale = tf.attention_scale.or(mixer.attention_scale());
         let num_layers = tf.num_layers.unwrap_or(tf.layer_configs.len());
 
-        // Extract sliding window sizes from each layer's attention config
+        // Extract sliding window sizes from each layer's mixer config
         let sliding_window_sizes: Box<[Option<usize>]> = tf
             .layer_configs
             .iter()
-            .map(|layer| layer.attention_config.sliding_window_size)
+            .map(|layer| layer.mixer_config.sliding_window_size())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        // Derive layer types from mixer configs
+        let layer_types: Box<[DecoderLayerType]> = tf
+            .layer_configs
+            .iter()
+            .map(|layer| Self::layer_type_from_mixer(&layer.mixer_config))
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
@@ -62,8 +73,10 @@ impl InnerModelConfig {
                     .pre_attention_norm_config
                     .clone()
                     .unwrap_or_else(|| tf.output_norm_config.clone()),
-                mixer_config: MixerConfig::Attention(layer.attention_config.clone()),
-                post_attention_norm_config: layer.post_attention_norm_config.clone(),
+                mixer_config: layer.mixer_config.clone(),
+                post_attention_norm_config: layer
+                    .post_attention_norm_config
+                    .clone(),
                 pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
                 mlp_config: layer.mlp_config.clone(),
                 post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
@@ -73,7 +86,7 @@ impl InnerModelConfig {
 
         DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: Some(tf.global_rope_config.clone()),
+            global_rope_config: tf.global_rope_config.clone(),
             local_rope_config: tf.local_rope_config.clone(),
             layer_config,
             layer_configs: Some(layer_configs),
@@ -87,8 +100,22 @@ impl InnerModelConfig {
             attention_scale,
             num_layers,
             sliding_window_sizes: Some(sliding_window_sizes),
-            layer_types: None,
+            layer_types: Some(layer_types),
             context_length: tf.context_length,
+        }
+    }
+
+    fn layer_type_from_mixer(mixer: &MixerConfig) -> DecoderLayerType {
+        match mixer {
+            MixerConfig::Attention(_) => DecoderLayerType::Transformer,
+            MixerConfig::Mamba(config) => DecoderLayerType::StateSpace {
+                conv_dim: config.conv_dim(),
+                kernel_size: config.kernel_size,
+                state_dim: config.state_dim,
+                num_heads: config.num_heads,
+                num_groups: config.num_groups,
+                head_dim: config.head_dim,
+            },
         }
     }
 }

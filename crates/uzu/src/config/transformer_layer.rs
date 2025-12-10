@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AttentionConfig, MLPConfig, NormalizationConfig};
+use crate::{MLPConfig, MixerConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
     #[serde(alias = "pre_mixer_norm_config")]
     pub pre_attention_norm_config: Option<NormalizationConfig>,
-    #[serde(alias = "mixer_config")]
-    pub attention_config: AttentionConfig,
+    pub mixer_config: MixerConfig,
     #[serde(alias = "post_mixer_norm_config")]
     pub post_attention_norm_config: Option<NormalizationConfig>,
     pub pre_mlp_norm_config: NormalizationConfig,
@@ -21,6 +20,7 @@ mod tests {
 
     use super::{
         super::{
+            attention::AttentionConfig,
             common::{Activation, ConfigDataType, QuantizationMode},
             linear::{LinearConfig, QuantizationConfig},
             normalization::UpcastMode,
@@ -41,7 +41,8 @@ mod tests {
                     "upcast_mode": "only_normalization",
                     "subtract_mean": false
                 },
-                "attention_config": {
+                "mixer_config": {
+                    "type": "AttentionConfig",
                     "qkv_projection_config": {
                         "type": "QLoRALinearConfig",
                         "group_size": 32,
@@ -121,7 +122,7 @@ mod tests {
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
             },
-            attention_config: AttentionConfig {
+            mixer_config: MixerConfig::Attention(AttentionConfig {
                 qkv_projection_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
@@ -158,7 +159,7 @@ mod tests {
                 has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
-            },
+            }),
             mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {

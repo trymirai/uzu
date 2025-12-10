@@ -42,18 +42,19 @@ impl Decoder {
             .as_ref()
             .unwrap_or(root_weight_loader);
 
+        // Embeddings are at root level in new lalamo format
         let embed = embed_block(
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
-            decoder_weight_loader,
+            root_weight_loader,
         );
 
         let readout = readout_block(
             &decoder_config,
             &mtl_context,
             &compilation_config.descriptor_general,
-            decoder_weight_loader,
+            root_weight_loader,
         );
 
         let attention_data_type = Self::attention_data_type(&decoder_config);

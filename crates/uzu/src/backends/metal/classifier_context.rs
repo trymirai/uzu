@@ -160,9 +160,9 @@ impl ClassifierContext {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let mut rope = global_rope.clone();
-                let attn = &layer_config.attention_config;
+                let mixer = &layer_config.mixer_config;
 
-                if attn.sliding_window_size.is_some() {
+                if mixer.sliding_window_size().is_some() {
                     if let Some(local_rope_block) = local_rope.clone() {
                         rope = local_rope_block;
                     }
@@ -178,10 +178,10 @@ impl ClassifierContext {
                         .model_config
                         .transformer_config
                         .hidden_dim,
-                    attn.num_heads.unwrap_or(12), // Default or unwrap
-                    attn.head_dim.unwrap_or(64),
-                    attn.num_groups.unwrap_or(12),
-                    attn.scale,
+                    mixer.num_heads().unwrap_or(12),
+                    mixer.head_dim().unwrap_or(64),
+                    mixer.num_groups().unwrap_or(12),
+                    mixer.attention_scale(),
                     &transformer_loader
                         .subtree(&format!("layers.{}", layer_index))
                         .unwrap(),

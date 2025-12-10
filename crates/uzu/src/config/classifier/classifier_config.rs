@@ -48,9 +48,7 @@ impl ClassifierConfig {
                         // If first layer has no pre-attention norm (like ModernBERT), use a default
                         self.transformer_config.output_norm_config.clone()
                     }),
-                mixer_config: crate::MixerConfig::Attention(
-                    first_layer.attention_config.clone(),
-                ),
+                mixer_config: first_layer.mixer_config.clone(),
                 post_attention_norm_config: first_layer
                     .post_attention_norm_config
                     .clone(),
@@ -62,20 +60,20 @@ impl ClassifierConfig {
             panic!("TransformerConfig must have at least one layer");
         };
 
-        // Derive head parameters from either top-level config or first layer
-        let heads = self
+        // Derive head parameters from either top-level config or first layer's mixer
+        let first_mixer = &self
             .transformer_config
             .layer_configs
             .first()
             .expect("TransformerConfig must have at least one layer")
-            .attention_config
-            .clone();
+            .mixer_config;
 
         DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: Some(
-                self.transformer_config.global_rope_config.clone(),
-            ),
+            global_rope_config: self
+                .transformer_config
+                .global_rope_config
+                .clone(),
             local_rope_config: self
                 .transformer_config
                 .local_rope_config
@@ -88,25 +86,26 @@ impl ClassifierConfig {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             hidden_dim: self.transformer_config.hidden_dim,
-            num_heads: self.num_heads.unwrap_or(heads.num_heads.unwrap_or(12)), // Default or unwrap
+            num_heads: self.num_heads.or(first_mixer.num_heads()).unwrap_or(12),
             num_groups: self
                 .num_groups
-                .unwrap_or(heads.num_groups.unwrap_or(12)),
-            head_dim: self.head_dim.unwrap_or(heads.head_dim.unwrap_or(64)),
+                .or(first_mixer.num_groups())
+                .unwrap_or(12),
+            head_dim: self.head_dim.or(first_mixer.head_dim()).unwrap_or(64),
             attention_scale: self.attention_scale,
             num_layers: self.num_layers,
             sliding_window_sizes: {
                 // If sliding_window_sizes is explicitly provided, use it
-                // Otherwise, extract from per-layer attention configs
+                // Otherwise, extract from per-layer mixer configs
                 if let Some(sizes) = &self.sliding_window_sizes {
                     Some(sizes.clone().into_boxed_slice())
                 } else {
-                    // Extract sliding_window_size from each layer's attention_config
+                    // Extract sliding_window_size from each layer's mixer_config
                     let sizes: Vec<Option<usize>> = self
                         .transformer_config
                         .layer_configs
                         .iter()
-                        .map(|layer| layer.attention_config.sliding_window_size)
+                        .map(|layer| layer.mixer_config.sliding_window_size())
                         .collect();
                     Some(sizes.into_boxed_slice())
                 }

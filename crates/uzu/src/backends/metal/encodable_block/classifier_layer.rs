@@ -52,8 +52,11 @@ impl ClassifierLayer {
         rope: Rc<Box<dyn EncodableBlock>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let intermediate_data_type: DataType = layer_config
-                .attention_config
+            let attention_config = layer_config
+                .mixer_config
+                .as_attention()
+                .expect("Classifier layers must use attention");
+            let intermediate_data_type: DataType = attention_config
                 .qkv_projection_config
                 .activation_precision()
                 .into();
@@ -97,8 +100,8 @@ impl ClassifierLayer {
                 };
 
             let qkv_projection = transformer_layer::linear_block(
-                &layer_config.attention_config.qkv_projection_config,
-                layer_config.attention_config.has_qkv_biases,
+                &attention_config.qkv_projection_config,
+                attention_config.has_qkv_biases,
                 model_dim,
                 [
                     num_heads * head_dim,
@@ -112,17 +115,16 @@ impl ClassifierLayer {
                 &compilation_config.descriptor_mlp,
             );
 
-            let qk_norm: Option<Box<dyn EncodableBlock>> = if layer_config
-                .attention_config
+            let qk_norm: Option<Box<dyn EncodableBlock>> = if attention_config
                 .query_norm_config
                 .is_some()
-                || layer_config.attention_config.key_norm_config.is_some()
+                || attention_config.key_norm_config.is_some()
             {
                 match QKNorm::new(
                     mtl_context,
                     intermediate_data_type,
-                    layer_config.attention_config.query_norm_config.clone(),
-                    layer_config.attention_config.key_norm_config.clone(),
+                    attention_config.query_norm_config.clone(),
+                    attention_config.key_norm_config.clone(),
                     ArrayId::QKV,
                     &layer_loader.subtree("mixer").unwrap(),
                     num_heads,
@@ -140,8 +142,8 @@ impl ClassifierLayer {
             };
 
             let out_projection = transformer_layer::linear_block(
-                &layer_config.attention_config.out_projection_config,
-                layer_config.attention_config.has_out_biases,
+                &attention_config.out_projection_config,
+                attention_config.has_out_biases,
                 num_heads * head_dim,
                 [model_dim],
                 mtl_context,
@@ -232,9 +234,9 @@ impl ClassifierLayer {
                     kernel_data_type,
                     layer_index,
                     attention_scale,
-                    layer_config.attention_config.has_sinks,
+                    attention_config.has_sinks,
                     false,
-                    layer_config.attention_config.sliding_window_size,
+                    attention_config.sliding_window_size,
                 )
                 .expect("Failed to create attention kernel"),
             );
