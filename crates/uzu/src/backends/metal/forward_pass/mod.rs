@@ -1,4 +1,5 @@
 pub mod cache_layers;
+mod encoder_resolver;
 mod io_arrays;
 pub mod kv_cache_layer;
 mod model_shape;
@@ -10,6 +11,7 @@ pub mod state;
 pub mod traces;
 
 pub use cache_layers::{CacheLayer, CacheLayers};
+pub use encoder_resolver::EncoderResolver;
 pub use io_arrays::IOArrays;
 pub use kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState};
 pub use model_shape::ModelShape;
