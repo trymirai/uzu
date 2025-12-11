@@ -80,7 +80,11 @@ impl RopeKernel {
         compute_encoder.set_buffer(0, Some(args.qkv_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.cosines_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.sines_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.token_positions_buffer), args.token_positions_offset as u64);
+        compute_encoder.set_buffer(
+            3,
+            Some(args.token_positions_buffer),
+            args.token_positions_offset as u64,
+        );
         compute_encoder.set_buffer(4, Some(args.rotated_queries_buffer), 0);
         compute_encoder.set_buffer(5, Some(args.rotated_keys_buffer), 0);
 
@@ -243,7 +247,7 @@ impl RopeKernelEncodable {
         let mut rope_sines = sin_buffer_binding[0].borrow_mut();
 
         let token_positions_offset = token_positions.buffer_offset();
-        
+
         self.kernel.encode(
             encoder,
             RopeKernelArguments {

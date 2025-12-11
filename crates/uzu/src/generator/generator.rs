@@ -563,7 +563,7 @@ impl Generator {
         result
     }
 
-    fn sync_prefix(&mut self) {
+    pub fn sync_prefix(&mut self) {
         if self.tokens.is_empty() {
             return;
         }
@@ -580,12 +580,6 @@ impl Generator {
             }
             self.registered_prefix_len = desired_prefix_len;
         }
-    }
-
-    /// Syncs the cache state after async generation for transformer models.
-    /// Must be called after all async passes complete.
-    pub fn sync_transformer_cache_after_async(&mut self) {
-        self.sync_prefix();
     }
 
     /// Prepares async buffers for generation.
@@ -651,9 +645,10 @@ impl Generator {
 
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
-        // Compute token position for attention bias (same as async_positions[pass_idx])
-        let prefill_count = self.context.async_buffers.prefill_count.get();
-        let token_position = prefill_count.saturating_sub(1) + pass_idx;
+        let token_position = unsafe {
+            let ptr = async_positions_buffer.contents() as *const u32;
+            *ptr.add(pass_idx) as usize
+        };
 
         let task = GeneratorRunTask {
             token_ids: &[last_token],
@@ -665,17 +660,12 @@ impl Generator {
             is_prefilling: false,
         };
 
-        // Use async buffers for all passes (simpler, avoids per-pass allocation)
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        // For passes > 0 with attention layers, skip CPU mask fill
-        // (GPU mask update from previous pass handles it)
         let skip_attention_bias_fill = pass_idx > 0
             && self.context.model_config.decoder_config.has_attention_layers();
 
-        // For passes > 0, skip token_ids copy - the previous pass's token_copy kernel
-        // already wrote the sampled token to scratch.token_ids
         let skip_token_ids_copy = pass_idx > 0;
 
         let mut state = ForwardPassState::new(
@@ -691,8 +681,8 @@ impl Generator {
             &task.token_seeds,
             task.active_suffix_length,
             task.is_prefilling,
-            false, // trace
-            None,  // external_bias_fn
+            false,
+            None,
             skip_token_ids_copy,
             async_positions,
             async_seeds,
@@ -710,11 +700,10 @@ impl Generator {
                 .encode_wait_for_event(&async_event, current_counter);
         }
 
-        let params = EncodingParameters::new(false, false, false);
         self.context.executables.encode(
             &mut state,
             &self.context.command_buffer,
-            &params,
+            &EncodingParameters::new(false, false, false),
         );
 
         // Encode sampling
@@ -748,9 +737,7 @@ impl Generator {
         );
         encoder.end_encoding();
 
-        // Scatter + register for all transformer layers (same as sync path)
-        // Windowed: scatters suffix→ring, Full: no-op (source==dest)
-        let token_position = prefill_count.saturating_sub(1) + pass_idx;
+        // Scatter + register for all transformer layers
         {
             let cb = root_command_buffer.to_owned();
             self.context.cache_layers.borrow_mut().update_after_acceptance(
@@ -765,7 +752,6 @@ impl Generator {
                 .register_accepted_tokens(&[token_position]);
         }
 
-        // Encode mask update for next pass
         let encoder = root_command_buffer.new_compute_command_encoder();
 
         if let Some(mask_update) = &self.context.mask_update {

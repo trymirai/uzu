@@ -360,9 +360,6 @@ impl Session {
             }
         }
 
-        // Enable async pipeline for all transformers (including sliding window).
-        // KV scatter is encoded at the end of each pass to propagate context.
-        // Set UZU_FORCE_SYNC=1 to disable async for debugging/comparison.
         let force_sync = std::env::var("UZU_FORCE_SYNC")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
@@ -684,15 +681,13 @@ impl Session {
                         let _ = receiver.recv();
                         in_flight -= 1;
                     }
-                    // Sync transformer cache state after async generation
-                    generator.sync_transformer_cache_after_async();
+                    generator.sync_prefix();
                     return Ok((results, durations, finish_reason));
                 }
             }
         }
 
-        // Sync transformer cache state after async generation
-        generator.sync_transformer_cache_after_async();
+        generator.sync_prefix();
         Ok((results, durations, finish_reason))
     }
 

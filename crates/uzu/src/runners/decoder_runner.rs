@@ -136,7 +136,7 @@ impl DecoderTestContext {
             false,
             None,
             None,
-            false, // skip_attention_bias_fill
+            false,
         );
 
         let executables = DecoderExecutables::new(
