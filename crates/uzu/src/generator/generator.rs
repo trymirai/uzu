@@ -608,11 +608,6 @@ impl Generator {
             }
         }
 
-        // Snapshot ring state for sliding window layers
-        // This is needed to compute eviction columns during async mask updates
-        let ring_states = self.context.cache_layers.borrow().get_ring_states();
-        self.context.async_buffers.snapshot_ring_state(ring_states);
-
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
@@ -715,24 +710,7 @@ impl Generator {
                 .encode_wait_for_event(&async_event, current_counter);
         }
 
-        // Encode forward pass
-        // For async, use projection_step to adjust sequence_length for growing KV cache
-        let projection_step = if self
-            .context
-            .model_config
-            .decoder_config
-            .has_attention_layers()
-        {
-            Some(pass_idx)
-        } else {
-            None
-        };
-        let params = match projection_step {
-            Some(s) => {
-                EncodingParameters::new(false, false, false).with_projection(s)
-            },
-            None => EncodingParameters::new(false, false, false),
-        };
+        let params = EncodingParameters::new(false, false, false);
         self.context.executables.encode(
             &mut state,
             &self.context.command_buffer,
@@ -770,76 +748,43 @@ impl Generator {
         );
         encoder.end_encoding();
 
-        // Encode KV scatter for SLIDING WINDOW layers only.
-        // Full attention layers use projection_step mechanism instead.
-        // This is critical for sliding window layers to see previous passes' KV.
-        // Use prefill_count (not tokens.len()) because tokens.len() changes as batches complete
+        // Scatter + register for all transformer layers (same as sync path)
+        // Windowed: scatters suffix→ring, Full: no-op (source==dest)
         let token_position = prefill_count.saturating_sub(1) + pass_idx;
-
-        // Encode async scatter for sliding window layers (KV from suffix to ring)
-        if self.context.model_config.decoder_config.has_sliding_window_layers()
         {
-            let initial_ring_states =
-                self.context.async_buffers.ring_state_snapshot.borrow();
-
-            let encoder = root_command_buffer.new_compute_command_encoder();
-            self.context.cache_layers.borrow().encode_async_scatter(
-                &initial_ring_states,
-                pass_idx,
-                &encoder,
+            let cb = root_command_buffer.to_owned();
+            self.context.cache_layers.borrow_mut().update_after_acceptance(
+                &[0],
+                None,
+                &cb,
                 &self.context.kv_cache_update,
             );
-            encoder.end_encoding();
+            self.context
+                .cache_layers
+                .borrow_mut()
+                .register_accepted_tokens(&[token_position]);
         }
 
-        // Update CPU-side ring state for next pass's mask computation
-        {
-            let mut cache_layers = self.context.cache_layers.borrow_mut();
-            cache_layers
-                .register_accepted_tokens_windowed_only(&[token_position]);
-        }
-
-        // Start new encoder for mask update
+        // Encode mask update for next pass
         let encoder = root_command_buffer.new_compute_command_encoder();
 
-        // Encode mask update for next pass (transformer async pipeline)
         if let Some(mask_update) = &self.context.mask_update {
-            let prefill_count = self.context.async_buffers.prefill_count.get();
+            let ring_states =
+                self.context.cache_layers.borrow().get_ring_states();
 
-            // For each attention bias buffer, update the mask
             for (window_size, mask_buffer) in
                 &self.context.scratch_buffers.attention_window_size_to_bias
             {
                 if let Some(window) = window_size {
-                    // Sliding window layer: Update mask for ring buffer rotation
-                    //
-                    // After pass N scatters KV to column C = (initial_ring_offset + N) % window:
-                    // - Column C was MASKED (contained oldest position, out of window)
-                    // - Column C now contains the NEW position → should be UNMASKED
-                    // - Column C+1 is now the oldest position → should be MASKED
-                    //
-                    // For pass N+1:
-                    // - Query position = prefill_count - 1 + N + 1
-                    // - Window = [query - window + 1, query]
-                    // - The position at column (initial_ring_offset + N) % window is IN window
-                    // - The position at column (initial_ring_offset + N + 1) % window is OUT
-
-                    let initial_ring_offset = self
-                        .context
-                        .async_buffers
-                        .ring_state_snapshot
-                        .borrow()
-                        .get(window)
-                        .map(|(offset, _)| *offset)
-                        .unwrap_or(0);
-
-                    // Unmask the column that was just scattered to (now contains in-window position)
+                    let (ring_offset, ring_length) =
+                        ring_states.get(window).copied().unwrap_or((0, 0));
                     let unmask_col =
-                        ((initial_ring_offset + pass_idx) % *window) as i32;
-                    // Mask the next column (oldest position, will be out of window)
-                    let mask_col =
-                        ((initial_ring_offset + pass_idx + 1) % *window) as i32;
-
+                        ((ring_offset + *window - 1) % *window) as i32;
+                    let mask_col = if ring_length == *window {
+                        ring_offset as i32
+                    } else {
+                        -1
+                    };
                     mask_update.encode(
                         encoder,
                         mask_buffer,
@@ -847,20 +792,11 @@ impl Generator {
                         mask_col,
                     );
                 } else {
-                    // Full attention layer: unmask new column, no eviction
-                    // After pass k, we prepare mask for pass k+1
-                    // prefix_segment_length = prefill_count - 1
-                    // seq_len at pass k = (prefill_count - 1 + k) + 1 = prefill_count + k
-                    // Pass k+1 will attend to column (prefill_count + k) which is the
-                    // suffix column of pass k
-                    let unmask_col = (prefill_count + pass_idx) as i32;
-                    let mask_col = -1;
-
                     mask_update.encode(
                         encoder,
                         mask_buffer,
-                        unmask_col,
-                        mask_col,
+                        token_position as i32,
+                        -1,
                     );
                 }
             }

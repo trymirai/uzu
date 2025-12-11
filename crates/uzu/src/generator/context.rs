@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     fs::File,
     io::BufReader,
     path::Path,
@@ -50,10 +49,6 @@ pub struct AsyncBuffers {
     pub prefill_count: Cell<usize>,
     /// Batch size (number of passes to keep in flight)
     pub batch_size: usize,
-    /// Ring state snapshot for sliding window layers.
-    /// Maps window_length -> (ring_offset, ring_length)
-    /// Used to compute eviction columns during async mask updates.
-    pub ring_state_snapshot: RefCell<HashMap<usize, (usize, usize)>>,
 }
 
 impl AsyncBuffers {
@@ -84,7 +79,6 @@ impl AsyncBuffers {
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
             batch_size,
-            ring_state_snapshot: RefCell::new(HashMap::new()),
         }
     }
 
@@ -122,23 +116,6 @@ impl AsyncBuffers {
     /// Reset event counter before async generation
     pub fn reset_counter(&self) {
         self.counter.set(0);
-    }
-
-    /// Snapshot ring state for sliding window layers.
-    /// Must be called before async generation to enable correct eviction computation.
-    pub fn snapshot_ring_state(
-        &self,
-        ring_states: HashMap<usize, (usize, usize)>,
-    ) {
-        *self.ring_state_snapshot.borrow_mut() = ring_states;
-    }
-
-    /// Get ring state for a window size (returns None for full attention layers)
-    pub fn get_ring_state(
-        &self,
-        window_length: usize,
-    ) -> Option<(usize, usize)> {
-        self.ring_state_snapshot.borrow().get(&window_length).copied()
     }
 
     /// Read sampled token from results buffer at given pass index

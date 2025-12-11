@@ -245,23 +245,6 @@ impl CacheLayers {
         }
     }
 
-    /// Update CPU-side ring state for WINDOWED layers only.
-    pub fn register_accepted_tokens_windowed_only(
-        &mut self,
-        token_positions: &[usize],
-    ) {
-        for layer in self.data.iter_mut() {
-            if let Some(layer) = layer.as_transformer_mut() {
-                if layer.is_sliding_window() {
-                    layer.register_accepted_tokens(token_positions);
-                }
-            }
-        }
-    }
-
-    /// Get ring state for all sliding window layers.
-    /// Returns a map of window_length -> (ring_offset, ring_length).
-    /// Used by async generation to compute eviction columns.
     pub fn get_ring_states(&self) -> HashMap<usize, (usize, usize)> {
         let mut result = HashMap::new();
         for layer in self.data.iter() {
@@ -272,8 +255,6 @@ impl CacheLayers {
                     window_length,
                 } = &kv_layer.state
                 {
-                    // Only insert if not already present (all layers with same
-                    // window size should have same ring state)
                     result
                         .entry(*window_length)
                         .or_insert((*ring_offset, *ring_length));
@@ -281,61 +262,6 @@ impl CacheLayers {
             }
         }
         result
-    }
-
-    /// Encode async scatter for sliding window layers.
-    /// Uses snapshotted ring state to compute destination for each pass.
-    pub fn encode_async_scatter(
-        &self,
-        initial_ring_states: &HashMap<usize, (usize, usize)>,
-        pass_idx: usize,
-        encoder: &metal::ComputeCommandEncoderRef,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
-        for layer in self.data.iter() {
-            if let CacheLayer::Transformer(kv_layer) = layer {
-                if let KVCacheLayerState::Windowed {
-                    window_length,
-                    ..
-                } = &kv_layer.state
-                {
-                    let initial_ring_offset = initial_ring_states
-                        .get(window_length)
-                        .map(|(offset, _)| *offset)
-                        .unwrap_or(0);
-
-                    // source = suffix slot (at index window_length)
-                    // dest = (initial_ring_offset + pass_idx) % window_length
-                    let source = *window_length;
-                    let dest =
-                        (initial_ring_offset + pass_idx) % *window_length;
-
-                    let key_buffer = {
-                        let mut k = kv_layer.keys.borrow_mut();
-                        unsafe { k.mtl_buffer() }.clone()
-                    };
-                    let value_buffer = {
-                        let mut v = kv_layer.values.borrow_mut();
-                        unsafe { v.mtl_buffer() }.clone()
-                    };
-                    let k_shape = kv_layer.keys.borrow().shape().to_vec();
-
-                    let layer_data = crate::backends::metal::kernel::kv_cache_update::KVLayerData {
-                        key_buffer,
-                        key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-                        value_buffer,
-                        value_shape: [k_shape[0], k_shape[1], k_shape[2]],
-                    };
-
-                    let _ = kv_cache_update.encode_with_encoder(
-                        &[layer_data],
-                        &[source],
-                        &[dest],
-                        encoder,
-                    );
-                }
-            }
-        }
     }
 
     pub fn clone(
