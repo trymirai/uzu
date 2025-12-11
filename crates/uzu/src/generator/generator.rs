@@ -340,6 +340,14 @@ impl Generator {
             ))
             .collect::<Box<[usize]>>();
 
+        // Debug: print sync decode setup
+        if std::env::var("UZU_DEBUG_SYNC").is_ok() && active_suffix_length == 1 {
+            eprintln!(
+                "[SYNC decode] start_position={}, token_positions={:?}, token_ids={:?}, tokens_len={}",
+                start_position, &token_positions[..1], &token_ids[..1], self.tokens.len()
+            );
+        }
+
         let token_seeds = flat_trie
             .token_seeds()
             .chain(repeat_n(0, suffix_length - active_suffix_length))
@@ -660,6 +668,14 @@ impl Generator {
         let prefill_count = self.context.async_buffers.prefill_count.get();
         let token_position = prefill_count.saturating_sub(1) + pass_idx;
 
+        // Debug: print pass 0 setup
+        if std::env::var("UZU_DEBUG_ASYNC").is_ok() && pass_idx == 0 {
+            eprintln!(
+                "[ASYNC pass 0] prefill_count={}, token_position={}, last_token={}, tokens_len={}",
+                prefill_count, token_position, last_token, self.tokens.len()
+            );
+        }
+
         let task = GeneratorRunTask {
             token_ids: &[last_token],
             token_positions: &[token_position],
@@ -696,9 +712,9 @@ impl Generator {
             &task.token_seeds,
             task.active_suffix_length,
             task.is_prefilling,
+            false, // trace
+            None,  // external_bias_fn
             skip_token_ids_copy,
-            None,
-            is_continuation,
             async_positions,
             async_seeds,
             Some(pass_idx),
@@ -895,30 +911,50 @@ impl Generator {
             for (window_size, mask_buffer) in
                 &self.context.scratch_buffers.attention_window_size_to_bias
             {
-                if let Some(_window) = window_size {
-                    // Sliding window layer: NO mask update needed!
+                if let Some(window) = window_size {
+                    // Sliding window layer: Update mask for ring buffer rotation
                     //
-                    // The ring buffer ALWAYS contains exactly window_length positions -
-                    // the most recent ones. For any query position Q:
-                    // - Window = [Q - window_length + 1, Q]
-                    // - Ring contains positions [Q - window_length + 1, Q]
-                    // - ALL ring positions are IN window!
+                    // After pass N scatters KV to column C = (initial_ring_offset + N) % window:
+                    // - Column C was MASKED (contained oldest position, out of window)
+                    // - Column C now contains the NEW position → should be UNMASKED
+                    // - Column C+1 is now the oldest position → should be MASKED
                     //
-                    // When a new token is added:
-                    // 1. Scatter copies new KV to the oldest slot (replacing old position)
-                    // 2. The new position IS in window (it's the current position)
-                    // 3. The other positions remain in window (they're the most recent window_length-1)
-                    //
-                    // Therefore the initial mask from fill_attention_bias is correct
-                    // and doesn't need any updates between passes.
+                    // For pass N+1:
+                    // - Query position = prefill_count - 1 + N + 1
+                    // - Window = [query - window + 1, query]
+                    // - The position at column (initial_ring_offset + N) % window is IN window
+                    // - The position at column (initial_ring_offset + N + 1) % window is OUT
+
+                    let initial_ring_offset = self
+                        .context
+                        .async_buffers
+                        .ring_state_snapshot
+                        .borrow()
+                        .get(window)
+                        .map(|(offset, _)| *offset)
+                        .unwrap_or(0);
+
+                    // Unmask the column that was just scattered to (now contains in-window position)
+                    let unmask_col =
+                        ((initial_ring_offset + pass_idx) % *window) as i32;
+                    // Mask the next column (oldest position, will be out of window)
+                    let mask_col =
+                        ((initial_ring_offset + pass_idx + 1) % *window) as i32;
 
                     // Debug output if enabled
                     if std::env::var("UZU_DEBUG_SCATTER").is_ok() && pass_idx < 5 {
                         eprintln!(
-                            "[async pass {}] sliding window: NO mask update needed (all positions in window)",
-                            pass_idx,
+                            "[async pass {}] sliding window: unmask_col={}, mask_col={}",
+                            pass_idx, unmask_col, mask_col,
                         );
                     }
+
+                    mask_update.encode(
+                        encoder,
+                        mask_buffer,
+                        unmask_col,
+                        mask_col,
+                    );
                 } else {
                     // Full attention layer: unmask new column, no eviction
                     // After pass k, we prepare mask for pass k+1
