@@ -360,11 +360,8 @@ impl Session {
             }
         }
 
-        let force_sync = std::env::var("UZU_FORCE_SYNC")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-        let can_use_async = !force_sync
-            && generator.decoding_config.generate_suffix_length() == 1
+        let can_use_async = generator.decoding_config.generate_suffix_length()
+            == 1
             && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
