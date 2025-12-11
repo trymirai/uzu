@@ -13,5 +13,5 @@ pub mod trie;
 pub mod utils;
 pub use utils::*;
 pub mod device;
-pub use device::*;
 pub use config::*;
+pub use device::*;
