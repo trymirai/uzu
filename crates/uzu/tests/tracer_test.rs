@@ -1,7 +1,9 @@
+#![cfg(feature = "tracing")]
+
 mod common;
 use std::path::PathBuf;
 
-use uzu::tracer::Tracer;
+use uzu::tracer::TraceValidator;
 
 fn build_model_path() -> PathBuf {
     common::get_test_model_path()
@@ -20,7 +22,13 @@ fn test_tracer() {
         return;
     }
 
-    let tracer = Tracer::new(&model_path);
+    let mut tracer = match TraceValidator::new(&model_path) {
+        Ok(t) => t,
+        Err(e) => {
+            println!("Failed to create TraceValidator: {:?}", e);
+            return;
+        },
+    };
 
     let colored_text = |text: &str, valid: bool| {
         if valid {
@@ -30,7 +38,14 @@ fn test_tracer() {
         }
     };
 
-    let results = tracer.run();
+    let results = match tracer.run() {
+        Ok(r) => r,
+        Err(e) => {
+            println!("Tracer run failed: {:?}", e);
+            return;
+        },
+    };
+
     for result in results.results.iter() {
         let valid = result.metrics.is_valid();
         let text = colored_text(

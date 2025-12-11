@@ -5,10 +5,9 @@ use mpsgraph::{
 use objc2::rc::Retained;
 
 use super::{
-    encodable_with_state::EncodableWithState, io_arrays::IOArrays,
-    state::ForwardPassState,
+    EncodableBlock, EncodingParameters, ForwardPassState,
+    io_arrays::IOArrays,
 };
-use crate::backends::metal::forward_pass::encodable_with_state::EncodingParameters;
 
 pub struct MPSGraphBlock {
     executable: Retained<Executable>,
@@ -28,37 +27,9 @@ impl MPSGraphBlock {
             arguments,
         }
     }
-
-    // fn load(path: &Path) -> Result<Self, ExecutableBlockError> {
-    //     let signature =
-    //         from_reader(fs::File::open(path.join("signature.json"))?)?;
-    //     let executable =
-    //         Executable::from_serialized_package(path, None).unwrap();
-    //     let execution_descriptor = ExecutableExecutionDescriptor::new();
-
-    //     Ok(Self {
-    //         signature,
-    //         executable,
-    //         execution_descriptor,
-    //     })
-    // }
-
-    // fn save(
-    //     &self,
-    //     path: &Path,
-    // ) -> Result<(), ExecutableBlockError> {
-    //     fs::create_dir(path)?;
-
-    //     self.executable.serialize_to_url(path, &SerializationDescriptor::new());
-
-    //     let writer = fs::File::create(path.join("signature.json"))?;
-    //     to_writer(writer, &self.signature)?;
-
-    //     Ok(())
-    // }
 }
 
-impl EncodableWithState for MPSGraphBlock {
+impl EncodableBlock for MPSGraphBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
@@ -102,9 +73,5 @@ impl EncodableWithState for MPSGraphBlock {
                 root_command_buffer.wait_until_completed();
             }
         }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        false // MPSGraph uses its own encoding mechanism, not compute encoders
     }
 }

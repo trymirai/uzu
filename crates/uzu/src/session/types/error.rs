@@ -1,3 +1,5 @@
+use crate::backends::metal::error::ClassifierError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Model folder not found")]
@@ -16,8 +18,8 @@ pub enum Error {
     UnsupportedContextModeForModel,
     #[error("Unsupported speculator config for model")]
     UnsupportedSpeculatorConfigForModel,
-    #[error("Generator not loaded")]
-    GeneratorNotLoaded,
+    #[error("Language model generator not loaded")]
+    LanguageModelGeneratorNotLoaded,
     #[error("Unable to load prompt template")]
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]
@@ -40,4 +42,6 @@ pub enum Error {
     SamplingFailed,
     #[error("Grammar error")]
     GrammarError,
+    #[error("Classifier error: {0}")]
+    Classifier(#[from] ClassifierError),
 }

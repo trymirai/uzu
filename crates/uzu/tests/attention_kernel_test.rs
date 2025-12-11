@@ -379,6 +379,7 @@ fn run_single_pass_attention(
         num_heads,
         suffix_length: seq_len,
         head_dim,
+        is_causal: false,
     };
 
     kernel.encode_single_pass(&compute_encoder, args)?;
@@ -516,20 +517,21 @@ fn test_single_pass_attention_basic() {
         },
     };
 
-    let variant = kernel.choose_variant(seq_len, head_dim);
+    let is_causal = false; // Non-causal attention for this test
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
     println!("Using kernel variant: {:?}", variant);
     println!(
         "Supports single-pass for head_dim={}: {}",
         head_dim,
-        kernel.supports_single_pass(head_dim)
+        kernel.supports_single_pass(head_dim, is_causal)
     );
     println!(
         "Supports two-pass for head_dim={}: {}",
         head_dim,
-        kernel.supports_two_pass(head_dim)
+        kernel.supports_two_pass(head_dim, is_causal)
     );
 
-    if !kernel.supports_single_pass(head_dim) {
+    if !kernel.supports_single_pass(head_dim, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -587,7 +589,7 @@ fn test_single_pass_attention_with_mask() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim) {
+    if !kernel.supports_single_pass(head_dim, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -668,7 +670,7 @@ fn test_single_pass_attention_with_sinks() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim) {
+    if !kernel.supports_single_pass(head_dim, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -746,7 +748,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim) {
+    if !kernel.supports_single_pass(head_dim, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -823,10 +825,11 @@ fn test_single_pass_attention_gqa() {
         },
     };
 
-    let variant = kernel.choose_variant(seq_len, head_dim);
+    let is_causal = false; // Non-causal attention for this test
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
     println!("Using kernel variant for GQA: {:?}", variant);
 
-    if !kernel.supports_single_pass(head_dim) {
+    if !kernel.supports_single_pass(head_dim, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -922,6 +925,7 @@ fn run_two_pass_attention(
         num_heads,
         suffix_length: seq_len,
         head_dim,
+        is_causal: false,
     };
 
     kernel.encode_two_pass(&compute_encoder, args)?;
@@ -970,12 +974,13 @@ fn test_two_pass_attention() {
     let seq_len = 2048;
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
+    let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim) {
+    if !kernel.supports_two_pass(head_dim, is_causal) {
         panic!("Two-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         panic!(
             "Two-pass not selected for seq_len={}. Got {:?}",
@@ -1039,12 +1044,13 @@ fn test_two_pass_attention_gqa() {
     let seq_len = 4096;
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
+    let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim) {
+    if !kernel.supports_two_pass(head_dim, is_causal) {
         panic!("Two-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         panic!(
             "Two-pass not selected for GQA seq_len={}. Got {:?}",
@@ -1113,8 +1119,9 @@ fn perf_two_pass_attention() {
     let suffix_length = 1; // Only processing 1 new token (realistic inference)
     let head_dim = 128;
     let scale = 1.0 / (head_dim as f32).sqrt();
+    let is_causal = false;
 
-    if !kernel.supports_two_pass(head_dim) {
+    if !kernel.supports_two_pass(head_dim, is_causal) {
         println!(
             "Skipping two-pass perf test: not supported for head_dim={}",
             head_dim
@@ -1122,7 +1129,7 @@ fn perf_two_pass_attention() {
         return;
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         println!(
             "Skipping two-pass perf test: variant {:?} selected instead",
@@ -1203,6 +1210,7 @@ fn perf_two_pass_attention() {
         num_heads,
         suffix_length, // Use actual suffix_length, not seq_len
         head_dim,
+        is_causal: false,
     };
 
     kernel.encode_two_pass(&compute_encoder, args).expect("encode");

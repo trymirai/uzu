@@ -21,10 +21,13 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         config: &LanguageModelConfig,
     ) -> usize {
         let default_limit: usize = 1024;
-        let model_context_length = config.decoder_config.context_length;
+        let model_context_length =
+            config.model_config.transformer_config.context_length;
+
         let minimal_sliding_window_size = config
-            .decoder_config
-            .sliding_window_sizes
+            .decoder_config()
+            .ok()
+            .and_then(|dc| dc.sliding_window_sizes)
             .as_deref()
             .into_iter()
             .flatten()
@@ -32,6 +35,7 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
             .copied()
             .min()
             .unwrap_or(usize::MAX);
+
         let maximal_value =
             [model_context_length, minimal_sliding_window_size, default_limit]
                 .into_iter()
