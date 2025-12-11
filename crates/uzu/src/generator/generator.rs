@@ -701,7 +701,6 @@ impl Generator {
             skip_token_ids_copy,
             async_positions,
             async_seeds,
-            Some(pass_idx),
             skip_attention_bias_fill,
         );
         state.sampling_method = Some(sampling_method);

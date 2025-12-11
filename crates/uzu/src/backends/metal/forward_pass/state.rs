@@ -948,7 +948,6 @@ impl ForwardPassState {
         skip_token_ids_copy: bool,
         async_positions: Option<(&metal::Buffer, usize)>,
         async_seeds: Option<(&metal::Buffer, usize)>,
-        projection_step: Option<usize>,
         skip_attention_bias_fill: bool,
     ) -> Self {
         let suffix_length = token_ids.len();
@@ -1105,7 +1104,6 @@ impl ForwardPassState {
                 suffix_length,
                 &context,
                 external_bias_fn,
-                projection_step.unwrap_or(0),
             );
         }
 

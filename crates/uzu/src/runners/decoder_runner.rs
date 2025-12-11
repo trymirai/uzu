@@ -136,7 +136,6 @@ impl DecoderTestContext {
             false,
             None,
             None,
-            None,
             false, // skip_attention_bias_fill
         );
 
