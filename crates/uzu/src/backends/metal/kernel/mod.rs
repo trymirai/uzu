@@ -20,6 +20,7 @@ pub mod token_copy;
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
+pub use mask_update::MaskUpdateKernel;
 pub use moe::{
     MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
@@ -45,7 +46,6 @@ pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 pub use token_copy::TokenCopyKernel;
-pub use mask_update::MaskUpdateKernel;
 
 use super::{MTLContext, metal_extensions};
 pub use crate::backends::metal::kernel::linear::QuantizedLinearKernelBlock;

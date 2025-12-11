@@ -681,13 +681,11 @@ impl Session {
                         let _ = receiver.recv();
                         in_flight -= 1;
                     }
-                    generator.sync_prefix();
                     return Ok((results, durations, finish_reason));
                 }
             }
         }
 
-        generator.sync_prefix();
         Ok((results, durations, finish_reason))
     }
 

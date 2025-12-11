@@ -688,7 +688,6 @@ impl AttentionKernelEncodable {
 
         let sequence_length = segment_prefix_length + suffix_length;
 
-
         let gqa_factor = num_heads / num_groups;
         let scale =
             self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());

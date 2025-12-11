@@ -563,7 +563,7 @@ impl Generator {
         result
     }
 
-    pub fn sync_prefix(&mut self) {
+    fn sync_prefix(&mut self) {
         if self.tokens.is_empty() {
             return;
         }
@@ -804,9 +804,5 @@ impl Generator {
 
     pub fn has_attention_layers(&self) -> bool {
         self.context.model_config.decoder_config.has_attention_layers()
-    }
-
-    pub fn has_sliding_window_layers(&self) -> bool {
-        self.context.model_config.decoder_config.has_sliding_window_layers()
     }
 }

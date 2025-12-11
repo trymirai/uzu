@@ -239,14 +239,6 @@ impl DecoderConfig {
             matches!(self.layer_config.mixer_config, MixerConfig::Attention(_))
         }
     }
-
-    pub fn has_sliding_window_layers(&self) -> bool {
-        if let Some(sizes) = &self.sliding_window_sizes {
-            sizes.iter().any(|size| size.is_some())
-        } else {
-            false
-        }
-    }
 }
 
 #[cfg(test)]
