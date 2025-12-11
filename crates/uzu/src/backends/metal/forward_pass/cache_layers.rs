@@ -245,25 +245,6 @@ impl CacheLayers {
         }
     }
 
-    pub fn get_ring_states(&self) -> HashMap<usize, (usize, usize)> {
-        let mut result = HashMap::new();
-        for layer in self.data.iter() {
-            if let CacheLayer::Transformer(kv_layer) = layer {
-                if let KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } = &kv_layer.state
-                {
-                    result
-                        .entry(*window_length)
-                        .or_insert((*ring_offset, *ring_length));
-                }
-            }
-        }
-        result
-    }
-
     pub fn clone(
         &self,
         context: &MTLContext,

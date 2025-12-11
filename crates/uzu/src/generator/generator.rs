@@ -769,36 +769,22 @@ impl Generator {
         let encoder = root_command_buffer.new_compute_command_encoder();
 
         if let Some(mask_update) = &self.context.mask_update {
-            let ring_states =
-                self.context.cache_layers.borrow().get_ring_states();
-
             for (window_size, mask_buffer) in
                 &self.context.scratch_buffers.attention_window_size_to_bias
             {
-                if let Some(window) = window_size {
-                    let (ring_offset, ring_length) =
-                        ring_states.get(window).copied().unwrap_or((0, 0));
-                    let unmask_col =
-                        ((ring_offset + *window - 1) % *window) as i32;
-                    let mask_col = if ring_length == *window {
-                        ring_offset as i32
+                let (unmask_col, mask_col) = if let Some(w) = window_size {
+                    // Sliding window: position P maps to column P % window
+                    let unmask = (token_position % w) as i32;
+                    let mask = if token_position + 1 >= *w {
+                        ((token_position + 1) % w) as i32
                     } else {
                         -1
                     };
-                    mask_update.encode(
-                        encoder,
-                        mask_buffer,
-                        unmask_col,
-                        mask_col,
-                    );
+                    (unmask, mask)
                 } else {
-                    mask_update.encode(
-                        encoder,
-                        mask_buffer,
-                        token_position as i32,
-                        -1,
-                    );
-                }
+                    (token_position as i32, -1)
+                };
+                mask_update.encode(encoder, mask_buffer, unmask_col, mask_col);
             }
         }
 
