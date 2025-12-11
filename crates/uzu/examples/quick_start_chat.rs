@@ -7,9 +7,7 @@ use uzu::session::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = PathBuf::from(
-        env::args().nth(1).expect("Usage: quick_start_chat <MODEL_PATH>"),
-    );
+    let model_path = PathBuf::from("MODEL_PATH");
     let mut session = ChatSession::new(model_path, DecodingConfig::default())?;
 
     let input = Input::Text(String::from("Tell about London"));

@@ -124,7 +124,6 @@ impl LanguageModelGeneratorAuxBuffers {
                     )),
                     _ => None,
                 },
-                // MoE buffers - simplified initialization
                 moe_topk_ids: match &decoder_config.layer_config.mlp_config {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_topk_ids.as_ref().map(|buf| {

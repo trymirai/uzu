@@ -20,7 +20,6 @@ impl InnerModelConfig {
     pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         let tf = &self.transformer_config;
 
-        // Get the first layer config as the template for layer_config
         let first_layer =
             tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
@@ -38,7 +37,6 @@ impl InnerModelConfig {
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
         };
 
-        // Derive head parameters from the first layer's mixer config
         let mixer = &first_layer.mixer_config;
         let num_heads =
             tf.num_heads.or(mixer.num_heads()).ok_or_else(|| {
@@ -53,7 +51,6 @@ impl InnerModelConfig {
         let attention_scale = tf.attention_scale.or(mixer.attention_scale());
         let num_layers = tf.num_layers.unwrap_or(tf.layer_configs.len());
 
-        // Extract sliding window sizes from each layer's mixer config
         let sliding_window_sizes: Box<[Option<usize>]> = tf
             .layer_configs
             .iter()
@@ -61,7 +58,6 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        // Derive layer types from mixer configs
         let layer_types: Box<[DecoderLayerType]> = tf
             .layer_configs
             .iter()
@@ -69,7 +65,6 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        // Convert layer_configs to DecoderLayerConfig format
         let layer_configs: Box<[DecoderLayerConfig]> = tf
             .layer_configs
             .iter()

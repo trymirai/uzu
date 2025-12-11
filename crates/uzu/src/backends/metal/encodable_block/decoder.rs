@@ -40,7 +40,6 @@ impl Decoder {
             .subtree("transformer")
             .expect("transformer subtree not found");
 
-        // Embeddings are at root level in new lalamo format
         let embed = embed_block(
             &decoder_config,
             &mtl_context,
