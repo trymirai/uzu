@@ -608,6 +608,11 @@ impl Generator {
             }
         }
 
+        // Snapshot ring state for sliding window layers
+        // This is needed to compute eviction columns during async mask updates
+        let ring_states = self.context.cache_layers.borrow().get_ring_states();
+        self.context.async_buffers.snapshot_ring_state(ring_states);
+
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
@@ -674,6 +679,10 @@ impl Generator {
         let skip_attention_bias_fill = pass_idx > 0
             && self.context.model_config.decoder_config.has_attention_layers();
 
+        // For passes > 0, skip token_ids copy - the previous pass's token_copy kernel
+        // already wrote the sampled token to scratch.token_ids
+        let skip_token_ids_copy = pass_idx > 0;
+
         let mut state = ForwardPassState::new(
             self.context.mtl_context.clone(),
             &self.context.model_config.decoder_config,
@@ -687,7 +696,7 @@ impl Generator {
             &task.token_seeds,
             task.active_suffix_length,
             task.is_prefilling,
-            false,
+            skip_token_ids_copy,
             None,
             is_continuation,
             async_positions,
@@ -705,6 +714,62 @@ impl Generator {
         if is_continuation {
             root_command_buffer
                 .encode_wait_for_event(&async_event, current_counter);
+        }
+
+        // Debug: print initial mask state for pass 0 (CPU-filled mask)
+        if std::env::var("UZU_DEBUG_MASK").is_ok() && pass_idx == 0 {
+            // Get activation dtype to read mask correctly
+            let act_dtype = self.context.model_shape.activation_data_type();
+            for (window_size, mask_buffer) in
+                &self.context.scratch_buffers.attention_window_size_to_bias
+            {
+                if let Some(window) = window_size {
+                    let cache_layers = self.context.cache_layers.borrow();
+                    if let Some(&(ring_offset, _ring_length)) =
+                        cache_layers.get_ring_states().get(window)
+                    {
+                        let start = ring_offset.saturating_sub(3);
+                        let end = (ring_offset + 5).min(*window);
+                        eprint!(
+                            "[pass 0 INITIAL] dtype={:?}, ring_off={}, mask[{}..{}]: ",
+                            act_dtype, ring_offset, start, end
+                        );
+
+                        for i in start..end {
+                            let is_masked = match act_dtype {
+                                crate::DataType::BF16 => {
+                                    let ptr =
+                                        mask_buffer.contents() as *const u16;
+                                    let bits = unsafe { *ptr.add(i) };
+                                    // BF16 -inf is 0xFF80
+                                    bits == 0xFF80
+                                },
+                                crate::DataType::F16 => {
+                                    let ptr =
+                                        mask_buffer.contents() as *const u16;
+                                    let bits = unsafe { *ptr.add(i) };
+                                    // F16 -inf is 0xFC00
+                                    bits == 0xFC00
+                                },
+                                crate::DataType::F32 => {
+                                    let ptr =
+                                        mask_buffer.contents() as *const f32;
+                                    let val = unsafe { *ptr.add(i) };
+                                    val < -1000.0
+                                },
+                                _ => false,
+                            };
+                            let status = if is_masked {
+                                "M"
+                            } else {
+                                "U"
+                            };
+                            eprint!("{}:{} ", i, status);
+                        }
+                        eprintln!();
+                    }
+                }
+            }
         }
 
         // Encode forward pass
@@ -760,30 +825,117 @@ impl Generator {
             slot,
             encoder,
         );
+        encoder.end_encoding();
+
+        // Encode KV scatter for SLIDING WINDOW layers only.
+        // Full attention layers use projection_step mechanism instead.
+        // This is critical for sliding window layers to see previous passes' KV.
+        // Use prefill_count (not tokens.len()) because tokens.len() changes as batches complete
+        let token_position = prefill_count.saturating_sub(1) + pass_idx;
+
+        // Debug: print ring state before scatter
+        if std::env::var("UZU_DEBUG_RING").is_ok() && pass_idx < 5 {
+            let cache_layers = self.context.cache_layers.borrow();
+            for (&window, &(ring_offset, ring_length)) in
+                cache_layers.get_ring_states().iter()
+            {
+                eprintln!(
+                    "[pass {}] BEFORE scatter: window={}, ring_offset={}, ring_length={}, token_pos={}",
+                    pass_idx, window, ring_offset, ring_length, token_position
+                );
+            }
+        }
+
+        // Encode async scatter for sliding window layers (KV from suffix to ring)
+        // Uses GPU-computed destination: dest = (initial_ring_offset + pass_idx) % window
+        if let Some(async_scatter) = &self.context.async_scatter {
+            let initial_ring_states = self
+                .context
+                .async_buffers
+                .ring_state_snapshot
+                .borrow();
+
+            let encoder = root_command_buffer.new_compute_command_encoder();
+            self.context.cache_layers.borrow().encode_async_scatter(
+                &initial_ring_states,
+                pass_idx,
+                &encoder,
+                async_scatter,
+            );
+            encoder.end_encoding();
+        }
+
+        // Update CPU-side ring state for next pass's mask computation
+        {
+            let mut cache_layers = self.context.cache_layers.borrow_mut();
+            cache_layers.register_accepted_tokens_windowed_only(&[token_position]);
+        }
+
+        // Debug: print ring state after register
+        if std::env::var("UZU_DEBUG_RING").is_ok() && pass_idx < 5 {
+            let cache_layers = self.context.cache_layers.borrow();
+            for (&window, &(ring_offset, ring_length)) in
+                cache_layers.get_ring_states().iter()
+            {
+                eprintln!(
+                    "[pass {}] AFTER register: window={}, ring_offset={}, ring_length={}, token_pos={}",
+                    pass_idx, window, ring_offset, ring_length, token_position
+                );
+            }
+        }
+
+        // Start new encoder for mask update
+        let encoder = root_command_buffer.new_compute_command_encoder();
 
         // Encode mask update for next pass (transformer async pipeline)
         if let Some(mask_update) = &self.context.mask_update {
             let prefill_count = self.context.async_buffers.prefill_count.get();
-            // After pass k, we prepare mask for pass k+1
-            // prefix_segment_length = prefill_count - 1
-            // seq_len at pass k = (prefill_count - 1 + k) + 1 = prefill_count + k
-            // Pass k+1 will attend to column (prefill_count + k) which is the suffix column of pass k
-            let unmask_col = (prefill_count + pass_idx) as i32;
 
             // For each attention bias buffer, update the mask
             for (window_size, mask_buffer) in
                 &self.context.scratch_buffers.attention_window_size_to_bias
             {
-                // For full attention: no eviction, just unmask new column
-                // For sliding window: would also mask evicted column
-                let mask_col = if let Some(_window) = window_size {
-                    // TODO: compute evicted column for sliding window
-                    -1
-                } else {
-                    -1
-                };
+                if let Some(_window) = window_size {
+                    // Sliding window layer: NO mask update needed!
+                    //
+                    // The ring buffer ALWAYS contains exactly window_length positions -
+                    // the most recent ones. For any query position Q:
+                    // - Window = [Q - window_length + 1, Q]
+                    // - Ring contains positions [Q - window_length + 1, Q]
+                    // - ALL ring positions are IN window!
+                    //
+                    // When a new token is added:
+                    // 1. Scatter copies new KV to the oldest slot (replacing old position)
+                    // 2. The new position IS in window (it's the current position)
+                    // 3. The other positions remain in window (they're the most recent window_length-1)
+                    //
+                    // Therefore the initial mask from fill_attention_bias is correct
+                    // and doesn't need any updates between passes.
 
-                mask_update.encode(encoder, mask_buffer, unmask_col, mask_col);
+                    // Debug output if enabled
+                    if std::env::var("UZU_DEBUG_SCATTER").is_ok() && pass_idx < 5 {
+                        eprintln!(
+                            "[async pass {}] sliding window: NO mask update needed (all positions in window)",
+                            pass_idx,
+                        );
+                    }
+                } else {
+                    // Full attention layer: unmask new column, no eviction
+                    // After pass k, we prepare mask for pass k+1
+                    // prefix_segment_length = prefill_count - 1
+                    // seq_len at pass k = (prefill_count - 1 + k) + 1 = prefill_count + k
+                    // Pass k+1 will attend to column (prefill_count + k) which is the
+                    // suffix column of pass k
+                    let unmask_col = (prefill_count + pass_idx) as i32;
+                    let mask_col = -1;
+
+                    mask_update.encode(
+                        encoder,
+                        mask_buffer,
+                        unmask_col,
+                        mask_col,
+                    );
+                }
             }
         }
 

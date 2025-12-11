@@ -230,6 +230,14 @@ impl KVCacheLayer {
                     );
                 }
 
+                // Debug: print scatter indices if UZU_DEBUG_SCATTER is set
+                if std::env::var("UZU_DEBUG_SCATTER").is_ok() {
+                    eprintln!(
+                        "[scatter] window={}, ring_offset={}, ring_length={}, src={:?}, dst={:?}",
+                        window_length, ring_offset, ring_length, source_indices, destination_indices
+                    );
+                }
+
                 self.scatter_if_required(
                     &source_indices,
                     &destination_indices,

@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     fs::File,
     io::BufReader,
     path::Path,
@@ -13,7 +14,7 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
+        AsyncScatterKV, CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
         MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
@@ -49,6 +50,10 @@ pub struct AsyncBuffers {
     pub prefill_count: Cell<usize>,
     /// Batch size (number of passes to keep in flight)
     pub batch_size: usize,
+    /// Ring state snapshot for sliding window layers.
+    /// Maps window_length -> (ring_offset, ring_length)
+    /// Used to compute eviction columns during async mask updates.
+    pub ring_state_snapshot: RefCell<HashMap<usize, (usize, usize)>>,
 }
 
 impl AsyncBuffers {
@@ -79,6 +84,7 @@ impl AsyncBuffers {
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
             batch_size,
+            ring_state_snapshot: RefCell::new(HashMap::new()),
         }
     }
 
@@ -118,6 +124,23 @@ impl AsyncBuffers {
         self.counter.set(0);
     }
 
+    /// Snapshot ring state for sliding window layers.
+    /// Must be called before async generation to enable correct eviction computation.
+    pub fn snapshot_ring_state(
+        &self,
+        ring_states: HashMap<usize, (usize, usize)>,
+    ) {
+        *self.ring_state_snapshot.borrow_mut() = ring_states;
+    }
+
+    /// Get ring state for a window size (returns None for full attention layers)
+    pub fn get_ring_state(
+        &self,
+        window_length: usize,
+    ) -> Option<(usize, usize)> {
+        self.ring_state_snapshot.borrow().get(&window_length).copied()
+    }
+
     /// Read sampled token from results buffer at given pass index
     pub fn read_result(
         &self,
@@ -147,6 +170,8 @@ pub struct GeneratorContext {
     pub token_copy: TokenCopyKernel,
     /// Kernel for updating attention mask between async passes
     pub mask_update: Option<MaskUpdateKernel>,
+    /// Kernel for async KV scatter (sliding window layers)
+    pub async_scatter: Option<AsyncScatterKV>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers,
 }
@@ -265,6 +290,16 @@ impl GeneratorContext {
             None
         };
 
+        // Create async scatter kernel if model has sliding window layers
+        let async_scatter = if decoder_config.has_sliding_window_layers() {
+            Some(
+                AsyncScatterKV::new(&mtl_context, kernel_data_type)
+                    .map_err(|_| Error::UnableToCreateMetalContext)?,
+            )
+        } else {
+            None
+        };
+
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
@@ -290,6 +325,7 @@ impl GeneratorContext {
             next_seed,
             token_copy,
             mask_update,
+            async_scatter,
             async_buffers,
         };
 

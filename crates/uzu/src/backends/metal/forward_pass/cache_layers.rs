@@ -247,6 +247,112 @@ impl CacheLayers {
         }
     }
 
+    /// Scatter KV from suffix to prefix for WINDOWED layers only.
+    /// Full attention layers use projection_step mechanism instead.
+    pub fn update_after_acceptance_windowed_only(
+        &mut self,
+        accepted_suffix_indices: &[usize],
+        command_buffer: &MTLCommandBuffer,
+        kv_cache_update: &KVCacheUpdate,
+    ) {
+        for layer in self.data.iter_mut() {
+            if let Some(layer) = layer.as_transformer_mut() {
+                if layer.is_sliding_window() {
+                    layer.update_after_acceptance(
+                        accepted_suffix_indices,
+                        None,
+                        command_buffer,
+                        kv_cache_update,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Update CPU-side ring state for WINDOWED layers only.
+    pub fn register_accepted_tokens_windowed_only(
+        &mut self,
+        token_positions: &[usize],
+    ) {
+        for layer in self.data.iter_mut() {
+            if let Some(layer) = layer.as_transformer_mut() {
+                if layer.is_sliding_window() {
+                    layer.register_accepted_tokens(token_positions);
+                }
+            }
+        }
+    }
+
+    /// Get ring state for all sliding window layers.
+    /// Returns a map of window_length -> (ring_offset, ring_length).
+    /// Used by async generation to compute eviction columns.
+    pub fn get_ring_states(&self) -> HashMap<usize, (usize, usize)> {
+        let mut result = HashMap::new();
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(kv_layer) = layer {
+                if let KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length,
+                } = &kv_layer.state
+                {
+                    // Only insert if not already present (all layers with same
+                    // window size should have same ring state)
+                    result
+                        .entry(*window_length)
+                        .or_insert((*ring_offset, *ring_length));
+                }
+            }
+        }
+        result
+    }
+
+    /// Encode async scatter for sliding window layers using the GPU-computed destination kernel.
+    /// - initial_ring_states: snapshotted ring states (window_length -> (ring_offset, ring_length))
+    /// - pass_idx: current pass index
+    pub fn encode_async_scatter(
+        &self,
+        initial_ring_states: &HashMap<usize, (usize, usize)>,
+        pass_idx: usize,
+        encoder: &metal::ComputeCommandEncoderRef,
+        async_scatter: &crate::backends::metal::kernel::AsyncScatterKV,
+    ) {
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(kv_layer) = layer {
+                if let KVCacheLayerState::Windowed { window_length, .. } = &kv_layer.state {
+                    // Get initial_ring_offset for this window_length
+                    let initial_ring_offset = initial_ring_states
+                        .get(window_length)
+                        .map(|(offset, _)| *offset)
+                        .unwrap_or(0);
+
+                    let key_buffer = {
+                        let mut k = kv_layer.keys.borrow_mut();
+                        unsafe { k.mtl_buffer() }.clone()
+                    };
+                    let value_buffer = {
+                        let mut v = kv_layer.values.borrow_mut();
+                        unsafe { v.mtl_buffer() }.clone()
+                    };
+                    let k_shape = kv_layer.keys.borrow().shape().to_vec();
+                    let num_heads = k_shape[0];
+                    let head_dim = k_shape[2];
+
+                    async_scatter.encode(
+                        &key_buffer,
+                        &value_buffer,
+                        num_heads,
+                        head_dim,
+                        *window_length,
+                        initial_ring_offset,
+                        pass_idx,
+                        encoder,
+                    );
+                }
+            }
+        }
+    }
+
     pub fn clone(
         &self,
         context: &MTLContext,

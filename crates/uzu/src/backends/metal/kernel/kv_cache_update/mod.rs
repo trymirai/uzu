@@ -266,6 +266,79 @@ pub fn create_swaps(
     swaps
 }
 
+/// Async scatter kernel for sliding window layers.
+/// Copies KV from suffix slot to ring buffer position.
+/// No shared buffer needed - all parameters passed as constants.
+pub struct AsyncScatterKV {
+    pipeline_state: MTLComputePipelineState,
+}
+
+impl AsyncScatterKV {
+    pub fn new(
+        context: &MTLContext,
+        data_type: KernelDataType,
+    ) -> Result<Self, KVCacheUpdateError> {
+        let function_name =
+            format!("asyncScatterKV_{}", data_type.function_name_suffix());
+
+        let (pipeline_state, _) = context
+            .compute_pipeline_state_with_reflection(&function_name, None)
+            .map_err(KVCacheUpdateError::MetalError)?;
+
+        Ok(Self { pipeline_state })
+    }
+
+    /// Encode scatter for a single layer.
+    /// - window_length: size of ring buffer
+    /// - initial_ring_offset: ring_offset at start of async batch
+    /// - pass_idx: current pass index (0, 1, 2, ...)
+    pub fn encode(
+        &self,
+        key_buffer: &MTLBuffer,
+        value_buffer: &MTLBuffer,
+        num_heads: usize,
+        head_dim: usize,
+        window_length: usize,
+        initial_ring_offset: usize,
+        pass_idx: usize,
+        encoder: &MTLComputeCommandEncoderRef,
+    ) {
+        encoder.set_compute_pipeline_state(&self.pipeline_state);
+        encoder.set_buffer(0, Some(key_buffer), 0);
+        encoder.set_buffer(1, Some(value_buffer), 0);
+        encoder.set_bytes(
+            2,
+            size_of::<i32>() as u64,
+            &(window_length as i32) as *const _ as *const _,
+        );
+        encoder.set_bytes(
+            3,
+            size_of::<i32>() as u64,
+            &(initial_ring_offset as i32) as *const _ as *const _,
+        );
+        encoder.set_bytes(
+            4,
+            size_of::<i32>() as u64,
+            &(pass_idx as i32) as *const _ as *const _,
+        );
+        encoder.set_bytes(
+            5,
+            size_of::<i32>() as u64,
+            &(num_heads as i32) as *const _ as *const _,
+        );
+        encoder.set_bytes(
+            6,
+            size_of::<i32>() as u64,
+            &(head_dim as i32) as *const _ as *const _,
+        );
+
+        encoder.dispatch_threads(
+            MTLSize::new(num_heads as u64, head_dim as u64, 1),
+            MTLSize::new(1, 1, 1),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

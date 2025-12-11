@@ -360,14 +360,14 @@ impl Session {
             }
         }
 
-        // Enable async pipeline for transformers without sliding window
-        // Set UZU_FORCE_SYNC=1 to disable async for debugging/comparison
+        // Enable async pipeline for all transformers (including sliding window).
+        // KV scatter is encoded at the end of each pass to propagate context.
+        // Set UZU_FORCE_SYNC=1 to disable async for debugging/comparison.
         let force_sync = std::env::var("UZU_FORCE_SYNC")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
         let can_use_async = !force_sync
             && generator.decoding_config.generate_suffix_length() == 1
-            && !generator.has_sliding_window_layers()
             && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
