@@ -1,5 +1,3 @@
-//! Shared buffers across forward passes.
-
 use std::{cell::RefCell, rc::Rc};
 
 use half::{bf16, f16};
@@ -13,14 +11,12 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Expert weights for Mixture of Experts models.
 pub struct MoeExpertWeights {
     pub w1: ArrayCell,
     pub w2: ArrayCell,
     pub w3: ArrayCell,
 }
 
-/// Shared buffers that persist across forward passes.
 pub struct SharedBuffers {
     pub embeddings: EmbeddingsBuffers,
     pub global_rope: Option<RopeBuffers>,

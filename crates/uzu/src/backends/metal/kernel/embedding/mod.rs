@@ -1,8 +1,3 @@
-//! Quantized embedding kernels.
-//!
-//! This module contains the pure kernel code for quantized embedding operations.
-//! For the encodable wrappers, see `crate::backends::metal::encodable_block::embedding`.
-
 use std::mem::size_of;
 
 use metal::{

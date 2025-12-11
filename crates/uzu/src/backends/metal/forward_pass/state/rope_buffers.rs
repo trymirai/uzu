@@ -1,18 +1,14 @@
-//! RoPE (Rotary Position Embedding) buffer types.
-
 use std::{cell::RefCell, rc::Rc};
 
+use super::super::ModelShape;
 use crate::{
+    DeviceContext,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
-    DeviceContext,
 };
-
-use super::super::ModelShape;
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Buffers for RoPE cosine and sine values.
 pub struct RopeBuffers {
     /// [rope_max_sequence_length, head_dim]
     pub cosines: ArrayCell,
@@ -59,4 +55,3 @@ impl RopeBuffers {
         self.sines.borrow_mut().copy_from_array(&sines_view);
     }
 }
-

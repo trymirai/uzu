@@ -1,8 +1,3 @@
-//! Unified forward pass state for both LLM and classifier models.
-//!
-//! This module consolidates `LLMForwardPassState` and `ClassificationForwardPassState`
-//! into a single implementation to eliminate code duplication.
-
 mod array_id;
 mod common_aux_buffers;
 mod embeddings_buffers;
@@ -36,10 +31,8 @@ use crate::{
     session::parameter::SamplingMethod,
 };
 
-/// Type alias for array storage.
 pub type ArrayCell = RefCell<MetalArray>;
 
-/// Unified forward pass state for both LLM and classifier models.
 pub struct ForwardPassState {
     context: Rc<MTLContext>,
     token_ids: ArrayCell,
@@ -100,7 +93,6 @@ impl ForwardPassState {
     // LLM Constructor
     // ========================================================================
 
-    /// Create a new forward pass state for LLM (autoregressive) mode.
     #[allow(clippy::too_many_arguments)]
     pub fn new_llm(
         context: Rc<MTLContext>,
@@ -325,7 +317,6 @@ impl ForwardPassState {
     // Classifier Constructor
     // ========================================================================
 
-    /// Create a new forward pass state for classifier (bidirectional) mode.
     #[allow(clippy::too_many_arguments)]
     pub fn new_classifier(
         context: Rc<MTLContext>,
@@ -548,12 +539,10 @@ impl ForwardPassState {
         matches!(self.mode, ForwardPassMode::Classifier(_))
     }
 
-    /// Get token bitmask if available.
     pub fn token_bitmask(&self) -> Option<&ArrayCell> {
         self.token_bitmask.as_ref()
     }
 
-    /// Get LLM-specific state (panics if not in LLM mode).
     pub fn llm_state(&self) -> &LanguageModelGeneratorModeState {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
@@ -561,7 +550,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get mutable LLM-specific state (panics if not in LLM mode).
     pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
@@ -569,7 +557,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get classifier-specific state (panics if not in classifier mode).
     pub fn classifier_state(&self) -> &ClassifierModeState {
         match &self.mode {
             ForwardPassMode::Classifier(state) => state,
@@ -577,7 +564,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get array cell by ID.
     pub fn array_cell(
         &self,
         id: ArrayId,
@@ -905,7 +891,6 @@ impl ForwardPassState {
     // Public API Methods (formerly trait methods)
     // ========================================================================
 
-    /// Access arrays by their IDs.
     pub fn arrays(
         &self,
         ids: &[ArrayId],
@@ -913,7 +898,6 @@ impl ForwardPassState {
         ids.iter().map(|id| self.array_cell(*id)).collect()
     }
 
-    /// Access hashmaps (e.g., attention bias) by their IDs.
     pub fn hashmaps(
         &self,
         ids: &[HashMapId],
@@ -925,7 +909,6 @@ impl ForwardPassState {
             .collect()
     }
 
-    /// Get the active suffix length (number of tokens to process).
     pub fn active_suffix_length(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
@@ -935,7 +918,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Check if the current pass is a prefill pass.
     pub fn is_prefilling(&self) -> bool {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
@@ -945,7 +927,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get cache layers (LLM only - returns None for classifiers).
     pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
@@ -955,7 +936,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get sampling output buffer (LLM only - returns None for classifiers).
     pub fn sampling_output(&self) -> Option<&ArrayCell> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
@@ -965,7 +945,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get activation traces (available for both LLM and classifier when tracing feature enabled).
     #[cfg(feature = "tracing")]
     pub fn traces(&self) -> &Rc<RefCell<ActivationTrace>> {
         match &self.mode {
@@ -974,7 +953,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get mutable reference to sampling method (LLM only).
     pub fn sampling_method_mut(
         &mut self
     ) -> Option<&mut Option<SamplingMethod>> {
@@ -986,7 +964,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Get sampling method (LLM only).
     pub fn sampling_method(&self) -> Option<SamplingMethod> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
@@ -996,7 +973,6 @@ impl ForwardPassState {
         }
     }
 
-    /// Copy array from source to destination.
     pub fn copy_array(
         &self,
         source_array_id: ArrayId,
@@ -1007,7 +983,6 @@ impl ForwardPassState {
             .copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
     }
 
-    /// Encode a GPU-to-GPU copy using a Blit encoder.
     pub fn encode_copy_array(
         &self,
         command_buffer: &mpsgraph::CommandBuffer,

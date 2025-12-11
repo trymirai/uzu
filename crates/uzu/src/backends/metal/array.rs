@@ -7,16 +7,11 @@ use objc2::rc::Retained;
 
 use crate::{Array, ArrayElement, DataType, array::array_size_in_bytes};
 
-/// Represents an n-dimensional array for Metal computation
 #[derive(Debug, Clone)]
 pub struct MetalArray {
-    /// Metal buffer containing the array data
     buffer: MTLBuffer,
-    /// Shape of the array (dimensions)
     shape: Box<[usize]>,
-    /// Data type of the elements
     data_type: DataType,
-    /// Byte offset into the buffer (for indexed async buffers)
     offset: usize,
 }
 
@@ -49,7 +44,6 @@ impl Array for MetalArray {
 }
 
 impl MetalArray {
-    /// Create a new Array at offset 0
     pub unsafe fn new(
         buffer: MTLBuffer,
         shape: &[usize],
@@ -58,8 +52,6 @@ impl MetalArray {
         unsafe { Self::new_with_offset(buffer, shape, data_type, 0) }
     }
 
-    /// Create a new Array at a byte offset into the buffer.
-    /// Used for indexed async buffers where each pass uses a different offset.
     pub unsafe fn new_with_offset(
         buffer: MTLBuffer,
         shape: &[usize],
@@ -84,12 +76,10 @@ impl MetalArray {
         }
     }
 
-    /// Returns the byte offset into the underlying buffer
     pub fn buffer_offset(&self) -> usize {
         self.offset
     }
 
-    /// Wraps the underlying MTLBuffer into MPSTensorData for use with MPSGraph.
     pub unsafe fn to_mps_tensor_data(&mut self) -> Retained<TensorData> {
         TensorData::new_with_mtl_buffer(
             &self.buffer,
@@ -99,9 +89,6 @@ impl MetalArray {
         )
     }
 
-    /// Returns the underlying MTLBuffer.
-    /// NOTE: For arrays created with `new_with_offset`, callers must use `buffer_offset()`
-    /// and pass it to `encoder.set_buffer(..., offset)` - Metal has no sub-buffer concept.
     pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {
         &self.buffer
     }

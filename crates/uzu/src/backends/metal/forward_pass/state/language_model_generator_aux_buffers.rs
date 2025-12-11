@@ -1,5 +1,3 @@
-//! Language model generator specific auxiliary buffers (SSM, MoE).
-
 use std::cell::RefCell;
 
 use super::super::{ModelShape, ScratchBuffers};
@@ -9,7 +7,6 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Language model generator specific auxiliary buffers (SSM, MoE).
 pub struct LanguageModelGeneratorAuxBuffers {
     pub ssm_inproj: Option<ArrayCell>,
     pub ssm_packed: Option<ArrayCell>,

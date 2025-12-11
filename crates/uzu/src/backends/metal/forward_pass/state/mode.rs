@@ -1,5 +1,3 @@
-//! Forward pass mode types for language model generator and classifier models.
-
 use std::{cell::RefCell, rc::Rc};
 
 use super::super::cache_layers::CacheLayers;
@@ -9,15 +7,11 @@ use crate::{backends::metal::MetalArray, session::parameter::SamplingMethod};
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Mode-specific configuration and state.
 pub enum ForwardPassMode {
-    /// Language model generator (autoregressive generation) mode.
     LanguageModelGenerator(LanguageModelGeneratorModeState),
-    /// Classifier (bidirectional) mode.
     Classifier(ClassifierModeState),
 }
 
-/// Language model generator specific state.
 pub struct LanguageModelGeneratorModeState {
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub token_seeds: ArrayCell,
@@ -30,7 +24,6 @@ pub struct LanguageModelGeneratorModeState {
     pub is_prefilling: bool,
 }
 
-/// Classifier-specific state.
 pub struct ClassifierModeState {
     pub pooling: ArrayCell,
     pub dense: ArrayCell,

@@ -1,8 +1,5 @@
-//! RoPE type enum.
-
 use serde::{Deserialize, Serialize};
 
-/// Type of RoPE (Rotary Position Embedding) buffers.
 #[derive(
     Debug,
     Clone,
@@ -19,4 +16,3 @@ pub enum RopeType {
     Global,
     Local,
 }
-

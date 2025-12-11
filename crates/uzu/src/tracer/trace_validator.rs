@@ -241,12 +241,10 @@ impl TraceValidator {
         }
     }
 
-    /// Check if this is a classifier model.
     pub fn is_classifier(&self) -> bool {
         matches!(self.context, ModelContext::Classifier(_))
     }
 
-    /// Check if this is a language model generator.
     pub fn is_language_model_generator(&self) -> bool {
         matches!(self.context, ModelContext::LanguageModelGenerator(_))
     }

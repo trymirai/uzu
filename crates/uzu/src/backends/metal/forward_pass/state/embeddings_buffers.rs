@@ -1,5 +1,3 @@
-//! Embeddings buffer types for different embedding configurations.
-
 use std::{cell::RefCell, rc::Rc};
 
 use super::super::ModelShape;
@@ -12,7 +10,6 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Buffers for embedding weights with different configurations.
 #[allow(dead_code)]
 pub enum EmbeddingsBuffers {
     Tied {

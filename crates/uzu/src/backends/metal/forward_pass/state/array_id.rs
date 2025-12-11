@@ -1,10 +1,7 @@
-//! Array identifier enum for forward pass buffers.
-
 use serde::{Deserialize, Serialize};
 
 use super::RopeType;
 
-/// Identifier for arrays used in the forward pass.
 #[derive(
     Debug,
     Clone,

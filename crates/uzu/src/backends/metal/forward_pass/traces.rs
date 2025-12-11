@@ -1,8 +1,3 @@
-//! Unified activation tracing for both LLM and classifier models.
-//!
-//! This module provides a single tracing implementation that works for any model type,
-//! with optional fields for model-specific traces (e.g., embedding_norm for classifiers).
-
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -12,10 +7,6 @@ use crate::{
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Activation trace for a single transformer layer.
-///
-/// This struct captures intermediate activations at each stage of a transformer layer,
-/// useful for debugging and validation against reference implementations.
 pub struct LayerActivationTrace {
     pub inputs: ArrayCell,
     pub pre_attention_norm: ArrayCell,
@@ -77,27 +68,15 @@ impl LayerActivationTrace {
     }
 }
 
-/// Unified activation trace for any model type.
-///
-/// This struct captures all intermediate activations during a forward pass.
-/// Some fields are optional and only populated for specific model types:
-/// - `embedding_norm`: Used by classifiers after embedding layer
-/// - `output_pooling`: Used by classifiers for pooled output
 pub struct ActivationTrace {
-    /// Post-embedding normalization (classifier-specific).
     pub embedding_norm: Option<ArrayCell>,
-    /// Per-layer activation traces.
     pub layer_results: Vec<Rc<RefCell<LayerActivationTrace>>>,
-    /// Output normalization activations.
     pub output_norm: ArrayCell,
-    /// Pooled output (classifier-specific).
     pub output_pooling: Option<ArrayCell>,
-    /// Final logits.
     pub logits: ArrayCell,
 }
 
 impl ActivationTrace {
-    /// Create a new activation trace for LLM (decoder) models.
     pub fn new_llm(
         context: &MTLContext,
         model_shape: &ModelShape,
@@ -129,7 +108,6 @@ impl ActivationTrace {
         }
     }
 
-    /// Create a new activation trace for classifier models.
     pub fn new_classifier(
         context: &MTLContext,
         model_shape: &ModelShape,
@@ -175,16 +153,12 @@ impl ActivationTrace {
 }
 
 impl ActivationTrace {
-    /// Get embedding_norm trace (classifier-specific).
-    /// Panics if called on LLM trace.
     pub fn embedding_norm(&self) -> &ArrayCell {
         self.embedding_norm
             .as_ref()
             .expect("embedding_norm is only available for classifier traces")
     }
 
-    /// Get output_pooling trace (classifier-specific).
-    /// Panics if called on LLM trace.
     pub fn output_pooling(&self) -> &ArrayCell {
         self.output_pooling
             .as_ref()

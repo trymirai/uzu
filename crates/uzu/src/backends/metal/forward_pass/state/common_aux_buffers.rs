@@ -1,5 +1,3 @@
-//! Common auxiliary buffers shared by both LLM and classifier modes.
-
 use std::cell::RefCell;
 
 use super::super::{ModelShape, ScratchBuffers};
@@ -7,7 +5,6 @@ use crate::backends::metal::MetalArray;
 
 type ArrayCell = RefCell<MetalArray>;
 
-/// Common auxiliary buffers shared by both LLM and classifier modes.
 pub struct CommonAuxBuffers {
     pub suffix_length: usize,
     pub main: ArrayCell,
@@ -25,7 +22,6 @@ pub struct CommonAuxBuffers {
 }
 
 impl CommonAuxBuffers {
-    /// Create common auxiliary buffers from scratch buffers.
     pub fn new(
         scratch: &ScratchBuffers,
         model_shape: &ModelShape,
