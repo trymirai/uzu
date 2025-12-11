@@ -60,7 +60,6 @@ impl ClassifierConfig {
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
         };
 
-        // Derive head parameters from either top-level config or first layer's mixer
         let first_mixer = &first_layer.mixer_config;
 
         let num_heads =
@@ -98,12 +97,9 @@ impl ClassifierConfig {
             attention_scale: self.attention_scale,
             num_layers: self.num_layers,
             sliding_window_sizes: {
-                // If sliding_window_sizes is explicitly provided, use it
-                // Otherwise, extract from per-layer mixer configs
                 if let Some(sizes) = &self.sliding_window_sizes {
                     Some(sizes.clone().into_boxed_slice())
                 } else {
-                    // Extract sliding_window_size from each layer's mixer_config
                     let sizes: Vec<Option<usize>> = self
                         .transformer_config
                         .layer_configs
