@@ -116,10 +116,16 @@ impl KVCacheUpdate {
             return Err(KVCacheUpdateError::MaxSequenceLengthExceeded);
         }
 
-        let indices_ptr = self.indices_buffer.contents() as *mut Swap;
-        unsafe {
-            for (i, swap) in swaps.iter().enumerate() {
-                *indices_ptr.add(i) = *swap;
+        // For small swap counts, use set_bytes to avoid shared buffer race in async mode.
+        // Metal's set_bytes limit is 4KB; 32 swaps = 256 bytes, well under limit.
+        let use_inline_bytes = swaps.len() <= 32;
+
+        if !use_inline_bytes {
+            let indices_ptr = self.indices_buffer.contents() as *mut Swap;
+            unsafe {
+                for (i, swap) in swaps.iter().enumerate() {
+                    *indices_ptr.add(i) = *swap;
+                }
             }
         }
 
@@ -134,7 +140,15 @@ impl KVCacheUpdate {
             // Set buffers and parameters
             compute_encoder.set_buffer(0, Some(&layer_data.key_buffer), 0);
             compute_encoder.set_buffer(1, Some(&layer_data.value_buffer), 0);
-            compute_encoder.set_buffer(2, Some(&self.indices_buffer), 0);
+            if use_inline_bytes {
+                compute_encoder.set_bytes(
+                    2,
+                    (swaps.len() * size_of::<Swap>()) as u64,
+                    swaps.as_ptr() as *const std::ffi::c_void,
+                );
+            } else {
+                compute_encoder.set_buffer(2, Some(&self.indices_buffer), 0);
+            }
             compute_encoder.set_bytes(
                 3,
                 size_of::<i32>() as u64,
@@ -192,151 +206,6 @@ pub fn create_swaps_direct(
     }
 
     swaps
-}
-
-/// Original implementation using cycles - kept for reference
-/// This function generates the minimum set of swaps needed to move elements
-/// from source positions to destination positions.
-pub fn create_swaps(
-    source_indices: &[usize],
-    destination_indices: &[usize],
-) -> Vec<Swap> {
-    // The two arrays must be of the same length.
-    if source_indices.len() != destination_indices.len() {
-        return Vec::new();
-    }
-
-    // Build mappings between source and destination indices
-    let mut forward_mapping = std::collections::HashMap::new();
-    let mut reverse_mapping = std::collections::HashMap::new();
-
-    for (&s, &d) in source_indices.iter().zip(destination_indices.iter()) {
-        if s != d {
-            forward_mapping.insert(s, d);
-            reverse_mapping.insert(d, s);
-        }
-    }
-
-    let mut swaps = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-
-    // Process keys in sorted order
-    let all_keys: std::collections::HashSet<_> =
-        forward_mapping.keys().chain(reverse_mapping.keys()).copied().collect();
-
-    let all_keys_vec: Vec<usize> = all_keys.into_iter().collect();
-    for &s in &all_keys_vec {
-        if visited.contains(&s) {
-            continue;
-        }
-
-        visited.insert(s);
-        let mut cycle = vec![s];
-        let mut iterator = s;
-
-        while let Some(&next) = forward_mapping.get(&iterator) {
-            iterator = next;
-            if visited.contains(&iterator) {
-                break;
-            }
-            visited.insert(iterator);
-            cycle.push(iterator);
-        }
-
-        // Reverse direction
-        iterator = s;
-        while let Some(&next) = reverse_mapping.get(&iterator) {
-            iterator = next;
-            if visited.contains(&iterator) {
-                break;
-            }
-            visited.insert(iterator);
-            cycle.push(iterator);
-        }
-
-        let first = cycle[0];
-        for &next in cycle.iter().skip(1) {
-            swaps.push(Swap {
-                source: first as i32,
-                destination: next as i32,
-            });
-        }
-    }
-
-    swaps
-}
-
-/// Async scatter kernel for sliding window layers.
-/// Copies KV from suffix slot to ring buffer position.
-/// No shared buffer needed - all parameters passed as constants.
-pub struct AsyncScatterKV {
-    pipeline_state: MTLComputePipelineState,
-}
-
-impl AsyncScatterKV {
-    pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
-    ) -> Result<Self, KVCacheUpdateError> {
-        let function_name =
-            format!("asyncScatterKV_{}", data_type.function_name_suffix());
-
-        let (pipeline_state, _) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)
-            .map_err(KVCacheUpdateError::MetalError)?;
-
-        Ok(Self { pipeline_state })
-    }
-
-    /// Encode scatter for a single layer.
-    /// - window_length: size of ring buffer
-    /// - initial_ring_offset: ring_offset at start of async batch
-    /// - pass_idx: current pass index (0, 1, 2, ...)
-    pub fn encode(
-        &self,
-        key_buffer: &MTLBuffer,
-        value_buffer: &MTLBuffer,
-        num_heads: usize,
-        head_dim: usize,
-        window_length: usize,
-        initial_ring_offset: usize,
-        pass_idx: usize,
-        encoder: &MTLComputeCommandEncoderRef,
-    ) {
-        encoder.set_compute_pipeline_state(&self.pipeline_state);
-        encoder.set_buffer(0, Some(key_buffer), 0);
-        encoder.set_buffer(1, Some(value_buffer), 0);
-        encoder.set_bytes(
-            2,
-            size_of::<i32>() as u64,
-            &(window_length as i32) as *const _ as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            size_of::<i32>() as u64,
-            &(initial_ring_offset as i32) as *const _ as *const _,
-        );
-        encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &(pass_idx as i32) as *const _ as *const _,
-        );
-        encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &(num_heads as i32) as *const _ as *const _,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &(head_dim as i32) as *const _ as *const _,
-        );
-
-        encoder.dispatch_threads(
-            MTLSize::new(num_heads as u64, head_dim as u64, 1),
-            MTLSize::new(1, 1, 1),
-        );
-    }
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ pub use context::MTLContext;
 pub use error::MTLError;
 pub use executable_builder::DecoderExecutables;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
-pub use kernel::{AsyncScatterKV, KVCacheUpdate, KernelDataType, RopeKernel};
+pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 // pub use kernel::{
 //     DataType as KernelDataType, Encoder as KernelEncoder,
 //     EncoderError as KernelEncoderError, TensorAddSwap, TensorCopy,

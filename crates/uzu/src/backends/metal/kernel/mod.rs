@@ -19,7 +19,7 @@ pub mod token_copy;
 
 pub use attention::{AttentionKernel, AttentionKernelEncodable};
 pub use data_type::KernelDataType;
-pub use kv_cache_update::{AsyncScatterKV, KVCacheUpdate};
+pub use kv_cache_update::KVCacheUpdate;
 pub use moe::{
     MoeBlockBasesArguments, MoeBlockEncodable, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,

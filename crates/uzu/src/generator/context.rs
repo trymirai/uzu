@@ -14,7 +14,7 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        AsyncScatterKV, CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
+        CacheLayers, DecoderExecutables, KVCacheUpdate, KernelDataType,
         MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         forward_pass::{ForwardPassBuffers, SharedBuffers},
@@ -170,8 +170,6 @@ pub struct GeneratorContext {
     pub token_copy: TokenCopyKernel,
     /// Kernel for updating attention mask between async passes
     pub mask_update: Option<MaskUpdateKernel>,
-    /// Kernel for async KV scatter (sliding window layers)
-    pub async_scatter: Option<AsyncScatterKV>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers,
 }
@@ -290,16 +288,6 @@ impl GeneratorContext {
             None
         };
 
-        // Create async scatter kernel if model has sliding window layers
-        let async_scatter = if decoder_config.has_sliding_window_layers() {
-            Some(
-                AsyncScatterKV::new(&mtl_context, kernel_data_type)
-                    .map_err(|_| Error::UnableToCreateMetalContext)?,
-            )
-        } else {
-            None
-        };
-
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
@@ -325,7 +313,6 @@ impl GeneratorContext {
             next_seed,
             token_copy,
             mask_update,
-            async_scatter,
             async_buffers,
         };
 

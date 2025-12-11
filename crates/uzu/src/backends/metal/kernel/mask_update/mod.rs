@@ -90,6 +90,3 @@ impl MaskUpdateKernel {
         encoder.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
     }
 }
-
-
-

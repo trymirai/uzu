@@ -93,7 +93,8 @@ impl KVCacheLayer {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         projection_step: usize,
     ) {
-        let prefix_segment_length = self.projected_segment_prefix_length(projection_step);
+        let prefix_segment_length =
+            self.projected_segment_prefix_length(projection_step);
 
         context.fill_attention_bias(
             dst,
@@ -141,7 +142,8 @@ impl KVCacheLayer {
             return true;
         }
 
-        let projected_prefix_len = self.projected_segment_prefix_length(projection_step);
+        let projected_prefix_len =
+            self.projected_segment_prefix_length(projection_step);
         let key_position = if column_index >= projected_prefix_len {
             suffix_token_positions[column_index - projected_prefix_len]
         } else {
@@ -227,14 +229,6 @@ impl KVCacheLayer {
                 for i in 0..suffix_indices.len() {
                     destination_indices.push(
                         (*ring_length + *ring_offset + i) % *window_length,
-                    );
-                }
-
-                // Debug: print scatter indices if UZU_DEBUG_SCATTER is set
-                if std::env::var("UZU_DEBUG_SCATTER").is_ok() {
-                    eprintln!(
-                        "[scatter] window={}, ring_offset={}, ring_length={}, src={:?}, dst={:?}",
-                        window_length, ring_offset, ring_length, source_indices, destination_indices
                     );
                 }
 
