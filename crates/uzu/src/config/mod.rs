@@ -17,6 +17,7 @@ mod model_config;
 mod model_type;
 mod normalization;
 mod rope;
+mod short_conv;
 mod transformer;
 mod transformer_layer;
 
@@ -39,5 +40,6 @@ pub use model_config::*;
 pub use model_type::*;
 pub use normalization::*;
 pub use rope::*;
+pub use short_conv::*;
 pub use transformer::*;
 pub use transformer_layer::*;

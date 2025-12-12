@@ -39,6 +39,7 @@ pub enum ArrayId {
     SsmC(usize),
     SsmDt(usize),
     SsmZ(usize),
+    ShortConvState(usize),
 
     RotatedQueries,
     RotatedKeys,

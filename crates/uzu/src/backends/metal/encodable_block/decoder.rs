@@ -69,6 +69,10 @@ impl Decoder {
             MixerConfig::Mamba(mamba_config) => {
                 mamba_config.in_projection_config.activation_precision().into()
             },
+            MixerConfig::ShortConv(short_conv_config) => short_conv_config
+                .in_projection_config
+                .activation_precision()
+                .into(),
         };
 
         let global_rope = if decoder_config.global_rope_config.is_some() {
@@ -121,6 +125,9 @@ impl Decoder {
                         Some(rope_block)
                     },
                     DecoderLayerType::StateSpace {
+                        ..
+                    } => None,
+                    DecoderLayerType::ShortConv {
                         ..
                     } => None,
                 };

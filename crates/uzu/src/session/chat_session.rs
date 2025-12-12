@@ -1,4 +1,18 @@
-use std::{fs::File, io::BufReader, path::PathBuf, time::Instant};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
+    time::Instant,
+};
+
+fn nanos_to_secs(nanos: u64) -> f64 {
+    nanos as f64 / 1_000_000_000.0
+}
 
 use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
@@ -390,27 +404,127 @@ impl ChatSession {
             }
         }
 
+        let can_use_async = llm.decoding_config.generate_suffix_length() == 1
+            && !llm.has_attention_layers()
+            && compiled_grammar.is_none();
+
+        let generate_output = if can_use_async {
+            let batch_size =
+                llm.decoding_config.async_batch_size.resolve(&self.model_path);
+            Self::run_async_batch(
+                &self.model_metadata,
+                &self.tokenizer,
+                &self.output_parser,
+                llm,
+                sampling_method,
+                &progress,
+                batch_size,
+                context_length,
+                &eos_tokens,
+                &prefill_result,
+                prefill_duration,
+                prefill_suffix_length,
+                run_start,
+                tokens.len(),
+                prefix_len_before,
+            )?
+        } else {
+            Self::run_sync_generate(
+                &self.model_metadata,
+                &self.tokenizer,
+                &self.output_parser,
+                llm,
+                compiled_grammar.as_mut(),
+                sampling_method,
+                &progress,
+                context_length,
+                &eos_tokens,
+                &prefill_result,
+                prefill_duration,
+                prefill_suffix_length,
+                run_start,
+                tokens.len(),
+                prefix_len_before,
+            )?
+        };
+
+        llm.clear_cache();
+        Ok(generate_output
+            .clone_with_duration(run_start.elapsed().as_secs_f64()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_sync_generate<F>(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        llm: &mut LanguageModelGenerator,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: super::parameter::SamplingMethod,
+        progress: &Option<F>,
+        context_length: usize,
+        eos_tokens: &[u64],
+        prefill_result: &PrefillResult,
+        prefill_duration: f64,
+        prefill_suffix_length: usize,
+        run_start: Instant,
+        tokens_len: usize,
+        prefix_len_before: usize,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        let finish_reason_fn = |llm: &LanguageModelGenerator,
+                                tokens: Vec<u64>|
+         -> Option<FinishReason> {
+            if llm.tokens.len() >= context_length {
+                Some(FinishReason::ContextLimitReached)
+            } else if tokens.iter().any(|t| eos_tokens.contains(t)) {
+                Some(FinishReason::Stop)
+            } else {
+                None
+            }
+        };
+
+        let build_generated_text = |llm: &LanguageModelGenerator,
+                                    tokenizer: &Tokenizer|
+         -> Result<String, Error> {
+            let start_idx = prefix_len_before + tokens_len;
+            let generated_tokens: Vec<u32> = llm.tokens[start_idx..]
+                .to_vec()
+                .iter()
+                .map(|value| *value as u32)
+                .collect();
+            let generated_text = tokenizer
+                .decode(&generated_tokens, true)
+                .map_err(|_| Error::UnableToDecodeText)?;
+            Ok(generated_text)
+        };
+
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
-        let generate_output = loop {
+        let mut compiled_grammar_mut = compiled_grammar;
+
+        loop {
             let generate_start = Instant::now();
-            let generate_result =
-                llm.generate(compiled_grammar.as_mut(), sampling_method)?;
+            let generate_result = llm.generate(
+                compiled_grammar_mut.as_deref_mut(),
+                sampling_method,
+            )?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
-            let generate_finish_reason = finish_reason(llm, generate_tokens);
-            let generate_generated_text =
-                build_generated_text(llm, &self.tokenizer)?;
+            let generate_finish_reason = finish_reason_fn(llm, generate_tokens);
+            let generate_generated_text = build_generated_text(llm, tokenizer)?;
             let generate_parsed_text =
-                self.output_parser.parse(generate_generated_text);
+                output_parser.parse(generate_generated_text);
 
             let generate_output = Output {
                 text: generate_parsed_text,
                 stats: Self::build_stats(
-                    &self.model_metadata,
+                    model_metadata,
                     prefill_result.clone(),
                     prefill_duration,
                     prefill_suffix_length,
@@ -418,32 +532,197 @@ impl ChatSession {
                     generate_durations.clone(),
                     llm.decoding_config.generate_suffix_length(),
                     run_start.elapsed().as_secs_f64(),
-                    tokens.len(),
-                    llm.tokens[prefix_len_before + tokens.len()..].len(),
+                    tokens_len,
+                    llm.tokens[prefix_len_before + tokens_len..].len(),
                 ),
                 finish_reason: generate_finish_reason.clone(),
             };
 
-            let generate_should_continue = if let Some(progress) = &progress {
-                progress(generate_output.clone())
+            let generate_should_continue = if let Some(progress_fn) = progress {
+                progress_fn(generate_output.clone())
             } else {
                 true
             };
 
             if !generate_should_continue || generate_finish_reason.is_some() {
                 if generate_should_continue {
-                    break generate_output;
+                    return Ok(generate_output);
                 } else {
-                    break generate_output.clone_with_finish_reason(Some(
+                    return Ok(generate_output.clone_with_finish_reason(Some(
                         FinishReason::Cancelled,
-                    ));
+                    )));
                 }
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_async_batch<F>(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        llm: &mut LanguageModelGenerator,
+        sampling_method: super::parameter::SamplingMethod,
+        progress: &Option<F>,
+        batch_size: usize,
+        context_length: usize,
+        eos_tokens: &[u64],
+        prefill_result: &PrefillResult,
+        prefill_duration: f64,
+        prefill_suffix_length: usize,
+        run_start: Instant,
+        tokens_len: usize,
+        prefix_len_before: usize,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        let build_generated_text = |llm: &LanguageModelGenerator,
+                                    tokenizer: &Tokenizer|
+         -> Result<String, Error> {
+            let start_idx = prefix_len_before + tokens_len;
+            let generated_tokens: Vec<u32> = llm.tokens[start_idx..]
+                .to_vec()
+                .iter()
+                .map(|value| *value as u32)
+                .collect();
+            let generated_text = tokenizer
+                .decode(&generated_tokens, true)
+                .map_err(|_| Error::UnableToDecodeText)?;
+            Ok(generated_text)
         };
 
-        llm.clear_cache();
-        Ok(generate_output
-            .clone_with_duration(run_start.elapsed().as_secs_f64()))
+        let remaining_by_context =
+            context_length.saturating_sub(llm.tokens.len());
+        let tokens_to_generate = remaining_by_context;
+
+        llm.prepare_async(tokens_to_generate);
+
+        let (sender, receiver) = mpsc::channel::<(usize, u64, u64)>();
+        let start_time = Instant::now();
+        let last_nanos = Arc::new(AtomicU64::new(0));
+
+        let mut results: Vec<GenerateResult> =
+            Vec::with_capacity(tokens_to_generate);
+        let mut durations: Vec<f64> = Vec::with_capacity(tokens_to_generate);
+        let mut finish_reason = FinishReason::Length;
+        let mut next_to_submit = 0;
+        let mut in_flight = 0;
+
+        while in_flight > 0 || next_to_submit < tokens_to_generate {
+            let batch_end =
+                std::cmp::min(next_to_submit + batch_size, tokens_to_generate);
+            for idx in next_to_submit..batch_end {
+                let batch_sender = sender.clone();
+                let last_callback_nanos = last_nanos.clone();
+                let batch_start_time = start_time;
+                llm.async_generate(idx, sampling_method, move |token| {
+                    let now_nanos =
+                        batch_start_time.elapsed().as_nanos() as u64;
+                    let prev_nanos =
+                        last_callback_nanos.swap(now_nanos, Ordering::SeqCst);
+                    let _ = batch_sender.send((
+                        idx,
+                        token,
+                        now_nanos.saturating_sub(prev_nanos),
+                    ));
+                })?;
+                in_flight += 1;
+            }
+            let batch_submitted = batch_end - next_to_submit;
+            next_to_submit = batch_end;
+
+            for _ in 0..batch_submitted {
+                let (_, token, duration_nanos) =
+                    receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                in_flight -= 1;
+
+                let duration = nanos_to_secs(duration_nanos);
+                llm.tokens.push(token);
+                results.push(GenerateResult {
+                    tokens: vec![token],
+                    forwardpass_duration: duration,
+                });
+                durations.push(duration);
+
+                let should_stop = if eos_tokens.contains(&token) {
+                    finish_reason = FinishReason::Stop;
+                    true
+                } else if llm.tokens.len() >= context_length {
+                    finish_reason = FinishReason::ContextLimitReached;
+                    true
+                } else if let Some(progress_fn) = progress {
+                    let output = Output {
+                        text: output_parser
+                            .parse(build_generated_text(llm, tokenizer)?),
+                        stats: Self::build_stats(
+                            model_metadata,
+                            prefill_result.clone(),
+                            prefill_duration,
+                            prefill_suffix_length,
+                            results.clone(),
+                            durations.clone(),
+                            llm.decoding_config.generate_suffix_length(),
+                            run_start.elapsed().as_secs_f64(),
+                            tokens_len,
+                            llm.tokens[prefix_len_before + tokens_len..].len(),
+                        ),
+                        finish_reason: None,
+                    };
+                    if !progress_fn(output) {
+                        finish_reason = FinishReason::Cancelled;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if should_stop {
+                    while in_flight > 0 {
+                        let _ = receiver.recv();
+                        in_flight -= 1;
+                    }
+                    let output = Output {
+                        text: output_parser
+                            .parse(build_generated_text(llm, tokenizer)?),
+                        stats: Self::build_stats(
+                            model_metadata,
+                            prefill_result.clone(),
+                            prefill_duration,
+                            prefill_suffix_length,
+                            results,
+                            durations,
+                            llm.decoding_config.generate_suffix_length(),
+                            run_start.elapsed().as_secs_f64(),
+                            tokens_len,
+                            llm.tokens[prefix_len_before + tokens_len..].len(),
+                        ),
+                        finish_reason: Some(finish_reason),
+                    };
+                    return Ok(output);
+                }
+            }
+        }
+
+        let output = Output {
+            text: output_parser.parse(build_generated_text(llm, tokenizer)?),
+            stats: Self::build_stats(
+                model_metadata,
+                prefill_result.clone(),
+                prefill_duration,
+                prefill_suffix_length,
+                results,
+                durations,
+                llm.decoding_config.generate_suffix_length(),
+                run_start.elapsed().as_secs_f64(),
+                tokens_len,
+                llm.tokens[prefix_len_before + tokens_len..].len(),
+            ),
+            finish_reason: Some(finish_reason),
+        };
+        Ok(output)
     }
 
     fn reconfigure_llm(

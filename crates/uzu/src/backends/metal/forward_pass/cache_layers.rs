@@ -6,6 +6,7 @@ use super::{
     super::{MTLContext, MetalArray},
     kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
     model_shape::ModelShape,
+    short_conv_layer::ShortConvLayer,
     ssm_layer::SSMLayer,
 };
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
 pub enum CacheLayer {
     Transformer(KVCacheLayer),
     StateSpace(SSMLayer),
+    ShortConv(ShortConvLayer),
 }
 
 impl CacheLayer {
@@ -44,6 +46,20 @@ impl CacheLayer {
     pub fn as_state_space_mut(&mut self) -> Option<&mut SSMLayer> {
         match self {
             CacheLayer::StateSpace(layer) => Some(layer),
+            _ => None,
+        }
+    }
+
+    pub fn as_short_conv(&self) -> Option<&ShortConvLayer> {
+        match self {
+            CacheLayer::ShortConv(layer) => Some(layer),
+            _ => None,
+        }
+    }
+
+    pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer> {
+        match self {
+            CacheLayer::ShortConv(layer) => Some(layer),
             _ => None,
         }
     }
@@ -139,6 +155,21 @@ impl CacheLayers {
                             ),
                         })
                     },
+                    DecoderLayerType::ShortConv {
+                        kernel_size,
+                    } => {
+                        let conv_shape = [
+                            model_shape.model_dim(),
+                            kernel_size.saturating_sub(1),
+                        ];
+                        let dtype = model_shape.activation_data_type();
+
+                        CacheLayer::ShortConv(ShortConvLayer {
+                            conv_state: RefCell::new(
+                                context.array(&conv_shape, dtype),
+                            ),
+                        })
+                    },
                 })
                 .collect();
 
@@ -170,6 +201,7 @@ impl CacheLayers {
                     },
                 },
                 CacheLayer::StateSpace(layer) => layer.zero(),
+                CacheLayer::ShortConv(layer) => layer.zero(),
             }
         }
     }
@@ -311,6 +343,19 @@ impl CacheLayers {
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: RefCell::new(new_conv),
                         ssm_state: RefCell::new(new_ssm),
+                    })
+                },
+                CacheLayer::ShortConv(layer) => {
+                    let conv_shape = layer.conv_state.borrow().shape().to_vec();
+                    let conv_dtype = layer.conv_state.borrow().data_type();
+                    let mut new_conv = context.array(&conv_shape, conv_dtype);
+                    {
+                        let conv_src = layer.conv_state.borrow();
+                        new_conv.copy_from_array(&conv_src);
+                    }
+
+                    CacheLayer::ShortConv(ShortConvLayer {
+                        conv_state: RefCell::new(new_conv),
                     })
                 },
             })

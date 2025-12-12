@@ -38,6 +38,20 @@ pub enum EmbeddingsBuffers {
         /// [vocab_size, num_groups]
         output_biases: ArrayCell,
     },
+    MLXQuantizedUntied {
+        /// [vocab_size, model_dim / packing_divisor]
+        packed_input_weights: ArrayCell,
+        /// [vocab_size, num_groups]
+        input_scales: ArrayCell,
+        /// [vocab_size, num_groups]
+        input_biases: ArrayCell,
+        /// [vocab_size, model_dim / packing_divisor]
+        packed_output_weights: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_scales: ArrayCell,
+        /// [vocab_size, num_groups]
+        output_biases: ArrayCell,
+    },
 }
 
 impl EmbeddingsBuffers {
@@ -160,6 +174,55 @@ impl EmbeddingsBuffers {
                         ),
                     }
                 },
+                EmbeddingConfig::MLXQuantizedUntied {
+                    group_size,
+                    embedding_quantization_mode,
+                    ..
+                } => {
+                    let [vocab_size, model_dim] =
+                        model_shape.quantized_embeddings_weights_shape();
+                    let num_groups = model_dim / group_size;
+                    let packed_dim = model_dim
+                        / embedding_quantization_mode.packing_divisor();
+                    Self::MLXQuantizedUntied {
+                        packed_input_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, packed_dim],
+                                embedding_quantization_mode.storage_type(),
+                            ),
+                        ),
+                        input_scales: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        input_biases: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        packed_output_weights: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, packed_dim],
+                                embedding_quantization_mode.storage_type(),
+                            ),
+                        ),
+                        output_scales: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        output_biases: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                    }
+                },
             }
         }
     }
@@ -207,6 +270,27 @@ impl EmbeddingsBuffers {
             } => {
                 let mapping = vec![
                     ("input_weights", input_weights),
+                    ("output_weights", packed_output_weights),
+                    ("output_scales", output_scales),
+                    ("output_biases", output_biases),
+                ];
+                for (name, buffer) in mapping {
+                    let view = embeddings_tree.leaf(name).unwrap();
+                    buffer.borrow_mut().copy_from_array(&view);
+                }
+            },
+            EmbeddingsBuffers::MLXQuantizedUntied {
+                packed_input_weights,
+                input_scales,
+                input_biases,
+                packed_output_weights,
+                output_scales,
+                output_biases,
+            } => {
+                let mapping = vec![
+                    ("input_weights", packed_input_weights),
+                    ("input_scales", input_scales),
+                    ("input_biases", input_biases),
                     ("output_weights", packed_output_weights),
                     ("output_scales", output_scales),
                     ("output_biases", output_biases),

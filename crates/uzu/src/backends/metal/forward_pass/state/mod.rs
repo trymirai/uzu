@@ -682,6 +682,14 @@ impl ForwardPassState {
                 .as_ref()
                 .and_then(|aux| aux.ssm_z.clone())
                 .expect("SSM z not initialized"),
+            ArrayId::ShortConvState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_short_conv()
+                    .expect("Expected ShortConv layer")
+                    .conv_state
+                    .clone()
+            },
 
             // MoE arrays (LLM only)
             ArrayId::MoeTopkIds => self
@@ -818,6 +826,10 @@ impl ForwardPassState {
                     input_weights,
                     ..
                 } => input_weights.clone(),
+                EmbeddingsBuffers::MLXQuantizedUntied {
+                    packed_input_weights,
+                    ..
+                } => packed_input_weights.clone(),
             }),
             ArrayId::EmbeddingsOutputWeights => {
                 Some(match &shared.embeddings {
@@ -833,6 +845,10 @@ impl ForwardPassState {
                         ..
                     } => weights.clone(),
                     EmbeddingsBuffers::MLXSemiQuantizedUntied {
+                        packed_output_weights,
+                        ..
+                    } => packed_output_weights.clone(),
+                    EmbeddingsBuffers::MLXQuantizedUntied {
                         packed_output_weights,
                         ..
                     } => packed_output_weights.clone(),
