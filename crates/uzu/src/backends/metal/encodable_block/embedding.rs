@@ -42,7 +42,6 @@ pub struct QuantizedEmbeddingLookup {
     vocab_size: u32,
     model_dim: u32,
     group_size: u32,
-    input_scale: f32,
 }
 
 impl QuantizedEmbeddingLookup {
@@ -54,7 +53,6 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-        input_scale: Option<f32>,
     ) -> Result<Self, QuantizedEmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
@@ -64,14 +62,12 @@ impl QuantizedEmbeddingLookup {
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
-            Err(_) => parameter_tree
-                .leaf("input_weights")
-                .or_else(|_| parameter_tree.leaf("output_weights"))
-                .map_err(|e| {
-                    QuantizedEmbeddingError::MetalError(MTLError::Generic(
-                        format!("Failed to load weights: {:?}", e),
-                    ))
-                })?,
+            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load weights: {:?}",
+                    e
+                )))
+            })?,
         };
 
         if weights.data_type() != mode.storage_type() {
@@ -87,14 +83,12 @@ impl QuantizedEmbeddingLookup {
         // Load scales [vocab_size, num_groups]
         let mut scales = match parameter_tree.leaf("scales") {
             Ok(scales) => scales,
-            Err(_) => parameter_tree
-                .leaf("input_scales")
-                .or_else(|_| parameter_tree.leaf("output_scales"))
-                .map_err(|e| {
-                    QuantizedEmbeddingError::MetalError(MTLError::Generic(
-                        format!("Failed to load scales: {:?}", e),
-                    ))
-                })?,
+            Err(_) => parameter_tree.leaf("output_scales").map_err(|e| {
+                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                    "Failed to load scales: {:?}",
+                    e
+                )))
+            })?,
         };
 
         // Validate shapes and types
@@ -128,7 +122,6 @@ impl QuantizedEmbeddingLookup {
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
         let biases_buffer: MTLBuffer = match parameter_tree
             .leaf("biases")
-            .or_else(|_| parameter_tree.leaf("input_biases"))
             .or_else(|_| parameter_tree.leaf("output_biases"))
         {
             Ok(mut deq_biases) => {
@@ -186,7 +179,6 @@ impl QuantizedEmbeddingLookup {
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             group_size: group_size as u32,
-            input_scale: input_scale.unwrap_or(1.0),
         })
     }
 }
@@ -219,7 +211,6 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             group_size: self.group_size,
-            input_scale: self.input_scale,
         };
 
         self.kernel

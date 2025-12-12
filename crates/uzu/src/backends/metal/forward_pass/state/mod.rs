@@ -826,10 +826,6 @@ impl ForwardPassState {
                     input_weights,
                     ..
                 } => input_weights.clone(),
-                EmbeddingsBuffers::MLXQuantizedUntied {
-                    packed_input_weights,
-                    ..
-                } => packed_input_weights.clone(),
             }),
             ArrayId::EmbeddingsOutputWeights => {
                 Some(match &shared.embeddings {
@@ -845,10 +841,6 @@ impl ForwardPassState {
                         ..
                     } => weights.clone(),
                     EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                        packed_output_weights,
-                        ..
-                    } => packed_output_weights.clone(),
-                    EmbeddingsBuffers::MLXQuantizedUntied {
                         packed_output_weights,
                         ..
                     } => packed_output_weights.clone(),

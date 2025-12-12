@@ -26,7 +26,6 @@ pub struct QuantizedEmbeddingLookupArguments<'a> {
     pub vocab_size: u32,
     pub model_dim: u32,
     pub group_size: u32,
-    pub input_scale: f32, // config input_scale (e.g. 34.0 for Gemma, 1.0 default)
 }
 
 impl QuantizedEmbeddingLookupKernel {
@@ -98,11 +97,6 @@ impl QuantizedEmbeddingLookupKernel {
             8,
             size_of::<u32>() as u64,
             &args.group_size as *const u32 as *const _,
-        );
-        encoder.set_bytes(
-            9,
-            size_of::<f32>() as u64,
-            &args.input_scale as *const f32 as *const _,
         );
 
         // Dispatch one thread per output element

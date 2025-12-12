@@ -49,15 +49,6 @@ pub enum EmbeddingConfig {
         activation_quantization_mode: Option<QuantizationMode>,
         activation_precision: ConfigDataType,
     },
-    #[serde(rename = "MLXQuantizedUntiedEmbeddingConfig")]
-    MLXQuantizedUntied {
-        #[serde(flatten)]
-        common: EmbeddingConfigCommon,
-        group_size: usize,
-        embedding_quantization_mode: QuantizationMode,
-        activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
-    },
 }
 
 impl EmbeddingConfig {
@@ -80,10 +71,6 @@ impl EmbeddingConfig {
                 ..
             } => common,
             EmbeddingConfig::MLXSemiQuantizedUntied {
-                common,
-                ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedUntied {
                 common,
                 ..
             } => common,

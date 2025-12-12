@@ -13,7 +13,6 @@ template <typename T, uint PACKING_DIVISOR, bool SIGNED_STORAGE>
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]], // config input_scale (e.g. 34.0 for Gemma)
     uint thread_position_in_grid [[thread_position_in_grid]]
 ) {
   const uint batch_idx = thread_position_in_grid / model_dim;
@@ -54,8 +53,7 @@ template <typename T, uint PACKING_DIVISOR, bool SIGNED_STORAGE>
         SIGNED_STORAGE ? int(weights_i8[elem_idx]) : int(weights_u8[elem_idx]);
   }
 
-  T dequantized = scale * T(quantized_value) + bias;
-  output[thread_position_in_grid] = T(input_scale) * dequantized;
+  output[thread_position_in_grid] = scale * T(quantized_value) + bias;
 }
 
 template [[host_name("quantized_embedding_lookup_f32_uint4")]] [[kernel]] void
@@ -69,7 +67,6 @@ quantized_embedding_lookup<float, 2, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -84,7 +81,6 @@ quantized_embedding_lookup<half, 2, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -99,7 +95,6 @@ quantized_embedding_lookup<bfloat, 2, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -114,7 +109,6 @@ quantized_embedding_lookup<float, 1, true>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -129,7 +123,6 @@ quantized_embedding_lookup<half, 1, true>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -144,7 +137,6 @@ quantized_embedding_lookup<bfloat, 1, true>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -159,7 +151,6 @@ quantized_embedding_lookup<float, 1, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -174,7 +165,6 @@ quantized_embedding_lookup<half, 1, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );
 
@@ -189,6 +179,5 @@ quantized_embedding_lookup<bfloat, 1, false>(
     constant uint32_t& vocab_size [[buffer(6)]],
     constant uint32_t& model_dim [[buffer(7)]],
     constant uint32_t& group_size [[buffer(8)]],
-    constant float& input_scale [[buffer(9)]],
     uint thread_position_in_grid [[thread_position_in_grid]]
 );

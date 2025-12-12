@@ -466,7 +466,6 @@ pub fn embed_block(
             Box::new(block)
         },
         EmbeddingConfig::MLXQuantizedTied {
-            common,
             group_size,
             embedding_quantization_mode,
             ..
@@ -486,34 +485,6 @@ pub fn embed_block(
                 *group_size,
                 *embedding_quantization_mode,
                 &embeddings_tree,
-                common.input_scale,
-            )
-            .expect("Failed to create quantized embedding lookup kernel");
-
-            Box::new(block)
-        },
-        EmbeddingConfig::MLXQuantizedUntied {
-            common,
-            group_size,
-            embedding_quantization_mode,
-            ..
-        } => {
-            let data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
-
-            let block = QuantizedEmbeddingLookup::new(
-                context,
-                data_type,
-                config.vocab_size,
-                config.model_dim,
-                *group_size,
-                *embedding_quantization_mode,
-                &embeddings_tree,
-                common.input_scale,
             )
             .expect("Failed to create quantized embedding lookup kernel");
 
@@ -719,31 +690,6 @@ pub fn readout_block(
             Box::new(block)
         },
         EmbeddingConfig::MLXQuantizedTied {
-            group_size,
-            embedding_quantization_mode,
-            ..
-        } => {
-            let data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
-
-            let block = QuantizedEmbeddingReadout::new(
-                context,
-                data_type,
-                config.vocab_size,
-                config.model_dim,
-                group_size,
-                embedding_quantization_mode,
-                &embeddings_tree,
-            )
-            .expect("Failed to create quantized embedding readout kernel");
-
-            Box::new(block)
-        },
-        EmbeddingConfig::MLXQuantizedUntied {
             group_size,
             embedding_quantization_mode,
             ..
