@@ -2,20 +2,10 @@ use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
     MTLSize,
 };
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use crate::{
     DataType,
-    array::Array,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{
-            ArrayId, ForwardPassState,
-            encodable_with_state::{EncodableWithState, EncodingParameters},
-        },
-        kernel::QuantizedLinearKernelBlock,
-        metal_extensions::ComputeEncoderConditional,
-    },
+    backends::metal::{MTLContext, MTLError},
     config::Activation,
 };
 
@@ -50,7 +40,7 @@ impl MlpGateActMulEncodable {
         fused_up: &MTLBuffer,
         hidden: &MTLBuffer,
         m: i32,
-    ) {
+    ) -> Result<(), MTLError> {
         self.kernel.encode(
             encoder,
             &self.activation,
@@ -58,14 +48,12 @@ impl MlpGateActMulEncodable {
             hidden,
             m,
             self.hidden_dim as i32,
-        );
+        )
     }
 }
 
 impl MlpGateActMulKernel {
-    fn kernel_name_for_type(
-        data_type: DataType
-    ) -> Result<&'static str, MTLError> {
+    fn kernel_name_for_type(data_type: DataType) -> Result<&'static str, MTLError> {
         match data_type {
             DataType::F16 => Ok("mlp_activation_mul_f16"),
             DataType::F32 => Ok("mlp_activation_mul_f32"),
@@ -77,22 +65,15 @@ impl MlpGateActMulKernel {
         }
     }
 
-    pub fn new(
-        context: &MTLContext,
-        data_type: DataType,
-    ) -> Result<Self, MTLError> {
+    pub fn new(context: &MTLContext, data_type: DataType) -> Result<Self, MTLError> {
         let fn_name = Self::kernel_name_for_type(data_type)?;
         let pipeline = context.compute_pipeline_state(fn_name, None)?;
-        Ok(Self {
-            pipeline,
-        })
+        Ok(Self { pipeline })
     }
 
     fn act_code(act: &Activation) -> u16 {
         match act {
-            Activation::SiLU {
-                ..
-            } => 0,
+            Activation::SiLU { .. } => 0,
             Activation::Gelu => 1,
             Activation::Identity => {
                 panic!("Identity activation is not supported for MLP kernels")
@@ -108,7 +89,7 @@ impl MlpGateActMulKernel {
         hidden_buffer: &MTLBuffer,
         m: i32,
         h: i32,
-    ) {
+    ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
         let threads_per_tg = MTLSize::new(64, 1, 1);
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -132,106 +113,6 @@ impl MlpGateActMulKernel {
 
         let grid = MTLSize::new(h as u64, m as u64, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
-    }
-}
-
-pub struct MlpBlockEncodable {
-    up: QuantizedLinearKernelBlock,
-    gate: MlpGateActMulEncodable,
-    down: QuantizedLinearKernelBlock,
-}
-
-impl MlpBlockEncodable {
-    pub fn new(
-        up: QuantizedLinearKernelBlock,
-        gate: MlpGateActMulEncodable,
-        down: QuantizedLinearKernelBlock,
-    ) -> Self {
-        Self {
-            up,
-            gate,
-            down,
-        }
-    }
-}
-
-impl EncodableWithState for MlpBlockEncodable {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
-        params: &EncodingParameters,
-    ) {
-        // Up
-        self.up.encode(state, command_buffer, params);
-        // Gate act+mul (fused_up -> hidden)
-        let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-        let mut fused = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
-        let m = fused.shape()[0] as i32;
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let encoder = mtl_command_buffer.new_compute_command_encoder();
-
-        let fused_buf = unsafe { fused.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
-
-        encoder.condition(
-            params.predicate_ref(),
-            || {
-                self.gate.encode(encoder, fused_buf, hidden_buf, m);
-            },
-            None::<fn()>,
-        );
-
-        encoder.end_encoding();
-        drop(fused);
-        drop(hidden);
-        // Down
-        self.down.encode(state, command_buffer, params);
-
-        if params.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
-        parameters: &EncodingParameters,
-    ) {
-        self.encode_with_encoder_impl(state, encoder, parameters);
-    }
-}
-
-impl MlpBlockEncodable {
-    fn encode_with_encoder_impl(
-        &self,
-        state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
-        params: &EncodingParameters,
-    ) {
-        // Up
-        self.up.encode_with_shared_encoder(state, encoder, params);
-        // Gate act+mul (fused_up -> hidden)
-        let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-        let mut fused = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
-        let m = fused.shape()[0] as i32;
-        let fused_buf = unsafe { fused.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
-        self.gate.encode(encoder, fused_buf, hidden_buf, m);
-        drop(fused);
-        drop(hidden);
-        // Down
-        self.down.encode_with_shared_encoder(state, encoder, params);
+        Ok(())
     }
 }

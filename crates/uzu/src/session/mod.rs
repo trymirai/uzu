@@ -1,6 +1,9 @@
+mod chat_session;
+pub mod classification_session;
 pub mod config;
 pub mod helpers;
 pub mod parameter;
-mod session;
 pub mod types;
-pub use session::Session;
+
+pub use chat_session::{ChatSession, ChatSession as Session};
+pub use classification_session::ClassificationSession;

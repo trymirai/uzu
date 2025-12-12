@@ -383,7 +383,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel.encode(
+    let _ = kernel.encode(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
@@ -514,7 +514,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel.encode(
+    let _ = kernel.encode(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
@@ -853,7 +853,7 @@ fn perf_rms_norm_with_size(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder();
 
-    kernel.encode(
+    let _ = kernel.encode(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
@@ -1046,7 +1046,7 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.new_command_buffer();
         let compute_encoder = command_buffer.new_compute_command_encoder();
 
-        q_kernel.encode_qk_norm(
+        let _ = q_kernel.encode_qk_norm(
             &compute_encoder,
             QKNormArguments {
                 qkv_input_buffer: &qkv_buffer,
@@ -1112,7 +1112,7 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.new_command_buffer();
         let compute_encoder = command_buffer.new_compute_command_encoder();
 
-        k_kernel.encode_qk_norm(
+        let _ = k_kernel.encode_qk_norm(
             &compute_encoder,
             QKNormArguments {
                 qkv_input_buffer: &qkv_buffer,

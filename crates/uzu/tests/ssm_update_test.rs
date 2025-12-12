@@ -6,6 +6,8 @@ use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
 };
+
+#[allow(dead_code)]
 fn ssm_update_ref_bf16(
     x: &[bf16],
     dt: &[bf16],
@@ -65,6 +67,7 @@ fn softplus_f32(x: f32) -> f32 {
     }
 }
 
+#[allow(dead_code)]
 fn ssd_update_no_z_ref_bf16(
     x: &[bf16],
     dt_raw: &[bf16],

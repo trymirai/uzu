@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap};
 use mpsgraph::TensorData;
 use objc2::rc::Retained;
 
-use super::state::{ArrayId, ForwardPassState};
+use super::{ArrayId, ForwardPassState};
 use crate::backends::metal::array::MetalArray;
 
 #[derive(Clone)]

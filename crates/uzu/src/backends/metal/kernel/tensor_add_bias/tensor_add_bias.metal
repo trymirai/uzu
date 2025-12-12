@@ -10,31 +10,23 @@ void tensorAddBias(
     constant int& length,
     const uint position
 ) {
-    if (position < length) {
-        int col = position % numCols;
-        output[position] = input[position] + bias[col];
-    }
+  if (position < length) {
+    int col = position % numCols;
+    output[position] = input[position] + bias[col];
+  }
 }
 
-#define outerArguments(T)                        \
-(const device T* input [[ buffer(0) ]],          \
-const device T* bias [[ buffer(1) ]],            \
-device T* output [[ buffer(2) ]],                \
-constant int& numCols [[ buffer(3) ]],           \
-constant int& length [[ buffer(4) ]],            \
-const uint position [[ thread_position_in_grid ]])
+#define outerArguments(T)                                                      \
+  (const device T* input [[buffer(0)]],                                        \
+   const device T* bias [[buffer(1)]],                                         \
+   device T* output [[buffer(2)]],                                             \
+   constant int& numCols [[buffer(3)]],                                        \
+   constant int& length [[buffer(4)]],                                         \
+   const uint position [[thread_position_in_grid]])
 
-#define innerArguments \
-(input,                 \
-bias,                  \
-output,                \
-numCols,               \
-length,                \
-position)
+#define innerArguments (input, bias, output, numCols, length, position)
 
 generateKernels(tensorAddBias)
 
 #undef outerArguments
 #undef innerArguments
-
-

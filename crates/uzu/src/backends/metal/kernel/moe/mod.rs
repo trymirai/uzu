@@ -1,8 +1,5 @@
 use crate::backends::metal::KernelDataType;
 
-mod encodable;
-pub use encodable::{MoeBlockEncodable, SharedMoeWeights};
-
 // Submodules
 mod counts_offsets_fused;
 mod experts;
@@ -18,7 +15,8 @@ pub use counts_offsets_fused::{
     MoeCountsOffsetsFusedKernel,
 };
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
+    MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };

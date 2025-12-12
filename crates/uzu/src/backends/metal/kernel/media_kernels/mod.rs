@@ -10,10 +10,7 @@ use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use crate::backends::metal::{
     MTLContext,
     error::MTLError,
-    forward_pass::{
-        ForwardPassState,
-        encodable_with_state::{EncodableWithState, EncodingParameters},
-    },
+    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
     image::Image,
     metal_extensions::ComputeEncoderDispatch,
 };
@@ -85,7 +82,7 @@ impl ScalePadNormalizeImage {
     }
 }
 
-impl EncodableWithState for ScalePadNormalizeImage {
+impl EncodableBlock for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,

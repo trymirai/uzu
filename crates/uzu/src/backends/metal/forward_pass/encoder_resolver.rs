@@ -1,9 +1,9 @@
 use metal::ComputeCommandEncoder;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{
-    ForwardPassState,
-    encodable_with_state::{EncodableWithState, EncodingParameters},
+use super::ForwardPassState;
+use crate::backends::metal::encodable_block::{
+    EncodableBlock, EncodingParameters,
 };
 
 pub struct EncoderResolver<'a> {
@@ -21,7 +21,7 @@ impl<'a> EncoderResolver<'a> {
 
     pub fn encode(
         &mut self,
-        block: &dyn EncodableWithState,
+        block: &dyn EncodableBlock,
         state: &mut ForwardPassState,
         parameters: &EncodingParameters,
     ) {

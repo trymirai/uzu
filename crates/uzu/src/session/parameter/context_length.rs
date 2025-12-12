@@ -20,7 +20,10 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for ContextLength {
         &self,
         config: &LanguageModelConfig,
     ) -> usize {
-        let model_context_length = config.decoder_config.context_length;
+        let model_context_length = config
+            .decoder_config()
+            .map(|dc| dc.context_length)
+            .unwrap_or(config.model_config.transformer_config.context_length);
         let proposed_value = match self {
             ContextLength::Default => {
                 if cfg!(target_os = "ios") {

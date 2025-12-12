@@ -1,11 +1,11 @@
+use thiserror::Error;
+
 use crate::{
-    generator::{
+    language_model::{
         grammar::CompiledGrammar, gumbel::speculator_sample, rng::DerivableSeed,
     },
     speculators::speculator::Speculator,
 };
-
-use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum TrieError {
