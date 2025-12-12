@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use uzu::VERSION;
 
-pub const MODEL_DIR_NAME: &str = "Gemma-3-1B-Instruct";
+pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
