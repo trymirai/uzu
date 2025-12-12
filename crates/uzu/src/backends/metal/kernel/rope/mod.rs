@@ -26,6 +26,7 @@ pub struct RopeKernelArguments<'a> {
     pub cosines_buffer: &'a MTLBuffer, // buffer(1)
     pub sines_buffer: &'a MTLBuffer,   // buffer(2)
     pub token_positions_buffer: &'a MTLBuffer, // buffer(3)
+    pub token_positions_offset: usize, // byte offset into token_positions_buffer
     pub rotated_queries_buffer: &'a MTLBuffer, // buffer(4)
     pub rotated_keys_buffer: &'a MTLBuffer, // buffer(5)
     pub head_dim: usize,
@@ -68,7 +69,11 @@ impl RopeKernel {
         compute_encoder.set_buffer(0, Some(args.qkv_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.cosines_buffer), 0);
         compute_encoder.set_buffer(2, Some(args.sines_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.token_positions_buffer), 0);
+        compute_encoder.set_buffer(
+            3,
+            Some(args.token_positions_buffer),
+            args.token_positions_offset as u64,
+        );
         compute_encoder.set_buffer(4, Some(args.rotated_queries_buffer), 0);
         compute_encoder.set_buffer(5, Some(args.rotated_keys_buffer), 0);
 

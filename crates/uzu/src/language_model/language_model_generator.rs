@@ -391,6 +391,19 @@ impl LanguageModelGenerator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
+
+        // Initialize attention bias buffers to zero for async mode
+        // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
+        // rather than garbage (which could be -inf and mask incorrectly)
+        for (_, mask_buffer) in
+            &self.context.scratch_buffers.attention_window_size_to_bias
+        {
+            unsafe {
+                let ptr = mask_buffer.contents() as *mut u8;
+                std::ptr::write_bytes(ptr, 0, mask_buffer.length() as usize);
+            }
+        }
+
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
@@ -434,12 +447,28 @@ impl LanguageModelGenerator {
 
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
-        let token_ids: [u64; 1] = [last_token];
-        let token_positions: [usize; 1] = [0]; // Ignored, using async buffer
-        let token_seeds: [u64; 1] = [0]; // Ignored, using async buffer
+        let token_position = unsafe {
+            let ptr = async_positions_buffer.contents() as *const u32;
+            *ptr.add(pass_idx) as usize
+        };
+
+        let task = LanguageModelGeneratorRunTask {
+            token_ids: &[last_token],
+            token_positions: &[token_position],
+            token_bitmask: None,
+            token_seeds: &[0], // Ignored, using async buffer
+            expected_number_of_new_tokens: 1,
+            active_suffix_length: 1,
+            is_prefilling: false,
+        };
 
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
+
+        let skip_attention_bias_fill =
+            pass_idx > 0 && self.context.decoder_config.has_attention_layers();
+
+        let skip_token_ids_copy = pass_idx > 0;
 
         let mut state = ForwardPassState::new_llm(
             self.context.mtl_context.clone(),
@@ -448,19 +477,20 @@ impl LanguageModelGenerator {
             &self.context.scratch_buffers,
             self.context.cache_layers.clone(),
             self.context.shared_buffers.clone(),
-            &token_ids,
-            &token_positions,
-            None, // token_bitmask - ignored, using async buffer
-            &token_seeds,
-            1,     // active_suffix_length
-            false, // is_prefilling
-            None,  // external_bias_fn
-            is_continuation,
+            &task.token_ids,
+            &task.token_positions,
+            task.token_bitmask,
+            &task.token_seeds,
+            task.active_suffix_length,
+            task.is_prefilling,
+            None,
+            skip_token_ids_copy,
+            skip_attention_bias_fill,
             async_positions,
             async_seeds,
         );
-        if let Some(method) = state.sampling_method_mut() {
-            *method = Some(sampling_method);
+        if let Some(sm) = state.sampling_method_mut() {
+            *sm = Some(sampling_method);
         }
 
         self.context.reset_command_buffer();
@@ -473,7 +503,6 @@ impl LanguageModelGenerator {
                 .encode_wait_for_event(&async_event, current_counter);
         }
 
-        // Encode forward pass
         self.context.executables.encode(
             &mut state,
             &self.context.command_buffer,
@@ -508,6 +537,45 @@ impl LanguageModelGenerator {
             slot,
             encoder,
         );
+        encoder.end_encoding();
+
+        // Scatter + register for all transformer layers
+        {
+            let cb = root_command_buffer.to_owned();
+            self.context.cache_layers.borrow_mut().update_after_acceptance(
+                &[0],
+                None,
+                &cb,
+                &self.context.kv_cache_update,
+            );
+            self.context
+                .cache_layers
+                .borrow_mut()
+                .register_accepted_tokens(&[token_position]);
+        }
+
+        let encoder = root_command_buffer.new_compute_command_encoder();
+
+        if let Some(mask_update) = &self.context.mask_update {
+            for (window_size, mask_buffer) in
+                &self.context.scratch_buffers.attention_window_size_to_bias
+            {
+                let (unmask_col, mask_col) = if let Some(w) = window_size {
+                    // Sliding window: position P maps to column P % window
+                    let unmask = (token_position % w) as i32;
+                    let mask = if token_position + 1 >= *w {
+                        ((token_position + 1) % w) as i32
+                    } else {
+                        -1
+                    };
+                    (unmask, mask)
+                } else {
+                    (token_position as i32, -1)
+                };
+                mask_update.encode(encoder, mask_buffer, unmask_col, mask_col);
+            }
+        }
+
         encoder.end_encoding();
 
         // Signal event for next pass

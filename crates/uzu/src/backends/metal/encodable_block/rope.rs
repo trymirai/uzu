@@ -85,6 +85,8 @@ impl EncodableBlock for Rope {
             command_buffer.root_command_buffer().to_owned();
         let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
+        let token_positions_offset = token_positions.buffer_offset();
+
         self.kernel.encode(
             &compute_encoder,
             RopeKernelArguments {
@@ -94,6 +96,7 @@ impl EncodableBlock for Rope {
                 token_positions_buffer: unsafe {
                     &token_positions.mtl_buffer()
                 },
+                token_positions_offset,
                 rotated_queries_buffer: unsafe {
                     &rotated_queries.mtl_buffer()
                 },
