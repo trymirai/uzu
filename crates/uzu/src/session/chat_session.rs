@@ -40,6 +40,18 @@ use crate::{
     },
 };
 
+struct RunContext {
+    eos_tokens: Vec<u64>,
+    context_length: usize,
+    prefix_len_before: usize,
+    input_tokens_len: usize,
+    tokens_limit: usize,
+    prefill_result: PrefillResult,
+    prefill_duration: f64,
+    prefill_suffix_length: usize,
+    run_start: Instant,
+}
+
 pub struct ChatSession {
     pub model_path: PathBuf,
     pub model_metadata: ModelMetadata,
@@ -260,7 +272,7 @@ impl ChatSession {
             .map(|&id| id as u64)
             .collect();
 
-        let language_model_config_for_context = self
+        let language_model_config = self
             .model_metadata
             .model_config
             .as_language_model()
@@ -268,68 +280,25 @@ impl ChatSession {
 
         let llm =
             self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
-        let context_length = llm
-            .decoding_config
-            .context_length
-            .resolve(language_model_config_for_context);
+        let context_length =
+            llm.decoding_config.context_length.resolve(language_model_config);
         if tokens.len() >= context_length {
             return Err(Error::ContextLengthExceeded);
         }
-        let prefix_len_before = llm.tokens.len().saturating_sub(1);
 
-        let eos_tokens: Vec<u64> = language_model_config_for_context
+        let prefix_offset = llm.tokens.len();
+        let prefix_len_before = prefix_offset.saturating_sub(1);
+
+        let eos_tokens: Vec<u64> = language_model_config
             .generation_config
             .stop_token_ids
             .iter()
             .map(|&x| x as u64)
             .collect();
 
-        let finish_reason = |llm: &LanguageModelGenerator,
-                             tokens_new: Vec<u64>|
-         -> Option<FinishReason> {
-            let start_idx = prefix_len_before + tokens.len();
-            let total_tokens = llm.tokens.len();
-            let total_new_tokens = llm.tokens[start_idx..].len();
-            let has_eos_token =
-                tokens_new.iter().any(|token| eos_tokens.contains(token));
-            let context_limit_reached = total_tokens >= context_length;
-
-            if has_eos_token {
-                Some(FinishReason::Stop)
-            } else if total_new_tokens >= config.tokens_limit as usize {
-                Some(FinishReason::Length)
-            } else if context_limit_reached {
-                Some(FinishReason::ContextLimitReached)
-            } else {
-                None
-            }
-        };
-
-        let build_generated_text = |llm: &LanguageModelGenerator,
-                                    tokenizer: &Tokenizer|
-         -> Result<String, Error> {
-            let start_idx = prefix_len_before + tokens.len();
-            let generated_tokens: Vec<u32> = llm.tokens[start_idx..]
-                .to_vec()
-                .iter()
-                .map(|value| *value as u32)
-                .collect();
-            let generated_text = tokenizer
-                .decode(&generated_tokens, true)
-                .map_err(|_| Error::UnableToDecodeText)?;
-            Ok(generated_text)
-        };
-
-        let language_model_config_for_sampling = self
-            .model_metadata
-            .model_config
-            .as_language_model()
-            .ok_or(Error::UnableToLoadConfig)?;
-
         let sampling_method =
-            config.sampling_policy.resolve(language_model_config_for_sampling);
+            config.sampling_policy.resolve(language_model_config);
 
-        // Create grammar from config if provided
         let mut compiled_grammar: Option<CompiledGrammar> =
             if let Some(ref grammar_config) = config.grammar_config {
                 Some(CompiledGrammar::from_config(
@@ -342,8 +311,6 @@ impl ChatSession {
             };
 
         let prefill_start = Instant::now();
-        let prefix_offset = llm.tokens.len();
-
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = llm.prefill(
             tokens.clone(),
@@ -356,41 +323,38 @@ impl ChatSession {
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
         llm.clear_cache();
 
-        let prefill_finish_reason = finish_reason(llm, prefill_tokens.clone());
-        let prefill_generated_text =
-            build_generated_text(llm, &self.tokenizer)?;
-        let prefill_parsed_text =
-            self.output_parser.parse(prefill_generated_text);
-
-        let language_model_config_for_prefill = self
-            .model_metadata
-            .model_config
-            .as_language_model()
-            .ok_or(Error::UnableToLoadConfig)?;
-
         let prefill_suffix_length = llm
             .decoding_config
             .prefill_step_size
-            .resolve(language_model_config_for_prefill);
-        let prefill_output = Output {
-            text: prefill_parsed_text,
-            stats: Self::build_stats(
-                &self.model_metadata,
-                prefill_result.clone(),
-                prefill_duration,
-                prefill_suffix_length,
-                Vec::new(),
-                Vec::new(),
-                llm.decoding_config.generate_suffix_length(),
-                run_start.elapsed().as_secs_f64(),
-                tokens.len(),
-                llm.tokens[prefix_len_before + tokens.len()..].len(),
-            ),
-            finish_reason: prefill_finish_reason.clone(),
+            .resolve(language_model_config);
+
+        let run_context = RunContext {
+            eos_tokens,
+            context_length,
+            prefix_len_before,
+            input_tokens_len: tokens.len(),
+            tokens_limit: config.tokens_limit as usize,
+            prefill_result: prefill_result.clone(),
+            prefill_duration,
+            prefill_suffix_length,
+            run_start,
         };
 
-        let prefill_should_continue = if let Some(progress) = &progress {
-            progress(prefill_output.clone())
+        let prefill_finish_reason =
+            Self::check_finish_reason(&run_context, llm, &prefill_tokens);
+        let prefill_output = Self::build_output(
+            &self.model_metadata,
+            &self.tokenizer,
+            &self.output_parser,
+            &run_context,
+            llm,
+            &[],
+            &[],
+            prefill_finish_reason.clone(),
+        )?;
+
+        let prefill_should_continue = if let Some(ref p) = progress {
+            p(prefill_output.clone())
         } else {
             true
         };
@@ -415,36 +379,22 @@ impl ChatSession {
                 &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
+                &run_context,
                 llm,
                 sampling_method,
                 &progress,
                 batch_size,
-                context_length,
-                &eos_tokens,
-                &prefill_result,
-                prefill_duration,
-                prefill_suffix_length,
-                run_start,
-                tokens.len(),
-                prefix_len_before,
             )?
         } else {
             Self::run_sync_generate(
                 &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
+                &run_context,
                 llm,
                 compiled_grammar.as_mut(),
                 sampling_method,
                 &progress,
-                context_length,
-                &eos_tokens,
-                &prefill_result,
-                prefill_duration,
-                prefill_suffix_length,
-                run_start,
-                tokens.len(),
-                prefix_len_before,
             )?
         };
 
@@ -453,54 +403,19 @@ impl ChatSession {
             .clone_with_duration(run_start.elapsed().as_secs_f64()))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_sync_generate<F>(
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
+        run_context: &RunContext,
         llm: &mut LanguageModelGenerator,
         compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
-        context_length: usize,
-        eos_tokens: &[u64],
-        prefill_result: &PrefillResult,
-        prefill_duration: f64,
-        prefill_suffix_length: usize,
-        run_start: Instant,
-        tokens_len: usize,
-        prefix_len_before: usize,
     ) -> Result<Output, Error>
     where
         F: Fn(Output) -> bool,
     {
-        let finish_reason_fn = |llm: &LanguageModelGenerator,
-                                tokens: Vec<u64>|
-         -> Option<FinishReason> {
-            if llm.tokens.len() >= context_length {
-                Some(FinishReason::ContextLimitReached)
-            } else if tokens.iter().any(|t| eos_tokens.contains(t)) {
-                Some(FinishReason::Stop)
-            } else {
-                None
-            }
-        };
-
-        let build_generated_text = |llm: &LanguageModelGenerator,
-                                    tokenizer: &Tokenizer|
-         -> Result<String, Error> {
-            let start_idx = prefix_len_before + tokens_len;
-            let generated_tokens: Vec<u32> = llm.tokens[start_idx..]
-                .to_vec()
-                .iter()
-                .map(|value| *value as u32)
-                .collect();
-            let generated_text = tokenizer
-                .decode(&generated_tokens, true)
-                .map_err(|_| Error::UnableToDecodeText)?;
-            Ok(generated_text)
-        };
-
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
         let mut compiled_grammar_mut = compiled_grammar;
@@ -516,27 +431,18 @@ impl ChatSession {
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
-            let generate_finish_reason = finish_reason_fn(llm, generate_tokens);
-            let generate_generated_text = build_generated_text(llm, tokenizer)?;
-            let generate_parsed_text =
-                output_parser.parse(generate_generated_text);
-
-            let generate_output = Output {
-                text: generate_parsed_text,
-                stats: Self::build_stats(
-                    model_metadata,
-                    prefill_result.clone(),
-                    prefill_duration,
-                    prefill_suffix_length,
-                    generate_results.clone(),
-                    generate_durations.clone(),
-                    llm.decoding_config.generate_suffix_length(),
-                    run_start.elapsed().as_secs_f64(),
-                    tokens_len,
-                    llm.tokens[prefix_len_before + tokens_len..].len(),
-                ),
-                finish_reason: generate_finish_reason.clone(),
-            };
+            let generate_finish_reason =
+                Self::check_finish_reason(run_context, llm, &generate_tokens);
+            let generate_output = Self::build_output(
+                model_metadata,
+                tokenizer,
+                output_parser,
+                run_context,
+                llm,
+                &generate_results,
+                &generate_durations,
+                generate_finish_reason.clone(),
+            )?;
 
             let generate_should_continue = if let Some(progress_fn) = progress {
                 progress_fn(generate_output.clone())
@@ -556,45 +462,25 @@ impl ChatSession {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_async_batch<F>(
         model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
+        run_context: &RunContext,
         llm: &mut LanguageModelGenerator,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
         batch_size: usize,
-        context_length: usize,
-        eos_tokens: &[u64],
-        prefill_result: &PrefillResult,
-        prefill_duration: f64,
-        prefill_suffix_length: usize,
-        run_start: Instant,
-        tokens_len: usize,
-        prefix_len_before: usize,
     ) -> Result<Output, Error>
     where
         F: Fn(Output) -> bool,
     {
-        let build_generated_text = |llm: &LanguageModelGenerator,
-                                    tokenizer: &Tokenizer|
-         -> Result<String, Error> {
-            let start_idx = prefix_len_before + tokens_len;
-            let generated_tokens: Vec<u32> = llm.tokens[start_idx..]
-                .to_vec()
-                .iter()
-                .map(|value| *value as u32)
-                .collect();
-            let generated_text = tokenizer
-                .decode(&generated_tokens, true)
-                .map_err(|_| Error::UnableToDecodeText)?;
-            Ok(generated_text)
-        };
-
+        let remaining_by_limit = run_context
+            .tokens_limit
+            .saturating_sub(run_context.prefill_result.tokens.len());
         let remaining_by_context =
-            context_length.saturating_sub(llm.tokens.len());
-        let tokens_to_generate = remaining_by_context;
+            run_context.context_length.saturating_sub(llm.tokens.len());
+        let tokens_to_generate = remaining_by_limit.min(remaining_by_context);
 
         llm.prepare_async(tokens_to_generate);
 
@@ -645,30 +531,23 @@ impl ChatSession {
                 });
                 durations.push(duration);
 
-                let should_stop = if eos_tokens.contains(&token) {
+                let should_stop = if run_context.eos_tokens.contains(&token) {
                     finish_reason = FinishReason::Stop;
                     true
-                } else if llm.tokens.len() >= context_length {
+                } else if llm.tokens.len() >= run_context.context_length {
                     finish_reason = FinishReason::ContextLimitReached;
                     true
                 } else if let Some(progress_fn) = progress {
-                    let output = Output {
-                        text: output_parser
-                            .parse(build_generated_text(llm, tokenizer)?),
-                        stats: Self::build_stats(
-                            model_metadata,
-                            prefill_result.clone(),
-                            prefill_duration,
-                            prefill_suffix_length,
-                            results.clone(),
-                            durations.clone(),
-                            llm.decoding_config.generate_suffix_length(),
-                            run_start.elapsed().as_secs_f64(),
-                            tokens_len,
-                            llm.tokens[prefix_len_before + tokens_len..].len(),
-                        ),
-                        finish_reason: None,
-                    };
+                    let output = Self::build_output(
+                        model_metadata,
+                        tokenizer,
+                        output_parser,
+                        run_context,
+                        llm,
+                        &results,
+                        &durations,
+                        None,
+                    )?;
                     if !progress_fn(output) {
                         finish_reason = FinishReason::Cancelled;
                         true
@@ -684,45 +563,30 @@ impl ChatSession {
                         let _ = receiver.recv();
                         in_flight -= 1;
                     }
-                    let output = Output {
-                        text: output_parser
-                            .parse(build_generated_text(llm, tokenizer)?),
-                        stats: Self::build_stats(
-                            model_metadata,
-                            prefill_result.clone(),
-                            prefill_duration,
-                            prefill_suffix_length,
-                            results,
-                            durations,
-                            llm.decoding_config.generate_suffix_length(),
-                            run_start.elapsed().as_secs_f64(),
-                            tokens_len,
-                            llm.tokens[prefix_len_before + tokens_len..].len(),
-                        ),
-                        finish_reason: Some(finish_reason),
-                    };
-                    return Ok(output);
+                    return Self::build_output(
+                        model_metadata,
+                        tokenizer,
+                        output_parser,
+                        run_context,
+                        llm,
+                        &results,
+                        &durations,
+                        Some(finish_reason),
+                    );
                 }
             }
         }
 
-        let output = Output {
-            text: output_parser.parse(build_generated_text(llm, tokenizer)?),
-            stats: Self::build_stats(
-                model_metadata,
-                prefill_result.clone(),
-                prefill_duration,
-                prefill_suffix_length,
-                results,
-                durations,
-                llm.decoding_config.generate_suffix_length(),
-                run_start.elapsed().as_secs_f64(),
-                tokens_len,
-                llm.tokens[prefix_len_before + tokens_len..].len(),
-            ),
-            finish_reason: Some(finish_reason),
-        };
-        Ok(output)
+        Self::build_output(
+            model_metadata,
+            tokenizer,
+            output_parser,
+            run_context,
+            llm,
+            &results,
+            &durations,
+            Some(finish_reason),
+        )
     }
 
     fn reconfigure_llm(
@@ -811,6 +675,77 @@ impl ChatSession {
 }
 
 impl ChatSession {
+    fn check_finish_reason(
+        run_context: &RunContext,
+        llm: &LanguageModelGenerator,
+        new_tokens: &[u64],
+    ) -> Option<FinishReason> {
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
+        let total_new_tokens = llm.tokens.len().saturating_sub(start_idx);
+        let has_eos =
+            new_tokens.iter().any(|t| run_context.eos_tokens.contains(t));
+        let context_limit = llm.tokens.len() >= run_context.context_length;
+
+        if has_eos {
+            Some(FinishReason::Stop)
+        } else if total_new_tokens >= run_context.tokens_limit {
+            Some(FinishReason::Length)
+        } else if context_limit {
+            Some(FinishReason::ContextLimitReached)
+        } else {
+            None
+        }
+    }
+
+    fn decode_generated_tokens(
+        tokenizer: &Tokenizer,
+        llm: &LanguageModelGenerator,
+        run_context: &RunContext,
+    ) -> Result<String, Error> {
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
+        let generated_tokens: Vec<u32> =
+            llm.tokens[start_idx..].iter().map(|&v| v as u32).collect();
+        tokenizer
+            .decode(&generated_tokens, true)
+            .map_err(|_| Error::UnableToDecodeText)
+    }
+
+    fn build_output(
+        model_metadata: &ModelMetadata,
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        run_context: &RunContext,
+        llm: &LanguageModelGenerator,
+        generate_results: &[GenerateResult],
+        generate_durations: &[f64],
+        finish_reason: Option<FinishReason>,
+    ) -> Result<Output, Error> {
+        let text = Self::decode_generated_tokens(tokenizer, llm, run_context)?;
+        let parsed = output_parser.parse(text);
+        let start_idx =
+            run_context.prefix_len_before + run_context.input_tokens_len;
+        let output_tokens = llm.tokens.len().saturating_sub(start_idx);
+
+        Ok(Output {
+            text: parsed,
+            stats: Self::build_stats(
+                model_metadata,
+                run_context.prefill_result.clone(),
+                run_context.prefill_duration,
+                run_context.prefill_suffix_length,
+                generate_results.to_vec(),
+                generate_durations.to_vec(),
+                llm.decoding_config.generate_suffix_length(),
+                run_context.run_start.elapsed().as_secs_f64(),
+                run_context.input_tokens_len,
+                output_tokens,
+            ),
+            finish_reason,
+        })
+    }
+
     fn build_stats(
         model_metadata: &ModelMetadata,
         prefill_result: PrefillResult,
