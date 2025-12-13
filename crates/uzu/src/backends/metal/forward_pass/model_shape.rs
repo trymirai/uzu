@@ -124,6 +124,10 @@ impl ModelShape {
         self.num_groups
     }
 
+    pub fn model_dim(&self) -> usize {
+        self.model_dim
+    }
+
     pub fn layer_type(
         &self,
         layer_index: usize,
@@ -484,6 +488,9 @@ impl ModelShape {
                 } => {
                     let inner_dim = num_heads * head_dim;
                     Some(conv_dim + inner_dim + num_heads)
+                },
+                DecoderLayerType::ShortConv { .. } => {
+                    Some(self.model_dim * 3)
                 },
                 _ => None,
             })

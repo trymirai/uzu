@@ -682,6 +682,14 @@ impl ForwardPassState {
                 .as_ref()
                 .and_then(|aux| aux.ssm_z.clone())
                 .expect("SSM z not initialized"),
+            ArrayId::ShortConvState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_short_conv()
+                    .expect("Expected ShortConv layer")
+                    .conv_state
+                    .clone()
+            },
 
             // MoE arrays (LLM only)
             ArrayId::MoeTopkIds => self

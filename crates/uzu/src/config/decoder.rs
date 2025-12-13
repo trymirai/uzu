@@ -23,6 +23,10 @@ pub enum DecoderLayerType {
         num_groups: usize,
         head_dim: usize,
     },
+    #[serde(rename = "short_conv")]
+    ShortConv {
+        kernel_size: usize,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -222,6 +226,9 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
             num_heads: config.num_heads,
             num_groups: config.num_groups,
             head_dim: config.head_dim,
+        },
+        MixerConfig::ShortConv(config) => DecoderLayerType::ShortConv {
+            kernel_size: config.kernel_size,
         },
     }
 }

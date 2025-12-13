@@ -5,6 +5,7 @@ pub mod kv_cache_layer;
 mod model_shape;
 mod mpsgraph_block;
 mod scratch_buffers;
+pub mod short_conv_layer;
 pub mod ssm_layer;
 pub mod state;
 #[cfg(feature = "tracing")]
@@ -17,6 +18,7 @@ pub use kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState};
 pub use model_shape::ModelShape;
 pub use mpsgraph_block::MPSGraphBlock;
 pub use scratch_buffers::ScratchBuffers;
+pub use short_conv_layer::ShortConvLayer;
 pub use ssm_layer::SSMLayer;
 pub use state::{
     ArrayCell, ArrayId, ClassifierModeState, CommonAuxBuffers,
