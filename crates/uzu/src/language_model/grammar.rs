@@ -177,12 +177,19 @@ impl CompiledGrammar {
     pub fn accept_token(
         &mut self,
         token_id: u64,
-    ) {
+    ) -> Result<(), Error> {
         if self.engagement_state.is_engaged() {
+            if (token_id as usize) >= self.vocab_size {
+                return Err(Error::TokenOutOfGrammarRange(
+                    token_id,
+                    self.vocab_size,
+                ));
+            }
             self.matcher.accept_token(token_id as i32);
         }
 
         self.engagement_state.accept_token(token_id);
+        Ok(())
     }
 
     pub fn rollback(
@@ -199,5 +206,9 @@ impl CompiledGrammar {
     pub fn reset(&mut self) {
         self.matcher.reset();
         self.engagement_state.reset();
+    }
+
+    pub fn is_terminated(&self) -> bool {
+        self.matcher.is_terminated()
     }
 }
