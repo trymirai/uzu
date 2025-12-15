@@ -200,4 +200,8 @@ impl CompiledGrammar {
         self.matcher.reset();
         self.engagement_state.reset();
     }
+
+    pub fn is_terminated(&self) -> bool {
+        self.matcher.is_terminated()
+    }
 }
