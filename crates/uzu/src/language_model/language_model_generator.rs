@@ -278,7 +278,7 @@ impl LanguageModelGenerator {
 
         if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
             for &token in &accepted_tokens {
-                compiled_grammar.accept_token(token);
+                compiled_grammar.accept_token(token)?;
             }
         }
 
@@ -386,7 +386,7 @@ impl LanguageModelGenerator {
 
         if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
             for &token in &accepted_tokens {
-                compiled_grammar.accept_token(token);
+                compiled_grammar.accept_token(token)?;
             }
         }
 
