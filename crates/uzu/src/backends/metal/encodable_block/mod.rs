@@ -20,6 +20,7 @@ mod layer;
 mod linear;
 mod mamba_mixer;
 mod mlp;
+mod short_conv_mixer;
 mod moe_block;
 mod normalization;
 mod pooling;
@@ -42,6 +43,7 @@ pub use layer::LayerExecutables;
 pub use linear::QuantizedLinear;
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::MlpBlock;
+pub(crate) use short_conv_mixer::ShortConvMixer;
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{
     LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,

@@ -8,7 +8,7 @@ use objc2::rc::autoreleasepool;
 use super::{
     super::{
         Attention, EncodableBlock, EncodingParameters, MambaMixer, QKNorm,
-        RMSNorm, TensorAddSwap, TensorCopy, transformer_layer,
+        RMSNorm, ShortConvMixer, TensorAddSwap, TensorCopy, transformer_layer,
     },
     MixerExecutables,
 };
@@ -64,6 +64,10 @@ impl LayerExecutables {
                     MixerConfig::Mamba(mamba) => {
                         mamba.in_projection_config.activation_precision().into()
                     },
+                    MixerConfig::ShortConv(short_conv) => short_conv
+                        .in_projection_config
+                        .activation_precision()
+                        .into(),
                 };
             let kernel_data_type: KernelDataType =
                 intermediate_data_type.into();
@@ -189,6 +193,21 @@ impl LayerExecutables {
                             decoder_layer_loader,
                         ));
                     MixerExecutables::StateSpace {
+                        mixer,
+                    }
+                },
+                MixerConfig::ShortConv(short_conv_config) => {
+                    let mixer: Box<dyn EncodableBlock> =
+                        Box::new(ShortConvMixer::new(
+                            mtl_context,
+                            layer_type.clone(),
+                            short_conv_config.clone(),
+                            compilation_config.clone(),
+                            layer_index,
+                            model_dim,
+                            decoder_layer_loader,
+                        ));
+                    MixerExecutables::ShortConv {
                         mixer,
                     }
                 },
@@ -340,6 +359,18 @@ impl EncodableBlock for LayerExecutables {
                 }
             },
             MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                mixer.encode(state, command_buffer, parameters);
+                #[cfg(feature = "tracing")]
+                if let Some(ref layer_traces) = layer_traces {
+                    state.copy_array(
+                        ArrayId::Main,
+                        layer_traces.borrow().attention.clone(),
+                    );
+                }
+            },
+            MixerExecutables::ShortConv {
                 mixer,
             } => {
                 mixer.encode(state, command_buffer, parameters);

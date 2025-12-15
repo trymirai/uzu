@@ -82,12 +82,18 @@ impl EncodableBlock for Sampling {
             state.sampling_output().unwrap().borrow_mut();
 
         let sampling_method = state.sampling_method().unwrap();
+        let seeds_offset = seeds.buffer_offset();
 
         let root_command_buffer =
             command_buffer.root_command_buffer().to_owned();
+        let bitmask_buffer = state
+            .token_bitmask()
+            .map(|cell| unsafe { cell.borrow_mut().mtl_buffer().clone() });
         if let Err(e) = self.kernel.encode(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
+            seeds_offset,
+            bitmask_buffer.as_ref(),
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,

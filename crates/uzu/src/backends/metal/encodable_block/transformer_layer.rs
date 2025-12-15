@@ -151,11 +151,9 @@ pub fn mlp_block(
         | crate::config::LinearConfig::MLXQuantized(ref quant_config) =
             dense.linear_config
         {
-            // Quantized MLP path: up (2H) -> act+mul -> down
             let dtype: DataType =
                 dense.linear_config.activation_precision().into();
 
-            // Up fused: Main -> MlpFusedUp
             let up = QuantizedLinear::new(
                 context,
                 quant_config,
@@ -167,7 +165,6 @@ pub fn mlp_block(
             )
             .expect("Failed to build MLP up quantized block");
 
-            // Activation+mul: MlpFusedUp -> MlpHidden
             let gate_op = MlpGateActMulEncodable::new(
                 context,
                 dtype,
@@ -176,7 +173,6 @@ pub fn mlp_block(
             )
             .expect("Failed to build MLP gate activation kernel");
 
-            // Down: MlpHidden -> Main
             let down = QuantizedLinear::new(
                 context,
                 quant_config,
@@ -193,7 +189,6 @@ pub fn mlp_block(
         }
     }
 
-    // STEP 2: Enable MOE block creation (encode will be minimal)
     if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
         let moe_block =
             MoeBlock::new(context, moe, model_dim, hidden_dim, parameter_tree)
@@ -201,7 +196,6 @@ pub fn mlp_block(
         return Box::new(moe_block);
     }
 
-    // Non-quantized Dense path is handled via MPSGraph below
     autoreleasepool(|_| {
         let graph = Graph::new();
 
@@ -270,14 +264,14 @@ pub fn embed_block(
     let input_placeholder = placeholder(&graph, &input_shape, input_data_type);
     let input_shaped_type = shaped_type(&input_shape, input_data_type);
 
-    match config.embedding_config {
+    match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
             ..
         } => {
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = precision.into();
+            let weights_data_type: DataType = (*precision).into();
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
@@ -322,7 +316,7 @@ pub fn embed_block(
         } => {
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = precision.into();
+            let weights_data_type: DataType = (*precision).into();
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
@@ -367,7 +361,7 @@ pub fn embed_block(
         } => {
             let weights_shape =
                 [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = activation_precision.into();
+            let weights_data_type: DataType = (*activation_precision).into();
             let weights_shaped_type =
                 shaped_type(&weights_shape, weights_data_type);
             let weights_placeholder =
@@ -410,7 +404,6 @@ pub fn embed_block(
             embedding_quantization_mode: _,
             ..
         } => {
-            // Packed U8 weights with shape [vocab_size, model_dim / 2]
             let weights_shape =
                 [config.vocab_size as isize, (config.model_dim / 2) as isize];
             let weights_data_type = DataType::U8;
@@ -477,11 +470,9 @@ pub fn embed_block(
             embedding_quantization_mode,
             ..
         } => {
-            // Use Metal kernel for MLX quantized embeddings
             let data_type: DataType =
                 config.output_norm_config.scale_precision.into();
 
-            // Get the embeddings subtree
             let embeddings_tree = parameter_tree
                 .subtree("embedding")
                 .expect("Failed to get embedding subtree");
@@ -491,8 +482,8 @@ pub fn embed_block(
                 data_type,
                 config.vocab_size,
                 config.model_dim,
-                group_size,
-                embedding_quantization_mode,
+                *group_size,
+                *embedding_quantization_mode,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding lookup kernel");
@@ -703,11 +694,9 @@ pub fn readout_block(
             embedding_quantization_mode,
             ..
         } => {
-            // Use Metal kernel for MLX quantized readout
             let data_type: DataType =
                 config.output_norm_config.scale_precision.into();
 
-            // Get the embeddings subtree
             let embeddings_tree = parameter_tree
                 .subtree("embedding")
                 .expect("Failed to get embedding subtree");

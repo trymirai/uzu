@@ -6,6 +6,13 @@ use crate::{
     config::ConfigError,
 };
 
+struct AttentionDims {
+    num_heads: usize,
+    num_groups: usize,
+    head_dim: usize,
+    attention_scale: Option<f32>,
+}
+
 /// Inner model config matching the new lalamo export format.
 /// Contains embedding_config at the top level, with transformer_config nested.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -37,18 +44,7 @@ impl InnerModelConfig {
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
         };
 
-        let mixer = &first_layer.mixer_config;
-        let num_heads =
-            tf.num_heads.or(mixer.num_heads()).ok_or_else(|| {
-                ConfigError::MissingField("num_heads".to_string())
-            })?;
-        let num_groups =
-            tf.num_groups.or(mixer.num_groups()).unwrap_or(num_heads);
-        let head_dim = tf
-            .head_dim
-            .or(mixer.head_dim())
-            .ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
-        let attention_scale = tf.attention_scale.or(mixer.attention_scale());
+        let attention_dims = Self::derive_attention_dims(tf)?;
         let num_layers = tf.num_layers.unwrap_or(tf.layer_configs.len());
 
         let sliding_window_sizes: Box<[Option<usize>]> = tf
@@ -94,14 +90,66 @@ impl InnerModelConfig {
             vocab_size: self.vocab_size,
             model_dim: tf.model_dim,
             hidden_dim: tf.hidden_dim,
-            num_heads,
-            num_groups,
-            head_dim,
-            attention_scale,
+            num_heads: attention_dims.num_heads,
+            num_groups: attention_dims.num_groups,
+            head_dim: attention_dims.head_dim,
+            attention_scale: attention_dims.attention_scale,
             num_layers,
             sliding_window_sizes: Some(sliding_window_sizes),
             layer_types: Some(layer_types),
             context_length: tf.context_length,
+        })
+    }
+
+    fn derive_attention_dims(
+        tf: &TransformerConfig
+    ) -> Result<AttentionDims, ConfigError> {
+        if let (Some(num_heads), Some(head_dim)) = (tf.num_heads, tf.head_dim) {
+            return Ok(AttentionDims {
+                num_heads,
+                num_groups: tf.num_groups.unwrap_or(num_heads),
+                head_dim,
+                attention_scale: tf.attention_scale,
+            });
+        }
+
+        if let Some(attn) = tf
+            .layer_configs
+            .iter()
+            .find_map(|layer| layer.mixer_config.as_attention())
+        {
+            let num_heads = attn.num_heads.ok_or_else(|| {
+                ConfigError::MissingField("num_heads".to_string())
+            })?;
+            let head_dim = attn.head_dim.ok_or_else(|| {
+                ConfigError::MissingField("head_dim".to_string())
+            })?;
+            return Ok(AttentionDims {
+                num_heads,
+                num_groups: attn.num_groups.unwrap_or(num_heads),
+                head_dim,
+                attention_scale: attn.scale,
+            });
+        }
+
+        if let Some(mamba) = tf
+            .layer_configs
+            .iter()
+            .find_map(|layer| layer.mixer_config.as_mamba())
+        {
+            return Ok(AttentionDims {
+                num_heads: mamba.num_heads,
+                num_groups: mamba.num_groups,
+                head_dim: mamba.head_dim,
+                attention_scale: None,
+            });
+        }
+
+        Ok(AttentionDims {
+            num_heads: 1,
+            num_groups: 1,
+            head_dim: tf.model_dim,
+            attention_scale: None,
         })
     }
 
@@ -115,6 +163,9 @@ impl InnerModelConfig {
                 num_heads: config.num_heads,
                 num_groups: config.num_groups,
                 head_dim: config.head_dim,
+            },
+            MixerConfig::ShortConv(config) => DecoderLayerType::ShortConv {
+                kernel_size: config.kernel_size,
             },
         }
     }

@@ -123,7 +123,14 @@ impl TrieNode {
                 let mask = if let Some(compiled_grammar) =
                     compiled_grammar.as_deref_mut()
                 {
-                    compiled_grammar.accept_token(next_speculated_token);
+                    if compiled_grammar
+                        .accept_token(next_speculated_token)
+                        .is_err()
+                    {
+                        cur_node_speculator_weights
+                            .remove(&next_speculated_token);
+                        continue;
+                    }
                     let next_bitmask = compiled_grammar.next_bitmask().unwrap();
                     compiled_grammar.rollback(1);
 
@@ -154,7 +161,9 @@ impl TrieNode {
                 speculated_suffix.push(next_node_token);
                 if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
                 {
-                    compiled_grammar.accept_token(next_node_token);
+                    if compiled_grammar.accept_token(next_node_token).is_err() {
+                        break;
+                    }
                     grammar_accept_count += 1;
                 }
                 cur_node = cur_node.get_mut(next_node_token).unwrap();

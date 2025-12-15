@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     attention::AttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
-    normalization::NormalizationConfig,
+    normalization::NormalizationConfig, short_conv::ShortConvConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -12,6 +12,8 @@ pub enum MixerConfig {
     Attention(AttentionConfig),
     #[serde(rename = "Mamba2Config")]
     Mamba(Mamba2Config),
+    #[serde(rename = "ShortConvConfig")]
+    ShortConv(ShortConvConfig),
 }
 
 impl MixerConfig {
@@ -29,10 +31,18 @@ impl MixerConfig {
         }
     }
 
+    pub fn as_short_conv(&self) -> Option<&ShortConvConfig> {
+        match self {
+            MixerConfig::ShortConv(config) => Some(config),
+            _ => None,
+        }
+    }
+
     pub fn num_heads(&self) -> Option<usize> {
         match self {
             MixerConfig::Attention(config) => config.num_heads,
             MixerConfig::Mamba(config) => Some(config.num_heads),
+            MixerConfig::ShortConv(_) => None,
         }
     }
 
@@ -40,6 +50,7 @@ impl MixerConfig {
         match self {
             MixerConfig::Attention(config) => config.num_groups,
             MixerConfig::Mamba(config) => Some(config.num_groups),
+            MixerConfig::ShortConv(_) => None,
         }
     }
 
@@ -47,6 +58,7 @@ impl MixerConfig {
         match self {
             MixerConfig::Attention(config) => config.head_dim,
             MixerConfig::Mamba(config) => Some(config.head_dim),
+            MixerConfig::ShortConv(_) => None,
         }
     }
 
@@ -54,6 +66,7 @@ impl MixerConfig {
         match self {
             MixerConfig::Attention(config) => config.sliding_window_size,
             MixerConfig::Mamba(_) => None,
+            MixerConfig::ShortConv(_) => None,
         }
     }
 
@@ -61,6 +74,7 @@ impl MixerConfig {
         match self {
             MixerConfig::Attention(config) => config.scale,
             MixerConfig::Mamba(_) => None,
+            MixerConfig::ShortConv(_) => None,
         }
     }
 }
