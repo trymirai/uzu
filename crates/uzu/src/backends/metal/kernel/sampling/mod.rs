@@ -52,15 +52,15 @@ enum ArgmaxImplementation {
 
 pub struct SamplingKernel {
     bitmask_pipeline: MTLComputePipelineState,
-    partial_bitmask_buffer: MTLBuffer,
+    bitmask_applied_logits: MTLBuffer,
     temperature_pipeline: MTLComputePipelineState,
-    partial_temperature_buffer: MTLBuffer,
+    temperature_applied_logits: MTLBuffer,
     topk_pipeline: MTLComputePipelineState,
-    partial_topk_buffer: MTLBuffer,
+    topk_applied_logits: MTLBuffer,
     topp_pipeline: MTLComputePipelineState,
-    partial_topp_buffer: MTLBuffer,
+    topp_applied_logits: MTLBuffer,
     gumbel_pipeline: MTLComputePipelineState,
-    partial_gumbel_buffer: MTLBuffer,
+    gumbel_applied_logits: MTLBuffer,
     argmax_implementation: ArgmaxImplementation,
     max_batch_size: usize,
     max_vocab_size: usize,
@@ -114,7 +114,7 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_bitmask_buffer = context.device.new_buffer(
+        let bitmask_applied_logits = context.device.new_buffer(
             (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
                 as u64,
             MTLResourceOptions::StorageModeShared,
@@ -128,7 +128,7 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_temperature_buffer = context.device.new_buffer(
+        let temperature_applied_logits = context.device.new_buffer(
             (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
                 as u64,
             MTLResourceOptions::StorageModeShared,
@@ -142,7 +142,7 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_topk_buffer = context.device.new_buffer(
+        let topk_applied_logits = context.device.new_buffer(
             (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
                 as u64,
             MTLResourceOptions::StorageModeShared,
@@ -156,7 +156,7 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_topp_buffer = context.device.new_buffer(
+        let topp_applied_logits = context.device.new_buffer(
             (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
                 as u64,
             MTLResourceOptions::StorageModeShared,
@@ -170,7 +170,7 @@ impl SamplingKernel {
             .map(|(pipeline, _)| pipeline)
             .map_err(SamplingError::MetalError)?;
 
-        let partial_gumbel_buffer = context.device.new_buffer(
+        let gumbel_applied_logits = context.device.new_buffer(
             (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
                 as u64,
             MTLResourceOptions::StorageModeShared,
@@ -229,15 +229,15 @@ impl SamplingKernel {
 
         Ok(Self {
             bitmask_pipeline,
-            partial_bitmask_buffer,
+            bitmask_applied_logits,
             temperature_pipeline,
-            partial_temperature_buffer,
+            temperature_applied_logits,
             topk_pipeline,
-            partial_topk_buffer,
+            topk_applied_logits,
             topp_pipeline,
-            partial_topp_buffer,
+            topp_applied_logits,
             gumbel_pipeline,
-            partial_gumbel_buffer,
+            gumbel_applied_logits,
             argmax_implementation,
             max_batch_size,
             max_vocab_size,
@@ -303,12 +303,12 @@ impl SamplingKernel {
             self.encode_bitmask(
                 last_logits_buffer,
                 bitmask_buffer,
-                &self.partial_bitmask_buffer,
+                &self.bitmask_applied_logits,
                 batch_size as u32,
                 vocab_size as u32,
                 compute_encoder,
             )?;
-            last_logits_buffer = &self.partial_bitmask_buffer;
+            last_logits_buffer = &self.bitmask_applied_logits;
         }
 
         if let SamplingMethod::Stochastic {
@@ -320,49 +320,49 @@ impl SamplingKernel {
             if let Some(temperature) = temperature {
                 self.encode_temperature(
                     last_logits_buffer,
-                    &self.partial_temperature_buffer,
+                    &self.temperature_applied_logits,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
                     compute_encoder,
                 )?;
-                last_logits_buffer = &self.partial_temperature_buffer;
+                last_logits_buffer = &self.temperature_applied_logits;
             }
 
             if let Some(top_k) = top_k {
                 self.encode_topk(
                     last_logits_buffer,
-                    &self.partial_topk_buffer,
+                    &self.topk_applied_logits,
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
                     compute_encoder,
                 )?;
-                last_logits_buffer = &self.partial_topk_buffer;
+                last_logits_buffer = &self.topk_applied_logits;
             }
 
             if let Some(top_p) = top_p {
                 self.encode_topp(
                     last_logits_buffer,
-                    &self.partial_topp_buffer,
+                    &self.topp_applied_logits,
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
                     compute_encoder,
                 )?;
-                last_logits_buffer = &self.partial_topp_buffer;
+                last_logits_buffer = &self.topp_applied_logits;
             }
 
             self.encode_gumbel(
                 last_logits_buffer,
                 seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
                 seeds_offset,
-                &self.partial_gumbel_buffer,
+                &self.gumbel_applied_logits,
                 batch_size as u32,
                 vocab_size as u32,
                 compute_encoder,
             )?;
-            last_logits_buffer = &self.partial_gumbel_buffer;
+            last_logits_buffer = &self.gumbel_applied_logits;
         }
 
         match &self.argmax_implementation {
