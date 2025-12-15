@@ -32,7 +32,7 @@ use crate::{
             Context, InputProcessor, InputProcessorDefault, OutputParser,
             is_directory_fits_ram,
         },
-        parameter::{ConfigResolvableValue, ContextMode, SamplingMethod},
+        parameter::{ConfigResolvableValue, ContextMode},
         types::{
             Error, FinishReason, Input, Output, RunStats, Stats, StepStats,
             TotalStats,
@@ -267,20 +267,6 @@ impl ChatSession {
     where
         F: Fn(Output) -> bool,
     {
-        let llm =
-            self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
-
-        let mut compiled_grammar: Option<CompiledGrammar> =
-            if let Some(ref grammar_config) = config.grammar_config {
-                Some(CompiledGrammar::from_config(
-                    grammar_config,
-                    None,
-                    &self.tokenizer_info,
-                )?)
-            } else {
-                None
-            };
-
         let run_start = Instant::now();
         let text =
             self.input_processor.process(&input, config.enable_thinking)?;
