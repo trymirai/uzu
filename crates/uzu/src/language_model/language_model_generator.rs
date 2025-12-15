@@ -156,7 +156,16 @@ impl LanguageModelGenerator {
                 step_token_positions.collect::<Box<[usize]>>();
             let step_token_bitmask = step_token_bitmask
                 .map(|mask| match mask {
-                    Some(mask) => Either::Left(mask.iter().copied()),
+                    Some(mask) => Either::Left(
+                        mask.iter()
+                            .copied()
+                            .take(single_token_bitmask_size)
+                            .chain(repeat_n(
+                                0u32,
+                                single_token_bitmask_size
+                                    .saturating_sub(mask.len()),
+                            )),
+                    ),
                     None => Either::Right(repeat_n(
                         u32::MAX,
                         single_token_bitmask_size,
@@ -322,7 +331,15 @@ impl LanguageModelGenerator {
             .token_masks()
             .chain(repeat_n(None, suffix_length - active_suffix_length))
             .map(|mask| match mask {
-                Some(mask) => Either::Left(mask.iter().copied()),
+                Some(mask) => Either::Left(
+                    mask.iter().copied().take(single_token_bitmask_size).chain(
+                        repeat_n(
+                            0u32,
+                            single_token_bitmask_size
+                                .saturating_sub(mask.len()),
+                        ),
+                    ),
+                ),
                 None => {
                     Either::Right(repeat_n(u32::MAX, single_token_bitmask_size))
                 },
