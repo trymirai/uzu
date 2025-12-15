@@ -162,6 +162,9 @@ impl ForwardPassState {
                     DataType::U32,
                 )
             };
+            if let Ok(dst) = bitmask_array.as_slice_mut::<u32>() {
+                dst.fill(0);
+            }
             context.copy_from_view(&mut bitmask_array, bitmask.into());
             RefCell::new(bitmask_array)
         });
