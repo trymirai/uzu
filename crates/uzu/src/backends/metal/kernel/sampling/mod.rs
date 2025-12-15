@@ -51,6 +51,8 @@ enum ArgmaxImplementation {
 }
 
 pub struct SamplingKernel {
+    bitmask_pipeline: MTLComputePipelineState,
+    partial_bitmask_buffer: MTLBuffer,
     temperature_pipeline: MTLComputePipelineState,
     partial_temperature_buffer: MTLBuffer,
     topk_pipeline: MTLComputePipelineState,
@@ -103,6 +105,20 @@ impl SamplingKernel {
     ) -> Result<Self, SamplingError> {
         let data_suffix = data_type.function_name_suffix();
         let max_elements = max_batch_size * max_vocab_size;
+
+        let bitmask_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_bitmask_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let partial_bitmask_buffer = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
 
         let temperature_pipeline = context
             .compute_pipeline_state_with_reflection(
@@ -212,6 +228,8 @@ impl SamplingKernel {
         };
 
         Ok(Self {
+            bitmask_pipeline,
+            partial_bitmask_buffer,
             temperature_pipeline,
             partial_temperature_buffer,
             topk_pipeline,
@@ -230,6 +248,8 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: Option<&MTLBuffer>,
+        seeds_offset: usize,
+        bitmask_buffer: Option<&MTLBuffer>,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -240,6 +260,8 @@ impl SamplingKernel {
         self.encode_with_encoder(
             logits_buffer,
             seeds_buffer,
+            seeds_offset,
+            bitmask_buffer,
             sampled_tokens_buffer,
             sampling_method,
             batch_size,
@@ -254,6 +276,8 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: Option<&MTLBuffer>,
+        seeds_offset: usize,
+        bitmask_buffer: Option<&MTLBuffer>,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -274,6 +298,18 @@ impl SamplingKernel {
         }
 
         let mut last_logits_buffer = logits_buffer;
+
+        if let Some(bitmask_buffer) = bitmask_buffer {
+            self.encode_bitmask(
+                last_logits_buffer,
+                bitmask_buffer,
+                &self.partial_bitmask_buffer,
+                batch_size as u32,
+                vocab_size as u32,
+                compute_encoder,
+            )?;
+            last_logits_buffer = &self.partial_bitmask_buffer;
+        }
 
         if let SamplingMethod::Stochastic {
             temperature,
@@ -320,6 +356,7 @@ impl SamplingKernel {
             self.encode_gumbel(
                 last_logits_buffer,
                 seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                seeds_offset,
                 &self.partial_gumbel_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -354,6 +391,38 @@ impl SamplingKernel {
                 compute_encoder,
             ),
         }
+    }
+
+    pub fn encode_bitmask(
+        &self,
+        logits_buffer: &MTLBuffer,
+        bitmask_buffer: &MTLBuffer,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(&self.bitmask_pipeline);
+
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(bitmask_buffer), 0);
+        compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            3,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
+        );
+
+        let elements_in_group = BLOCK_SIZE * ELEMENTWISE_GRAIN_SIZE;
+        let groups = (vocab_size + (elements_in_group as u32 - 1))
+            / elements_in_group as u32;
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(groups as u64, batch_size as u64, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
     }
 
     pub fn encode_temperature(
@@ -460,6 +529,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         seeds_buffer: &MTLBuffer,
+        seeds_offset: usize,
         processed_logits_buffer: &MTLBuffer,
         batch_size: u32,
         vocab_size: u32,
@@ -468,7 +538,7 @@ impl SamplingKernel {
         compute_encoder.set_compute_pipeline_state(&self.gumbel_pipeline);
 
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(seeds_buffer), 0);
+        compute_encoder.set_buffer(1, Some(seeds_buffer), seeds_offset as u64);
         compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
         compute_encoder.set_bytes(
             3,
