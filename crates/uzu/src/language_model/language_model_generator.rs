@@ -574,18 +574,43 @@ impl LanguageModelGenerator {
         let encoder = root_command_buffer.new_compute_command_encoder();
 
         if let Some(mask_update) = &self.context.mask_update {
+            let window_state_for =
+                |target_w: usize| -> Option<(usize, usize, usize)> {
+                    // (ring_offset, ring_length, window_length)
+                    let cache = self.context.cache_layers.borrow();
+                    cache.data.iter().find_map(|layer| match layer {
+                    crate::backends::metal::forward_pass::CacheLayer::Transformer(kv) => {
+                        match kv.state {
+                            crate::backends::metal::forward_pass::KVCacheLayerState::Windowed {
+                                ring_offset,
+                                ring_length,
+                                window_length,
+                            } if window_length == target_w => Some((ring_offset, ring_length, window_length)),
+                            _ => None,
+                        }
+                    },
+                    _ => None,
+                })
+                };
             for (window_size, mask_buffer) in
                 &self.context.scratch_buffers.attention_window_size_to_bias
             {
                 let (unmask_col, mask_col) = if let Some(w) = window_size {
-                    // Sliding window: position P maps to column P % window
-                    let unmask = (token_position % w) as i32;
-                    let mask = if token_position + 1 >= *w {
-                        ((token_position + 1) % w) as i32
+                    if let Some((ring_offset, ring_length, window_length)) =
+                        window_state_for(*w)
+                    {
+                        let newest_slot =
+                            (ring_offset + window_length - 1) % window_length;
+                        let unmask_col = (ring_length > 0)
+                            .then_some(newest_slot as i32)
+                            .unwrap_or(-1);
+                        let mask_col = (ring_length == window_length)
+                            .then_some(ring_offset as i32)
+                            .unwrap_or(-1);
+                        (unmask_col, mask_col)
                     } else {
-                        -1
-                    };
-                    (unmask, mask)
+                        ((token_position % w) as i32, -1)
+                    }
                 } else {
                     (token_position as i32, -1)
                 };

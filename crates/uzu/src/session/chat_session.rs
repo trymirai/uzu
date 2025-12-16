@@ -299,7 +299,7 @@ impl ChatSession {
         }
 
         let prefix_offset = language_model_generator.tokens.len();
-        let prefix_len_before = prefix_offset.saturating_sub(1);
+        let prefix_len_before = prefix_offset;
 
         let eos_tokens: Vec<u64> = language_model_config
             .generation_config
