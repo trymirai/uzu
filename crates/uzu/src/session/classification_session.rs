@@ -64,7 +64,7 @@ impl ClassificationSession {
         input: Input,
     ) -> Result<ClassificationOutput, Error> {
         let preprocessing_start = std::time::Instant::now();
-        let text = self.input_processor.process(&input, false)?;
+        let text = self.input_processor.process(&input, false, false)?;
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)

@@ -11,6 +11,24 @@ use crate::{
 
 pub type ArrayCell = RefCell<MetalArray>;
 
+#[derive(Clone)]
+pub enum KVSlice {
+    Full {
+        base_prefix_len: usize,
+        base_positions_len: usize,
+        positions: Vec<usize>,
+    },
+    Window {
+        window_length: usize,
+        base_ring_offset: usize,
+        base_ring_length: usize,
+        slots: Vec<usize>,
+        positions: Vec<usize>, // per slot
+        keys: MetalArray,      // [num_groups, slots.len(), head_dim]
+        values: MetalArray,    // [num_groups, slots.len(), head_dim]
+    },
+}
+
 #[derive(Clone, Debug)]
 pub enum KVCacheLayerState {
     Full {
@@ -290,6 +308,188 @@ impl KVCacheLayer {
                     }
                 }
             },
+        }
+    }
+
+    pub fn slice(
+        &self,
+        context: &MTLContext,
+        range: std::ops::Range<usize>,
+    ) -> Option<KVSlice> {
+        match self.state {
+            KVCacheLayerState::Full {
+                prefix_len,
+            } => Some(KVSlice::Full {
+                base_prefix_len: prefix_len,
+                base_positions_len: self.prefix_token_positions.len(),
+                positions: self.prefix_token_positions.clone(),
+            }),
+            KVCacheLayerState::Windowed {
+                ring_offset,
+                ring_length,
+                window_length,
+            } => {
+                let len = range.end.saturating_sub(range.start);
+                if len == 0 || len > window_length {
+                    return None;
+                }
+                let keys = self.keys.borrow();
+                let values = self.values.borrow();
+                let shape = keys.shape();
+                let num_groups = shape[0];
+                let head_dim = shape[2];
+                let dtype = keys.data_type();
+
+                let slice_shape = [num_groups, len, head_dim];
+                let mut slice_keys = context.array(&slice_shape, dtype);
+                let mut slice_values = context.array(&slice_shape, dtype);
+
+                let slots: Vec<usize> = (range.start..range.end)
+                    .enumerate()
+                    .map(|(offset, _)| {
+                        let x = ring_length + offset;
+                        if x < window_length {
+                            (ring_offset + x) % window_length
+                        } else {
+                            (ring_offset + (x - window_length)) % window_length
+                        }
+                    })
+                    .collect();
+
+                let positions: Vec<usize> = slots
+                    .iter()
+                    .map(|&s| self.prefix_token_positions[s])
+                    .collect();
+
+                for (i, &slot) in slots.iter().enumerate() {
+                    slice_keys.copy_slice(&keys, 1, slot..slot + 1, i);
+                    slice_values.copy_slice(&values, 1, slot..slot + 1, i);
+                }
+
+                Some(KVSlice::Window {
+                    window_length,
+                    base_ring_offset: ring_offset,
+                    base_ring_length: ring_length,
+                    slots,
+                    positions,
+                    keys: slice_keys,
+                    values: slice_values,
+                })
+            },
+        }
+    }
+
+    pub fn apply_slice(
+        &mut self,
+        slice: &KVSlice,
+        range: Option<std::ops::Range<usize>>,
+    ) {
+        match (slice, &mut self.state) {
+            (
+                KVSlice::Full {
+                    base_prefix_len,
+                    base_positions_len,
+                    positions,
+                },
+                KVCacheLayerState::Full {
+                    prefix_len,
+                },
+            ) => match range {
+                None => {
+                    *prefix_len = *base_prefix_len;
+                    self.prefix_token_positions.clone_from(positions);
+                    self.prefix_token_positions.truncate(*base_positions_len);
+                },
+                Some(r) => {
+                    let accepted = r.start;
+                    *prefix_len = base_prefix_len.saturating_add(accepted);
+                    let keep_positions =
+                        base_positions_len.saturating_add(accepted);
+                    self.prefix_token_positions.truncate(keep_positions);
+                },
+            },
+            (
+                KVSlice::Window {
+                    window_length,
+                    base_ring_offset,
+                    base_ring_length,
+                    slots,
+                    positions,
+                    keys,
+                    values,
+                },
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length: w_len,
+                },
+            ) => {
+                *w_len = *window_length;
+                match range {
+                    None => {
+                        *ring_offset = *base_ring_offset;
+                        *ring_length = *base_ring_length;
+
+                        for (i, &slot) in slots.iter().enumerate() {
+                            self.prefix_token_positions[slot] = positions[i];
+                        }
+
+                        let mut dst_keys = self.keys.borrow_mut();
+                        let mut dst_values = self.values.borrow_mut();
+                        for (i, &slot) in slots.iter().enumerate() {
+                            dst_keys.copy_slice(keys, 1, i..i + 1, slot);
+                            dst_values.copy_slice(values, 1, i..i + 1, slot);
+                        }
+                    },
+                    Some(r) => {
+                        let len = r.end.saturating_sub(r.start);
+                        if len == 0 {
+                            return;
+                        }
+
+                        let accepted = r.start;
+                        let base_len = *base_ring_length;
+                        let w = *window_length;
+
+                        let (new_offset, new_len) = if base_len < w {
+                            let after = base_len.saturating_add(accepted);
+                            if after <= w {
+                                (*base_ring_offset, after)
+                            } else {
+                                let overflow = after - w;
+                                ((base_ring_offset + overflow) % w, w)
+                            }
+                        } else {
+                            ((base_ring_offset + accepted) % w, w)
+                        };
+
+                        *ring_offset = new_offset;
+                        *ring_length = new_len;
+
+                        let mut dst_keys = self.keys.borrow_mut();
+                        let mut dst_values = self.values.borrow_mut();
+
+                        for (i, &slot) in slots[r.clone()].iter().enumerate() {
+                            let src_i = r.start + i;
+                            self.prefix_token_positions[slot] =
+                                positions[src_i];
+                            dst_keys.copy_slice(
+                                keys,
+                                1,
+                                src_i..src_i + 1,
+                                slot,
+                            );
+                            dst_values.copy_slice(
+                                values,
+                                1,
+                                src_i..src_i + 1,
+                                slot,
+                            );
+                        }
+                    },
+                }
+            },
+            _ => {},
         }
     }
 }

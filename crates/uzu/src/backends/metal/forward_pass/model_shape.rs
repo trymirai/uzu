@@ -489,9 +489,9 @@ impl ModelShape {
                     let inner_dim = num_heads * head_dim;
                     Some(conv_dim + inner_dim + num_heads)
                 },
-                DecoderLayerType::ShortConv { .. } => {
-                    Some(self.model_dim * 3)
-                },
+                DecoderLayerType::ShortConv {
+                    ..
+                } => Some(self.model_dim * 3),
                 _ => None,
             })
             .max()

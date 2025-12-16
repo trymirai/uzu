@@ -10,7 +10,8 @@ use crate::{
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
-            ShortConvDecodeArguments, ShortConvKernel, ShortConvPrefillArguments,
+            ShortConvDecodeArguments, ShortConvKernel,
+            ShortConvPrefillArguments,
         },
     },
     config::{DecoderLayerType, ShortConvConfig},
@@ -37,10 +38,7 @@ fn resolve_subtree<'tree>(
             return subtree;
         }
     }
-    panic!(
-        "Could not find any of {:?} in parameter tree",
-        candidates
-    );
+    panic!("Could not find any of {:?} in parameter tree", candidates);
 }
 
 impl ShortConvMixer {
@@ -64,8 +62,10 @@ impl ShortConvMixer {
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
 
-        let data_type: DataType =
-            short_conv_config.in_projection_config.activation_precision().into();
+        let data_type: DataType = short_conv_config
+            .in_projection_config
+            .activation_precision()
+            .into();
         let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
@@ -99,8 +99,9 @@ impl ShortConvMixer {
             None
         };
 
-        let short_conv_kernel = ShortConvKernel::new(mtl_context, kernel_data_type)
-            .expect("Failed to create short conv kernel");
+        let short_conv_kernel =
+            ShortConvKernel::new(mtl_context, kernel_data_type)
+                .expect("Failed to create short conv kernel");
 
         Self {
             layer_index,
@@ -173,7 +174,8 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        let mtl_command_buffer = command_buffer.root_command_buffer().to_owned();
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
         let compute = mtl_command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
@@ -227,7 +229,8 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        let mtl_command_buffer = command_buffer.root_command_buffer().to_owned();
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
         let compute = mtl_command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
@@ -263,4 +266,3 @@ impl EncodableBlock for ShortConvMixer {
         self.encode_pipeline(state, command_buffer, parameters);
     }
 }
-
