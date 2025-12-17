@@ -53,7 +53,9 @@ impl MlpGateActMulEncodable {
 }
 
 impl MlpGateActMulKernel {
-    fn kernel_name_for_type(data_type: DataType) -> Result<&'static str, MTLError> {
+    fn kernel_name_for_type(
+        data_type: DataType
+    ) -> Result<&'static str, MTLError> {
         match data_type {
             DataType::F16 => Ok("mlp_activation_mul_f16"),
             DataType::F32 => Ok("mlp_activation_mul_f32"),
@@ -65,15 +67,22 @@ impl MlpGateActMulKernel {
         }
     }
 
-    pub fn new(context: &MTLContext, data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(
+        context: &MTLContext,
+        data_type: DataType,
+    ) -> Result<Self, MTLError> {
         let fn_name = Self::kernel_name_for_type(data_type)?;
         let pipeline = context.compute_pipeline_state(fn_name, None)?;
-        Ok(Self { pipeline })
+        Ok(Self {
+            pipeline,
+        })
     }
 
     fn act_code(act: &Activation) -> u16 {
         match act {
-            Activation::SiLU { .. } => 0,
+            Activation::SiLU {
+                ..
+            } => 0,
             Activation::Gelu => 1,
             Activation::Identity => {
                 panic!("Identity activation is not supported for MLP kernels")

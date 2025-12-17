@@ -5,7 +5,9 @@ use metal::{
     ComputePipelineState as MTLComputePipelineState,
 };
 
-use super::{KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch};
+use super::{
+    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
+};
 use crate::backends::metal::error::MTLError;
 
 pub struct TensorCopyKernel {

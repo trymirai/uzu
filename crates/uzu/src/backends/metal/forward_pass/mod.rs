@@ -14,7 +14,9 @@ pub mod traces;
 pub use cache_layers::{CacheLayer, CacheLayers};
 pub use encoder_resolver::EncoderResolver;
 pub use io_arrays::IOArrays;
-pub use kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState};
+pub use kv_cache_layer::{
+    AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
+};
 pub use model_shape::ModelShape;
 pub use mpsgraph_block::MPSGraphBlock;
 pub use scratch_buffers::ScratchBuffers;

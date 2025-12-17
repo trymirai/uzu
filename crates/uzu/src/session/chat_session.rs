@@ -268,8 +268,11 @@ impl ChatSession {
         F: Fn(Output) -> bool,
     {
         let run_start = Instant::now();
-        let text =
-            self.input_processor.process(&input, config.enable_thinking)?;
+        let text = self.input_processor.process(
+            &input,
+            config.enable_thinking,
+            config.tokens_limit > 0,
+        )?;
         let tokens: Vec<u64> = self
             .tokenizer
             .encode(text.as_str(), false)
@@ -296,7 +299,7 @@ impl ChatSession {
         }
 
         let prefix_offset = language_model_generator.tokens.len();
-        let prefix_len_before = prefix_offset.saturating_sub(1);
+        let prefix_len_before = prefix_offset;
 
         let eos_tokens: Vec<u64> = language_model_config
             .generation_config
@@ -393,7 +396,6 @@ impl ChatSession {
         let can_use_async =
             language_model_generator.decoding_config.generate_suffix_length()
                 == 1
-                && !language_model_generator.has_attention_layers()
                 && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
@@ -539,6 +541,15 @@ impl ChatSession {
         while in_flight > 0 || next_to_submit < tokens_to_generate {
             let batch_end =
                 std::cmp::min(next_to_submit + batch_size, tokens_to_generate);
+            let batch_submitted = batch_end - next_to_submit;
+            let accepted_before_batch = results.len();
+
+            let cache_slice = llm
+                .context
+                .cache_layers
+                .borrow()
+                .slice(&llm.context.mtl_context, 0..batch_submitted);
+
             for idx in next_to_submit..batch_end {
                 let batch_sender = sender.clone();
                 let last_callback_nanos = last_nanos.clone();
@@ -556,7 +567,6 @@ impl ChatSession {
                 })?;
                 in_flight += 1;
             }
-            let batch_submitted = batch_end - next_to_submit;
             next_to_submit = batch_end;
 
             for _ in 0..batch_submitted {
@@ -603,6 +613,16 @@ impl ChatSession {
                     while in_flight > 0 {
                         let _ = receiver.recv();
                         in_flight -= 1;
+                    }
+                    if let Some(slice) = cache_slice {
+                        let accepted_in_batch =
+                            results.len().saturating_sub(accepted_before_batch);
+                        if accepted_in_batch < batch_submitted {
+                            llm.context.cache_layers.borrow_mut().apply_slice(
+                                &slice,
+                                Some(accepted_in_batch..batch_submitted),
+                            );
+                        }
                     }
                     return Self::build_output(
                         model_metadata,
@@ -749,14 +769,12 @@ impl ChatSession {
 
     fn decode_generated_tokens(
         tokenizer: &Tokenizer,
-        language_model_generator: &LanguageModelGenerator,
-        run_context: &RunContext,
+        prefill_tokens: &[u64],
+        generate_results: &[GenerateResult],
     ) -> Result<String, Error> {
-        let start_idx =
-            run_context.prefix_len_before + run_context.input_tokens_len;
-        let generated_tokens: Vec<u32> = language_model_generator.tokens
-            [start_idx..]
+        let generated_tokens: Vec<u32> = prefill_tokens
             .iter()
+            .chain(generate_results.iter().flat_map(|r| r.tokens.iter()))
             .map(|&v| v as u32)
             .collect();
         tokenizer
@@ -776,8 +794,8 @@ impl ChatSession {
     ) -> Result<Output, Error> {
         let text = Self::decode_generated_tokens(
             tokenizer,
-            language_model_generator,
-            run_context,
+            &run_context.prefill_result.tokens,
+            generate_results,
         )?;
         let parsed = output_parser.parse(text);
         let start_idx =

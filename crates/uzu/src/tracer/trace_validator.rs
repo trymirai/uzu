@@ -289,6 +289,7 @@ impl TraceValidator {
             false,
             None,
             false,
+            false,
             None,
             None,
         );

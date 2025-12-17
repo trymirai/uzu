@@ -38,7 +38,14 @@ struct MoeTestData {
 }
 
 impl MoeTestData {
-    fn generate(rng: &mut StdRng, t: usize, k: usize, d_model: usize, d_ff: usize, e: usize) -> Self {
+    fn generate(
+        rng: &mut StdRng,
+        t: usize,
+        k: usize,
+        d_model: usize,
+        d_ff: usize,
+        e: usize,
+    ) -> Self {
         let x: Vec<bf16> = (0..t * d_model)
             .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
             .collect();
@@ -49,7 +56,8 @@ impl MoeTestData {
 
         let topk_probs: Vec<bf16> = (0..t)
             .flat_map(|_| {
-                let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+                let raw: Vec<f32> =
+                    (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
                 let sum: f32 = raw.iter().sum();
                 raw.iter().map(|p| bf16::from_f32(p / sum)).collect::<Vec<_>>()
             })
@@ -68,7 +76,15 @@ impl MoeTestData {
             .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
             .collect();
 
-        Self { x, topk_ids, topk_probs, w13, w2, up_biases, down_biases }
+        Self {
+            x,
+            topk_ids,
+            topk_probs,
+            w13,
+            w2,
+            up_biases,
+            down_biases,
+        }
     }
 }
 
@@ -124,7 +140,12 @@ fn scatter_by_expert(
         row_expert_map[bucket_row] = topk_ids[orig_row] as u32;
     }
 
-    ScatterResult { x_perm, offsets, row_expert_map, perm_idx }
+    ScatterResult {
+        x_perm,
+        offsets,
+        row_expert_map,
+        perm_idx,
+    }
 }
 
 /// Gather + finalize: reorder from bucketed order and apply weighted sum
@@ -240,11 +261,13 @@ fn cpu_moe_reference(
                     }
                 } else {
                     // SwiGLU or GEGLU - need gate projection too
-                    let mut acc_gate = f32::from(up_biases[bias_base + d_ff + h]);
+                    let mut acc_gate =
+                        f32::from(up_biases[bias_base + d_ff + h]);
                     for d in 0..d_model {
                         let x_val = f32::from(x[x_offset + d]);
-                        let w_val =
-                            f32::from(w13_all[w13_base + (d_ff + h) * d_model + d]);
+                        let w_val = f32::from(
+                            w13_all[w13_base + (d_ff + h) * d_model + d],
+                        );
                         acc_gate += x_val * w_val;
                     }
 
@@ -321,9 +344,8 @@ fn test_two_pass_decode_correctness() {
         .collect();
 
     // Generate routing: topk_ids [T*K], topk_probs [T*K]
-    let topk_ids: Vec<i32> = (0..t * k)
-        .map(|i| ((i / k) + (i % k) * 2) as i32 % e as i32)
-        .collect();
+    let topk_ids: Vec<i32> =
+        (0..t * k).map(|i| ((i / k) + (i % k) * 2) as i32 % e as i32).collect();
     let topk_probs: Vec<bf16> = (0..t)
         .flat_map(|_| {
             let raw: Vec<f32> =
@@ -531,21 +553,39 @@ fn test_two_pass_decode_multi_token() {
     let gating_code = 2u32;
     let silu_alpha = 1.0f32;
 
-    eprintln!("[2-pass decode multi-token] T={}, K={}, d_model={}, d_ff={}, E={}", t, k, d_model, d_ff, e);
+    eprintln!(
+        "[2-pass decode multi-token] T={}, K={}, d_model={}, d_ff={}, E={}",
+        t, k, d_model, d_ff, e
+    );
 
     let data = MoeTestData::generate(&mut rng, t, k, d_model, d_ff, e);
     let scatter = scatter_by_expert(&data.x, &data.topk_ids, t, k, d_model, e);
 
     let y_expected = cpu_moe_reference(
-        &data.x, &data.topk_ids, &data.topk_probs, &data.w13, &data.w2,
-        &data.up_biases, &data.down_biases, t, d_model, d_ff, k, gating_code,
-        silu_alpha, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY,
+        &data.x,
+        &data.topk_ids,
+        &data.topk_probs,
+        &data.w13,
+        &data.w2,
+        &data.up_biases,
+        &data.down_biases,
+        t,
+        d_model,
+        d_ff,
+        k,
+        gating_code,
+        silu_alpha,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
     );
 
     // GPU buffers
     let x_perm_buf = alloc_buffer_with_data(&ctx, &scatter.x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &scatter.offsets);
-    let row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
+    let row_expert_map_buf =
+        alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
     let w13_buf = alloc_buffer_with_data(&ctx, &data.w13);
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
@@ -561,28 +601,59 @@ fn test_two_pass_decode_multi_token() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx).expect("kernel");
+    let experts_kernel =
+        MoeExpertsTwoPassDecodeKernel::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    experts_kernel.encode(&cb, MoeExpertsTwoPassArguments {
-        x_perm_buffer: &x_perm_buf, expert_offsets: &offsets_buf,
-        row_expert_map: &row_expert_map_buf, hidden_buffer: &hidden_buf,
-        output_buffer: &y_partial_buf, w13_all: &w13_buf, w2_all: &w2_buf,
-        up_biases: &up_biases_buf, down_biases: &down_biases_buf,
-        tile_counts: &tile_counts_buf, tile_offsets: &tile_offsets_buf,
-        tile_map: &tile_map_buf, total_tiles: &total_tiles_buf,
-        dispatch_args: &dispatch_args_buf, total_rows: sum_k, d_model, d_ff, e,
-        num_tiles_k: ((d_ff + 63) / 64) as u32, gating_code,
-        gate_clip_min: f32::NEG_INFINITY, gate_clip_max: f32::INFINITY,
-        up_clip_min: f32::NEG_INFINITY, up_clip_max: f32::INFINITY,
-        silu_alpha, data_type: KernelDataType::BFloat16,
-    }).expect("encode");
+    experts_kernel
+        .encode(
+            &cb,
+            MoeExpertsTwoPassArguments {
+                x_perm_buffer: &x_perm_buf,
+                expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                output_buffer: &y_partial_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                tile_counts: &tile_counts_buf,
+                tile_offsets: &tile_offsets_buf,
+                tile_map: &tile_map_buf,
+                total_tiles: &total_tiles_buf,
+                dispatch_args: &dispatch_args_buf,
+                total_rows: sum_k,
+                d_model,
+                d_ff,
+                e,
+                num_tiles_k: ((d_ff + 63) / 64) as u32,
+                gating_code,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                silu_alpha,
+                data_type: KernelDataType::BFloat16,
+            },
+        )
+        .expect("encode");
     cb.commit();
     cb.wait_until_completed();
 
     let y_partial_gpu = unsafe {
-        std::slice::from_raw_parts(y_partial_buf.contents() as *const bf16, sum_k * d_model)
+        std::slice::from_raw_parts(
+            y_partial_buf.contents() as *const bf16,
+            sum_k * d_model,
+        )
     };
-    let y_gpu = gather_and_finalize(y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+    let y_gpu = gather_and_finalize(
+        y_partial_gpu,
+        &data.topk_probs,
+        &scatter.perm_idx,
+        t,
+        k,
+        d_model,
+    );
 
     assert_bf16_close(&y_gpu, &y_expected, 0.02, "2-pass decode multi-token");
     eprintln!("[2-pass decode multi-token] ✓ PASSED");
@@ -602,21 +673,39 @@ fn test_two_pass_prefill_correctness() {
     let gating_code = 2u32;
     let silu_alpha = 1.0f32;
 
-    eprintln!("[2-pass prefill] T={}, K={}, d_model={}, d_ff={}, E={}", t, k, d_model, d_ff, e);
+    eprintln!(
+        "[2-pass prefill] T={}, K={}, d_model={}, d_ff={}, E={}",
+        t, k, d_model, d_ff, e
+    );
 
     let data = MoeTestData::generate(&mut rng, t, k, d_model, d_ff, e);
     let scatter = scatter_by_expert(&data.x, &data.topk_ids, t, k, d_model, e);
 
     let y_expected = cpu_moe_reference(
-        &data.x, &data.topk_ids, &data.topk_probs, &data.w13, &data.w2,
-        &data.up_biases, &data.down_biases, t, d_model, d_ff, k, gating_code,
-        silu_alpha, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY,
+        &data.x,
+        &data.topk_ids,
+        &data.topk_probs,
+        &data.w13,
+        &data.w2,
+        &data.up_biases,
+        &data.down_biases,
+        t,
+        d_model,
+        d_ff,
+        k,
+        gating_code,
+        silu_alpha,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
     );
 
     // GPU buffers
     let x_perm_buf = alloc_buffer_with_data(&ctx, &scatter.x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &scatter.offsets);
-    let row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
+    let row_expert_map_buf =
+        alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
     let w13_buf = alloc_buffer_with_data(&ctx, &data.w13);
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
@@ -632,28 +721,59 @@ fn test_two_pass_prefill_correctness() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("kernel");
+    let experts_kernel =
+        MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.new_command_buffer();
-    experts_kernel.encode(&cb, MoeExpertsTwoPassArguments {
-        x_perm_buffer: &x_perm_buf, expert_offsets: &offsets_buf,
-        row_expert_map: &row_expert_map_buf, hidden_buffer: &hidden_buf,
-        output_buffer: &y_partial_buf, w13_all: &w13_buf, w2_all: &w2_buf,
-        up_biases: &up_biases_buf, down_biases: &down_biases_buf,
-        tile_counts: &tile_counts_buf, tile_offsets: &tile_offsets_buf,
-        tile_map: &tile_map_buf, total_tiles: &total_tiles_buf,
-        dispatch_args: &dispatch_args_buf, total_rows: sum_k, d_model, d_ff, e,
-        num_tiles_k: ((d_ff + 63) / 64) as u32, gating_code,
-        gate_clip_min: f32::NEG_INFINITY, gate_clip_max: f32::INFINITY,
-        up_clip_min: f32::NEG_INFINITY, up_clip_max: f32::INFINITY,
-        silu_alpha, data_type: KernelDataType::BFloat16,
-    }).expect("encode");
+    experts_kernel
+        .encode(
+            &cb,
+            MoeExpertsTwoPassArguments {
+                x_perm_buffer: &x_perm_buf,
+                expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                output_buffer: &y_partial_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                tile_counts: &tile_counts_buf,
+                tile_offsets: &tile_offsets_buf,
+                tile_map: &tile_map_buf,
+                total_tiles: &total_tiles_buf,
+                dispatch_args: &dispatch_args_buf,
+                total_rows: sum_k,
+                d_model,
+                d_ff,
+                e,
+                num_tiles_k: ((d_ff + 63) / 64) as u32,
+                gating_code,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                silu_alpha,
+                data_type: KernelDataType::BFloat16,
+            },
+        )
+        .expect("encode");
     cb.commit();
     cb.wait_until_completed();
 
     let y_partial_gpu = unsafe {
-        std::slice::from_raw_parts(y_partial_buf.contents() as *const bf16, sum_k * d_model)
+        std::slice::from_raw_parts(
+            y_partial_buf.contents() as *const bf16,
+            sum_k * d_model,
+        )
     };
-    let y_gpu = gather_and_finalize(y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+    let y_gpu = gather_and_finalize(
+        y_partial_gpu,
+        &data.topk_probs,
+        &scatter.perm_idx,
+        t,
+        k,
+        d_model,
+    );
 
     assert_bf16_close(&y_gpu, &y_expected, 0.02, "2-pass prefill");
     eprintln!("[2-pass prefill] ✓ PASSED");

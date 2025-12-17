@@ -433,3 +433,157 @@ fn kv_cache_state_and_mask_scenarios() {
         run_scenario(&context, scenario);
     }
 }
+
+#[test]
+fn kv_cache_slice_apply_contiguous_window() {
+    let Some(context) = create_test_context() else {
+        return;
+    };
+
+    let mut layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Windowed {
+            ring_offset: 1,
+            ring_length: 3,
+            window_length: 4,
+        },
+        4,
+        0,
+    );
+    layer.prefix_token_positions = vec![10, 11, 12, INVALID_POSITION];
+    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+
+    let slice = layer.slice(&context, 0..2).expect("slice should exist");
+    // Mutate the captured slots.
+    {
+        layer.prefix_token_positions[0] = 999;
+        layer.prefix_token_positions[1] = 998;
+        let mut keys = layer.keys.borrow_mut();
+        let mut values = layer.values.borrow_mut();
+        keys.as_slice_mut::<f32>().unwrap()[0] = -1.0;
+        keys.as_slice_mut::<f32>().unwrap()[1] = -2.0;
+        values.as_slice_mut::<f32>().unwrap()[0] = -3.0;
+        values.as_slice_mut::<f32>().unwrap()[1] = -4.0;
+    }
+
+    layer.apply_slice(&slice, None);
+
+    assert_eq!(
+        layer.prefix_token_positions,
+        vec![10, 11, 12, INVALID_POSITION],
+        "positions restored for contiguous slice"
+    );
+
+    let keys_after = layer.keys.borrow().as_slice::<f32>().unwrap().to_vec();
+    let values_after =
+        layer.values.borrow().as_slice::<f32>().unwrap().to_vec();
+    assert_eq!(
+        keys_after[0..4],
+        initial_keys[0..4],
+        "keys restored for contiguous slice"
+    );
+    assert_eq!(
+        values_after[0..4],
+        initial_values[0..4],
+        "values restored for contiguous slice"
+    );
+}
+
+#[test]
+fn kv_cache_slice_apply_wrap_window() {
+    let Some(context) = create_test_context() else {
+        return;
+    };
+
+    let mut layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Windowed {
+            ring_offset: 3,
+            ring_length: 3,
+            window_length: 4,
+        },
+        4,
+        0,
+    );
+    layer.prefix_token_positions = vec![30, 31, 32, 33];
+    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+
+    let slice = layer.slice(&context, 2..4).expect("slice should exist");
+    // Captured slots are expected to wrap; mutate them.
+    {
+        layer.prefix_token_positions[2] = 777;
+        layer.prefix_token_positions[3] = 778;
+        let mut keys = layer.keys.borrow_mut();
+        let mut values = layer.values.borrow_mut();
+        keys.as_slice_mut::<f32>().unwrap()[2] = -11.0;
+        keys.as_slice_mut::<f32>().unwrap()[3] = -12.0;
+        values.as_slice_mut::<f32>().unwrap()[2] = -13.0;
+        values.as_slice_mut::<f32>().unwrap()[3] = -14.0;
+    }
+
+    layer.apply_slice(&slice, None);
+
+    assert_eq!(
+        layer.prefix_token_positions,
+        vec![30, 31, 32, 33],
+        "positions restored for wrapped slice"
+    );
+
+    let keys_after = layer.keys.borrow().as_slice::<f32>().unwrap().to_vec();
+    let values_after =
+        layer.values.borrow().as_slice::<f32>().unwrap().to_vec();
+    assert_eq!(
+        keys_after[0..4],
+        initial_keys[0..4],
+        "keys restored for wrapped slice"
+    );
+    assert_eq!(
+        values_after[0..4],
+        initial_values[0..4],
+        "values restored for wrapped slice"
+    );
+}
+
+#[test]
+fn kv_cache_slice_apply_full_restores_metadata() {
+    let Some(context) = create_test_context() else {
+        return;
+    };
+
+    let mut layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Full {
+            prefix_len: 3,
+        },
+        6,
+        0,
+    );
+    layer.prefix_token_positions = vec![1, 2, 3];
+
+    let slice = layer.slice(&context, 0..2).expect("full slice exists");
+
+    // Mutate metadata.
+    if let KVCacheLayerState::Full {
+        prefix_len,
+    } = &mut layer.state
+    {
+        *prefix_len = 1;
+    }
+    layer.prefix_token_positions = vec![9, 9, 9, 9];
+
+    layer.apply_slice(&slice, None);
+
+    assert_eq!(
+        layer.prefix_token_positions,
+        vec![1, 2, 3],
+        "full slice restores positions"
+    );
+    if let KVCacheLayerState::Full {
+        prefix_len,
+    } = &layer.state
+    {
+        assert_eq!(*prefix_len, 3, "full slice restores prefix_len");
+    } else {
+        panic!("expected full state");
+    }
+}

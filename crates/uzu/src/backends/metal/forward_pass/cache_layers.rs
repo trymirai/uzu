@@ -4,7 +4,10 @@ use metal::CommandBuffer as MTLCommandBuffer;
 
 use super::{
     super::{MTLContext, MetalArray},
-    kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
+    kv_cache_layer::{
+        AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
+        KVSlice,
+    },
     model_shape::ModelShape,
     short_conv_layer::ShortConvLayer,
     ssm_layer::SSMLayer,
@@ -19,6 +22,13 @@ pub enum CacheLayer {
     Transformer(KVCacheLayer),
     StateSpace(SSMLayer),
     ShortConv(ShortConvLayer),
+}
+
+#[derive(Clone)]
+pub enum CacheLayerSlice {
+    Transformer(KVSlice),
+    StateSpace,
+    ShortConv,
 }
 
 impl CacheLayer {
@@ -69,6 +79,11 @@ pub struct CacheLayers {
     max_suffix_length: usize,
     max_prefix_length: usize,
     pub data: Box<[CacheLayer]>,
+}
+
+#[derive(Clone)]
+pub struct CacheLayersSlice {
+    pub layers: Vec<CacheLayerSlice>,
 }
 
 impl CacheLayers {
@@ -273,6 +288,69 @@ impl CacheLayers {
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
                 layer.register_accepted_tokens(token_positions);
+            }
+        }
+    }
+
+    pub fn attention_bias_updates_after_acceptance(
+        &self,
+        accepted_len: usize,
+    ) -> Vec<AttentionBiasUpdate> {
+        self.data
+            .iter()
+            .filter_map(|layer| match layer {
+                CacheLayer::Transformer(kv) => {
+                    kv.attention_bias_update_after_acceptance(accepted_len)
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn slice(
+        &self,
+        context: &MTLContext,
+        range: std::ops::Range<usize>,
+    ) -> Option<CacheLayersSlice> {
+        let mut layers = Vec::with_capacity(self.data.len());
+        for layer in self.data.iter() {
+            match layer {
+                CacheLayer::Transformer(kv) => {
+                    let Some(slice) = kv.slice(context, range.clone()) else {
+                        return None;
+                    };
+                    layers.push(CacheLayerSlice::Transformer(slice));
+                },
+                CacheLayer::StateSpace(_) => {
+                    layers.push(CacheLayerSlice::StateSpace)
+                },
+                CacheLayer::ShortConv(_) => {
+                    layers.push(CacheLayerSlice::ShortConv)
+                },
+            }
+        }
+
+        Some(CacheLayersSlice {
+            layers,
+        })
+    }
+
+    pub fn apply_slice(
+        &mut self,
+        slice: &CacheLayersSlice,
+        range: Option<std::ops::Range<usize>>,
+    ) {
+        for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
+            match (layer, snapshot) {
+                (
+                    CacheLayer::Transformer(kv),
+                    CacheLayerSlice::Transformer(s),
+                ) => {
+                    kv.apply_slice(s, range.clone());
+                },
+                (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
+                (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
+                _ => {},
             }
         }
     }

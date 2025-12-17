@@ -109,6 +109,7 @@ impl ForwardPassState {
         is_prefilling: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
+        skip_attention_bias_fill: bool,
         async_positions: Option<(&metal::Buffer, usize)>,
         async_seeds: Option<(&metal::Buffer, usize)>,
     ) -> Self {
@@ -220,6 +221,7 @@ impl ForwardPassState {
             act_dtype,
             token_positions,
             external_bias_fn,
+            skip_attention_bias_fill,
         );
 
         // Common aux buffers
@@ -277,6 +279,7 @@ impl ForwardPassState {
         act_dtype: DataType,
         token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+        skip_fill: bool,
     ) -> HashMap<Option<usize>, ArrayCell> {
         let cache_ref = cache_layers.borrow();
         let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
@@ -302,13 +305,16 @@ impl ForwardPassState {
 
         // Use cache_layers' fill_attention_bias which properly handles
         // both causal masking and sliding window constraints
-        cache_layers.borrow().fill_attention_bias(
-            &mut attention_bias_map,
-            token_positions,
-            suffix_length,
-            context,
-            external_bias_fn,
-        );
+        // Skip fill for async decode passes after the first one (bias already set)
+        if !skip_fill {
+            cache_layers.borrow().fill_attention_bias(
+                &mut attention_bias_map,
+                token_positions,
+                suffix_length,
+                context,
+                external_bias_fn,
+            );
+        }
 
         attention_bias_map
             .into_iter()

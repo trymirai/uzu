@@ -16,6 +16,7 @@ pub trait InputProcessor: Send + Sync {
         &self,
         input: &Input,
         enable_thinking: bool,
+        add_generation_prompt: bool,
     ) -> Result<String, Error>;
 }
 
@@ -79,6 +80,7 @@ impl InputProcessor for InputProcessorDefault {
         &self,
         input: &Input,
         enable_thinking: bool,
+        add_generation_prompt: bool,
     ) -> Result<String, Error> {
         let messages = input.get_messages();
         for message in &messages {
@@ -110,7 +112,7 @@ impl InputProcessor for InputProcessorDefault {
         let result = template
             .render(context!(
                 messages => messages,
-                add_generation_prompt => true,
+                add_generation_prompt => add_generation_prompt,
                 bos_token => bos_token,
                 enable_thinking => enable_thinking
             ))

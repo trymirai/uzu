@@ -116,10 +116,16 @@ impl KVCacheUpdate {
             return Err(KVCacheUpdateError::MaxSequenceLengthExceeded);
         }
 
-        let indices_ptr = self.indices_buffer.contents() as *mut Swap;
-        unsafe {
-            for (i, swap) in swaps.iter().enumerate() {
-                *indices_ptr.add(i) = *swap;
+        // For small swap counts, use set_bytes to avoid shared buffer race in async mode.
+        // Metal's set_bytes limit is 4KB; 32 swaps = 256 bytes, well under limit.
+        let use_inline_bytes = swaps.len() <= 32;
+
+        if !use_inline_bytes {
+            let indices_ptr = self.indices_buffer.contents() as *mut Swap;
+            unsafe {
+                for (i, swap) in swaps.iter().enumerate() {
+                    *indices_ptr.add(i) = *swap;
+                }
             }
         }
 
@@ -134,7 +140,15 @@ impl KVCacheUpdate {
             // Set buffers and parameters
             compute_encoder.set_buffer(0, Some(&layer_data.key_buffer), 0);
             compute_encoder.set_buffer(1, Some(&layer_data.value_buffer), 0);
-            compute_encoder.set_buffer(2, Some(&self.indices_buffer), 0);
+            if use_inline_bytes {
+                compute_encoder.set_bytes(
+                    2,
+                    (swaps.len() * size_of::<Swap>()) as u64,
+                    swaps.as_ptr() as *const std::ffi::c_void,
+                );
+            } else {
+                compute_encoder.set_buffer(2, Some(&self.indices_buffer), 0);
+            }
             compute_encoder.set_bytes(
                 3,
                 size_of::<i32>() as u64,
@@ -187,78 +201,6 @@ pub fn create_swaps_direct(
             swaps.push(Swap {
                 source: src as i32,
                 destination: dst as i32,
-            });
-        }
-    }
-
-    swaps
-}
-
-/// Original implementation using cycles - kept for reference
-/// This function generates the minimum set of swaps needed to move elements
-/// from source positions to destination positions.
-pub fn create_swaps(
-    source_indices: &[usize],
-    destination_indices: &[usize],
-) -> Vec<Swap> {
-    // The two arrays must be of the same length.
-    if source_indices.len() != destination_indices.len() {
-        return Vec::new();
-    }
-
-    // Build mappings between source and destination indices
-    let mut forward_mapping = std::collections::HashMap::new();
-    let mut reverse_mapping = std::collections::HashMap::new();
-
-    for (&s, &d) in source_indices.iter().zip(destination_indices.iter()) {
-        if s != d {
-            forward_mapping.insert(s, d);
-            reverse_mapping.insert(d, s);
-        }
-    }
-
-    let mut swaps = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-
-    // Process keys in sorted order
-    let all_keys: std::collections::HashSet<_> =
-        forward_mapping.keys().chain(reverse_mapping.keys()).copied().collect();
-
-    let all_keys_vec: Vec<usize> = all_keys.into_iter().collect();
-    for &s in &all_keys_vec {
-        if visited.contains(&s) {
-            continue;
-        }
-
-        visited.insert(s);
-        let mut cycle = vec![s];
-        let mut iterator = s;
-
-        while let Some(&next) = forward_mapping.get(&iterator) {
-            iterator = next;
-            if visited.contains(&iterator) {
-                break;
-            }
-            visited.insert(iterator);
-            cycle.push(iterator);
-        }
-
-        // Reverse direction
-        iterator = s;
-        while let Some(&next) = reverse_mapping.get(&iterator) {
-            iterator = next;
-            if visited.contains(&iterator) {
-                break;
-            }
-            visited.insert(iterator);
-            cycle.push(iterator);
-        }
-
-        let first = cycle[0];
-        for &next in cycle.iter().skip(1) {
-            swaps.push(Swap {
-                source: first as i32,
-                destination: next as i32,
             });
         }
     }

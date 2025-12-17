@@ -3,6 +3,7 @@ mod data_type;
 pub mod embedding;
 pub mod kv_cache_update;
 pub mod layer_norm;
+pub mod mask_update;
 pub mod media_kernels;
 pub mod mlp;
 pub mod moe;
@@ -27,6 +28,7 @@ pub use attention::{
 pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use layer_norm::{LayerNormArguments, LayerNormError, LayerNormKernel};
+pub use mask_update::MaskUpdateKernel;
 pub use moe::{
     MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,

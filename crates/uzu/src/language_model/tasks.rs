@@ -83,6 +83,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             self.is_prefilling,
             external_bias_fn,
             false,
+            false,
             None,
             None,
         )

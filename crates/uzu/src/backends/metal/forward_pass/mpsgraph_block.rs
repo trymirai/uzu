@@ -5,8 +5,7 @@ use mpsgraph::{
 use objc2::rc::Retained;
 
 use super::{
-    EncodableBlock, EncodingParameters, ForwardPassState,
-    io_arrays::IOArrays,
+    EncodableBlock, EncodingParameters, ForwardPassState, io_arrays::IOArrays,
 };
 
 pub struct MPSGraphBlock {
