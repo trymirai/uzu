@@ -5,7 +5,8 @@ use metal::CommandBuffer as MTLCommandBuffer;
 use super::{
     super::{MTLContext, MetalArray},
     kv_cache_layer::{
-        INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice,
+        AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
+        KVSlice,
     },
     model_shape::ModelShape,
     short_conv_layer::ShortConvLayer,
@@ -289,6 +290,21 @@ impl CacheLayers {
                 layer.register_accepted_tokens(token_positions);
             }
         }
+    }
+
+    pub fn attention_bias_updates_after_acceptance(
+        &self,
+        accepted_len: usize,
+    ) -> Vec<AttentionBiasUpdate> {
+        self.data
+            .iter()
+            .filter_map(|layer| match layer {
+                CacheLayer::Transformer(kv) => {
+                    kv.attention_bias_update_after_acceptance(accepted_len)
+                },
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn slice(

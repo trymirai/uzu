@@ -11,6 +11,13 @@ use crate::{
 
 pub type ArrayCell = RefCell<MetalArray>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttentionBiasUpdate {
+    pub key: Option<usize>,
+    pub unmask_col: i32,
+    pub mask_col: i32,
+}
+
 #[derive(Clone)]
 pub enum KVSlice {
     Full {
@@ -307,6 +314,41 @@ impl KVCacheLayer {
                         *ring_offset = (*ring_offset + 1) % *window_length;
                     }
                 }
+            },
+        }
+    }
+
+    pub fn attention_bias_update_after_acceptance(
+        &self,
+        accepted_len: usize,
+    ) -> Option<AttentionBiasUpdate> {
+        if accepted_len != 1 {
+            return None;
+        }
+
+        match self.state {
+            KVCacheLayerState::Full {
+                ..
+            } => None,
+            KVCacheLayerState::Windowed {
+                ring_offset,
+                ring_length,
+                window_length,
+            } => {
+                let newest_slot =
+                    (ring_offset + window_length - 1) % window_length;
+                let unmask_col = (ring_length > 0)
+                    .then_some(newest_slot as i32)
+                    .unwrap_or(-1);
+                let mask_col = (ring_length == window_length)
+                    .then_some(ring_offset as i32)
+                    .unwrap_or(-1);
+
+                Some(AttentionBiasUpdate {
+                    key: Some(window_length),
+                    unmask_col,
+                    mask_col,
+                })
             },
         }
     }
