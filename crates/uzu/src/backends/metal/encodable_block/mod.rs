@@ -35,8 +35,8 @@ pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::Decoder;
 pub use embedding::{
-    QuantizedEmbeddingError, QuantizedEmbeddingLookup,
-    QuantizedEmbeddingReadout,
+    FullPrecisionEmbeddingReadout, QuantizedEmbeddingError,
+    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout,
 };
 pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
