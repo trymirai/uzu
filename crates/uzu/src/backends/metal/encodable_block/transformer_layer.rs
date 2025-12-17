@@ -7,8 +7,9 @@ use mpsgraph::{
 use objc2::rc::{Retained, autoreleasepool};
 
 use super::{
-    EncodableBlock, FullPrecisionLinear, MlpBlock, MoeBlock,
-    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
+    EncodableBlock, FullPrecisionEmbeddingReadout, FullPrecisionLinear,
+    MlpBlock, MoeBlock, QuantizedEmbeddingLookup, QuantizedEmbeddingReadout,
+    QuantizedLinear,
 };
 use crate::{
     DataType,
@@ -507,14 +508,6 @@ pub fn readout_block(
     compilation_descriptor: &CompilationDescriptor,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn EncodableBlock> {
-    let graph = Graph::new();
-
-    let input_shape = [-1 as isize, config.model_dim as isize];
-    let input_data_type: DataType =
-        config.output_norm_config.scale_precision.into();
-    let input_placeholder = placeholder(&graph, &input_shape, input_data_type);
-    let input_shaped_type = shaped_type(&input_shape, input_data_type);
-
     match config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
@@ -524,52 +517,14 @@ pub fn readout_block(
                 .subtree("embedding")
                 .expect("Failed to get embedding subtree");
 
-            let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = precision.into();
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
-
-            let weights_transposed =
-                graph.transpose(&weights_placeholder, &[1, 0], None);
-            let input_shape = [-1 as isize, config.model_dim as isize];
-            let input_data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let input_placeholder =
-                placeholder(&graph, &input_shape, input_data_type);
-            let input_shaped_type = shaped_type(&input_shape, input_data_type);
-
-            let output = embeddings_readout_subgraph(
-                &graph,
-                &input_placeholder,
-                &weights_transposed,
+            let block = FullPrecisionEmbeddingReadout::new(
+                context,
+                precision.into(),
+                config.vocab_size,
+                config.model_dim,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![ArrayId::Main, ArrayId::EmbeddingsOutputWeights]
-                        .into_boxed_slice(),
-                    vec![ArrayId::Logits].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create full precision embedding readout");
 
             Box::new(block)
         },
@@ -580,53 +535,15 @@ pub fn readout_block(
             let embeddings_tree = parameter_tree
                 .subtree("embedding")
                 .expect("Failed to get embedding subtree");
-            // Use MPSGraph readout path
-            let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = precision.into();
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
 
-            let weights_transposed =
-                graph.transpose(&weights_placeholder, &[1, 0], None);
-            let input_shape = [-1 as isize, config.model_dim as isize];
-            let input_data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let input_placeholder =
-                placeholder(&graph, &input_shape, input_data_type);
-            let input_shaped_type = shaped_type(&input_shape, input_data_type);
-
-            let output = embeddings_readout_subgraph(
-                &graph,
-                &input_placeholder,
-                &weights_transposed,
+            let block = FullPrecisionEmbeddingReadout::new(
+                context,
+                precision.into(),
+                config.vocab_size,
+                config.model_dim,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![ArrayId::Main, ArrayId::EmbeddingsOutputWeights]
-                        .into_boxed_slice(),
-                    vec![ArrayId::Logits].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create full precision embedding readout");
 
             Box::new(block)
         },
