@@ -7,7 +7,7 @@ mod rms_norm;
 use std::rc::Rc;
 
 pub use layer_norm::LayerNorm;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
@@ -77,7 +77,7 @@ impl EncodableBlock for Normalization {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         match self {

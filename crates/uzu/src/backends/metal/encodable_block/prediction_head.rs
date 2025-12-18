@@ -1,6 +1,6 @@
 //! Prediction head encodable for classification output.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -40,7 +40,7 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         self.dense.encode(state, command_buffer, parameters);
@@ -49,11 +49,15 @@ impl EncodableBlock for ClassifierPredictionHead {
         self.readout.encode(state, command_buffer, parameters);
 
         #[cfg_attr(feature = "tracing", allow(unused_variables))]
-        let root_after_head = command_buffer.root_command_buffer().to_owned();
-        command_buffer.commit_and_continue();
+        let root_after_head = command_buffer.to_owned();
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+        }
 
         #[cfg(not(feature = "tracing"))]
-        root_after_head.wait_until_completed();
+        if parameters.wait_until_completed {
+            root_after_head.wait_until_completed();
+        }
 
         #[cfg(feature = "tracing")]
         {
@@ -77,8 +81,7 @@ impl EncodableBlock for ClassifierPredictionHead {
                 (batch_size * self.num_labels * data_type.size_in_bytes())
                     as u64;
 
-            let root = command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
+            let blit = command_buffer.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &linear_output_buffer,
                 0,
@@ -88,8 +91,8 @@ impl EncodableBlock for ClassifierPredictionHead {
             );
             blit.end_encoding();
 
-            let root_owned = root.to_owned();
-            command_buffer.commit_and_continue();
+            let root_owned = command_buffer.to_owned();
+            command_buffer.commit();
             root_owned.wait_until_completed();
         }
     }

@@ -1,24 +1,18 @@
-use std::{
-    cell::RefCell, collections::HashMap, fs::File, io::BufReader, path::Path,
-    rc::Rc,
-};
+use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
-use mpsgraph::{CommandBuffer as MPSCommandBuffer, Device as MPSDevice, Graph};
-use objc2::rc::{Retained, autoreleasepool};
+use metal::CommandBuffer;
 
 use super::{
     KernelDataType, MTLContext, ModelShape,
     compilation_parameters::CompilationConfig,
     encodable_block::{
-        ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling,
-        Rope,
+        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization,
+        Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
     forward_pass::{
-        ArrayId, EncodableBlock, IOArrays, MPSGraphBlock, RopeType,
-        ScratchBuffers, SharedBuffers,
+        ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
     },
-    graph::{common::activation, placeholder, shaped_type},
     kernel::{PoolingKernel, SigmoidKernel},
 };
 use crate::{
@@ -31,7 +25,7 @@ use crate::{
 
 pub struct ClassifierContext {
     pub mtl_context: Rc<MTLContext>,
-    pub command_buffer: Retained<MPSCommandBuffer>,
+    pub command_buffer: CommandBuffer,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ScratchBuffers,
@@ -59,8 +53,7 @@ impl ClassifierContext {
         let mtl_command_queue =
             mtl_device.new_command_queue_with_max_command_buffer_count(1024);
 
-        let command_buffer =
-            MPSCommandBuffer::from_command_queue(&mtl_command_queue);
+        let command_buffer = mtl_command_queue.new_command_buffer().to_owned();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -137,12 +130,8 @@ impl ClassifierContext {
             .activation_precision()
             .into();
 
-        let embed = embed_block(
-            &decoder_config,
-            &mtl_context,
-            &compilation_config.descriptor_general,
-            &root_loader_view,
-        );
+        let embed =
+            embed_block(&decoder_config, &mtl_context, &root_loader_view);
 
         let global_rope =
             Self::create_rope_block(&mtl_context, data_type, RopeType::Global)
@@ -315,50 +304,22 @@ impl ClassifierContext {
             &prediction_head_dense_tree,
             ArrayId::ClassifierPooling,
             ArrayId::ClassifierPredictionHeadDense,
-            &compilation_config.descriptor_general,
         );
 
-        let prediction_head_activation = autoreleasepool(|_| {
-            let graph = Graph::new();
-            let input_shape = [-1, model_dim as isize];
-            let input_placeholder =
-                placeholder(&graph, &input_shape, prediction_head_data_type);
-
-            let output = activation(
-                &graph,
-                &prediction_head_config.activation,
-                &input_placeholder,
+        let prediction_head_activation = Box::new(
+            Activation::new(
+                &mtl_context,
                 prediction_head_data_type,
-            );
-
-            let shaped_type_obj =
-                shaped_type(&input_shape, prediction_head_data_type);
-            let feeds =
-                HashMap::from([(&*input_placeholder, &*shaped_type_obj)]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&mtl_context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(&compilation_config.descriptor_general),
-            );
-
-            let arguments = IOArrays::new(
-                vec![ArrayId::ClassifierPredictionHeadDense].into_boxed_slice(),
-                vec![ArrayId::ClassifierPredictionHeadDense].into_boxed_slice(),
-            );
-
-            let execution_descriptor =
-                mpsgraph::ExecutableExecutionDescriptor::new();
-            execution_descriptor.set_enable_commit_and_continue(true);
-
-            Box::new(MPSGraphBlock::new(
-                executable,
-                execution_descriptor,
-                arguments,
-            )) as Box<dyn EncodableBlock>
-        });
+                prediction_head_config.activation.clone(),
+                ArrayId::ClassifierPredictionHeadDense,
+                ArrayId::ClassifierPredictionHeadDense,
+            )
+            .map_err(|e| {
+                Error::Classifier(ClassifierError::KernelCreationFailed(
+                    format!("prediction head activation: {:?}", e),
+                ))
+            })?,
+        );
 
         let prediction_head_norm_tree =
             prediction_head_tree.subtree("norm").map_err(|_| {
@@ -396,7 +357,6 @@ impl ClassifierContext {
             &prediction_head_readout_tree,
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
-            &compilation_config.descriptor_general,
         )
         .map_err(|e| {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!(
@@ -474,8 +434,7 @@ impl ClassifierContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = MPSCommandBuffer::from_command_queue(
-            &self.mtl_context.command_queue,
-        );
+        self.command_buffer =
+            self.mtl_context.command_queue.new_command_buffer().to_owned();
     }
 }

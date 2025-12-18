@@ -1,6 +1,6 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -36,7 +36,7 @@ impl EncodableBlock for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         _parameters: &EncodingParameters,
     ) {
         let batch_size = 1;
@@ -51,8 +51,7 @@ impl EncodableBlock for Pooling {
         let mut pooling_array = arrays[1].borrow_mut();
         let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
 
-        let root = command_buffer.root_command_buffer();
-        let encoder = root.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let result = match self.pooling_type {
             PoolingType::Cls => self.pooling_kernel.encode_cls(
@@ -81,8 +80,6 @@ impl EncodableBlock for Pooling {
         drop(main_array);
         drop(pooling_array);
 
-        command_buffer.commit_and_continue();
-
         #[cfg(feature = "tracing")]
         {
             let traces_rc = state.traces().clone();
@@ -92,8 +89,7 @@ impl EncodableBlock for Pooling {
             drop(trace_arr);
             drop(traces_ref);
 
-            let root = command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
+            let blit = command_buffer.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &output_buffer,
                 0,
@@ -103,10 +99,6 @@ impl EncodableBlock for Pooling {
                     as u64,
             );
             blit.end_encoding();
-
-            let root_owned = root.to_owned();
-            command_buffer.commit_and_continue();
-            root_owned.wait_until_completed();
         }
     }
 }

@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -93,7 +92,7 @@ impl EncodableBlock for RMSNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
@@ -113,9 +112,7 @@ impl EncodableBlock for RMSNorm {
         let batch_size = input_shape[0] as i32;
         let model_dim = input_shape[1] as i32;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
 
         if let Err(e) = self.kernel.encode(
             &compute_encoder,
@@ -135,8 +132,8 @@ impl EncodableBlock for RMSNorm {
         compute_encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

@@ -1,9 +1,11 @@
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
-use super::QuantizedEmbeddingError;
+use super::{
+    super::{EncodableBlock, EncodingParameters},
+    EmbeddingError,
+};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -16,8 +18,6 @@ use crate::{
     },
     parameters::ParameterTree,
 };
-
-use super::super::{EncodableBlock, EncodingParameters};
 
 pub struct FullPrecisionEmbeddingLookup {
     kernel: FullPrecisionEmbeddingLookupKernel,
@@ -35,14 +35,14 @@ impl FullPrecisionEmbeddingLookup {
         model_dim: usize,
         input_scale: Option<f32>,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         let kernel =
             FullPrecisionEmbeddingLookupKernel::new(mtl_context, data_type)?;
 
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("input_weights").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                EmbeddingError::MetalError(MTLError::Generic(format!(
                     "Failed to load weights: {:?}",
                     e
                 )))
@@ -50,7 +50,7 @@ impl FullPrecisionEmbeddingLookup {
         };
 
         if weights.shape() != [vocab_size, model_dim] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding lookup weights shape mismatch: got {:?}, \
                      expected [{}, {}]",
@@ -62,7 +62,7 @@ impl FullPrecisionEmbeddingLookup {
         }
 
         if weights.data_type() != data_type {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Weights dtype mismatch: got {:?}, expected {:?}",
                     weights.data_type(),
@@ -87,7 +87,7 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
@@ -98,8 +98,7 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
         let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = FullPrecisionEmbeddingLookupArguments {
             token_ids_buffer,
@@ -118,11 +117,8 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }
-

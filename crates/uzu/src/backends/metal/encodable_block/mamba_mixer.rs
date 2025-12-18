@@ -2,7 +2,7 @@
 
 use std::{env, rc::Rc};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
@@ -44,7 +44,7 @@ impl MambaMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         num_heads: usize,
@@ -82,7 +82,6 @@ impl MambaMixer {
             ),
             ArrayId::Main,
             ArrayId::SsmInProj,
-            &compilation_config.descriptor_mlp,
         )
         .expect("Failed to create in-projection kernel");
 
@@ -98,7 +97,6 @@ impl MambaMixer {
             ),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-            &compilation_config.descriptor_mlp,
         )
         .expect("Failed to create out-projection kernel");
 
@@ -147,7 +145,7 @@ impl MambaMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.aux_buffers_suffix_length();
@@ -169,17 +167,15 @@ impl MambaMixer {
         self.out_projection.encode(state, command_buffer, parameters);
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -205,9 +201,7 @@ impl MambaMixer {
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
+        let compute = command_buffer.new_compute_command_encoder();
         self.split_inproj
             .encode(
                 &compute,
@@ -231,7 +225,7 @@ impl MambaMixer {
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -263,7 +257,7 @@ impl MambaMixer {
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
-        let cmd = command_buffer.root_command_buffer().to_owned();
+        let cmd = command_buffer.to_owned();
         let state_stride = self.config.kernel_size.saturating_sub(1);
         drop(conv_state);
 
@@ -356,7 +350,7 @@ impl MambaMixer {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -393,7 +387,7 @@ impl MambaMixer {
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
-        let cmd = command_buffer.root_command_buffer().to_owned();
+        let cmd = command_buffer.to_owned();
         let compute = cmd.new_compute_command_encoder();
         self.ssm_prefill
             .encode(
@@ -439,7 +433,7 @@ impl MambaMixer {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -486,7 +480,7 @@ impl MambaMixer {
         let group_size = (h / g) as i32;
         let state_size = n as i32;
 
-        let cmd = command_buffer.root_command_buffer().to_owned();
+        let cmd = command_buffer.to_owned();
         let compute = cmd.new_compute_command_encoder();
         self.ssd_update
             .encode(
@@ -534,7 +528,7 @@ impl EncodableBlock for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline(state, command_buffer, parameters);

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -114,7 +114,6 @@ impl LayerExecutables {
                             .unwrap(),
                         ArrayId::Main,
                         ArrayId::QKV,
-                        &compilation_config.descriptor_mlp,
                     )
                     .expect("Failed to create qkv projection");
 
@@ -155,7 +154,6 @@ impl LayerExecutables {
                             .unwrap(),
                         ArrayId::AttentionOutput,
                         ArrayId::Main,
-                        &compilation_config.descriptor_mlp,
                     )
                     .expect("Failed to create out projection");
 
@@ -263,7 +261,6 @@ impl LayerExecutables {
                 hidden_dim,
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
-                &compilation_config.descriptor_mlp,
             )
             .expect("Failed to create mlp block");
 
@@ -305,7 +302,7 @@ impl EncodableBlock for LayerExecutables {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         #[cfg(feature = "tracing")]

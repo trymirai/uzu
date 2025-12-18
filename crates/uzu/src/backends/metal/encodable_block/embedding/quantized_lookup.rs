@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
-    QuantizedEmbeddingError,
+    EmbeddingError,
 };
 use crate::{
     Array, DataType,
@@ -39,7 +38,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
             data_type,
@@ -62,7 +61,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
             data_type,
@@ -88,7 +87,7 @@ impl QuantizedEmbeddingLookup {
         scales_name: &str,
         biases_name: &str,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
         let kernel =
@@ -96,14 +95,14 @@ impl QuantizedEmbeddingLookup {
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+            EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load weights: {:?}",
                 e
             )))
         })?;
 
         if weights.data_type() != mode.storage_type() {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Expected packed weights of type {:?}, got {:?}",
                     mode.storage_type(),
@@ -114,7 +113,7 @@ impl QuantizedEmbeddingLookup {
 
         // Load scales [vocab_size, num_groups]
         let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+            EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load scales: {:?}",
                 e
             )))
@@ -123,7 +122,7 @@ impl QuantizedEmbeddingLookup {
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding lookup weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
@@ -133,7 +132,7 @@ impl QuantizedEmbeddingLookup {
             ));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding lookup scales shape mismatch: got {:?}, expected [{}, {}]",
                     scales.shape(),
@@ -143,7 +142,7 @@ impl QuantizedEmbeddingLookup {
             ));
         }
         if scales.data_type() != data_type {
-            return Err(QuantizedEmbeddingError::UnsupportedDataType(
+            return Err(EmbeddingError::UnsupportedDataType(
                 scales.data_type(),
             ));
         }
@@ -152,7 +151,7 @@ impl QuantizedEmbeddingLookup {
         let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(QuantizedEmbeddingError::MetalError(
+                    return Err(EmbeddingError::MetalError(
                         MTLError::Generic(format!(
                             "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
@@ -162,7 +161,7 @@ impl QuantizedEmbeddingLookup {
                     ));
                 }
                 if deq_biases.data_type() != data_type {
-                    return Err(QuantizedEmbeddingError::UnsupportedDataType(
+                    return Err(EmbeddingError::UnsupportedDataType(
                         deq_biases.data_type(),
                     ));
                 }
@@ -174,7 +173,7 @@ impl QuantizedEmbeddingLookup {
                     DataType::F32 => 4,
                     other => {
                         return Err(
-                            QuantizedEmbeddingError::UnsupportedDataType(other),
+                            EmbeddingError::UnsupportedDataType(other),
                         );
                     },
                 };
@@ -213,7 +212,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
@@ -224,8 +223,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
         let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = QuantizedEmbeddingLookupArguments {
             token_ids_buffer,
@@ -246,10 +244,8 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

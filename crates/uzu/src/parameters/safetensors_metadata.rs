@@ -80,9 +80,9 @@ pub enum Dtype {
     U64,
 }
 
-impl Into<DataType> for Dtype {
-    fn into(self) -> DataType {
-        match self {
+impl From<Dtype> for DataType {
+    fn from(val: Dtype) -> Self {
+        match val {
             Dtype::F16 => DataType::F16,
             Dtype::BF16 => DataType::BF16,
             Dtype::F32 => DataType::F32,
@@ -94,7 +94,7 @@ impl Into<DataType> for Dtype {
             Dtype::U64 => DataType::U64,
             Dtype::BOOL => DataType::I8,
             // Add mappings for other types as needed
-            _ => panic!("Unsupported dtype: {:?}", self),
+            _ => panic!("Unsupported dtype: {:?}", val),
         }
     }
 }

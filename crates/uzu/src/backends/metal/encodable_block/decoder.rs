@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{
     EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -40,19 +40,11 @@ impl Decoder {
             .subtree("transformer")
             .expect("transformer subtree not found");
 
-        let embed = embed_block(
-            &decoder_config,
-            &mtl_context,
-            &compilation_config.descriptor_general,
-            root_weight_loader,
-        );
+        let embed =
+            embed_block(&decoder_config, &mtl_context, root_weight_loader);
 
-        let readout = readout_block(
-            &decoder_config,
-            &mtl_context,
-            &compilation_config.descriptor_general,
-            root_weight_loader,
-        );
+        let readout =
+            readout_block(&decoder_config, &mtl_context, root_weight_loader);
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer = decoder_config
@@ -209,7 +201,7 @@ impl EncodableBlock for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let mut resolver = EncoderResolver::new(command_buffer);

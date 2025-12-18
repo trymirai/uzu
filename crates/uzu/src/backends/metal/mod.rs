@@ -6,7 +6,6 @@ mod context;
 pub mod encodable_block;
 pub mod error;
 pub mod forward_pass;
-pub mod graph;
 pub mod image;
 pub mod kernel;
 mod language_model_generator_context;

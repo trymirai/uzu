@@ -1,9 +1,7 @@
 pub mod cache_layers;
 mod encoder_resolver;
-mod io_arrays;
 pub mod kv_cache_layer;
 mod model_shape;
-mod mpsgraph_block;
 mod scratch_buffers;
 pub mod short_conv_layer;
 pub mod ssm_layer;
@@ -13,12 +11,10 @@ pub mod traces;
 
 pub use cache_layers::{CacheLayer, CacheLayers};
 pub use encoder_resolver::EncoderResolver;
-pub use io_arrays::IOArrays;
 pub use kv_cache_layer::{
     AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
 };
 pub use model_shape::ModelShape;
-pub use mpsgraph_block::MPSGraphBlock;
 pub use scratch_buffers::ScratchBuffers;
 pub use short_conv_layer::ShortConvLayer;
 pub use ssm_layer::SSMLayer;
