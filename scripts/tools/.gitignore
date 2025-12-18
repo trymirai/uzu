@@ -35,3 +35,4 @@ sync.bb
 # Profiler
 memray-*.bin
 memray-*.html
+run_all_validations.py

@@ -28,3 +28,4 @@ target/
 models/
 external/
 .github/*.md
+crates/uzu/examples/validate_model.rs
