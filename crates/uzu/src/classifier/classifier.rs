@@ -103,6 +103,8 @@ impl Classifier {
                 num_labels,
             );
 
+            self.context.reset_command_buffer();
+
             let encoding_params = EncodingParameters::new(false, true, false);
 
             self.context.embed.encode(
@@ -159,6 +161,9 @@ impl Classifier {
                 &encoding_params,
             );
 
+            self.context.command_buffer.commit();
+            self.context.command_buffer.wait_until_completed();
+
             let logits = self.copy_logits_from_state(&state)?;
 
             let traces = state.traces().clone();
@@ -184,6 +189,8 @@ impl Classifier {
                 true,
                 num_labels,
             );
+
+            self.context.reset_command_buffer();
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
@@ -219,6 +226,9 @@ impl Classifier {
                 &self.context.command_buffer,
                 &encoding_params,
             );
+
+            self.context.command_buffer.commit();
+            self.context.command_buffer.wait_until_completed();
 
             let logits = self.copy_logits_from_state(&state)?;
 
