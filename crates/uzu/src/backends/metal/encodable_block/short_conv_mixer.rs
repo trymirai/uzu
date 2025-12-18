@@ -78,7 +78,8 @@ impl ShortConvMixer {
             ArrayId::Main,
             ArrayId::SsmInProj,
             &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &short_conv_config.out_projection_config,
@@ -90,7 +91,8 @@ impl ShortConvMixer {
             ArrayId::AttentionOutput,
             ArrayId::Main,
             &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if short_conv_config.conv_config.has_biases {

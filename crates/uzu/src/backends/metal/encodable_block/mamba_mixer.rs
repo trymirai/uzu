@@ -83,7 +83,8 @@ impl MambaMixer {
             ArrayId::Main,
             ArrayId::SsmInProj,
             &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &mamba_config.out_projection_config,
@@ -98,7 +99,8 @@ impl MambaMixer {
             ArrayId::AttentionOutput,
             ArrayId::Main,
             &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {

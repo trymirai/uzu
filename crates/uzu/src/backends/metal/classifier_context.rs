@@ -397,7 +397,13 @@ impl ClassifierContext {
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
             &compilation_config.descriptor_general,
-        );
+        )
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!(
+                "prediction head readout: {:?}",
+                e
+            )))
+        })?;
 
         let pooling_kernel = PoolingKernel::new(&mtl_context, data_type)
             .map_err(|e| {
@@ -417,7 +423,11 @@ impl ClassifierContext {
         ));
 
         let prediction_head = Box::new(ClassifierPredictionHead::new(
-            prediction_head_dense,
+            prediction_head_dense.map_err(|e| {
+                Error::Classifier(ClassifierError::KernelCreationFailed(
+                    format!("prediction head dense: {:?}", e),
+                ))
+            })?,
             prediction_head_activation,
             Box::new(prediction_head_norm),
             prediction_head_final_linear,

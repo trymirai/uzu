@@ -14,12 +14,11 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MTLContext, MTLError,
         forward_pass::{ArrayId, IOArrays, MPSGraphBlock},
         graph::{
             embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
-            embeddings_readout_subgraph, linear_subgraph, mlp_subgraph,
-            placeholder, shaped_type,
+            embeddings_readout_subgraph, placeholder, shaped_type,
         },
         kernel::mlp::MlpGateActMulEncodable,
     },
@@ -42,8 +41,8 @@ pub fn linear_block<const N: usize>(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    compilation_descriptor: &CompilationDescriptor,
-) -> Box<dyn EncodableBlock> {
+    _compilation_descriptor: &CompilationDescriptor,
+) -> Result<Box<dyn EncodableBlock>, MTLError> {
     let out_sum: usize = output_dims.iter().sum();
     match config {
         LinearConfig::Quantized(quant_config)
@@ -56,9 +55,8 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )
-            .expect("Failed to create quantized linear kernel block");
-            return Box::new(block);
+            )?;
+            Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
             precision,
@@ -71,57 +69,15 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )
-            .expect("Failed to create full precision linear kernel block");
-            return Box::new(block);
+            )?;
+            Ok(Box::new(block))
         },
         LinearConfig::QLoRA {
             ..
-        } => {},
+        } => Err(MTLError::Generic(
+            "QLoRA linear layer not supported".to_string(),
+        )),
     }
-
-    autoreleasepool(|_| {
-        let graph = Graph::new();
-
-        let input_shape = [-1, input_dim as isize];
-        let input_data_type: DataType = config.activation_precision().into();
-        let input_placeholder =
-            placeholder(&graph, &input_shape, input_data_type);
-
-        let output = linear_subgraph(
-            &graph,
-            config,
-            input_dim,
-            output_dims,
-            true,
-            &input_placeholder,
-            parameter_tree,
-        )
-        .unwrap();
-
-        let retained_shaped_type = shaped_type(&input_shape, input_data_type);
-        let feeds =
-            HashMap::from([(&*input_placeholder, &*retained_shaped_type)]);
-
-        let executable = graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &feeds,
-            &[&output],
-            None,
-            Some(&compilation_descriptor),
-        );
-
-        let arguments = IOArrays::new(
-            vec![input_array_id].into_boxed_slice(),
-            vec![output_array_id].into_boxed_slice(),
-        );
-
-        Box::new(MPSGraphBlock::new(
-            executable,
-            make_execution_descriptor(),
-            arguments,
-        ))
-    })
 }
 
 pub fn mlp_block(
@@ -130,8 +86,8 @@ pub fn mlp_block(
     hidden_dim: usize,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    compilation_descriptor: &CompilationDescriptor,
-) -> Box<dyn EncodableBlock> {
+    _compilation_descriptor: &CompilationDescriptor,
+) -> Result<Box<dyn EncodableBlock>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense) = config {
         match &dense.linear_config {
             LinearConfig::Quantized(quant_config)
@@ -144,33 +100,34 @@ pub fn mlp_block(
                     quant_config,
                     model_dim,
                     2 * hidden_dim,
-                    &parameter_tree.subtree("up_projection").unwrap(),
+                    &parameter_tree
+                        .subtree("up_projection")
+                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
                     ArrayId::Main,
                     ArrayId::MlpFusedUp,
-                )
-                .expect("Failed to build MLP up quantized block");
+                )?;
 
                 let gate_op = MlpGateActMulEncodable::new(
                     context,
                     dtype,
                     dense.activation,
                     hidden_dim,
-                )
-                .expect("Failed to build MLP gate activation kernel");
+                )?;
 
                 let down = QuantizedLinear::new(
                     context,
                     quant_config,
                     hidden_dim,
                     model_dim,
-                    &parameter_tree.subtree("down_projection").unwrap(),
+                    &parameter_tree
+                        .subtree("down_projection")
+                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
-                )
-                .expect("Failed to build MLP down quantized block");
+                )?;
 
                 let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
-                return Box::new(enc);
+                return Ok(Box::new(enc));
             },
             LinearConfig::FullPrecision {
                 precision,
@@ -182,98 +139,52 @@ pub fn mlp_block(
                     dtype,
                     model_dim,
                     2 * hidden_dim,
-                    &parameter_tree.subtree("up_projection").unwrap(),
+                    &parameter_tree
+                        .subtree("up_projection")
+                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
                     ArrayId::Main,
                     ArrayId::MlpFusedUp,
-                )
-                .expect("Failed to build MLP up full precision block");
+                )?;
 
                 let gate_op = MlpGateActMulEncodable::new(
                     context,
                     dtype,
                     dense.activation,
                     hidden_dim,
-                )
-                .expect("Failed to build MLP gate activation kernel");
+                )?;
 
                 let down = FullPrecisionLinear::new(
                     context,
                     dtype,
                     hidden_dim,
                     model_dim,
-                    &parameter_tree.subtree("down_projection").unwrap(),
+                    &parameter_tree
+                        .subtree("down_projection")
+                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
-                )
-                .expect("Failed to build MLP down full precision block");
+                )?;
 
                 let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
-                return Box::new(enc);
+                return Ok(Box::new(enc));
             },
-            _ => {},
+            LinearConfig::QLoRA {
+                ..
+            } => {
+                return Err(MTLError::Generic(
+                    "QLoRA MLP not supported".to_string(),
+                ));
+            },
         }
     }
 
     if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
         let moe_block =
-            MoeBlock::new(context, moe, model_dim, hidden_dim, parameter_tree)
-                .expect("Failed to build MoE block");
-        return Box::new(moe_block);
+            MoeBlock::new(context, moe, model_dim, hidden_dim, parameter_tree)?;
+        return Ok(Box::new(moe_block));
     }
 
-    autoreleasepool(|_| {
-        let graph = Graph::new();
-
-        let input_shape = [-1, model_dim as isize];
-        let input_data_type: DataType = match config {
-            crate::config::MLPConfig::Dense(dense) => {
-                dense.linear_config.activation_precision().into()
-            },
-            crate::config::MLPConfig::MixtureOfExperts(moe) => {
-                moe.expert_config.linear_config.activation_precision().into()
-            },
-        };
-        let input_placeholder =
-            placeholder(&graph, &input_shape, input_data_type);
-
-        let output = match config {
-            crate::config::MLPConfig::Dense(dense) => mlp_subgraph(
-                &graph,
-                &MLPConfig::Dense(dense.clone()),
-                model_dim,
-                hidden_dim,
-                &input_placeholder,
-                parameter_tree,
-            )
-            .unwrap(),
-            crate::config::MLPConfig::MixtureOfExperts(_moe) => {
-                unreachable!("MoE uses MoeBlock, not MPSGraph")
-            },
-        };
-
-        let retained_shaped_type = shaped_type(&input_shape, input_data_type);
-        let feeds =
-            HashMap::from([(&*input_placeholder, &*retained_shaped_type)]);
-
-        let executable = graph.compile(
-            &MPSDevice::with_device(&context.device),
-            &feeds,
-            &[&output],
-            None,
-            Some(&compilation_descriptor),
-        );
-
-        let arguments = IOArrays::new(
-            vec![ArrayId::Main].into_boxed_slice(),
-            vec![ArrayId::Main].into_boxed_slice(),
-        );
-
-        Box::new(MPSGraphBlock::new(
-            executable,
-            make_execution_descriptor(),
-            arguments,
-        ))
-    })
+    unreachable!("Unknown MLP config")
 }
 
 pub fn embed_block(
