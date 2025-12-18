@@ -7,9 +7,9 @@ use mpsgraph::{
 use objc2::rc::{Retained, autoreleasepool};
 
 use super::{
-    EncodableBlock, FullPrecisionEmbeddingReadout, FullPrecisionLinear,
-    MlpBlock, MoeBlock, QuantizedEmbeddingLookup, QuantizedEmbeddingReadout,
-    QuantizedLinear,
+    EncodableBlock, FullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock, MoeBlock,
+    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
@@ -23,10 +23,7 @@ use crate::{
         },
         kernel::mlp::MlpGateActMulEncodable,
     },
-    config::{
-        DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig,
-        QuantizationConfig,
-    },
+    config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
     parameters::ParameterTree,
 };
 
@@ -51,16 +48,17 @@ pub fn linear_block<const N: usize>(
     match config {
         LinearConfig::Quantized(quant_config)
         | LinearConfig::MLXQuantized(quant_config) => {
-            return quantized_linear_block_custom(
+            let block = QuantizedLinear::new(
+                context,
                 quant_config,
                 input_dim,
                 out_sum,
-                context,
                 parameter_tree,
                 input_array_id,
                 output_array_id,
             )
-            .unwrap();
+            .expect("Failed to create quantized linear kernel block");
+            return Box::new(block);
         },
         LinearConfig::FullPrecision {
             precision,
@@ -124,27 +122,6 @@ pub fn linear_block<const N: usize>(
             arguments,
         ))
     })
-}
-
-pub fn quantized_linear_block_custom(
-    config: &QuantizationConfig,
-    input_dim: usize,
-    output_dim: usize,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock>, crate::backends::metal::MTLError> {
-    let block = QuantizedLinear::new(
-        context,
-        config,
-        input_dim,
-        output_dim,
-        parameter_tree,
-        input_array_id,
-        output_array_id,
-    )?;
-    Ok(Box::new(block))
 }
 
 pub fn mlp_block(
@@ -266,146 +243,65 @@ pub fn embed_block(
     compilation_descriptor: &CompilationDescriptor,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn EncodableBlock> {
-    let graph = Graph::new();
-
-    let input_shape = [-1 as isize];
-    let input_data_type = DataType::U64;
-    let input_placeholder = placeholder(&graph, &input_shape, input_data_type);
-    let input_shaped_type = shaped_type(&input_shape, input_data_type);
-
     match &config.embedding_config {
         EmbeddingConfig::Tied {
+            common,
             precision,
-            ..
         } => {
-            let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = (*precision).into();
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
 
-            let output = embeddings_embed_subgraph(
-                &graph,
-                &config.embedding_config,
-                &input_placeholder,
-                &weights_placeholder,
+            let block = FullPrecisionEmbeddingLookup::new(
+                context,
+                (*precision).into(),
+                config.vocab_size,
+                config.model_dim,
+                common.input_scale,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(&compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
-                        .into_boxed_slice(),
-                    vec![ArrayId::Main].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create full precision embedding lookup");
 
             Box::new(block)
         },
         EmbeddingConfig::Untied {
+            common,
             precision,
-            ..
         } => {
-            let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = (*precision).into();
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
 
-            let output = embeddings_embed_subgraph(
-                &graph,
-                &config.embedding_config,
-                &input_placeholder,
-                &weights_placeholder,
+            let block = FullPrecisionEmbeddingLookup::new(
+                context,
+                (*precision).into(),
+                config.vocab_size,
+                config.model_dim,
+                common.input_scale,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(&compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
-                        .into_boxed_slice(),
-                    vec![ArrayId::Main].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create full precision embedding lookup");
 
             Box::new(block)
         },
         EmbeddingConfig::MLXSemiQuantizedUntied {
+            common,
             activation_precision,
             ..
         } => {
-            let weights_shape =
-                [config.vocab_size as isize, config.model_dim as isize];
-            let weights_data_type: DataType = (*activation_precision).into();
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
 
-            let output = embeddings_embed_subgraph(
-                &graph,
-                &config.embedding_config,
-                &input_placeholder,
-                &weights_placeholder,
+            let block = FullPrecisionEmbeddingLookup::new(
+                context,
+                (*activation_precision).into(),
+                config.vocab_size,
+                config.model_dim,
+                common.input_scale,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(&compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![ArrayId::TokenIds, ArrayId::EmbeddingsInputWeights]
-                        .into_boxed_slice(),
-                    vec![ArrayId::Main].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create full precision embedding lookup");
 
             Box::new(block)
         },
@@ -413,6 +309,13 @@ pub fn embed_block(
             embedding_quantization_mode: _,
             ..
         } => {
+            let graph = Graph::new();
+
+            let input_shape = [-1 as isize];
+            let input_data_type = DataType::U64;
+            let input_placeholder =
+                placeholder(&graph, &input_shape, input_data_type);
+            let input_shaped_type = shaped_type(&input_shape, input_data_type);
             let weights_shape =
                 [config.vocab_size as isize, (config.model_dim / 2) as isize];
             let weights_data_type = DataType::U8;
