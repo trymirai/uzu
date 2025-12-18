@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_run, handle_serve};
+use cli::handlers::{handle_bench, handle_run, handle_serve};
 
 #[derive(Parser)]
 struct Cli {
@@ -23,6 +23,15 @@ enum Commands {
         /// Prefill step size
         prefill_step_size: Option<usize>,
     },
+    /// Run benchmarks for the specified model
+    Bench {
+        /// Folder with model's files
+        model_path: String,
+        /// Path to the task file
+        task_path: String,
+        /// Path to the output file
+        output_path: String,
+    },
 }
 
 fn main() {
@@ -40,6 +49,13 @@ fn main() {
             prefill_step_size,
         }) => {
             handle_serve(model_path, prefill_step_size);
+        },
+        Some(Commands::Bench {
+            model_path,
+            task_path,
+            output_path,
+        }) => {
+            let _ = handle_bench(model_path, task_path, output_path);
         },
         None => {
             let mut cmd = Cli::command();
