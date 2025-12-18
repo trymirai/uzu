@@ -9,16 +9,16 @@ use crate::backends::metal::{
 };
 
 pub struct MlpBlock {
-    up: QuantizedLinear,
+    up: Box<dyn EncodableBlock>,
     gate: MlpGateActMulEncodable,
-    down: QuantizedLinear,
+    down: Box<dyn EncodableBlock>,
 }
 
 impl MlpBlock {
     pub fn new(
-        up: QuantizedLinear,
+        up: Box<dyn EncodableBlock>,
         gate: MlpGateActMulEncodable,
-        down: QuantizedLinear,
+        down: Box<dyn EncodableBlock>,
     ) -> Self {
         Self {
             up,

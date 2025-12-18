@@ -133,45 +133,84 @@ pub fn mlp_block(
     compilation_descriptor: &CompilationDescriptor,
 ) -> Box<dyn EncodableBlock> {
     if let crate::config::MLPConfig::Dense(dense) = config {
-        if let crate::config::LinearConfig::Quantized(ref quant_config)
-        | crate::config::LinearConfig::MLXQuantized(ref quant_config) =
-            dense.linear_config
-        {
-            let dtype: DataType =
-                dense.linear_config.activation_precision().into();
+        match &dense.linear_config {
+            LinearConfig::Quantized(quant_config)
+            | LinearConfig::MLXQuantized(quant_config) => {
+                let dtype: DataType =
+                    dense.linear_config.activation_precision().into();
 
-            let up = QuantizedLinear::new(
-                context,
-                quant_config,
-                model_dim,
-                2 * hidden_dim,
-                &parameter_tree.subtree("up_projection").unwrap(),
-                ArrayId::Main,
-                ArrayId::MlpFusedUp,
-            )
-            .expect("Failed to build MLP up quantized block");
+                let up = QuantizedLinear::new(
+                    context,
+                    quant_config,
+                    model_dim,
+                    2 * hidden_dim,
+                    &parameter_tree.subtree("up_projection").unwrap(),
+                    ArrayId::Main,
+                    ArrayId::MlpFusedUp,
+                )
+                .expect("Failed to build MLP up quantized block");
 
-            let gate_op = MlpGateActMulEncodable::new(
-                context,
-                dtype,
-                dense.activation,
-                hidden_dim,
-            )
-            .expect("Failed to build MLP gate activation kernel");
+                let gate_op = MlpGateActMulEncodable::new(
+                    context,
+                    dtype,
+                    dense.activation,
+                    hidden_dim,
+                )
+                .expect("Failed to build MLP gate activation kernel");
 
-            let down = QuantizedLinear::new(
-                context,
-                quant_config,
-                hidden_dim,
-                model_dim,
-                &parameter_tree.subtree("down_projection").unwrap(),
-                ArrayId::MlpHidden,
-                ArrayId::Main,
-            )
-            .expect("Failed to build MLP down quantized block");
+                let down = QuantizedLinear::new(
+                    context,
+                    quant_config,
+                    hidden_dim,
+                    model_dim,
+                    &parameter_tree.subtree("down_projection").unwrap(),
+                    ArrayId::MlpHidden,
+                    ArrayId::Main,
+                )
+                .expect("Failed to build MLP down quantized block");
 
-            let enc = MlpBlock::new(up, gate_op, down);
-            return Box::new(enc);
+                let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
+                return Box::new(enc);
+            },
+            LinearConfig::FullPrecision {
+                precision,
+            } => {
+                let dtype: DataType = (*precision).into();
+
+                let up = FullPrecisionLinear::new(
+                    context,
+                    dtype,
+                    model_dim,
+                    2 * hidden_dim,
+                    &parameter_tree.subtree("up_projection").unwrap(),
+                    ArrayId::Main,
+                    ArrayId::MlpFusedUp,
+                )
+                .expect("Failed to build MLP up full precision block");
+
+                let gate_op = MlpGateActMulEncodable::new(
+                    context,
+                    dtype,
+                    dense.activation,
+                    hidden_dim,
+                )
+                .expect("Failed to build MLP gate activation kernel");
+
+                let down = FullPrecisionLinear::new(
+                    context,
+                    dtype,
+                    hidden_dim,
+                    model_dim,
+                    &parameter_tree.subtree("down_projection").unwrap(),
+                    ArrayId::MlpHidden,
+                    ArrayId::Main,
+                )
+                .expect("Failed to build MLP down full precision block");
+
+                let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
+                return Box::new(enc);
+            },
+            _ => {},
         }
     }
 
