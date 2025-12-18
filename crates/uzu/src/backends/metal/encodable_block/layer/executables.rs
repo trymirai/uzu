@@ -352,7 +352,8 @@ impl EncodableBlock for LayerExecutables {
                 out_projection.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );
@@ -364,7 +365,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );
@@ -376,7 +378,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );

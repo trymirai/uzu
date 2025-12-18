@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{CommandBuffer, Device};
+use metal::Device;
 use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
