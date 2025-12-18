@@ -2,7 +2,7 @@
 
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
-use super::{EncodableBlock, EncodingParameters, QuantizedLinear};
+use super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array,
     backends::metal::{
@@ -12,16 +12,16 @@ use crate::{
 };
 
 pub struct MlpBlock {
-    up: QuantizedLinear,
+    up: Box<dyn EncodableBlock>,
     gate: MlpGateActMulEncodable,
-    down: QuantizedLinear,
+    down: Box<dyn EncodableBlock>,
 }
 
 impl MlpBlock {
     pub fn new(
-        up: QuantizedLinear,
+        up: Box<dyn EncodableBlock>,
         gate: MlpGateActMulEncodable,
-        down: QuantizedLinear,
+        down: Box<dyn EncodableBlock>,
     ) -> Self {
         Self {
             up,
