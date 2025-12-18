@@ -115,7 +115,8 @@ impl LayerExecutables {
                         ArrayId::Main,
                         ArrayId::QKV,
                         &compilation_config.descriptor_mlp,
-                    );
+                    )
+                    .expect("Failed to create qkv projection");
 
                     let qk_norm: Option<Box<dyn EncodableBlock>> =
                         if attention_config.query_norm_config.is_some()
@@ -155,7 +156,8 @@ impl LayerExecutables {
                         ArrayId::AttentionOutput,
                         ArrayId::Main,
                         &compilation_config.descriptor_mlp,
-                    );
+                    )
+                    .expect("Failed to create out projection");
 
                     let attention = Box::new(
                         Attention::new(
@@ -262,7 +264,8 @@ impl LayerExecutables {
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
                 &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create mlp block");
 
             let post_mlp_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
