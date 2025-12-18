@@ -4,7 +4,7 @@ use mpsgraph::{
     CompilationDescriptor, Device as MPSDevice, ExecutableExecutionDescriptor,
     Graph,
 };
-use objc2::rc::{Retained, autoreleasepool};
+use objc2::rc::Retained;
 
 use super::{
     EncodableBlock, FullPrecisionEmbeddingLookup,
