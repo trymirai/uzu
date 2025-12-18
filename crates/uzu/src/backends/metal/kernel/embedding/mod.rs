@@ -7,7 +7,7 @@ use metal::{
 
 use super::super::MTLContext;
 use crate::{
-    DataType, backends::metal::encodable_block::QuantizedEmbeddingError,
+    DataType, backends::metal::encodable_block::EmbeddingError,
     config::QuantizationMode,
 };
 
@@ -32,13 +32,13 @@ impl FullPrecisionEmbeddingLookupKernel {
     pub fn new(
         mtl_context: &MTLContext,
         data_type: DataType,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         let dtype_suffix = match data_type {
             DataType::F32 => "f32",
             DataType::F16 => "f16",
             DataType::BF16 => "bf16",
             other => {
-                return Err(QuantizedEmbeddingError::UnsupportedDataType(
+                return Err(EmbeddingError::UnsupportedDataType(
                     other,
                 ));
             },
@@ -48,7 +48,7 @@ impl FullPrecisionEmbeddingLookupKernel {
 
         let (pipeline, _) = mtl_context
             .compute_pipeline_state_with_reflection(&kernel_name, None)
-            .map_err(QuantizedEmbeddingError::MetalError)?;
+            .map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
             pipeline,
@@ -59,7 +59,7 @@ impl FullPrecisionEmbeddingLookupKernel {
         &self,
         encoder: &ComputeCommandEncoderRef,
         args: FullPrecisionEmbeddingLookupArguments,
-    ) -> Result<(), QuantizedEmbeddingError> {
+    ) -> Result<(), EmbeddingError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         encoder.set_buffer(0, Some(args.token_ids_buffer), 0);
@@ -126,13 +126,13 @@ impl QuantizedEmbeddingLookupKernel {
         mtl_context: &MTLContext,
         data_type: DataType,
         mode: QuantizationMode,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         let dtype_suffix = match data_type {
             DataType::F32 => "f32",
             DataType::F16 => "f16",
             DataType::BF16 => "bf16",
             other => {
-                return Err(QuantizedEmbeddingError::UnsupportedDataType(
+                return Err(EmbeddingError::UnsupportedDataType(
                     other,
                 ));
             },
@@ -149,7 +149,7 @@ impl QuantizedEmbeddingLookupKernel {
 
         let (pipeline, _) = mtl_context
             .compute_pipeline_state_with_reflection(&kernel_name, None)
-            .map_err(QuantizedEmbeddingError::MetalError)?;
+            .map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
             pipeline,
@@ -160,7 +160,7 @@ impl QuantizedEmbeddingLookupKernel {
         &self,
         encoder: &ComputeCommandEncoderRef,
         args: QuantizedEmbeddingLookupArguments,
-    ) -> Result<(), QuantizedEmbeddingError> {
+    ) -> Result<(), EmbeddingError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers

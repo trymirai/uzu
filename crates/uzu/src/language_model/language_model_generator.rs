@@ -4,7 +4,6 @@ use std::{
 
 use block::ConcreteBlock;
 use itertools::{Either, Itertools, izip};
-use mpsgraph::CommandBuffer;
 
 use super::{
     LanguageModelGeneratorContext,
@@ -502,8 +501,7 @@ impl LanguageModelGenerator {
         }
 
         self.context.reset_command_buffer();
-        let root_command_buffer =
-            self.context.command_buffer.root_command_buffer();
+        let root_command_buffer = &self.context.command_buffer;
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
@@ -611,7 +609,7 @@ impl LanguageModelGenerator {
         let block = block.copy();
 
         root_command_buffer.add_completed_handler(&block);
-        self.context.command_buffer.commit_and_continue();
+        self.context.command_buffer.commit();
 
         Ok(())
     }
@@ -704,8 +702,7 @@ impl LanguageModelGenerator {
                 );
             }
 
-            let root_command_buffer =
-                self.context.command_buffer.root_command_buffer().to_owned();
+            let root_command_buffer = self.context.command_buffer.clone();
 
             if !warmup {
                 if !task.is_prefilling {
@@ -717,9 +714,11 @@ impl LanguageModelGenerator {
                 }
             }
 
-            self.context.command_buffer.commit_and_continue();
+            self.context.command_buffer.commit();
 
             if allow_pre_encode {
+                self.context.reset_command_buffer();
+
                 let next_task_key: String =
                     task.encoded_task_key(self.tokens.len() + 1);
 
@@ -773,11 +772,13 @@ impl LanguageModelGenerator {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = CommandBuffer::from_command_queue(
-            &self.context.mtl_context.command_queue,
-        );
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
+        let command_buffer = self
+            .context
+            .mtl_context
+            .command_queue
+            .new_command_buffer()
+            .to_owned();
+        let root_command_buffer = command_buffer.to_owned();
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
@@ -792,7 +793,7 @@ impl LanguageModelGenerator {
         command_buffer.commit();
 
         if wait_until_completed {
-            command_buffer.root_command_buffer().wait_until_completed();
+            command_buffer.wait_until_completed();
         }
     }
 

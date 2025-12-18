@@ -1,11 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
-    QuantizedEmbeddingError,
+    EmbeddingError,
 };
 use crate::{
     Array, DataType,
@@ -31,10 +30,10 @@ impl FullPrecisionEmbeddingReadout {
         vocab_size: usize,
         model_dim: usize,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
         {
-            return Err(QuantizedEmbeddingError::UnsupportedDataType(
+            return Err(EmbeddingError::UnsupportedDataType(
                 data_type,
             ));
         }
@@ -42,7 +41,7 @@ impl FullPrecisionEmbeddingReadout {
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                EmbeddingError::MetalError(MTLError::Generic(format!(
                     "Failed to load weights: {:?}",
                     e
                 )))
@@ -50,7 +49,7 @@ impl FullPrecisionEmbeddingReadout {
         };
 
         if weights.shape() != [vocab_size, model_dim] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
@@ -61,7 +60,7 @@ impl FullPrecisionEmbeddingReadout {
         }
 
         if weights.data_type() != data_type {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Weights dtype mismatch: got {:?}, expected {:?}",
                     weights.data_type(),
@@ -75,7 +74,7 @@ impl FullPrecisionEmbeddingReadout {
         // Weights are [vocab_size, model_dim], we compute input @ weights^T
         // MatmulKernel with transpose_b=true handles this
         let kernel = MatmulKernel::new(mtl_context, data_type, false, true)
-            .map_err(QuantizedEmbeddingError::MetalError)?;
+            .map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -90,7 +89,7 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
@@ -101,8 +100,7 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = MatmulArguments {
             a: input_buffer,
@@ -125,10 +123,8 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

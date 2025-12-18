@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
-    QuantizedEmbeddingError,
+    EmbeddingError,
 };
 use crate::{
     Array, DataType,
@@ -38,7 +37,7 @@ impl QuantizedEmbeddingReadout {
         group_size: usize,
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
             data_type,
@@ -61,7 +60,7 @@ impl QuantizedEmbeddingReadout {
         group_size: usize,
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
             data_type,
@@ -87,10 +86,10 @@ impl QuantizedEmbeddingReadout {
         scales_name: &str,
         biases_name: &str,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, QuantizedEmbeddingError> {
+    ) -> Result<Self, EmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
         let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+            EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load weights: {:?}",
                 e
             )))
@@ -98,7 +97,7 @@ impl QuantizedEmbeddingReadout {
 
         // Load scales [vocab_size, num_groups]
         let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+            EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load scales: {:?}",
                 e
             )))
@@ -112,7 +111,7 @@ impl QuantizedEmbeddingReadout {
         let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
@@ -122,7 +121,7 @@ impl QuantizedEmbeddingReadout {
             ));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(QuantizedEmbeddingError::MetalError(
+            return Err(EmbeddingError::MetalError(
                 MTLError::Generic(format!(
                     "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
                     scales.shape(),
@@ -132,7 +131,7 @@ impl QuantizedEmbeddingReadout {
             ));
         }
         if scales.data_type() != data_type {
-            return Err(QuantizedEmbeddingError::UnsupportedDataType(
+            return Err(EmbeddingError::UnsupportedDataType(
                 scales.data_type(),
             ));
         }
@@ -141,7 +140,7 @@ impl QuantizedEmbeddingReadout {
         let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(QuantizedEmbeddingError::MetalError(
+                    return Err(EmbeddingError::MetalError(
                         MTLError::Generic(format!(
                             "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
@@ -151,7 +150,7 @@ impl QuantizedEmbeddingReadout {
                     ));
                 }
                 if deq_biases.data_type() != data_type {
-                    return Err(QuantizedEmbeddingError::UnsupportedDataType(
+                    return Err(EmbeddingError::UnsupportedDataType(
                         deq_biases.data_type(),
                     ));
                 }
@@ -164,7 +163,7 @@ impl QuantizedEmbeddingReadout {
                     DataType::F32 => 4,
                     other => {
                         return Err(
-                            QuantizedEmbeddingError::UnsupportedDataType(other),
+                            EmbeddingError::UnsupportedDataType(other),
                         );
                     },
                 };
@@ -198,7 +197,7 @@ impl QuantizedEmbeddingReadout {
             weights_transposed,
         )
         .map_err(|e| {
-            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+            EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to create kernel: {:?}",
                 e
             )))
@@ -219,7 +218,7 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
@@ -230,8 +229,7 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -252,10 +250,8 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

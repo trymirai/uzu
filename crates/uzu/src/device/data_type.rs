@@ -1,6 +1,5 @@
 use bytemuck::Pod;
 use half::{bf16, f16};
-use mpsgraph::DataType as MPSDataType;
 use num_traits::NumCast;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
@@ -46,48 +45,6 @@ impl DataType {
 
     pub fn size_in_bytes(&self) -> usize {
         (self.size_in_bits() + 7) / 8 // Round up to nearest byte
-    }
-}
-
-impl From<MPSDataType> for DataType {
-    fn from(dtype: MPSDataType) -> Self {
-        match dtype {
-            MPSDataType::BFloat16 => DataType::BF16,
-            MPSDataType::Float16 => DataType::F16,
-            MPSDataType::Float32 => DataType::F32,
-            MPSDataType::Int4 => DataType::I4,
-            MPSDataType::UInt4 => DataType::U4,
-            MPSDataType::Int8 => DataType::I8,
-            MPSDataType::UInt8 => DataType::U8,
-            MPSDataType::Int16 => DataType::I16,
-            MPSDataType::UInt16 => DataType::U16,
-            MPSDataType::Int32 => DataType::I32,
-            MPSDataType::UInt32 => DataType::U32,
-            MPSDataType::Int64 => DataType::I64,
-            MPSDataType::UInt64 => DataType::U64,
-            _ => panic!("Unsupported MPS data type: {0:?}", dtype),
-        }
-    }
-}
-
-impl From<DataType> for MPSDataType {
-    fn from(dtype: DataType) -> Self {
-        match dtype {
-            DataType::BF16 => MPSDataType::BFloat16,
-            DataType::F16 => MPSDataType::Float16,
-            DataType::F32 => MPSDataType::Float32,
-            DataType::I4 => MPSDataType::Int4,
-            DataType::U4 => MPSDataType::UInt4,
-            DataType::I8 => MPSDataType::Int8,
-            DataType::U8 => MPSDataType::UInt8,
-            DataType::I16 => MPSDataType::Int16,
-            DataType::U16 => MPSDataType::UInt16,
-            DataType::I32 => MPSDataType::Int32,
-            DataType::U32 => MPSDataType::UInt32,
-            DataType::I64 => MPSDataType::Int64,
-            DataType::U64 => MPSDataType::UInt64,
-            _ => panic!("Unsupported MPS data type: {0:?}", dtype),
-        }
     }
 }
 

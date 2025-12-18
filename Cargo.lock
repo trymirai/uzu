@@ -2192,19 +2192,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpsgraph"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b3d4f4ee48894ff2d83808e8a0333f00eb7576375a5a77e8132f10ebb2a1f86"
-dependencies = [
- "bitflags 2.9.4",
- "block2",
- "metal",
- "objc2",
- "objc2-foundation",
-]
-
-[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4103,7 +4090,6 @@ dependencies = [
  "metal",
  "minijinja",
  "minijinja-contrib",
- "mpsgraph",
  "ndarray",
  "num-traits",
  "objc2",

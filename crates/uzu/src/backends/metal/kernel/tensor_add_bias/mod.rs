@@ -1,8 +1,8 @@
 use std::mem::size_of;
 
 use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
+    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
+    ComputePipelineState as MTLComputePipelineState,
 };
 
 use super::{
@@ -37,7 +37,7 @@ impl TensorAddBias {
         output: &MTLBuffer,
         num_cols: usize,
         total_len: usize,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &CommandBufferRef,
         predicate: Option<&MTLBuffer>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();

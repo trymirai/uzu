@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -40,7 +40,7 @@ impl ClassifierLayer {
     pub fn new(
         mtl_context: &MTLContext,
         layer_config: &TransformerLayerConfig,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -112,7 +112,6 @@ impl ClassifierLayer {
                 &layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 ArrayId::Main,
                 ArrayId::QKV,
-                &compilation_config.descriptor_mlp,
             )
             .expect("Failed to create qkv projection");
 
@@ -151,7 +150,6 @@ impl ClassifierLayer {
                 &layer_loader.subtree("mixer.out_projection").unwrap(),
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
-                &compilation_config.descriptor_mlp,
             )
             .expect("Failed to create out projection");
 
@@ -210,7 +208,6 @@ impl ClassifierLayer {
                 hidden_dim,
                 mtl_context,
                 &layer_loader.subtree("mlp").unwrap(),
-                &compilation_config.descriptor_mlp,
             )
             .expect("Failed to create mlp block");
 
@@ -278,7 +275,7 @@ impl EncodableBlock for ClassifierLayer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         #[cfg(feature = "tracing")]

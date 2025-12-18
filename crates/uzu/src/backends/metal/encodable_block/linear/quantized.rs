@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef};
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
 
 use crate::{
     DataType,
@@ -226,7 +225,7 @@ impl EncodableBlock for QuantizedLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -238,8 +237,7 @@ impl EncodableBlock for QuantizedLinear {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -263,23 +261,20 @@ impl EncodableBlock for QuantizedLinear {
             (&self.bias_add_kernel, &self.biases_buffer)
         {
             let total_len = batch_size * self.output_dim;
-            let retained_cb = root_command_buffer.to_owned();
             bias_add.encode_into_command_buffer(
                 &output_buffer,
                 bias_buf,
                 &output_buffer,
                 self.output_dim,
                 total_len,
-                &retained_cb,
+                command_buffer,
                 parameters.predicate,
             );
         }
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 

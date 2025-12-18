@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
+    Buffer as MTLBuffer, CommandBufferRef,
     ComputePipelineState as MTLComputePipelineState,
 };
 
@@ -36,7 +36,7 @@ impl TensorAddSwapKernel {
         skip_buffer: &MTLBuffer,
         main_buffer: &MTLBuffer,
         length: usize,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &CommandBufferRef,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder();
 

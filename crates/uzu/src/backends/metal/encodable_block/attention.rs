@@ -1,6 +1,6 @@
 //! Attention kernel encodable.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
@@ -48,7 +48,7 @@ impl EncodableBlock for Attention {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let (
@@ -145,9 +145,7 @@ impl EncodableBlock for Attention {
         let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
 
         // Prepare command encoder early (used for optional value extraction)
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
@@ -331,10 +329,5 @@ impl EncodableBlock for Attention {
         }
 
         compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
     }
 }

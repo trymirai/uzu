@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
@@ -47,7 +47,7 @@ impl ShortConvMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
@@ -77,7 +77,6 @@ impl ShortConvMixer {
             &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
             ArrayId::Main,
             ArrayId::SsmInProj,
-            &compilation_config.descriptor_mlp,
         )
         .expect("Failed to create in-projection kernel");
 
@@ -90,7 +89,6 @@ impl ShortConvMixer {
             &resolve_subtree(&mixer_tree, &["out_projection", "out_proj"]),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-            &compilation_config.descriptor_mlp,
         )
         .expect("Failed to create out-projection kernel");
 
@@ -120,7 +118,7 @@ impl ShortConvMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -139,17 +137,15 @@ impl ShortConvMixer {
         self.out_projection.encode(state, command_buffer, parameters);
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 
     fn run_prefill_conv(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let padded = state
@@ -237,7 +233,7 @@ impl ShortConvMixer {
     fn run_decode_conv(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -263,9 +259,7 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
+        let compute = command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
             .encode_decode(
@@ -294,7 +288,7 @@ impl EncodableBlock for ShortConvMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline(state, command_buffer, parameters);

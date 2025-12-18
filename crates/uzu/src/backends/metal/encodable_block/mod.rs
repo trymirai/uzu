@@ -6,11 +6,11 @@
 //! Encodables implement `EncodableBlock` and orchestrate one or more
 //! kernels to perform operations on `ForwardPassState`.
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::forward_pass::ForwardPassState;
 
+mod activation;
 mod attention;
 mod classifier_layer;
 mod decoder;
@@ -31,12 +31,14 @@ mod tensor_add_swap;
 mod tensor_copy;
 pub mod transformer_layer;
 
+pub use activation::Activation;
 pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::Decoder;
 pub use embedding::{
-    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout,
-    QuantizedEmbeddingError, QuantizedEmbeddingLookup, QuantizedEmbeddingReadout,
+    EmbeddingError, FullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout,
 };
 pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
@@ -60,7 +62,7 @@ pub trait EncodableBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     );
 

@@ -1,10 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
-
-use mpsgraph::{
-    CompilationDescriptor, Device as MPSDevice, ExecutableExecutionDescriptor,
-    Graph,
-};
-use objc2::rc::Retained;
+use std::rc::Rc;
 
 use super::{
     EncodableBlock, FullPrecisionEmbeddingLookup,
@@ -14,23 +8,12 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{ArrayId, IOArrays, MPSGraphBlock},
-        graph::{
-            embeddings_dequantize_weights_subgraph, embeddings_embed_subgraph,
-            embeddings_readout_subgraph, placeholder, shaped_type,
-        },
+        MTLContext, MTLError, forward_pass::ArrayId,
         kernel::mlp::MlpGateActMulEncodable,
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
     parameters::ParameterTree,
 };
-
-fn make_execution_descriptor() -> Retained<ExecutableExecutionDescriptor> {
-    let execution_descriptor = ExecutableExecutionDescriptor::new();
-    execution_descriptor.set_enable_commit_and_continue(true);
-    execution_descriptor
-}
 
 pub fn linear_block<const N: usize>(
     config: &LinearConfig,
@@ -41,7 +24,6 @@ pub fn linear_block<const N: usize>(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    _compilation_descriptor: &CompilationDescriptor,
 ) -> Result<Box<dyn EncodableBlock>, MTLError> {
     let out_sum: usize = output_dims.iter().sum();
     match config {
@@ -86,7 +68,6 @@ pub fn mlp_block(
     hidden_dim: usize,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    _compilation_descriptor: &CompilationDescriptor,
 ) -> Result<Box<dyn EncodableBlock>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense) = config {
         match &dense.linear_config {
@@ -190,7 +171,6 @@ pub fn mlp_block(
 pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    compilation_descriptor: &CompilationDescriptor,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn EncodableBlock> {
     match &config.embedding_config {
@@ -281,74 +261,29 @@ pub fn embed_block(
             Box::new(block)
         },
         EmbeddingConfig::QuantizedTied {
-            embedding_quantization_mode: _,
+            embedding_quantization_mode,
+            activation_precision,
             ..
         } => {
-            let graph = Graph::new();
+            let data_type: DataType = (*activation_precision).into();
 
-            let input_shape = [-1 as isize];
-            let input_data_type = DataType::U64;
-            let input_placeholder =
-                placeholder(&graph, &input_shape, input_data_type);
-            let input_shaped_type = shaped_type(&input_shape, input_data_type);
-            let weights_shape =
-                [config.vocab_size as isize, (config.model_dim / 2) as isize];
-            let weights_data_type = DataType::U8;
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
 
-            let scales_shape = [config.vocab_size as isize];
-            let scales_data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let scales_shaped_type =
-                shaped_type(&scales_shape, scales_data_type);
-            let scales_placeholder =
-                placeholder(&graph, &scales_shape, scales_data_type);
+            // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
+            let group_size = config.model_dim;
 
-            let weights = embeddings_dequantize_weights_subgraph(
-                &graph,
-                &weights_placeholder,
-                &scales_placeholder,
+            let block = QuantizedEmbeddingLookup::new_tied(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                *embedding_quantization_mode,
+                &embeddings_tree,
             )
-            .unwrap();
-
-            let output = embeddings_embed_subgraph(
-                &graph,
-                &config.embedding_config,
-                &input_placeholder,
-                &weights,
-            )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-                (&*scales_placeholder, &*scales_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(&compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![
-                        ArrayId::TokenIds,
-                        ArrayId::EmbeddingsInputWeights,
-                        ArrayId::EmbeddingsScales,
-                    ]
-                    .into_boxed_slice(),
-                    vec![ArrayId::Main].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create quantized embedding lookup kernel");
 
             Box::new(block)
         },
@@ -414,10 +349,9 @@ pub fn embed_block(
 pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    compilation_descriptor: &CompilationDescriptor,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Box<dyn EncodableBlock> {
-    match config.embedding_config {
+    match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
             ..
@@ -428,7 +362,7 @@ pub fn readout_block(
 
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
-                precision.into(),
+                (*precision).into(),
                 config.vocab_size,
                 config.model_dim,
                 &embeddings_tree,
@@ -447,7 +381,7 @@ pub fn readout_block(
 
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
-                precision.into(),
+                (*precision).into(),
                 config.vocab_size,
                 config.model_dim,
                 &embeddings_tree,
@@ -462,7 +396,7 @@ pub fn readout_block(
             embedding_quantization_mode,
             ..
         } => {
-            let data_type: DataType = activation_precision.into();
+            let data_type: DataType = (*activation_precision).into();
             let embeddings_tree = parameter_tree
                 .subtree("embedding")
                 .expect("Failed to get embedding subtree");
@@ -472,8 +406,8 @@ pub fn readout_block(
                 data_type,
                 config.vocab_size,
                 config.model_dim,
-                group_size,
-                embedding_quantization_mode,
+                *group_size,
+                *embedding_quantization_mode,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
@@ -481,75 +415,29 @@ pub fn readout_block(
             Box::new(block)
         },
         EmbeddingConfig::QuantizedTied {
-            embedding_quantization_mode: _,
+            embedding_quantization_mode,
+            activation_precision,
             ..
         } => {
-            let graph = Graph::new();
+            let data_type: DataType = (*activation_precision).into();
 
-            let input_shape = [-1 as isize, config.model_dim as isize];
-            let input_data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let input_placeholder =
-                placeholder(&graph, &input_shape, input_data_type);
-            let input_shaped_type = shaped_type(&input_shape, input_data_type);
+            let embeddings_tree = parameter_tree
+                .subtree("embedding")
+                .expect("Failed to get embedding subtree");
 
-            let weights_shape =
-                [config.vocab_size as isize, (config.model_dim / 2) as isize];
-            let weights_data_type = DataType::U8;
-            let weights_shaped_type =
-                shaped_type(&weights_shape, weights_data_type);
-            let weights_placeholder =
-                placeholder(&graph, &weights_shape, weights_data_type);
+            // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
+            let group_size = config.model_dim;
 
-            let scales_shape = [config.vocab_size as isize];
-            let scales_data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let scales_shaped_type =
-                shaped_type(&scales_shape, scales_data_type);
-            let scales_placeholder =
-                placeholder(&graph, &scales_shape, scales_data_type);
-
-            let weights = embeddings_dequantize_weights_subgraph(
-                &graph,
-                &weights_placeholder,
-                &scales_placeholder,
+            let block = QuantizedEmbeddingReadout::new_tied(
+                context,
+                data_type,
+                config.vocab_size,
+                config.model_dim,
+                group_size,
+                *embedding_quantization_mode,
+                &embeddings_tree,
             )
-            .unwrap();
-            let weights_transposed = graph.transpose(&weights, &[1, 0], None);
-            let output = embeddings_readout_subgraph(
-                &graph,
-                &input_placeholder,
-                &weights_transposed,
-            )
-            .unwrap();
-
-            let feeds = HashMap::from([
-                (&*input_placeholder, &*input_shaped_type),
-                (&*weights_placeholder, &*weights_shaped_type),
-                (&*scales_placeholder, &*scales_shaped_type),
-            ]);
-
-            let executable = graph.compile(
-                &MPSDevice::with_device(&context.device),
-                &feeds,
-                &[&output],
-                None,
-                Some(compilation_descriptor),
-            );
-
-            let block = MPSGraphBlock::new(
-                executable,
-                make_execution_descriptor(),
-                IOArrays::new(
-                    vec![
-                        ArrayId::Main,
-                        ArrayId::EmbeddingsOutputWeights,
-                        ArrayId::EmbeddingsScales,
-                    ]
-                    .into_boxed_slice(),
-                    vec![ArrayId::Logits].into_boxed_slice(),
-                ),
-            );
+            .expect("Failed to create quantized embedding readout kernel");
 
             Box::new(block)
         },
@@ -570,8 +458,8 @@ pub fn readout_block(
                 data_type,
                 config.vocab_size,
                 config.model_dim,
-                group_size,
-                embedding_quantization_mode,
+                *group_size,
+                *embedding_quantization_mode,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");

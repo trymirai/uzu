@@ -1020,7 +1020,7 @@ impl ForwardPassState {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &mpsgraph::CommandBuffer,
+        command_buffer: &metal::CommandBufferRef,
         source_array_id: ArrayId,
         destination_array: RefCell<MetalArray>,
     ) {
@@ -1037,9 +1037,7 @@ impl ForwardPassState {
             src_borrow.size_in_bytes()
         );
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let blit_encoder = mtl_command_buffer.new_blit_command_encoder();
+        let blit_encoder = command_buffer.new_blit_command_encoder();
         blit_encoder.copy_from_buffer(
             &src_buf,
             0,

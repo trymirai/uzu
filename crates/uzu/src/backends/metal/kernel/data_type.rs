@@ -17,9 +17,9 @@ impl KernelDataType {
     }
 }
 
-impl Into<DataType> for KernelDataType {
-    fn into(self) -> DataType {
-        match self {
+impl From<KernelDataType> for DataType {
+    fn from(val: KernelDataType) -> Self {
+        match val {
             KernelDataType::BFloat16 => DataType::BF16,
             KernelDataType::Float16 => DataType::F16,
             KernelDataType::Float32 => DataType::F32,

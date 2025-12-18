@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef};
 
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -163,7 +162,7 @@ impl EncodableBlock for QKNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
@@ -178,9 +177,7 @@ impl EncodableBlock for QKNorm {
         let batch_size = qkv_shape[0] as i32;
         let head_dim = self.head_dim as i32;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
 
         // Process query normalization if configured
         if let (
@@ -240,8 +237,8 @@ impl EncodableBlock for QKNorm {
         compute_encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

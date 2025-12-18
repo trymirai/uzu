@@ -1,6 +1,6 @@
 //! MLP block encodable.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters, QuantizedLinear};
 use crate::backends::metal::{
@@ -32,7 +32,7 @@ impl EncodableBlock for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         params: &EncodingParameters,
     ) {
         // Up
@@ -42,8 +42,7 @@ impl EncodableBlock for MlpBlock {
         let mut fused = arrays[0].borrow_mut();
         let mut hidden = arrays[1].borrow_mut();
         let active_suffix_length = state.active_suffix_length() as i32;
-        let root = command_buffer.root_command_buffer();
-        let encoder = root.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
         self.gate
@@ -56,10 +55,8 @@ impl EncodableBlock for MlpBlock {
         self.down.encode(state, command_buffer, params);
 
         if params.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
@@ -57,7 +57,7 @@ impl EncodableBlock for Sampling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         assert!(
@@ -84,8 +84,7 @@ impl EncodableBlock for Sampling {
         let sampling_method = state.sampling_method().unwrap();
         let seeds_offset = seeds.buffer_offset();
 
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
+        let root_command_buffer = command_buffer.to_owned();
         let bitmask_buffer = state
             .token_bitmask()
             .map(|cell| unsafe { cell.borrow_mut().mtl_buffer().clone() });
@@ -104,8 +103,8 @@ impl EncodableBlock for Sampling {
         }
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 }
