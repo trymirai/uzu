@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import List
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -38,3 +39,24 @@ class Registry:
     @classmethod
     def from_dict(cls, data: dict) -> "Registry":
         return cls(models=[Model.from_dict(model) for model in data["models"]])
+
+
+class Role(str, Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True)
+class Message:
+    role: Role
+    content: str
+
+
+@dataclass(frozen=True)
+class BenchmarkTask:
+    identifier: str
+    repo_id: str
+    number_of_runs: int
+    tokens_limit: int
+    messages: List[Message]

@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Annotated
 
+import json
 import requests
 import tomllib
-from model import Registry
+from model import Registry, Model, BenchmarkTask, Message, Role
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -16,6 +17,7 @@ from rich.progress import (
 )
 from rich.table import Table
 from typer import Argument, Typer
+from dataclasses import asdict
 from utils import download_file_with_resume
 
 ROOT_PATH = Path(__file__).parent.parent.parent
@@ -109,6 +111,14 @@ def download_model(
         model_path = engine_path / model.name
         model_path.mkdir(parents=True, exist_ok=True)
 
+        benchmark_task = generate_benchmark_task(model)
+        benchmark_task_data = asdict(benchmark_task)
+        benchmark_task_name = "benchmark_task.json"
+        benchmark_task_path = model_path / benchmark_task_name
+        with open(benchmark_task_path, "w") as file:
+            json.dump(benchmark_task_data, file, indent=4, sort_keys=True)
+        console.print(f"[green]✓[/green] {benchmark_task_name} generated")
+
         files_to_download = []
         for file in model.files:
             file_path = model_path / file.name
@@ -145,6 +155,22 @@ def download_model(
 
     except Exception as e:
         err_console.print(f"[red]Error: {e}[/red]")
+
+
+def generate_benchmark_task(model: Model) -> BenchmarkTask:
+    messages: [Message] = [
+        Message(role=Role.SYSTEM, content="Summarize user's input"),
+        Message(role=Role.USER, content="Large language models, commonly referred to as LLMs, are a class of artificial intelligence systems designed to understand, generate, and manipulate human language at scale. They are built using deep learning techniques, most notably transformer architectures, and are trained on vast collections of text data drawn from books, articles, websites, and other written sources. Through this training process, LLMs learn statistical patterns in language, allowing them to predict likely sequences of words and produce coherent, contextually appropriate responses to prompts. At their core, LLMs operate by representing words or subword units as numerical vectors in a high-dimensional space. These representations capture semantic and syntactic relationships, such that words with similar meanings or grammatical roles tend to have similar vector representations. The transformer architecture enables the model to process entire sequences of text simultaneously rather than sequentially, using mechanisms such as self-attention to determine which parts of the input are most relevant at any given moment. This allows LLMs to handle long-range dependencies in text, such as references made many sentences earlier, more effectively than earlier generations of language models. Training an LLM typically involves two main phases. The first is pretraining, during which the model learns general language patterns by predicting missing or next tokens in large, mostly uncurated text corpora. This phase gives the model broad linguistic competence and general world knowledge as reflected in its training data. The second phase often involves fine-tuning, where the model is further trained on more specific datasets, such as question-answer pairs, instructional content, or conversational examples. Fine-tuning helps align the model’s behavior with particular tasks or desired styles of interaction. One of the most notable characteristics of LLMs is their versatility. A single model can perform a wide range of language-related tasks, including text generation, summarization, translation, classification, question answering, and code generation, often without task-specific retraining. This flexibility arises from the model’s general-purpose training and its ability to condition its outputs on the instructions or context provided in the prompt. As a result, LLMs are increasingly used as foundational models that can be adapted to many applications across different domains. Despite their impressive capabilities, LLMs do not possess true understanding or consciousness. They do not have beliefs, intentions, or awareness in the human sense. Instead, they generate responses based on learned correlations in data. This limitation can lead to errors such as producing confident-sounding but incorrect information, sometimes referred to as hallucinations. Because LLMs rely on patterns in their training data, they may also reflect biases, inaccuracies, or gaps present in that data. Addressing these issues is an ongoing area of research and development. The computational cost of training and running LLMs is another significant consideration. Training state-of-the-art models can require enormous amounts of computing power, energy, and financial investment. This has implications for environmental sustainability and for who can realistically develop and deploy such models. As a result, there is growing interest in techniques that improve efficiency, such as model compression, distillation, sparse architectures, and more efficient training algorithms, as well as in smaller models that can perform well on specific tasks. LLMs also raise important ethical and social questions. Their ability to generate human-like text can be beneficial in areas such as education, accessibility, and productivity, but it can also be misused for purposes like misinformation, plagiarism, or automated spam. Ensuring responsible use involves a combination of technical safeguards, policy decisions, and user education. Researchers and developers are actively exploring methods for making LLMs more transparent, controllable, and aligned with human values. As research continues, LLMs are likely to become more capable, more efficient, and more integrated into everyday tools and workflows. Future developments may involve better reasoning abilities, improved factual reliability, stronger multimodal integration with images, audio, and video, and more personalized interactions that adapt to individual users while respecting privacy. While LLMs are not a replacement for human judgment or creativity, they represent a powerful technology that, when used thoughtfully, can augment human capabilities and transform how people interact with information and with machines."),
+    ]
+
+    task = BenchmarkTask(
+        identifier=model.name.lower(),
+        repo_id=model.repod_id,
+        number_of_runs=15,
+        tokens_limit=512,
+        messages=messages,
+    )
+    return task
 
 
 if __name__ == "__main__":
