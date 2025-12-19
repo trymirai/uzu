@@ -1,89 +1,80 @@
 use std::collections::HashMap;
 
-use metal::Buffer as MTLBuffer;
-
-use super::{super::MTLContext, model_shape::ModelShape};
+use super::model_shape::ModelShape;
 use crate::{
-    DataType,
-    array::array_size_in_bytes,
+    DataType, DeviceContext,
     config::{DecoderConfig, MLPConfig},
 };
 
 #[derive(Debug)]
-pub struct ScratchBuffers {
+pub struct ScratchBuffers<C: DeviceContext> {
     // 1-D
-    pub token_ids: MTLBuffer,
-    pub token_positions: MTLBuffer,
-    pub token_bitmask: MTLBuffer,
-    pub token_seeds: MTLBuffer,
-    pub sampling_output: MTLBuffer,
+    pub token_ids: C::DeviceArray,
+    pub token_positions: C::DeviceArray,
+    pub token_bitmask: C::DeviceArray,
+    pub token_seeds: C::DeviceArray,
+    pub sampling_output: C::DeviceArray,
 
     // 2-D
-    pub attention_window_size_to_bias: HashMap<Option<usize>, MTLBuffer>,
-    pub logits: MTLBuffer,
-    pub main: MTLBuffer,
-    pub shortcut: MTLBuffer,
-    pub qkv: MTLBuffer,
-    pub attention_output: MTLBuffer,
-    pub mlp_fused_up: MTLBuffer,
-    pub mlp_hidden: MTLBuffer,
-    pub ssm_inproj: Option<MTLBuffer>,
-    pub ssm_packed: Option<MTLBuffer>,
-    pub ssm_conv_padded: Option<MTLBuffer>,
-    pub ssm_x: Option<MTLBuffer>,
-    pub ssm_b: Option<MTLBuffer>,
-    pub ssm_c: Option<MTLBuffer>,
-    pub ssm_dt: Option<MTLBuffer>,
-    pub ssm_z: Option<MTLBuffer>,
+    pub attention_window_size_to_bias: HashMap<Option<usize>, C::DeviceArray>,
+    pub logits: C::DeviceArray,
+    pub main: C::DeviceArray,
+    pub shortcut: C::DeviceArray,
+    pub qkv: C::DeviceArray,
+    pub attention_output: C::DeviceArray,
+    pub mlp_fused_up: C::DeviceArray,
+    pub mlp_hidden: C::DeviceArray,
+    pub ssm_inproj: Option<C::DeviceArray>,
+    pub ssm_packed: Option<C::DeviceArray>,
+    pub ssm_conv_padded: Option<C::DeviceArray>,
+    pub ssm_x: Option<C::DeviceArray>,
+    pub ssm_b: Option<C::DeviceArray>,
+    pub ssm_c: Option<C::DeviceArray>,
+    pub ssm_dt: Option<C::DeviceArray>,
+    pub ssm_z: Option<C::DeviceArray>,
 
     // 3-D
-    pub rotated_queries: MTLBuffer,
-    pub rotated_keys: MTLBuffer,
-    pub extracted_values: MTLBuffer,
+    pub rotated_queries: C::DeviceArray,
+    pub rotated_keys: C::DeviceArray,
+    pub extracted_values: C::DeviceArray,
 
     // 2-pass attention intermediate buffers
-    pub attention_partials: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
-    pub attention_sums: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
-    pub attention_maxs: MTLBuffer, // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_partials: C::DeviceArray, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
+    pub attention_sums: C::DeviceArray, // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_maxs: C::DeviceArray, // [num_heads * max_suffix_len * total_blocks_count]
 
-    pub moe_topk_ids: Option<MTLBuffer>,
-    pub moe_topk_probs: Option<MTLBuffer>,
-    pub moe_offsets: Option<MTLBuffer>,
-    pub moe_sumk: Option<MTLBuffer>,
-    pub moe_bucketed_token_ids: Option<MTLBuffer>,
-    pub moe_bucketed_probs: Option<MTLBuffer>,
-    pub moe_x_perm: Option<MTLBuffer>,
-    pub moe_tok2row: Option<MTLBuffer>,
-    pub moe_y_partial: Option<MTLBuffer>,
-    pub moe_hidden: Option<MTLBuffer>,
-    pub moe_two_pass_row_expert_map: Option<MTLBuffer>,
-    pub moe_tile_counts: Option<MTLBuffer>,
-    pub moe_tile_offsets: Option<MTLBuffer>,
-    pub moe_tile_map: Option<MTLBuffer>,
-    pub moe_total_tiles: Option<MTLBuffer>,
-    pub moe_dispatch_args: Option<MTLBuffer>,
-    pub moe_scatter_partials: Option<MTLBuffer>,
-    pub moe_scatter_block_bases: Option<MTLBuffer>,
-    pub moe_block_alloc: Option<MTLBuffer>,
+    pub moe_topk_ids: Option<C::DeviceArray>,
+    pub moe_topk_probs: Option<C::DeviceArray>,
+    pub moe_offsets: Option<C::DeviceArray>,
+    pub moe_sumk: Option<C::DeviceArray>,
+    pub moe_bucketed_token_ids: Option<C::DeviceArray>,
+    pub moe_bucketed_probs: Option<C::DeviceArray>,
+    pub moe_x_perm: Option<C::DeviceArray>,
+    pub moe_tok2row: Option<C::DeviceArray>,
+    pub moe_y_partial: Option<C::DeviceArray>,
+    pub moe_hidden: Option<C::DeviceArray>,
+    pub moe_two_pass_row_expert_map: Option<C::DeviceArray>,
+    pub moe_tile_counts: Option<C::DeviceArray>,
+    pub moe_tile_offsets: Option<C::DeviceArray>,
+    pub moe_tile_map: Option<C::DeviceArray>,
+    pub moe_total_tiles: Option<C::DeviceArray>,
+    pub moe_dispatch_args: Option<C::DeviceArray>,
+    pub moe_scatter_partials: Option<C::DeviceArray>,
+    pub moe_scatter_block_bases: Option<C::DeviceArray>,
+    pub moe_block_alloc: Option<C::DeviceArray>,
 }
 
-impl ScratchBuffers {
-    // TODO: use device arrays instead of MTLBuffers
-    /// Allocate the buffers with `StorageModeShared` so that they are CPU-accessible as well.
+impl<C: DeviceContext> ScratchBuffers<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         max_prefix_len: usize,
         max_suffix_len: usize,
     ) -> Self {
         // Helper closure for allocation
-        let alloc = |shape: &[usize], dtype: DataType| -> MTLBuffer {
-            let bytes = array_size_in_bytes(shape, dtype);
-            context.device.new_buffer(
-                bytes as u64,
-                metal::MTLResourceOptions::StorageModeShared,
-            )
+        let alloc = |shape: &[usize], dtype: DataType| -> C::DeviceArray {
+            unsafe { context.array_uninitialized(shape, dtype) }
         };
 
         let act_ty = model_shape.activation_data_type();
@@ -129,7 +120,7 @@ impl ScratchBuffers {
                             ),
                         )
                     })
-                    .collect::<HashMap<Option<usize>, MTLBuffer>>()
+                    .collect::<HashMap<Option<usize>, C::DeviceArray>>()
             },
             logits: alloc(&model_shape.logits_shape(max_suffix_len), act_ty),
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty),
@@ -330,11 +321,7 @@ impl ScratchBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
-                        bytes,
-                        metal::MTLResourceOptions::StorageModeShared,
-                    ))
+                    Some(alloc(&[entries], DataType::U32))
                 },
                 _ => None,
             },
@@ -346,11 +333,7 @@ impl ScratchBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
-                        bytes,
-                        metal::MTLResourceOptions::StorageModeShared,
-                    ))
+                    Some(alloc(&[entries], DataType::U32))
                 },
                 _ => None,
             },
@@ -359,11 +342,7 @@ impl ScratchBuffers {
                     let num_blocks = ((max_suffix_len + 255) / 256).max(1);
                     let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
                     let entries = num_blocks * num_tiles * 512;
-                    let bytes = (entries * std::mem::size_of::<u32>()) as u64;
-                    Some(context.device.new_buffer(
-                        bytes,
-                        metal::MTLResourceOptions::StorageModeShared,
-                    ))
+                    Some(alloc(&[entries], DataType::U32))
                 },
                 _ => None,
             },

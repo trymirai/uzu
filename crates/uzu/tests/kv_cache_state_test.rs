@@ -5,7 +5,10 @@ use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
         KVCacheUpdate, KernelDataType, MTLContext,
-        forward_pass::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
+        forward_pass::{
+            INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
+            update_kv_cache_layer_after_acceptance,
+        },
     },
 };
 
@@ -225,7 +228,8 @@ fn run_scenario(
     let command_buffer = context.command_queue.new_command_buffer().to_owned();
 
     let root_command_buffer = command_buffer.clone();
-    layer.update_after_acceptance(
+    update_kv_cache_layer_after_acceptance(
+        &mut layer,
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
         &root_command_buffer,

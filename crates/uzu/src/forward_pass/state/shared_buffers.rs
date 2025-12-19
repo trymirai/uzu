@@ -3,31 +3,27 @@ use std::{cell::RefCell, rc::Rc};
 use half::{bf16, f16};
 
 use super::{super::ModelShape, EmbeddingsBuffers, RopeBuffers};
-use crate::{
-    Array, DataType, DeviceContext,
-    backends::metal::{MTLContext, MetalArray},
-    parameters::ParameterTree,
-};
+use crate::{Array, DataType, DeviceContext, parameters::ParameterTree};
 
-type ArrayCell = RefCell<MetalArray>;
+type ArrayCell<C> = RefCell<<C as DeviceContext>::DeviceArray>;
 
-pub struct MoeExpertWeights {
-    pub w1: ArrayCell,
-    pub w2: ArrayCell,
-    pub w3: ArrayCell,
+pub struct MoeExpertWeights<C: DeviceContext> {
+    pub w1: ArrayCell<C>,
+    pub w2: ArrayCell<C>,
+    pub w3: ArrayCell<C>,
 }
 
-pub struct SharedBuffers {
-    pub embeddings: EmbeddingsBuffers,
-    pub global_rope: Option<RopeBuffers>,
-    pub local_rope: Option<RopeBuffers>,
-    pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
-    pub attention_sinks: Option<Vec<ArrayCell>>,
+pub struct SharedBuffers<C: DeviceContext> {
+    pub embeddings: EmbeddingsBuffers<C>,
+    pub global_rope: Option<RopeBuffers<C>>,
+    pub local_rope: Option<RopeBuffers<C>>,
+    pub moe_expert_weights: Option<Vec<MoeExpertWeights<C>>>,
+    pub attention_sinks: Option<Vec<ArrayCell<C>>>,
 }
 
-impl SharedBuffers {
+impl<C: DeviceContext> SharedBuffers<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         decoder_config: &crate::config::DecoderConfig,
         model_shape: &ModelShape,
     ) -> Self {
@@ -91,7 +87,7 @@ impl SharedBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<Rc<C>>,
     ) {
         self.embeddings.update_data(parameter_tree);
 

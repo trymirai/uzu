@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap};
 
 use metal::{
     CommandQueue as MTLCommandQueue,
@@ -136,17 +136,5 @@ impl DeviceContext for MTLContext {
             );
             MetalArray::new(buffer, shape, data_type)
         }
-    }
-}
-
-impl DeviceContext for Rc<MTLContext> {
-    type DeviceArray = MetalArray;
-
-    unsafe fn array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-    ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type) }
     }
 }

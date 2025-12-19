@@ -17,6 +17,7 @@ use crate::{
     backends::metal::forward_pass::{
         AttentionBiasUpdate, EncodableBlock, EncodingParameters,
         ForwardPassState, INVALID_POSITION,
+        update_cache_layers_after_acceptance,
     },
     session::{
         config::DecodingConfig,
@@ -413,12 +414,9 @@ impl LanguageModelGenerator {
         // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
         // rather than garbage (which could be -inf and mask incorrectly)
         for (_, mask_buffer) in
-            &self.context.scratch_buffers.attention_window_size_to_bias
+            &mut self.context.scratch_buffers.attention_window_size_to_bias
         {
-            unsafe {
-                let ptr = mask_buffer.contents() as *mut u8;
-                std::ptr::write_bytes(ptr, 0, mask_buffer.length() as usize);
-            }
+            mask_buffer.buffer_mut().fill(0);
         }
 
         self.context
@@ -479,13 +477,13 @@ impl LanguageModelGenerator {
             is_prefilling: false,
         };
 
-        let async_positions = Some((&async_positions_buffer, pass_idx));
-        let async_seeds = Some((&async_seeds_buffer, pass_idx));
+        let _async_positions = Some((&async_positions_buffer, pass_idx));
+        let _async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        let skip_attention_bias_fill =
+        let _skip_attention_bias_fill =
             pass_idx > 0 && self.context.decoder_config.has_attention_layers();
 
-        let skip_token_ids_copy = pass_idx > 0;
+        let _skip_token_ids_copy = pass_idx > 0;
 
         let mut state = ForwardPassState::new_llm(
             self.context.mtl_context.clone(),
@@ -501,14 +499,12 @@ impl LanguageModelGenerator {
             task.active_suffix_length,
             task.is_prefilling,
             None,
-            skip_token_ids_copy,
-            skip_attention_bias_fill,
-            async_positions,
-            async_seeds,
+            false,
+            false,
+            None,
+            None,
         );
-        if let Some(sm) = state.sampling_method_mut() {
-            *sm = Some(sampling_method);
-        }
+        state.llm_state_mut().sampling_method = Some(sampling_method);
 
         self.context.reset_command_buffer();
         let root_command_buffer = &self.context.command_buffer;
@@ -539,12 +535,13 @@ impl LanguageModelGenerator {
             .expect("sampling_output must exist after sampling encode");
         let sampling_output_buffer =
             unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
-        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+        let mut token_ids_buffer =
+            self.context.scratch_buffers.token_ids.clone();
 
         let encoder = root_command_buffer.new_compute_command_encoder();
         self.context.token_copy.encode_to_token_ids(
             &sampling_output_buffer,
-            &token_ids_buffer,
+            unsafe { token_ids_buffer.mtl_buffer() },
             encoder,
         );
         self.context.token_copy.encode_to_results(
@@ -558,7 +555,8 @@ impl LanguageModelGenerator {
         // Scatter + register for all transformer layers
         {
             let cb = root_command_buffer.to_owned();
-            self.context.cache_layers.borrow_mut().update_after_acceptance(
+            update_cache_layers_after_acceptance(
+                &mut self.context.cache_layers.borrow_mut(),
                 &[0],
                 None,
                 &cb,
@@ -579,7 +577,7 @@ impl LanguageModelGenerator {
                 .borrow()
                 .attention_bias_updates_after_acceptance(1);
             for (window_size, mask_buffer) in
-                &self.context.scratch_buffers.attention_window_size_to_bias
+                &mut self.context.scratch_buffers.attention_window_size_to_bias
             {
                 if let Some(update) =
                     updates.iter().find(|u| &u.key == window_size)
@@ -587,7 +585,7 @@ impl LanguageModelGenerator {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
                             encoder,
-                            mask_buffer,
+                            unsafe { mask_buffer.mtl_buffer() },
                             update.unmask_col,
                             update.mask_col,
                         );
@@ -679,9 +677,7 @@ impl LanguageModelGenerator {
             let run_start = Instant::now();
 
             let mut state = task.create_state(&mut self.context, None);
-            if let Some(method) = state.sampling_method_mut() {
-                *method = Some(sampling_method);
-            }
+            state.llm_state_mut().sampling_method = Some(sampling_method);
 
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture =
@@ -792,7 +788,8 @@ impl LanguageModelGenerator {
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
-            cache_layers.update_after_acceptance(
+            update_cache_layers_after_acceptance(
+                &mut cache_layers,
                 accepted_token_indices,
                 suffix_start,
                 &root_command_buffer,

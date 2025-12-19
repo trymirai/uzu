@@ -39,6 +39,20 @@ impl Array for MetalArray {
             )
         }
     }
+
+    fn reshape(
+        &self,
+        shape: &[usize],
+    ) -> Self {
+        unsafe {
+            Self::new_with_offset(
+                self.buffer.clone(),
+                shape,
+                self.data_type,
+                self.offset,
+            )
+        }
+    }
 }
 
 impl MetalArray {

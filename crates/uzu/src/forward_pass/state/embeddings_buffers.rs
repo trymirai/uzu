@@ -2,61 +2,58 @@ use std::{cell::RefCell, rc::Rc};
 
 use super::super::ModelShape;
 use crate::{
-    DeviceContext,
-    backends::metal::{MTLContext, MetalArray},
-    config::EmbeddingConfig,
-    parameters::ParameterTree,
+    Array, DeviceContext, config::EmbeddingConfig, parameters::ParameterTree,
 };
 
-type ArrayCell = RefCell<MetalArray>;
+type ArrayCell<C> = RefCell<<C as DeviceContext>::DeviceArray>;
 
 #[allow(dead_code)]
-pub enum EmbeddingsBuffers {
+pub enum EmbeddingsBuffers<C: DeviceContext> {
     Tied {
         /// [vocab_size, model_dim]
-        weights: ArrayCell,
+        weights: ArrayCell<C>,
     },
     Untied {
         /// [vocab_size, model_dim]
-        input_weights: ArrayCell,
+        input_weights: ArrayCell<C>,
         /// [vocab_size, model_dim]
-        output_weights: ArrayCell,
+        output_weights: ArrayCell<C>,
     },
     QuantizedTied {
         /// [vocab_size, model_dim]
-        weights: ArrayCell,
+        weights: ArrayCell<C>,
         /// [vocab_size]
-        scales: ArrayCell,
+        scales: ArrayCell<C>,
     },
     MLXSemiQuantizedUntied {
         /// [vocab_size, model_dim]
-        input_weights: ArrayCell,
+        input_weights: ArrayCell<C>,
         /// [vocab_size, model_dim]
-        packed_output_weights: ArrayCell,
+        packed_output_weights: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        output_scales: ArrayCell,
+        output_scales: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        output_biases: ArrayCell,
+        output_biases: ArrayCell<C>,
     },
     MLXQuantizedUntied {
         /// [vocab_size, model_dim]
-        packed_input_weights: ArrayCell,
+        packed_input_weights: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        input_scales: ArrayCell,
+        input_scales: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        input_biases: ArrayCell,
+        input_biases: ArrayCell<C>,
         /// [vocab_size, model_dim]
-        packed_output_weights: ArrayCell,
+        packed_output_weights: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        output_scales: ArrayCell,
+        output_scales: ArrayCell<C>,
         /// [vocab_size, num_groups]
-        output_biases: ArrayCell,
+        output_biases: ArrayCell<C>,
     },
 }
 
-impl EmbeddingsBuffers {
+impl<C: DeviceContext> EmbeddingsBuffers<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         embeddings_config: &EmbeddingConfig,
         model_shape: &ModelShape,
     ) -> Self {
@@ -237,7 +234,7 @@ impl EmbeddingsBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<Rc<C>>,
     ) {
         let embeddings_tree = parameter_tree.subtree("embedding").unwrap();
         match self {
@@ -245,7 +242,7 @@ impl EmbeddingsBuffers {
                 weights,
             } => {
                 let embeddings_view = embeddings_tree.leaf("weights").unwrap();
-                weights.borrow_mut().copy_from_array(&embeddings_view);
+                weights.borrow_mut().copy_from(&embeddings_view);
             },
             EmbeddingsBuffers::Untied {
                 input_weights,
@@ -257,7 +254,7 @@ impl EmbeddingsBuffers {
                 ];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
-                    buffer.borrow_mut().copy_from_array(&view);
+                    buffer.borrow_mut().copy_from(&view);
                 }
             },
             EmbeddingsBuffers::QuantizedTied {
@@ -267,7 +264,7 @@ impl EmbeddingsBuffers {
                 let mapping = vec![("weights", weights), ("scales", scales)];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
-                    buffer.borrow_mut().copy_from_array(&view);
+                    buffer.borrow_mut().copy_from(&view);
                 }
             },
             EmbeddingsBuffers::MLXSemiQuantizedUntied {
@@ -284,7 +281,7 @@ impl EmbeddingsBuffers {
                 ];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
-                    buffer.borrow_mut().copy_from_array(&view);
+                    buffer.borrow_mut().copy_from(&view);
                 }
             },
             EmbeddingsBuffers::MLXQuantizedUntied {
@@ -305,7 +302,7 @@ impl EmbeddingsBuffers {
                 ];
                 for (name, buffer) in mapping {
                     let view = embeddings_tree.leaf(name).unwrap();
-                    buffer.borrow_mut().copy_from_array(&view);
+                    buffer.borrow_mut().copy_from(&view);
                 }
             },
         }

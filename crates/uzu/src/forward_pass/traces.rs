@@ -1,27 +1,24 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{
-    DeviceContext,
-    backends::metal::{MTLContext, MetalArray, ModelShape},
-};
+use crate::{DeviceContext, forward_pass::model_shape::ModelShape};
 
-type ArrayCell = RefCell<MetalArray>;
+type ArrayCell<C> = RefCell<<C as DeviceContext>::DeviceArray>;
 
-pub struct LayerActivationTrace {
-    pub inputs: ArrayCell,
-    pub pre_attention_norm: ArrayCell,
-    pub attention: ArrayCell,
-    pub post_attention_norm: ArrayCell,
-    pub mlp_inputs: ArrayCell,
-    pub pre_mlp_norm: ArrayCell,
-    pub mlp: ArrayCell,
-    pub post_mlp_norm: ArrayCell,
-    pub outputs: ArrayCell,
+pub struct LayerActivationTrace<C: DeviceContext> {
+    pub inputs: ArrayCell<C>,
+    pub pre_attention_norm: ArrayCell<C>,
+    pub attention: ArrayCell<C>,
+    pub post_attention_norm: ArrayCell<C>,
+    pub mlp_inputs: ArrayCell<C>,
+    pub pre_mlp_norm: ArrayCell<C>,
+    pub mlp: ArrayCell<C>,
+    pub post_mlp_norm: ArrayCell<C>,
+    pub outputs: ArrayCell<C>,
 }
 
-impl LayerActivationTrace {
+impl<C: DeviceContext> LayerActivationTrace<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
@@ -68,17 +65,17 @@ impl LayerActivationTrace {
     }
 }
 
-pub struct ActivationTrace {
-    pub embedding_norm: Option<ArrayCell>,
-    pub layer_results: Vec<Rc<RefCell<LayerActivationTrace>>>,
-    pub output_norm: ArrayCell,
-    pub output_pooling: Option<ArrayCell>,
-    pub logits: ArrayCell,
+pub struct ActivationTrace<C: DeviceContext> {
+    pub embedding_norm: Option<ArrayCell<C>>,
+    pub layer_results: Vec<Rc<RefCell<LayerActivationTrace<C>>>>,
+    pub output_norm: ArrayCell<C>,
+    pub output_pooling: Option<ArrayCell<C>>,
+    pub logits: ArrayCell<C>,
 }
 
-impl ActivationTrace {
+impl<C: DeviceContext> ActivationTrace<C> {
     pub fn new_llm(
-        context: &MTLContext,
+        context: &C,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
@@ -109,7 +106,7 @@ impl ActivationTrace {
     }
 
     pub fn new_classifier(
-        context: &MTLContext,
+        context: &C,
         model_shape: &ModelShape,
         suffix_length: usize,
         num_labels: usize,
@@ -152,14 +149,14 @@ impl ActivationTrace {
     }
 }
 
-impl ActivationTrace {
-    pub fn embedding_norm(&self) -> &ArrayCell {
+impl<C: DeviceContext> ActivationTrace<C> {
+    pub fn embedding_norm(&self) -> &ArrayCell<C> {
         self.embedding_norm
             .as_ref()
             .expect("embedding_norm is only available for classifier traces")
     }
 
-    pub fn output_pooling(&self) -> &ArrayCell {
+    pub fn output_pooling(&self) -> &ArrayCell<C> {
         self.output_pooling
             .as_ref()
             .expect("output_pooling is only available for classifier traces")

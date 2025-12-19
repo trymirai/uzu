@@ -19,7 +19,7 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
-    backends::metal::forward_pass::cache_layers::CacheLayer,
+    backends::metal::forward_pass::CacheLayer,
     config::{MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator,

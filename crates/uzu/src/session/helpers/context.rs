@@ -1,6 +1,5 @@
 use crate::{
-    backends::metal::forward_pass::cache_layers::CacheLayers,
-    session::config::DecodingConfig,
+    backends::metal::forward_pass::CacheLayers, session::config::DecodingConfig,
 };
 
 pub struct Context {

@@ -7,6 +7,8 @@ use objc2::rc::autoreleasepool;
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
+#[cfg(feature = "tracing")]
+use crate::backends::metal::forward_pass::encode_copy_array;
 use crate::{
     Array, DataType,
     backends::metal::forward_pass::{
@@ -92,15 +94,30 @@ impl Classifier {
     ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace>>), Error> {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
+            let traces =
+                Rc::new(RefCell::new(ActivationTrace::new_classifier(
+                    &self.context.mtl_context,
+                    &self.context.model_shape,
+                    token_ids.len(),
+                    num_labels,
+                )));
+
             let mut state = ForwardPassState::new_classifier(
                 self.context.mtl_context.clone(),
+                self.context
+                    .model_config
+                    .model_config
+                    .transformer_config
+                    .layer_configs[0]
+                    .attention_config(),
                 &self.context.model_shape,
-                &self.context.scratch_buffers,
                 self.context.shared_buffers.clone(),
+                &self.context.scratch_buffers,
                 token_ids,
                 token_positions,
                 true,
                 num_labels,
+                traces,
             );
 
             self.context.reset_command_buffer();
@@ -120,7 +137,8 @@ impl Classifier {
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
-                state.encode_copy_array(
+                encode_copy_array(
+                    &state,
                     &self.context.command_buffer,
                     ArrayId::Main,
                     traces.borrow().embedding_norm().clone(),
@@ -142,7 +160,8 @@ impl Classifier {
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
-                state.encode_copy_array(
+                encode_copy_array(
+                    &state,
                     &self.context.command_buffer,
                     ArrayId::Main,
                     traces.borrow().output_norm.clone(),
@@ -181,9 +200,15 @@ impl Classifier {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
                 self.context.mtl_context.clone(),
+                self.context
+                    .model_config
+                    .model_config
+                    .transformer_config
+                    .layer_configs[0]
+                    .attention_config(),
                 &self.context.model_shape,
-                &self.context.scratch_buffers,
                 self.context.shared_buffers.clone(),
+                &self.context.scratch_buffers,
                 token_ids,
                 token_positions,
                 true,

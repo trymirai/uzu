@@ -23,6 +23,24 @@ impl Array for CPUArray {
     fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer
     }
+
+    fn reshape(
+        &self,
+        shape: &[usize],
+    ) -> Self {
+        let new_size = array_size_in_bytes(shape, self.data_type);
+        assert!(
+            new_size <= self.buffer.len(),
+            "New shape too large for buffer"
+        );
+        // We have to copy here because CPUArray owns its buffer
+        let new_buffer = self.buffer[0..new_size].to_vec().into_boxed_slice();
+        Self {
+            buffer: new_buffer,
+            shape: shape.into(),
+            data_type: self.data_type,
+        }
+    }
 }
 
 impl CPUArray {

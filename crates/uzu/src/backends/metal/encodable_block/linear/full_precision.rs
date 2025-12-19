@@ -145,7 +145,7 @@ impl EncodableBlock for FullPrecisionLinear {
 
         self.kernel
             .borrow_mut()
-            .encode(state.mtl_context(), encoder, args)
+            .encode(state.context(), encoder, args)
             .expect("Failed to encode matmul kernel");
 
         encoder.end_encoding();
@@ -200,7 +200,7 @@ impl EncodableBlock for FullPrecisionLinear {
 
         self.kernel
             .borrow_mut()
-            .encode(state.mtl_context(), encoder, args)
+            .encode(state.context(), encoder, args)
             .expect("Failed to encode matmul kernel");
 
         if let (Some(bias_add), Some(bias_buf)) =

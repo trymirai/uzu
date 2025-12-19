@@ -94,7 +94,7 @@ impl EncodableBlock for Sampling {
             seeds_offset,
             bitmask_buffer.as_ref(),
             unsafe { &output_buffer_ref.mtl_buffer() },
-            sampling_method,
+            *sampling_method,
             batch_size,
             vocab_size,
             &root_command_buffer,

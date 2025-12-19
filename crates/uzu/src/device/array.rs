@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use bytemuck;
 use ndarray::{ArrayView, ArrayViewMut, IxDyn};
 use thiserror::Error;
@@ -132,5 +134,79 @@ pub trait Array {
             self.as_slice_mut()?,
         )
         .unwrap())
+    }
+
+    /// Create a new array sharing the same underlying buffer but with a different shape.
+    /// The total size in bytes must be less than or equal to the underlying buffer size.
+    fn reshape(
+        &self,
+        shape: &[usize],
+    ) -> Self
+    where
+        Self: Sized;
+
+    fn copy_from(
+        &mut self,
+        other: &Self,
+    ) {
+        assert_eq!(self.shape(), other.shape(), "Shape mismatch");
+        assert_eq!(self.data_type(), other.data_type(), "Data type mismatch");
+        self.buffer_mut().copy_from_slice(other.buffer());
+    }
+
+    fn copy_slice(
+        &mut self,
+        source: &Self,
+        axis: usize,
+        src_range: Range<usize>,
+        dst_offset: usize,
+    ) {
+        assert_eq!(self.shape().len(), source.shape().len(), "Rank mismatch");
+        assert!(axis < self.shape().len(), "Axis out of bounds");
+        for (i, (a, b)) in self.shape().iter().zip(source.shape()).enumerate() {
+            if i != axis {
+                assert_eq!(a, b, "Shapes must match on all non-sliced axes");
+            }
+        }
+        assert_eq!(
+            self.data_type(),
+            source.data_type(),
+            "Arrays must have the same data type"
+        );
+
+        let elem_size = self.data_type().size_in_bytes();
+
+        // The number of contiguous elements to copy for each slice operation
+        let block_size_elems =
+            self.shape().iter().skip(axis + 1).product::<usize>();
+        let block_size_bytes = block_size_elems * elem_size;
+
+        // The total number of blocks to copy
+        let num_blocks: usize = self.shape().iter().take(axis).product();
+
+        // Strides between the start of each block
+        let src_stride_bytes = source.shape()[axis] * block_size_bytes;
+        let dst_stride_bytes = self.shape()[axis] * block_size_bytes;
+
+        let rows_to_copy = src_range.end - src_range.start;
+        assert!(dst_offset + rows_to_copy <= self.shape()[axis]);
+        assert!(src_range.end <= source.shape()[axis]);
+
+        let src_buf = source.buffer();
+        let dst_buf = self.buffer_mut();
+        let copy_bytes = rows_to_copy * block_size_bytes;
+
+        for i in 0..num_blocks {
+            let src_block_start = i * src_stride_bytes;
+            let dst_block_start = i * dst_stride_bytes;
+
+            let src_start =
+                src_block_start + src_range.start * block_size_bytes;
+            let dst_start = dst_block_start + dst_offset * block_size_bytes;
+
+            let src_slice = &src_buf[src_start..src_start + copy_bytes];
+            let dst_slice = &mut dst_buf[dst_start..dst_start + copy_bytes];
+            dst_slice.copy_from_slice(src_slice);
+        }
     }
 }

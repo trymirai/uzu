@@ -13,5 +13,6 @@ pub mod trie;
 pub mod utils;
 pub use utils::*;
 pub mod device;
+pub mod forward_pass;
 pub use config::*;
 pub use device::*;

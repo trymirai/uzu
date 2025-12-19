@@ -12,6 +12,8 @@ use super::{
     },
     MixerExecutables,
 };
+#[cfg(feature = "tracing")]
+use crate::backends::metal::forward_pass::encode_copy_array;
 use crate::{
     DataType, DecoderLayerConfig,
     backends::metal::{
@@ -315,7 +317,8 @@ impl EncodableBlock for LayerExecutables {
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().inputs.clone(),
@@ -328,7 +331,8 @@ impl EncodableBlock for LayerExecutables {
         self.pre_attention_norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().pre_attention_norm.clone(),
@@ -352,7 +356,8 @@ impl EncodableBlock for LayerExecutables {
                 out_projection.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(
+                    encode_copy_array(
+                        state,
                         command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
@@ -365,7 +370,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(
+                    encode_copy_array(
+                        state,
                         command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
@@ -378,7 +384,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(
+                    encode_copy_array(
+                        state,
                         command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
@@ -391,7 +398,8 @@ impl EncodableBlock for LayerExecutables {
             post_attention_norm.encode(state, command_buffer, parameters);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_attention_norm.clone(),
@@ -405,7 +413,8 @@ impl EncodableBlock for LayerExecutables {
         // main = input + attention_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().mlp_inputs.clone(),
@@ -415,7 +424,8 @@ impl EncodableBlock for LayerExecutables {
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().pre_mlp_norm.clone(),

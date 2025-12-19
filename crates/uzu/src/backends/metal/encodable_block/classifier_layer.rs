@@ -7,6 +7,8 @@ use super::{
     Attention, EncodableBlock, EncodingParameters, ForwardPassState,
     Normalization, QKNorm, TensorAddSwap, TensorCopy, transformer_layer,
 };
+#[cfg(feature = "tracing")]
+use crate::backends::metal::forward_pass::encode_copy_array;
 use crate::{
     DataType,
     backends::metal::{
@@ -288,7 +290,8 @@ impl EncodableBlock for ClassifierLayer {
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().inputs.clone(),
@@ -305,7 +308,8 @@ impl EncodableBlock for ClassifierLayer {
             pre_attn_norm.encode(state, command_buffer, parameters);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().pre_attention_norm.clone(),
@@ -314,7 +318,8 @@ impl EncodableBlock for ClassifierLayer {
         } else {
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().pre_attention_norm.clone(),
@@ -331,7 +336,8 @@ impl EncodableBlock for ClassifierLayer {
         self.out_projection.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().attention.clone(),
@@ -342,7 +348,8 @@ impl EncodableBlock for ClassifierLayer {
             post_attn_norm.encode(state, command_buffer, parameters);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_attention_norm.clone(),
@@ -353,7 +360,8 @@ impl EncodableBlock for ClassifierLayer {
         self.mixer_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().mlp_inputs.clone(),
@@ -369,7 +377,8 @@ impl EncodableBlock for ClassifierLayer {
         self.pre_mlp_norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().pre_mlp_norm.clone(),
@@ -379,7 +388,8 @@ impl EncodableBlock for ClassifierLayer {
         self.mlp.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().mlp.clone(),
@@ -390,7 +400,8 @@ impl EncodableBlock for ClassifierLayer {
             post_mlp_norm.encode(state, command_buffer, parameters);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_mlp_norm.clone(),
@@ -401,7 +412,8 @@ impl EncodableBlock for ClassifierLayer {
         self.mlp_residual_add.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().outputs.clone(),

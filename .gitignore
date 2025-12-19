@@ -29,3 +29,5 @@ models/
 external/
 .github/*.md
 crates/uzu/examples/validate_model.rs
+crates/uzu/examples/quick_chat.rs
+run_all_models.sh

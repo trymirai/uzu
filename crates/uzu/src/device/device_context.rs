@@ -20,7 +20,7 @@ fn slice_index_to_array_index<const D: usize>(
 }
 
 pub trait DeviceContext {
-    type DeviceArray: Array;
+    type DeviceArray: Array + Clone + std::fmt::Debug;
 
     /// Allocate a new array with the given shape and data type, but doesn't initialize it.
     unsafe fn array_uninitialized(
@@ -251,5 +251,17 @@ pub trait DeviceContext {
             },
             _ => panic!("Unsupported data type for attention bias fill"),
         }
+    }
+}
+
+impl<T: DeviceContext> DeviceContext for std::rc::Rc<T> {
+    type DeviceArray = T::DeviceArray;
+
+    unsafe fn array_uninitialized(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+    ) -> Self::DeviceArray {
+        unsafe { (**self).array_uninitialized(shape, data_type) }
     }
 }

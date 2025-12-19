@@ -7,6 +7,8 @@ use metal::CommandBufferRef;
 use super::{
     EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
 };
+#[cfg(feature = "tracing")]
+use crate::backends::metal::forward_pass::encode_copy_array;
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
@@ -222,7 +224,8 @@ impl EncodableBlock for Decoder {
         {
             resolver.end_current_encoder();
             let traces = state.traces().clone();
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 traces.borrow().output_norm.clone(),
@@ -234,7 +237,8 @@ impl EncodableBlock for Decoder {
         {
             resolver.end_current_encoder();
             let traces = state.traces().clone();
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Logits,
                 traces.borrow().logits.clone(),

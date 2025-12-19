@@ -1,9 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use metal::CommandBuffer as MTLCommandBuffer;
-
 use super::{
-    super::{MTLContext, MetalArray},
     kv_cache_layer::{
         AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
         KVSlice,
@@ -12,62 +9,59 @@ use super::{
     short_conv_layer::ShortConvLayer,
     ssm_layer::SSMLayer,
 };
-use crate::{
-    DeviceContext, array::Array, backends::metal::kernel::KVCacheUpdate,
-    config::DecoderLayerType,
-};
+use crate::{Array, DeviceContext, config::DecoderLayerType};
 
 #[derive(Debug)]
-pub enum CacheLayer {
-    Transformer(KVCacheLayer),
-    StateSpace(SSMLayer),
-    ShortConv(ShortConvLayer),
+pub enum CacheLayer<C: DeviceContext> {
+    Transformer(KVCacheLayer<C>),
+    StateSpace(SSMLayer<C>),
+    ShortConv(ShortConvLayer<C>),
 }
 
 #[derive(Clone)]
-pub enum CacheLayerSlice {
-    Transformer(KVSlice),
+pub enum CacheLayerSlice<C: DeviceContext> {
+    Transformer(KVSlice<C>),
     StateSpace,
     ShortConv,
 }
 
-impl CacheLayer {
-    pub fn as_transformer(&self) -> Option<&KVCacheLayer> {
+impl<C: DeviceContext> CacheLayer<C> {
+    pub fn as_transformer(&self) -> Option<&KVCacheLayer<C>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_transformer_mut(&mut self) -> Option<&mut KVCacheLayer> {
+    pub fn as_transformer_mut(&mut self) -> Option<&mut KVCacheLayer<C>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_state_space(&self) -> Option<&SSMLayer> {
+    pub fn as_state_space(&self) -> Option<&SSMLayer<C>> {
         match self {
             CacheLayer::StateSpace(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_state_space_mut(&mut self) -> Option<&mut SSMLayer> {
+    pub fn as_state_space_mut(&mut self) -> Option<&mut SSMLayer<C>> {
         match self {
             CacheLayer::StateSpace(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_short_conv(&self) -> Option<&ShortConvLayer> {
+    pub fn as_short_conv(&self) -> Option<&ShortConvLayer<C>> {
         match self {
             CacheLayer::ShortConv(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer> {
+    pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer<C>> {
         match self {
             CacheLayer::ShortConv(layer) => Some(layer),
             _ => None,
@@ -75,20 +69,20 @@ impl CacheLayer {
     }
 }
 
-pub struct CacheLayers {
+pub struct CacheLayers<C: DeviceContext> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[CacheLayer]>,
+    pub data: Box<[CacheLayer<C>]>,
 }
 
 #[derive(Clone)]
-pub struct CacheLayersSlice {
-    pub layers: Vec<CacheLayerSlice>,
+pub struct CacheLayersSlice<C: DeviceContext> {
+    pub layers: Vec<CacheLayerSlice<C>>,
 }
 
-impl CacheLayers {
+impl<C: DeviceContext> CacheLayers<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         model_shape: &ModelShape,
         max_prefix_length: usize,
         max_suffix_length: usize,
@@ -98,7 +92,7 @@ impl CacheLayers {
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .collect();
 
-        let data: Box<[CacheLayer]> =
+        let data: Box<[CacheLayer<C>]> =
             model_shape
                 .layer_types()
                 .iter()
@@ -231,10 +225,10 @@ impl CacheLayers {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut HashMap<Option<usize>, MetalArray>,
+        dst: &mut HashMap<Option<usize>, C::DeviceArray>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
+        context: &C,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         for layer in self.data.iter() {
@@ -258,25 +252,6 @@ impl CacheLayers {
                         external_bias_fn,
                     );
                 }
-            }
-        }
-    }
-
-    pub fn update_after_acceptance(
-        &mut self,
-        accepted_suffix_indices: &[usize],
-        suffix_start: Option<usize>,
-        command_buffer: &MTLCommandBuffer,
-        kv_cache_update: &KVCacheUpdate,
-    ) {
-        for layer in self.data.iter_mut() {
-            if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(
-                    accepted_suffix_indices,
-                    suffix_start,
-                    command_buffer,
-                    kv_cache_update,
-                );
             }
         }
     }
@@ -309,9 +284,9 @@ impl CacheLayers {
 
     pub fn slice(
         &self,
-        context: &MTLContext,
+        context: &C,
         range: std::ops::Range<usize>,
-    ) -> Option<CacheLayersSlice> {
+    ) -> Option<CacheLayersSlice<C>> {
         let mut layers = Vec::with_capacity(self.data.len());
         for layer in self.data.iter() {
             match layer {
@@ -337,7 +312,7 @@ impl CacheLayers {
 
     pub fn apply_slice(
         &mut self,
-        slice: &CacheLayersSlice,
+        slice: &CacheLayersSlice<C>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
@@ -357,10 +332,10 @@ impl CacheLayers {
 
     pub fn clone(
         &self,
-        context: &MTLContext,
+        context: &C,
     ) -> Self {
         let mut max_prefix_capacity_across_layers = 0usize;
-        let data: Box<[CacheLayer]> = self
+        let data: Box<[CacheLayer<C>]> = self
             .data
             .iter()
             .map(|layer| match layer {
@@ -398,25 +373,19 @@ impl CacheLayers {
                         prefix_token_positions: layer
                             .prefix_token_positions
                             .clone(),
-                        max_suffix_length: layer.max_suffix_length,
+                        max_suffix_length: self.max_suffix_length,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
-                    let conv_shape = layer.conv_state.borrow().shape().to_vec();
-                    let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(&conv_shape, conv_dtype);
-                    {
-                        let conv_src = layer.conv_state.borrow();
-                        new_conv.copy_from_array(&conv_src);
-                    }
+                    let conv = layer.conv_state.borrow();
+                    let mut new_conv =
+                        context.array(conv.shape(), conv.data_type());
+                    new_conv.copy_from(&conv);
 
-                    let ssm_shape = layer.ssm_state.borrow().shape().to_vec();
-                    let ssm_dtype = layer.ssm_state.borrow().data_type();
-                    let mut new_ssm = context.array(&ssm_shape, ssm_dtype);
-                    {
-                        let ssm_src = layer.ssm_state.borrow();
-                        new_ssm.copy_from_array(&ssm_src);
-                    }
+                    let ssm = layer.ssm_state.borrow();
+                    let mut new_ssm =
+                        context.array(ssm.shape(), ssm.data_type());
+                    new_ssm.copy_from(&ssm);
 
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: RefCell::new(new_conv),
@@ -424,13 +393,10 @@ impl CacheLayers {
                     })
                 },
                 CacheLayer::ShortConv(layer) => {
-                    let conv_shape = layer.conv_state.borrow().shape().to_vec();
-                    let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(&conv_shape, conv_dtype);
-                    {
-                        let conv_src = layer.conv_state.borrow();
-                        new_conv.copy_from_array(&conv_src);
-                    }
+                    let conv = layer.conv_state.borrow();
+                    let mut new_conv =
+                        context.array(conv.shape(), conv.data_type());
+                    new_conv.copy_from(&conv);
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: RefCell::new(new_conv),
@@ -439,9 +405,16 @@ impl CacheLayers {
             })
             .collect();
 
+        if max_prefix_capacity_across_layers > self.max_prefix_length {
+            panic!(
+                "Cached items count {} exceeds max_prefix_length {}",
+                max_prefix_capacity_across_layers, self.max_prefix_length
+            );
+        }
+
         Self {
             max_suffix_length: self.max_suffix_length,
-            max_prefix_length: max_prefix_capacity_across_layers,
+            max_prefix_length: self.max_prefix_length,
             data,
         }
     }

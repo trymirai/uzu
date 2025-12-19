@@ -123,12 +123,9 @@ impl EncodableBlock for Attention {
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
         let qkv_binding = state.arrays(&[ArrayId::QKV]);
-        let attention_bias_binding =
-            state.hashmaps(&[HashMapId::AttentionBias]);
+        let attention_bias_map = state.hashmaps(HashMapId::AttentionBias);
         let attention_output_binding =
             state.arrays(&[ArrayId::AttentionOutput]);
-
-        let attention_bias_map = attention_bias_binding[0].clone();
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
         let mask_head_stride = 0;

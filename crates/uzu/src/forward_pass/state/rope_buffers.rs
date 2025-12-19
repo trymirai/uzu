@@ -1,24 +1,20 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::super::ModelShape;
-use crate::{
-    DeviceContext,
-    backends::metal::{MTLContext, MetalArray},
-    parameters::ParameterTree,
-};
+use crate::{Array, DeviceContext, parameters::ParameterTree};
 
-type ArrayCell = RefCell<MetalArray>;
+type ArrayCell<C> = RefCell<<C as DeviceContext>::DeviceArray>;
 
-pub struct RopeBuffers {
+pub struct RopeBuffers<C: DeviceContext> {
     /// [rope_max_sequence_length, head_dim]
-    pub cosines: ArrayCell,
+    pub cosines: ArrayCell<C>,
     /// [rope_max_sequence_length, head_dim]
-    pub sines: ArrayCell,
+    pub sines: ArrayCell<C>,
 }
 
-impl RopeBuffers {
+impl<C: DeviceContext> RopeBuffers<C> {
     pub fn new(
-        context: &MTLContext,
+        context: &C,
         model_shape: &ModelShape,
     ) -> Self {
         unsafe {
@@ -41,7 +37,7 @@ impl RopeBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<Rc<C>>,
         rope_name: String,
     ) {
         let Ok(rope_tree) = parameter_tree.subtree(rope_name.as_str()) else {
@@ -49,9 +45,9 @@ impl RopeBuffers {
         };
 
         let cosines_view = rope_tree.leaf("cosines").unwrap();
-        self.cosines.borrow_mut().copy_from_array(&cosines_view);
+        self.cosines.borrow_mut().copy_from(&cosines_view);
 
         let sines_view = rope_tree.leaf("sines").unwrap();
-        self.sines.borrow_mut().copy_from_array(&sines_view);
+        self.sines.borrow_mut().copy_from(&sines_view);
     }
 }

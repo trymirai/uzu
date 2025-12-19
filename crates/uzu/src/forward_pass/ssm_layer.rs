@@ -1,15 +1,15 @@
 use bytemuck::fill_zeroes;
 
 use super::kv_cache_layer::ArrayCell;
-use crate::device::array::Array;
+use crate::{Array, DeviceContext};
 
 #[derive(Debug)]
-pub struct SSMLayer {
-    pub conv_state: ArrayCell,
-    pub ssm_state: ArrayCell,
+pub struct SSMLayer<C: DeviceContext> {
+    pub conv_state: ArrayCell<C>,
+    pub ssm_state: ArrayCell<C>,
 }
 
-impl SSMLayer {
+impl<C: DeviceContext> SSMLayer<C> {
     pub fn zero(&self) {
         {
             let mut conv = self.conv_state.borrow_mut();
