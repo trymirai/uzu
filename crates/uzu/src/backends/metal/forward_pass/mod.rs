@@ -41,6 +41,11 @@ pub use forward_pass::{
 };
 
 #[cfg(feature = "tracing")]
-pub type ActivationTrace = forward_pass::traces::ActivationTrace<MTLContext>;
+pub mod traces {
+    use crate::{backends::metal::MTLContext, forward_pass as fp};
+    pub type ActivationTrace = fp::traces::ActivationTrace<MTLContext>;
+    pub type LayerActivationTrace =
+        fp::traces::LayerActivationTrace<MTLContext>;
+}
 
 pub use super::encodable_block::{EncodableBlock, EncodingParameters};

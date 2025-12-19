@@ -294,8 +294,7 @@ impl TraceValidator {
             None,
         );
 
-        let root_command_buffer =
-            ctx.command_buffer.root_command_buffer().to_owned();
+        let root_command_buffer = ctx.command_buffer.clone();
         ctx.executables.encode(
             &mut state,
             &ctx.command_buffer,
@@ -313,7 +312,8 @@ impl TraceValidator {
 
         // LLM-specific: KV cache validation
         let transformer_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache_layers = state.cache_layers().unwrap();
+            let cache = cache_layers.borrow();
             cache
                 .data
                 .iter()
@@ -361,7 +361,8 @@ impl TraceValidator {
 
         // LLM-specific: SSM state validation
         let ssm_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache_layers = state.cache_layers().unwrap();
+            let cache = cache_layers.borrow();
             cache
                 .data
                 .iter()
@@ -560,7 +561,7 @@ impl TraceValidator {
         let mut results = Vec::new();
 
         let validate = |path: &str,
-                        array: &Ref<MetalArray>|
+                        array: &MetalArray|
          -> Option<TracerValidationResult> {
             if traces_view.leaf(path).is_ok() {
                 Some(TracerValidationResult {
@@ -589,57 +590,55 @@ impl TraceValidator {
 
             if let Some(r) = validate(
                 &path("inputs"),
-                &layer_traces.borrow().inputs.borrow(),
+                &*layer_traces.borrow().inputs.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("pre_mixer_norm"),
-                &layer_traces.borrow().pre_attention_norm.borrow(),
+                &*layer_traces.borrow().pre_attention_norm.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("mixer"),
-                &layer_traces.borrow().attention.borrow(),
+                &*layer_traces.borrow().attention.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("post_mixer_norm"),
-                &layer_traces.borrow().post_attention_norm.borrow(),
+                &*layer_traces.borrow().post_attention_norm.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("mlp_inputs"),
-                &layer_traces.borrow().mlp_inputs.borrow(),
+                &*layer_traces.borrow().mlp_inputs.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("pre_mlp_norm"),
-                &layer_traces.borrow().pre_mlp_norm.borrow(),
+                &*layer_traces.borrow().pre_mlp_norm.borrow(),
             ) {
                 results.push(r);
             }
             if let Some(r) =
-                validate(&path("mlp"), &layer_traces.borrow().mlp.borrow())
+                validate(&path("mlp"), &*layer_traces.borrow().mlp.borrow())
             {
                 results.push(r);
             }
             if let Some(r) = validate(
                 &path("post_mlp_norm"),
-                &layer_traces.borrow().post_mlp_norm.borrow(),
+                &*layer_traces.borrow().post_mlp_norm.borrow(),
             ) {
                 results.push(r);
             }
-
-            let outputs_path =
-                format!("activation_trace.layer_results.{}.outputs", index);
-            if let Some(r) =
-                validate(&outputs_path, &layer_traces.borrow().outputs.borrow())
-            {
+            if let Some(r) = validate(
+                &path("layer_output"),
+                &*layer_traces.borrow().outputs.borrow(),
+            ) {
                 results.push(r);
             }
         }
@@ -683,7 +682,7 @@ impl TraceValidator {
                         data_type,
                         traces_view,
                         "activation_trace.embedding_norm",
-                        &embedding_norm.borrow(),
+                        &*embedding_norm.borrow(),
                     ),
                 });
             }
@@ -698,7 +697,7 @@ impl TraceValidator {
                         data_type,
                         traces_view,
                         "activation_trace.output_pooling",
-                        &output_pooling.borrow(),
+                        &*output_pooling.borrow(),
                     ),
                 });
             }
@@ -714,21 +713,21 @@ impl TraceValidator {
     fn validate_array(
         data_type: DataType,
         expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        produced_array: &MetalArray,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
+            DataType::F32 => Self::validate_array_of_type::<f32>(
+                expected_array,
+                produced_array,
+                transform,
+            ),
             DataType::F16 => Self::validate_array_of_type::<f16>(
                 expected_array,
                 produced_array,
                 transform,
             ),
             DataType::BF16 => Self::validate_array_of_type::<bf16>(
-                expected_array,
-                produced_array,
-                transform,
-            ),
-            DataType::F32 => Self::validate_array_of_type::<f32>(
                 expected_array,
                 produced_array,
                 transform,
@@ -741,7 +740,7 @@ impl TraceValidator {
         data_type: DataType,
         traces_view: &ParameterTree<Rc<MTLContext>>,
         expected_array_path: &str,
-        produced_array: &Ref<MetalArray>,
+        produced_array: &MetalArray,
     ) -> TracerValidationMetrics {
         let expected_array = traces_view.leaf(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
@@ -749,7 +748,7 @@ impl TraceValidator {
 
     fn validate_array_of_type<Precision: ArrayElement>(
         expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        produced_array: &MetalArray,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>().unwrap();

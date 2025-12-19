@@ -435,7 +435,8 @@ impl EncodableBlock for LayerExecutables {
         self.mlp.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().mlp.clone(),
@@ -446,7 +447,8 @@ impl EncodableBlock for LayerExecutables {
             post_mlp_norm.encode(state, command_buffer, parameters);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
+                encode_copy_array(
+                    state,
                     command_buffer,
                     ArrayId::Main,
                     layer_traces.borrow().post_mlp_norm.clone(),
@@ -460,7 +462,8 @@ impl EncodableBlock for LayerExecutables {
         // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(
+            encode_copy_array(
+                state,
                 command_buffer,
                 ArrayId::Main,
                 layer_traces.borrow().outputs.clone(),

@@ -181,10 +181,9 @@ impl<C: DeviceContext> ForwardPassState<C> {
             suffix_length,
         ));
 
-        // Traces
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(
-            &context,
+            &*context,
             model_shape,
             suffix_length,
         )));
@@ -198,7 +197,7 @@ impl<C: DeviceContext> ForwardPassState<C> {
                 sampling_method: None,
                 #[cfg(feature = "tracing")]
                 traces,
-                active_suffix_length,
+                active_suffix_length: suffix_length,
                 is_prefilling,
             },
         );
@@ -307,7 +306,7 @@ impl<C: DeviceContext> ForwardPassState<C> {
 
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_classifier(
-            &context,
+            &*context,
             model_shape,
             suffix_length,
             num_labels,
