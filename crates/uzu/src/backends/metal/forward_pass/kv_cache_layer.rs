@@ -335,8 +335,12 @@ impl KVCacheLayer {
                 ring_length,
                 window_length,
             } => {
-                let newest_slot =
-                    (ring_offset + window_length - 1) % window_length;
+                let newest_slot = (ring_length > 0)
+                    .then_some(
+                        (ring_offset + ring_length + window_length - 1)
+                            % window_length,
+                    )
+                    .unwrap_or(0);
                 let unmask_col = (ring_length > 0)
                     .then_some(newest_slot as i32)
                     .unwrap_or(-1);
