@@ -10,6 +10,7 @@ use std::{
 fn main() {
     if cfg!(feature = "metal-shaders") {
         println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
+        println!("cargo:rerun-if-env-changed=UZU_SKIP_METAL_SHADERS");
         compile_metal_shaders();
     } else {
         write_empty_metallib();
@@ -22,26 +23,33 @@ fn compile_metal_shaders() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
-    // Choose appropriate SDK: macosx, iphoneos, iphonesimulator, or maccatalyst
-    let sdk = if target_os == "ios" {
-        if target.contains("macabi") || target_env == "macabi" {
-            "maccatalyst"
-        } else if target.contains("ios")
-            && (target.contains("86_64") || target_env == "sim")
-        {
-            // Use iPhoneSimulator SDK for simulator targets (x86_64 or explicit 'sim')
-            "iphonesimulator"
-        } else {
-            "iphoneos"
-        }
-    } else if target_os == "macos" {
-        "macosx"
-    } else {
+    if parse_env_flag_value(env::var("UZU_SKIP_METAL_SHADERS").ok().as_deref()) {
         println!(
-            "cargo:warning=Not an Apple platform, skipping Metal shader compilation"
+            "cargo:warning=UZU_SKIP_METAL_SHADERS is set; skipping Metal shader compilation"
         );
+        write_empty_metallib();
         return;
+    }
+
+    // Choose appropriate SDK: macosx, iphoneos, iphonesimulator, or maccatalyst
+    let sdk = match resolve_metal_sdk(&target_os, &target, &target_env) {
+        Some(sdk) => sdk,
+        None => {
+            println!(
+                "cargo:warning=Not an Apple platform, skipping Metal shader compilation"
+            );
+            write_empty_metallib();
+            return;
+        }
     };
+
+    if !metal_compiler_available(sdk) {
+        println!(
+            "cargo:warning=Metal compiler not found. Install Xcode (not just Command Line Tools) or set UZU_SKIP_METAL_SHADERS=1 to build without Metal shaders."
+        );
+        write_empty_metallib();
+        return;
+    }
 
     println!("cargo:info=Compiling Metal shaders for SDK: {}", sdk);
 
@@ -85,9 +93,24 @@ fn compile_metal_shaders() {
     let should_compile =
         needs_compilation(&metal_files, &metallib_path, &target);
     if should_compile {
-        compile_metal_files(&metal_files, &metallib_dir, sdk, &src_dir);
-        // Record the target triple for which we built the metallib
-        let _ = fs::write(metallib_path.with_extension("target"), &target);
+        match compile_metal_files(&metal_files, &metallib_dir, sdk, &src_dir) {
+            Ok(()) => {
+                // Record the target triple for which we built the metallib
+                let _ =
+                    fs::write(metallib_path.with_extension("target"), &target);
+            }
+            Err(MetalCompileError::ToolchainMissing(message)) => {
+                println!(
+                    "cargo:warning=Metal compiler unavailable: {}. Install the Metal toolchain (xcodebuild -downloadComponent MetalToolchain), or set UZU_SKIP_METAL_SHADERS=1 to build without Metal shaders.",
+                    message
+                );
+                write_empty_metallib();
+                return;
+            }
+            Err(MetalCompileError::CompileFailed(message)) => {
+                panic!("Metal shader compilation failed: {}", message);
+            }
+        }
     } else {
         println!(
             "cargo:info=Metal shaders are up-to-date; skipping compilation"
@@ -108,6 +131,61 @@ fn compile_metal_shaders() {
         println!("cargo:rerun-if-changed={}", file.display());
     }
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+fn parse_env_flag_value(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|value| value.trim().to_ascii_lowercase()),
+        Some(value)
+            if matches!(
+                value.as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+    )
+}
+
+fn resolve_metal_sdk(
+    target_os: &str,
+    target: &str,
+    target_env: &str,
+) -> Option<&'static str> {
+    if target_os == "ios" {
+        if target.contains("macabi") || target_env == "macabi" {
+            Some("maccatalyst")
+        } else if target.contains("ios")
+            && (target.contains("86_64") || target_env == "sim")
+        {
+            // Use iPhoneSimulator SDK for simulator targets (x86_64 or explicit 'sim')
+            Some("iphonesimulator")
+        } else {
+            Some("iphoneos")
+        }
+    } else if target_os == "macos" {
+        Some("macosx")
+    } else {
+        None
+    }
+}
+
+fn metal_compiler_available(sdk: &str) -> bool {
+    Command::new("xcrun")
+        .args(["-sdk", sdk, "-find", "metal"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[derive(Debug)]
+enum MetalCompileError {
+    ToolchainMissing(String),
+    CompileFailed(String),
+}
+
+fn is_toolchain_missing(stderr: &str) -> bool {
+    let message = stderr.to_ascii_lowercase();
+    message.contains("missing metal toolchain")
+        || message.contains("not a developer tool")
+        || message.contains("unable to find utility \"metal\"")
 }
 
 // Recursively find all .metal files in the given directory
@@ -173,7 +251,7 @@ fn compile_metal_files(
     out_dir: &Path,
     sdk: &str,
     src_dir: &Path,
-) {
+) -> Result<(), MetalCompileError> {
     // Create temp directory for .air files
     let air_dir = out_dir.join("air");
     fs::create_dir_all(&air_dir).unwrap();
@@ -245,11 +323,21 @@ fn compile_metal_files(
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        if !cmd.status().expect("Failed to run metal compiler").success() {
-            panic!(
-                "Metal shader compilation failed for {}",
-                metal_file.display()
-            );
+        let output = cmd
+            .output()
+            .map_err(|err| MetalCompileError::CompileFailed(err.to_string()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if is_toolchain_missing(&stderr) {
+                return Err(MetalCompileError::ToolchainMissing(
+                    stderr.to_string(),
+                ));
+            }
+            return Err(MetalCompileError::CompileFailed(format!(
+                "Metal shader compilation failed for {}: {}",
+                metal_file.display(),
+                stderr.trim()
+            )));
         }
     }
 
@@ -274,8 +362,20 @@ fn compile_metal_files(
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if !lib_cmd.status().expect("Failed to run metallib linker").success() {
-        panic!("Failed to link Metal shader libraries");
+    let lib_output = lib_cmd
+        .output()
+        .map_err(|err| MetalCompileError::CompileFailed(err.to_string()))?;
+    if !lib_output.status.success() {
+        let stderr = String::from_utf8_lossy(&lib_output.stderr);
+        if is_toolchain_missing(&stderr) {
+            return Err(MetalCompileError::ToolchainMissing(
+                stderr.to_string(),
+            ));
+        }
+        return Err(MetalCompileError::CompileFailed(format!(
+            "Failed to link Metal shader libraries: {}",
+            stderr.trim()
+        )));
     }
 
     // Clean up intermediate .air files
@@ -286,6 +386,8 @@ fn compile_metal_files(
         "cargo:info=Metal shaders compiled successfully to {}",
         metallib_path.display()
     );
+
+    Ok(())
 }
 
 fn write_metallib_as_bytes(

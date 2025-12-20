@@ -26,6 +26,12 @@ impl MTLContext {
         device: MTLDevice,
         command_queue: MTLCommandQueue,
     ) -> Result<Self, MTLError> {
+        if METAL_LIBRARY_DATA.is_empty() {
+            return Err(MTLError::Generic(
+                "Metal shader library is empty. Install Xcode and rebuild, or ensure Metal shaders are compiled during build.".to_string(),
+            ));
+        }
+
         let library = match device.new_library_with_data(METAL_LIBRARY_DATA) {
             Ok(lib) => lib,
             Err(e) => {
