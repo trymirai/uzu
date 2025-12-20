@@ -124,6 +124,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### ANE placement
+
+To prefer the Apple Neural Engine for MPSGraph blocks, set `UZU_MPSGRAPH_DEVICE=ane`
+in your environment. Use `UZU_MPSGRAPH_DEVICE=gpu` to force GPU-only compilation.
+
 ## Benchmarks
 
 Here are the performance metrics for various models:

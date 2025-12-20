@@ -34,6 +34,19 @@ pub fn make_compilation_descriptor(
     desc
 }
 
+fn preferred_block_device() -> BlockDevice {
+    match std::env::var("UZU_MPSGRAPH_DEVICE")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "ane" => BlockDevice::Ane,
+        "gpu" => BlockDevice::Gpu,
+        _ => BlockDevice::Gpu,
+    }
+}
+
 pub struct CompilationConfig {
     pub descriptor_general: Retained<CompilationDescriptor>,
     pub descriptor_mlp: Retained<CompilationDescriptor>,
@@ -54,20 +67,51 @@ impl CompilationConfig {
         let optimization_level = Optimization::Level1;
         let optimization_profile = OptimizationProfile::Performance;
         let perform_placement_analysis = false;
+        let preferred_device = preferred_block_device();
 
         Self::new(
             make_compilation_descriptor(
-                BlockDevice::Gpu,
+                preferred_device,
                 optimization_level,
                 optimization_profile,
                 perform_placement_analysis,
             ),
             make_compilation_descriptor(
-                BlockDevice::Gpu,
+                preferred_device,
                 optimization_level,
                 optimization_profile,
                 perform_placement_analysis,
             ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::{BlockDevice, preferred_block_device};
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn defaults_to_gpu_without_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("UZU_MPSGRAPH_DEVICE");
+        }
+        assert!(matches!(preferred_block_device(), BlockDevice::Gpu));
+    }
+
+    #[test]
+    fn honors_ane_preference() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::set_var("UZU_MPSGRAPH_DEVICE", "ane");
+        }
+        assert!(matches!(preferred_block_device(), BlockDevice::Ane));
+        unsafe {
+            std::env::remove_var("UZU_MPSGRAPH_DEVICE");
+        }
     }
 }
