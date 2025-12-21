@@ -10,7 +10,7 @@ use crate::{
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
-            ShortConvDecodeArguments, ShortConvKernel,
+            ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments,
             ShortConvPrefillArguments,
         },
     },
@@ -121,15 +121,14 @@ impl ShortConvMixer {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let suffix_length = state.aux_buffers_suffix_length();
         let active_suffix_length = state.active_suffix_length();
-        if suffix_length == 0 || active_suffix_length == 0 {
+        if active_suffix_length == 0 {
             return;
         }
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        if suffix_length == 1 {
+        if active_suffix_length == 1 {
             self.run_decode_conv(state, command_buffer, active_suffix_length);
         } else {
             self.run_prefill_conv(state, command_buffer, active_suffix_length);
@@ -174,18 +173,45 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
+        // Allocate temporary padded buffer
+        let data_type: DataType =
+            self.config.in_projection_config.activation_precision().into();
+        let element_size = data_type.size_in_bytes();
+        let padded_rows = state_stride + suffix_length;
+        let padded_size = (padded_rows * self.model_dim * element_size) as u64;
+        let device = in_proj_buf.device();
+        let padded_buf = device.new_buffer(
+            padded_size,
+            metal::MTLResourceOptions::StorageModePrivate,
+        );
+
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         let compute = mtl_command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
+            .encode_pack(
+                &compute,
+                ShortConvPackArguments {
+                    state_in: &state_buf,
+                    in_proj: &in_proj_buf,
+                    padded: &padded_buf,
+                    state_stride,
+                    suffix_len: suffix_length,
+                    in_proj_stride: self.model_dim * 3,
+                    model_dim: self.model_dim,
+                },
+            )
+            .expect("Failed to encode short conv pack kernel");
+
+        self.short_conv_kernel
             .encode_prefill(
                 &compute,
                 ShortConvPrefillArguments {
+                    padded: &padded_buf,
                     in_proj: &in_proj_buf,
                     w: &weight_buf,
                     b: bias_buf.as_ref(),
-                    state_in: &state_buf,
                     out: &out_buf,
                     state_out: &state_buf,
                     suffix_len: suffix_length,
