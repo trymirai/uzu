@@ -179,6 +179,18 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
+        // Allocate temporary padded buffer
+        let data_type: DataType =
+            self.config.in_projection_config.activation_precision().into();
+        let element_size = data_type.size_in_bytes();
+        let padded_rows = state_stride + suffix_length;
+        let padded_size = (padded_rows * self.model_dim * element_size) as u64;
+        let device = in_proj_buf.device();
+        let padded_buf = device.new_buffer(
+            padded_size,
+            metal::MTLResourceOptions::StorageModePrivate,
+        );
+
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();
         let compute = mtl_command_buffer.new_compute_command_encoder();
