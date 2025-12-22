@@ -391,6 +391,12 @@ impl ModelShape {
         self.max_mamba_heads > 0
     }
 
+    pub fn has_short_conv_layers(&self) -> bool {
+        self.layer_types.iter().any(|layer_type| {
+            matches!(layer_type, DecoderLayerType::ShortConv { .. })
+        })
+    }
+
     pub fn max_mamba_conv_dim(&self) -> Option<usize> {
         if self.max_mamba_conv_dim == 0 {
             None
@@ -432,6 +438,28 @@ impl ModelShape {
             },
             _ => None,
         }
+    }
+
+    pub fn short_conv_padded_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        if !self.has_short_conv_layers() {
+            return None;
+        }
+
+        let max_kernel_size = self
+            .layer_types
+            .iter()
+            .filter_map(|layer_type| match layer_type {
+                DecoderLayerType::ShortConv { kernel_size } => Some(*kernel_size),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        let max_state_stride = max_kernel_size.saturating_sub(1);
+        Some([suffix_length + max_state_stride, self.model_dim])
     }
 
     pub fn ssm_x_shape(

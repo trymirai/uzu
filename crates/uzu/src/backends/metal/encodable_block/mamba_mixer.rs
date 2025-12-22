@@ -148,9 +148,8 @@ impl MambaMixer {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let suffix_length = state.aux_buffers_suffix_length();
         let active_suffix_length = state.active_suffix_length();
-        if suffix_length == 0 || active_suffix_length == 0 {
+        if active_suffix_length == 0 {
             return;
         }
 
@@ -158,7 +157,7 @@ impl MambaMixer {
         self.run_split_inproj(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
 
-        if suffix_length == 1 {
+        if active_suffix_length == 1 {
             self.run_decode_ssm(state, command_buffer, active_suffix_length);
         } else {
             self.run_prefill_ssm(state, command_buffer, active_suffix_length);

@@ -10,7 +10,7 @@ use crate::{
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
-            ShortConvDecodeArguments, ShortConvKernel,
+            ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments,
             ShortConvPrefillArguments,
         },
     },
@@ -121,15 +121,14 @@ impl ShortConvMixer {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let suffix_length = state.aux_buffers_suffix_length();
         let active_suffix_length = state.active_suffix_length();
-        if suffix_length == 0 || active_suffix_length == 0 {
+        if active_suffix_length == 0 {
             return;
         }
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        if suffix_length == 1 {
+        if active_suffix_length == 1 {
             self.run_decode_conv(state, command_buffer, active_suffix_length);
         } else {
             self.run_prefill_conv(state, command_buffer, active_suffix_length);
@@ -151,15 +150,21 @@ impl ShortConvMixer {
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
+        let padded = state
+            .short_conv_padded_buffer()
+            .expect("short_conv_padded scratch buffer not initialized");
+
         let arrays = state.arrays(&[
             ArrayId::SsmInProj,
             ArrayId::ShortConvState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
+        let mut padded = padded.borrow_mut();
         let mut in_proj = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
         let mut out = arrays[2].borrow_mut();
 
+        let padded_buf = unsafe { padded.mtl_buffer().to_owned() };
         let in_proj_buf = unsafe { in_proj.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let out_buf = unsafe { out.mtl_buffer().to_owned() };
@@ -179,13 +184,28 @@ impl ShortConvMixer {
         let compute = mtl_command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
+            .encode_pack(
+                &compute,
+                ShortConvPackArguments {
+                    state_in: &state_buf,
+                    in_proj: &in_proj_buf,
+                    padded: &padded_buf,
+                    state_stride,
+                    suffix_len: suffix_length,
+                    in_proj_stride: self.model_dim * 3,
+                    model_dim: self.model_dim,
+                },
+            )
+            .expect("Failed to encode short conv pack kernel");
+
+        self.short_conv_kernel
             .encode_prefill(
                 &compute,
                 ShortConvPrefillArguments {
+                    padded: &padded_buf,
                     in_proj: &in_proj_buf,
                     w: &weight_buf,
                     b: bias_buf.as_ref(),
-                    state_in: &state_buf,
                     out: &out_buf,
                     state_out: &state_buf,
                     suffix_len: suffix_length,

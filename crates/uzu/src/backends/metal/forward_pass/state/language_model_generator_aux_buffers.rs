@@ -11,6 +11,7 @@ pub struct LanguageModelGeneratorAuxBuffers {
     pub ssm_inproj: Option<ArrayCell>,
     pub ssm_packed: Option<ArrayCell>,
     pub ssm_conv_padded: Option<ArrayCell>,
+    pub short_conv_padded: Option<ArrayCell>,
     pub ssm_x: Option<ArrayCell>,
     pub ssm_b: Option<ArrayCell>,
     pub ssm_c: Option<ArrayCell>,
@@ -70,6 +71,15 @@ impl LanguageModelGeneratorAuxBuffers {
                 ssm_conv_padded: match (
                     scratch.ssm_conv_padded.as_ref(),
                     model_shape.ssm_conv_padded_shape(suffix_length),
+                ) {
+                    (Some(buf), Some(shape)) => Some(RefCell::new(
+                        MetalArray::new(buf.clone(), &shape, act_dtype),
+                    )),
+                    _ => None,
+                },
+                short_conv_padded: match (
+                    scratch.short_conv_padded.as_ref(),
+                    model_shape.short_conv_padded_shape(suffix_length),
                 ) {
                     (Some(buf), Some(shape)) => Some(RefCell::new(
                         MetalArray::new(buf.clone(), &shape, act_dtype),
