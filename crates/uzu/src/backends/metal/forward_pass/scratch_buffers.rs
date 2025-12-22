@@ -30,6 +30,7 @@ pub struct ScratchBuffers {
     pub ssm_inproj: Option<MTLBuffer>,
     pub ssm_packed: Option<MTLBuffer>,
     pub ssm_conv_padded: Option<MTLBuffer>,
+    pub short_conv_padded: Option<MTLBuffer>,
     pub ssm_x: Option<MTLBuffer>,
     pub ssm_b: Option<MTLBuffer>,
     pub ssm_c: Option<MTLBuffer>,
@@ -155,6 +156,9 @@ impl ScratchBuffers {
                 .map(|shape| alloc(&shape, act_ty)),
             ssm_conv_padded: model_shape
                 .ssm_conv_padded_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty)),
+            short_conv_padded: model_shape
+                .short_conv_padded_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty)),
             ssm_x: model_shape
                 .ssm_x_shape(max_suffix_len)

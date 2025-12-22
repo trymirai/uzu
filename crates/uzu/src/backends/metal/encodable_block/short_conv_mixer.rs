@@ -150,15 +150,21 @@ impl ShortConvMixer {
         command_buffer: &MPSCommandBuffer,
         suffix_length: usize,
     ) {
+        let padded = state
+            .short_conv_padded_buffer()
+            .expect("short_conv_padded scratch buffer not initialized");
+
         let arrays = state.arrays(&[
             ArrayId::SsmInProj,
             ArrayId::ShortConvState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
+        let mut padded = padded.borrow_mut();
         let mut in_proj = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
         let mut out = arrays[2].borrow_mut();
 
+        let padded_buf = unsafe { padded.mtl_buffer().to_owned() };
         let in_proj_buf = unsafe { in_proj.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let out_buf = unsafe { out.mtl_buffer().to_owned() };
@@ -172,18 +178,6 @@ impl ShortConvMixer {
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
-
-        // Allocate temporary padded buffer
-        let data_type: DataType =
-            self.config.in_projection_config.activation_precision().into();
-        let element_size = data_type.size_in_bytes();
-        let padded_rows = state_stride + suffix_length;
-        let padded_size = (padded_rows * self.model_dim * element_size) as u64;
-        let device = in_proj_buf.device();
-        let padded_buf = device.new_buffer(
-            padded_size,
-            metal::MTLResourceOptions::StorageModePrivate,
-        );
 
         let mtl_command_buffer =
             command_buffer.root_command_buffer().to_owned();

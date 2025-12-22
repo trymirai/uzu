@@ -22,22 +22,23 @@ kernel void short_conv_pack_kernel(
         return;
     }
 
-    const size_t padded_idx = size_t(row_idx) * model_dim + size_t(channel_idx);
+    const size_t padded_offset =
+        size_t(row_idx) * model_dim + size_t(channel_idx);
 
     if (row_idx < state_stride) {
         // Copy from state
         const size_t state_idx = size_t(channel_idx) * state_stride + size_t(row_idx);
-        padded[padded_idx] = state_in[state_idx];
+        padded[padded_offset] = state_in[state_idx];
     } else {
         // Compute gated input from in_proj
         const size_t token = row_idx - state_stride;
         const size_t in_proj_idx = size_t(token) * in_proj_stride + size_t(channel_idx);
 
         float pre_gate = float(in_proj[in_proj_idx]);
-        float x = float(in_proj[in_proj_idx + 2 * model_dim]);
-        float gated_input = x * pre_gate;
+        float x_in = float(in_proj[in_proj_idx + 2 * model_dim]);
+        float x = x_in * pre_gate;
 
-        padded[padded_idx] = static_cast<T>(gated_input);
+        padded[padded_offset] = static_cast<T>(x);
     }
 }
 
@@ -75,9 +76,9 @@ kernel void short_conv_prefill_kernel(
 
         // Convolve using padded buffer
         for (int tap = 0; tap < kernel_size; ++tap) {
-            const size_t padded_idx = size_t(token_idx + tap);
-            const size_t padded_index = padded_idx * model_dim + channel_idx;
-            float sample = float(padded[padded_index]);
+            const size_t padded_row = size_t(token_idx + tap);
+            const size_t padded_offset = padded_row * model_dim + channel_idx;
+            float sample = float(padded[padded_offset]);
             acc += float(w_row[tap]) * sample;
         }
 
@@ -98,11 +99,11 @@ kernel void short_conv_prefill_kernel(
         }
 
         // Copy last tap_count values from padded to state_out
-        const size_t padded_idx = suffix_len + tap;
-        const size_t padded_index = padded_idx * model_dim + channel_idx;
+        const size_t padded_row = suffix_len + tap;
+        const size_t padded_offset = padded_row * model_dim + channel_idx;
         const size_t state_idx = size_t(channel_idx) * state_stride + tap;
 
-        state_out[state_idx] = padded[padded_index];
+        state_out[state_idx] = padded[padded_offset];
     }
 }
 
@@ -136,9 +137,9 @@ kernel void short_conv_decode_kernel(
     size_t in_proj_idx = size_t(token_idx) * in_proj_stride + size_t(channel_idx);
     float pre_conv_gate = float(in_proj[in_proj_idx]);
     float post_conv_gate = float(in_proj[in_proj_idx + model_dim]);
-    float x_val = float(in_proj[in_proj_idx + 2 * model_dim]);
+    float x_in = float(in_proj[in_proj_idx + 2 * model_dim]);
 
-    float gated_input = x_val * pre_conv_gate;
+    float x = x_in * pre_conv_gate;
 
     float acc = has_bias ? float(b[channel_idx]) : 0.0f;
 
@@ -147,7 +148,7 @@ kernel void short_conv_decode_kernel(
         acc += float(w_row[tap]) * sample;
     }
 
-    acc += float(w_row[tap_count]) * gated_input;
+    acc += float(w_row[tap_count]) * x;
 
     float gated_output = acc * post_conv_gate;
 
@@ -158,7 +159,7 @@ kernel void short_conv_decode_kernel(
         for (int tap = 0; tap < tap_count - 1; ++tap) {
             next_state[state_offset + size_t(tap)] = state[state_offset + size_t(tap + 1)];
         }
-        next_state[state_offset + size_t(tap_count - 1)] = static_cast<T>(gated_input);
+        next_state[state_offset + size_t(tap_count - 1)] = static_cast<T>(x);
     }
 }
 
