@@ -472,6 +472,8 @@ pub fn embed_block(
         } => {
             let data_type: DataType =
                 config.output_norm_config.scale_precision.into();
+            let input_scale =
+                config.embedding_config.common().input_scale.unwrap_or(1.0);
 
             let embeddings_tree = parameter_tree
                 .subtree("embedding")
@@ -484,6 +486,7 @@ pub fn embed_block(
                 config.model_dim,
                 *group_size,
                 *embedding_quantization_mode,
+                input_scale,
                 &embeddings_tree,
             )
             .expect("Failed to create quantized embedding lookup kernel");

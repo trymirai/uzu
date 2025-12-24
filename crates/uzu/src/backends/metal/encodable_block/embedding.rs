@@ -42,6 +42,7 @@ pub struct QuantizedEmbeddingLookup {
     vocab_size: u32,
     model_dim: u32,
     group_size: u32,
+    input_scale: f32,
 }
 
 impl QuantizedEmbeddingLookup {
@@ -52,6 +53,7 @@ impl QuantizedEmbeddingLookup {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
+        input_scale: f32,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
         let packing_divisor = mode.packing_divisor();
@@ -179,6 +181,7 @@ impl QuantizedEmbeddingLookup {
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             group_size: group_size as u32,
+            input_scale,
         })
     }
 }
@@ -211,6 +214,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             group_size: self.group_size,
+            input_scale: self.input_scale,
         };
 
         self.kernel
