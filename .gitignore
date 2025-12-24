@@ -30,3 +30,6 @@ external/
 
 # Local-only dev example
 crates/uzu/examples/quick_chat.rs
+
+# Local-only dev example: structured chat output validator
+crates/uzu/examples/chat_output_validator.rs
