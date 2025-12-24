@@ -46,7 +46,7 @@ pub struct QuantizedEmbeddingLookup {
 }
 
 impl QuantizedEmbeddingLookup {
-    pub fn new(
+    pub fn new_tied(
         mtl_context: &MTLContext,
         data_type: DataType,
         vocab_size: usize,
@@ -56,21 +56,71 @@ impl QuantizedEmbeddingLookup {
         input_scale: f32,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
+        Self::new_with_names(
+            mtl_context,
+            data_type,
+            vocab_size,
+            model_dim,
+            group_size,
+            mode,
+            input_scale,
+            "weights",
+            "scales",
+            "biases",
+            parameter_tree,
+        )
+    }
+
+    pub fn new_untied_input(
+        mtl_context: &MTLContext,
+        data_type: DataType,
+        vocab_size: usize,
+        model_dim: usize,
+        group_size: usize,
+        mode: QuantizationMode,
+        input_scale: f32,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    ) -> Result<Self, QuantizedEmbeddingError> {
+        Self::new_with_names(
+            mtl_context,
+            data_type,
+            vocab_size,
+            model_dim,
+            group_size,
+            mode,
+            input_scale,
+            "input_weights",
+            "input_scales",
+            "input_biases",
+            parameter_tree,
+        )
+    }
+
+    fn new_with_names(
+        mtl_context: &MTLContext,
+        data_type: DataType,
+        vocab_size: usize,
+        model_dim: usize,
+        group_size: usize,
+        mode: QuantizationMode,
+        input_scale: f32,
+        weights_name: &str,
+        scales_name: &str,
+        biases_name: &str,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    ) -> Result<Self, QuantizedEmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
         let kernel =
             QuantizedEmbeddingLookupKernel::new(mtl_context, data_type, mode)?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
-        let mut weights = match parameter_tree.leaf("weights") {
-            Ok(weights) => weights,
-            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load weights: {:?}",
-                    e
-                )))
-            })?,
-        };
+        let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
+            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                "Failed to load {weights_name}: {:?}",
+                e
+            )))
+        })?;
 
         if weights.data_type() != mode.storage_type() {
             return Err(QuantizedEmbeddingError::MetalError(
@@ -83,15 +133,12 @@ impl QuantizedEmbeddingLookup {
         }
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = match parameter_tree.leaf("scales") {
-            Ok(scales) => scales,
-            Err(_) => parameter_tree.leaf("output_scales").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )))
-            })?,
-        };
+        let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
+            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                "Failed to load {scales_name}: {:?}",
+                e
+            )))
+        })?;
 
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -121,16 +168,13 @@ impl QuantizedEmbeddingLookup {
             ));
         }
 
-        // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
-        let biases_buffer: MTLBuffer = match parameter_tree
-            .leaf("biases")
-            .or_else(|_| parameter_tree.leaf("output_biases"))
-        {
+        // Load or create biases buffer [vocab_size, num_groups]
+        let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(QuantizedEmbeddingError::MetalError(
                         MTLError::Generic(format!(
-                            "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
+                            "Embedding lookup biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
                             vocab_size,
                             num_groups
@@ -241,7 +285,7 @@ pub struct QuantizedEmbeddingReadout {
 }
 
 impl QuantizedEmbeddingReadout {
-    pub fn new(
+    pub fn new_tied(
         mtl_context: &MTLContext,
         data_type: DataType,
         vocab_size: usize,
@@ -250,27 +294,70 @@ impl QuantizedEmbeddingReadout {
         mode: QuantizationMode,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, QuantizedEmbeddingError> {
+        Self::new_with_names(
+            mtl_context,
+            data_type,
+            vocab_size,
+            model_dim,
+            group_size,
+            mode,
+            "weights",
+            "scales",
+            "biases",
+            parameter_tree,
+        )
+    }
+
+    pub fn new_untied_output(
+        mtl_context: &MTLContext,
+        data_type: DataType,
+        vocab_size: usize,
+        model_dim: usize,
+        group_size: usize,
+        mode: QuantizationMode,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    ) -> Result<Self, QuantizedEmbeddingError> {
+        Self::new_with_names(
+            mtl_context,
+            data_type,
+            vocab_size,
+            model_dim,
+            group_size,
+            mode,
+            "output_weights",
+            "output_scales",
+            "output_biases",
+            parameter_tree,
+        )
+    }
+
+    fn new_with_names(
+        mtl_context: &MTLContext,
+        data_type: DataType,
+        vocab_size: usize,
+        model_dim: usize,
+        group_size: usize,
+        mode: QuantizationMode,
+        weights_name: &str,
+        scales_name: &str,
+        biases_name: &str,
+        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    ) -> Result<Self, QuantizedEmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
-        let mut weights = match parameter_tree.leaf("weights") {
-            Ok(weights) => weights,
-            Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load weights: {:?}",
-                    e
-                )))
-            })?,
-        };
+        let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
+            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                "Failed to load {weights_name}: {:?}",
+                e
+            )))
+        })?;
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = match parameter_tree.leaf("scales") {
-            Ok(scales) => scales,
-            Err(_) => parameter_tree.leaf("output_scales").map_err(|e| {
-                QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )))
-            })?,
-        };
+        let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
+            QuantizedEmbeddingError::MetalError(MTLError::Generic(format!(
+                "Failed to load {scales_name}: {:?}",
+                e
+            )))
+        })?;
 
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -306,10 +393,7 @@ impl QuantizedEmbeddingReadout {
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: MTLBuffer = match parameter_tree
-            .leaf("biases")
-            .or_else(|_| parameter_tree.leaf("output_biases"))
-        {
+        let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(QuantizedEmbeddingError::MetalError(
