@@ -3,12 +3,9 @@
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{EncodableBlock, EncodingParameters, QuantizedLinear};
-use crate::{
-    Array,
-    backends::metal::{
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::mlp::MlpGateActMulEncodable,
-    },
+use crate::backends::metal::{
+    forward_pass::{ArrayId, ForwardPassState},
+    kernel::mlp::MlpGateActMulEncodable,
 };
 
 pub struct MlpBlock {
@@ -44,13 +41,13 @@ impl EncodableBlock for MlpBlock {
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
         let mut fused = arrays[0].borrow_mut();
         let mut hidden = arrays[1].borrow_mut();
-        let m = fused.shape()[0] as i32;
+        let active_suffix_length = state.active_suffix_length() as i32;
         let root = command_buffer.root_command_buffer();
         let encoder = root.new_compute_command_encoder();
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
         self.gate
-            .encode(encoder, fused_buf, hidden_buf, m)
+            .encode(encoder, fused_buf, hidden_buf, active_suffix_length)
             .expect("Failed to encode MLP activation/mul kernel");
         encoder.end_encoding();
         drop(fused);
