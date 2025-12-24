@@ -20,8 +20,6 @@ inline T gelu_approx(T x) {
   constexpr float k1 = 0.7978845608f; // sqrt(2/pi)
   float xf = float(x);
   float t = k1 * (xf + k0 * xf * xf * xf);
-  // Avoid NaNs from fast `tanh` implementations that may overflow internally.
-  t = clamp(t, -20.0f, 20.0f);
   float yf = 0.5f * xf * (1.0f + metal::precise::tanh(t));
   return T(yf);
 }
