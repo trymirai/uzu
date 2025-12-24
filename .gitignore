@@ -27,3 +27,6 @@ target/
 # Models
 models/
 external/
+
+# Local-only dev example
+crates/uzu/examples/quick_chat.rs
