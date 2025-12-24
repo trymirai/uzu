@@ -42,6 +42,8 @@ pub enum Error {
     SamplingFailed,
     #[error("Grammar error")]
     GrammarError,
+    #[error("Grammar rejected the token")]
+    GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]
     TokenOutOfGrammarRange(u64, usize),
     #[error("Classifier error: {0}")]

@@ -2,30 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use uzu::{
     language_model::rng::DerivableSeed,
-    speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
+    speculators::empty_speculator::EmptySpeculator,
     trie::{TrieCreationConfig, TrieNode},
 };
 
-struct StaticSpeculator {
-    responses: HashMap<Vec<u64>, HashMap<u64, f32>>,
-}
-
-impl StaticSpeculator {
-    fn new(responses: HashMap<Vec<u64>, HashMap<u64, f32>>) -> Self {
-        Self {
-            responses,
-        }
-    }
-}
-
-impl Speculator for StaticSpeculator {
-    fn speculate(
-        &self,
-        prefix: &[u64],
-    ) -> HashMap<u64, f32> {
-        self.responses.get(prefix).cloned().unwrap_or_default()
-    }
-}
+mod common;
+use common::StaticSpeculator;
 
 fn verify_sprout(
     trie_root: &TrieNode,
