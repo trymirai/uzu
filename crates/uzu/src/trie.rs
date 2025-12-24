@@ -247,6 +247,7 @@ impl<'a> FlatTrie<'a> {
     pub fn accept(
         &self,
         sampled_tokens: &[u64],
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
     ) -> (Vec<u64>, Vec<usize>) {
         let mut current_token = self.root().unwrap();
         let mut accepted_tokens = Vec::new();
@@ -257,10 +258,22 @@ impl<'a> FlatTrie<'a> {
 
             accepted_token_indices.push(current_token_index);
             accepted_tokens.push(current_token_id);
+            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
+                && !compiled_grammar.is_terminated()
+            {
+                compiled_grammar.accept_token(current_token_id).unwrap();
+            }
 
             let Some(next_token) = current_token.get(current_token_id) else {
                 break;
             };
+
+            if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+                assert!(
+                    !compiled_grammar.is_terminated(),
+                    "Grammar has terminated but llm continued generation"
+                );
+            }
 
             current_token = next_token;
         }

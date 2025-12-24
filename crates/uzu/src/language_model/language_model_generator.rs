@@ -274,14 +274,10 @@ impl LanguageModelGenerator {
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens[suffix_root_index..]);
-
-        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-            for &token in &accepted_tokens {
-                compiled_grammar.accept_token(token)?;
-            }
-        }
+        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(
+            &sampled_tokens[suffix_root_index..],
+            compiled_grammar.as_deref_mut(),
+        );
 
         self.update_cache_layers(
             &accepted_token_indices
@@ -383,13 +379,7 @@ impl LanguageModelGenerator {
         let sampled_tokens = self.sample(&mut state)?;
 
         let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens);
-
-        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-            for &token in &accepted_tokens {
-                compiled_grammar.accept_token(token)?;
-            }
-        }
+            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
         self.update_cache_layers(&accepted_token_indices[1..], None, false);
 

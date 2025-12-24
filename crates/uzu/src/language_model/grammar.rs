@@ -185,7 +185,10 @@ impl CompiledGrammar {
                     self.vocab_size,
                 ));
             }
-            self.matcher.accept_token(token_id as i32);
+
+            if !self.matcher.accept_token(token_id as i32) {
+                return Err(Error::GrammarReject);
+            }
         }
 
         self.engagement_state.accept_token(token_id);
