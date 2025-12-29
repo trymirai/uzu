@@ -2,8 +2,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use uzu::VERSION;
-use uzu::speculators::speculator::Speculator;
+use uzu::{VERSION, speculators::speculator::Speculator};
 
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";

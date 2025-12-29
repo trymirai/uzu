@@ -107,6 +107,8 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         .encode(
             &logits_buffer,
             None,
+            0,
+            None,
             &output_buffer,
             SamplingMethod::Greedy,
             batch_size,
@@ -247,6 +249,8 @@ fn test_topp_sampling_from_prob_exact_match(
             .encode(
                 &logits_buf,
                 Some(&seeds_buf),
+                0,
+                None,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -374,6 +378,8 @@ fn test_topp_sampling_statistical_large() {
             .encode(
                 &logits_buf,
                 Some(&seeds_buf),
+                0,
+                None,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -482,6 +488,8 @@ fn perf_topp_128k_vocab() {
         .encode(
             &logits_buf,
             Some(&seeds_buf),
+            0,
+            None,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -587,6 +595,8 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         .encode(
             &logits_buf,
             Some(&seeds_buf),
+            0,
+            None,
             &output_buf,
             SamplingMethod::Greedy,
             BATCH,
@@ -708,6 +718,8 @@ fn test_categorical_sampling() {
             .encode(
                 &logits_buffer,
                 Some(&seeds_buffer),
+                0,
+                None,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -851,6 +863,8 @@ fn test_categorical_sampling_statistical() {
             .encode(
                 &logits_buffer,
                 Some(&seeds_buffer),
+                0,
+                None,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -957,6 +971,8 @@ fn perf_categorical_128k_vocab() {
         .encode(
             &logits_buf,
             Some(&seeds_buf),
+            0,
+            None,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -1291,6 +1307,7 @@ fn test_gumbel_gpu_cpu_match() {
         .encode_gumbel(
             &logits_buffer,
             &seeds_buffer,
+            0,
             &gumbel_logits_buffer,
             BATCH as u32,
             VOCAB as u32,
