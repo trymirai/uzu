@@ -87,6 +87,15 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 ```
 
+### Compilation
+
+For now, we only support the `Metal` backend, so to compile corresponding kernels you’ll need to install `Xcode` and run the following commands:
+
+```bash
+xcodebuild -runFirstLaunch
+xcodebuild -downloadComponent MetalToolchain
+```
+
 ## Quick Start
 
 First, add the `uzu` dependency to your `Cargo.toml`:
