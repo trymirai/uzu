@@ -1,11 +1,9 @@
-#![allow(unexpected_cfgs)]
-
 use metal::{
     BufferRef, ComputeCommandEncoder, ComputeCommandEncoderRef,
     MTLCompareFunction,
     foreign_types::{ForeignType, ForeignTypeRef},
-    objc::{msg_send, runtime::Object, sel, sel_impl},
 };
+use objc2::{msg_send, runtime::AnyObject};
 
 /// Low-level, unsafe conditional control of Metal encoders.
 /// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.
@@ -43,24 +41,24 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoder {
         comparison: MTLCompareFunction,
         reference_value: u32,
     ) {
-        let obj = self.as_ptr() as *mut Object;
-        let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
+        let predicate_ptr = predicate.as_ptr() as *mut AnyObject;
         let _: () = msg_send![
             obj,
-            encodeStartIf: predicate_ptr
-            offset: offset
-            comparison: comparison
+            encodeStartIf: predicate_ptr,
+            offset: offset,
+            comparison: comparison as u64,
             referenceValue: reference_value
         ];
     }
 
     unsafe fn encode_start_else(&self) {
-        let obj = self.as_ptr() as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
         let _: () = msg_send![obj, encodeStartElse];
     }
 
     unsafe fn encode_end_if(&self) -> bool {
-        let obj = self.as_ptr() as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
         let result: bool = msg_send![obj, encodeEndIf];
         result
     }
@@ -74,24 +72,24 @@ impl ComputeEncoderRawConditional for ComputeCommandEncoderRef {
         comparison: MTLCompareFunction,
         reference_value: u32,
     ) {
-        let obj = self as *const _ as *mut Object;
-        let predicate_ptr = predicate.as_ptr() as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
+        let predicate_ptr = predicate.as_ptr() as *mut AnyObject;
         let _: () = msg_send![
             obj,
-            encodeStartIf:predicate_ptr
-            offset:offset
-            comparison:comparison
-            referenceValue:reference_value
+            encodeStartIf: predicate_ptr,
+            offset: offset,
+            comparison: comparison as u64,
+            referenceValue: reference_value
         ];
     }
 
     unsafe fn encode_start_else(&self) {
-        let obj = self as *const _ as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
         let _: () = msg_send![obj, encodeStartElse];
     }
 
     unsafe fn encode_end_if(&self) -> bool {
-        let obj = self as *const _ as *mut Object;
+        let obj = self.as_ptr() as *mut AnyObject;
         let result: bool = msg_send![obj, encodeEndIf];
         result
     }
