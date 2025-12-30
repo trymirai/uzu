@@ -1,11 +1,15 @@
 //! MLP block encodable.
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{EncodableBlock, EncodingParameters, QuantizedLinear};
-use crate::backends::metal::{
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::mlp::MlpGateActMulEncodable,
+use crate::{
+    Array,
+    backends::metal::{
+        forward_pass::{ArrayId, ForwardPassState},
+        kernel::mlp::MlpGateActMulEncodable,
+    },
 };
 
 pub struct MlpBlock {
@@ -35,31 +39,44 @@ impl EncodableBlock for MlpBlock {
         command_buffer: &MPSCommandBuffer,
         params: &EncodingParameters,
     ) {
+        let root = command_buffer.root_command_buffer().to_owned();
+        let encoder = root.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, params);
+        encoder.end_encoding();
+
+        if params.wait_until_completed {
+            command_buffer.commit_and_continue();
+            root.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        params: &EncodingParameters,
+    ) {
         // Up
-        self.up.encode(state, command_buffer, params);
+        self.up.encode_with_shared_encoder(state, encoder, params);
+
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
         let mut fused = arrays[0].borrow_mut();
         let mut hidden = arrays[1].borrow_mut();
-        let active_suffix_length = state.active_suffix_length() as i32;
-        let root = command_buffer.root_command_buffer();
-        let encoder = root.new_compute_command_encoder();
+        let m = fused.shape()[0] as i32;
         let fused_buf = unsafe { fused.mtl_buffer() };
         let hidden_buf = unsafe { hidden.mtl_buffer() };
         self.gate
-            .encode(encoder, fused_buf, hidden_buf, active_suffix_length)
+            .encode(encoder, fused_buf, hidden_buf, m)
             .expect("Failed to encode MLP activation/mul kernel");
-        encoder.end_encoding();
         drop(fused);
         drop(hidden);
-        // Down
-        self.down.encode(state, command_buffer, params);
 
-        if params.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
+        // Down
+        self.down.encode_with_shared_encoder(state, encoder, params);
     }
 }

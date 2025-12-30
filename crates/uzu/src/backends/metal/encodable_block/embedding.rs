@@ -2,8 +2,8 @@
 
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer;
+use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef};
+use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -190,8 +190,31 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
+    ) {
+        let root_command_buffer = command_buffer.root_command_buffer();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, parameters);
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            let mtl_command_buffer =
+                command_buffer.root_command_buffer().to_owned();
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
@@ -200,9 +223,6 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
 
         let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
 
         let args = QuantizedEmbeddingLookupArguments {
             token_ids_buffer,
@@ -220,15 +240,6 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding lookup kernel");
-
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
     }
 }
 pub struct QuantizedEmbeddingReadout {
@@ -390,8 +401,24 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBuffer,
+        command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
+    ) {
+        let root_command_buffer = command_buffer.root_command_buffer();
+        let encoder = root_command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, parameters);
+        encoder.end_encoding();
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.active_suffix_length();
@@ -400,9 +427,6 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
 
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let root_command_buffer = command_buffer.root_command_buffer();
-        let encoder = root_command_buffer.new_compute_command_encoder();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -419,14 +443,5 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
-
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
     }
 }

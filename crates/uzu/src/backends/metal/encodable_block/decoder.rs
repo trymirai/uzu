@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{
@@ -13,7 +14,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
-        forward_pass::{ArrayId, EncoderResolver, ForwardPassState, RopeType},
+        forward_pass::{ArrayId, ForwardPassState, RopeType},
     },
     config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
@@ -212,32 +213,40 @@ impl EncodableBlock for Decoder {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        let mut resolver = EncoderResolver::new(command_buffer);
+        let root = command_buffer.root_command_buffer().to_owned();
 
-        resolver.encode(self.embed.as_ref(), state, parameters);
+        if self.supports_shared_encoder() {
+            let encoder = root.new_compute_command_encoder();
+            self.encode_with_shared_encoder(state, &encoder, parameters);
+            encoder.end_encoding();
 
-        for layer in self.layers.iter() {
-            resolver.encode(layer, state, parameters);
-        }
-
-        if state.is_prefilling() {
-            resolver.finish();
+            if parameters.wait_until_completed {
+                command_buffer.commit_and_continue();
+                root.wait_until_completed();
+            }
             return;
         }
 
-        resolver.encode(self.norm.as_ref(), state, parameters);
-        #[cfg(feature = "tracing")]
-        {
-            resolver.end_current_encoder();
-            let traces = state.traces().clone();
-            state.encode_copy_array(
-                command_buffer,
-                ArrayId::Main,
-                traces.borrow().output_norm.clone(),
-            );
+        self.embed.encode(state, command_buffer, parameters);
+
+        for layer in self.layers.iter() {
+            let encoder = root.new_compute_command_encoder();
+            layer.encode_with_shared_encoder(state, &encoder, parameters);
+            encoder.end_encoding();
+
+            if parameters.wait_until_completed {
+                command_buffer.commit_and_continue();
+                root.wait_until_completed();
+            }
         }
 
-        resolver.encode(self.readout.as_ref(), state, parameters);
+        if state.is_prefilling() {
+            return;
+        }
+
+        self.norm.encode(state, command_buffer, parameters);
+        self.readout.encode(state, command_buffer, parameters);
+
         #[cfg(feature = "tracing")]
         {
             resolver.end_current_encoder();
@@ -249,6 +258,41 @@ impl EncodableBlock for Decoder {
             );
         }
 
-        resolver.finish();
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            root.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.embed.supports_shared_encoder()
+            && self.layers.iter().all(|l| l.supports_shared_encoder())
+            && self.norm.supports_shared_encoder()
+            && self.readout.supports_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        debug_assert!(
+            self.supports_shared_encoder(),
+            "encode_with_shared_encoder called on unsupported Decoder"
+        );
+
+        self.embed.encode_with_shared_encoder(state, encoder, parameters);
+
+        for layer in self.layers.iter() {
+            layer.encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        if state.is_prefilling() {
+            return;
+        }
+
+        self.norm.encode_with_shared_encoder(state, encoder, parameters);
+        self.readout.encode_with_shared_encoder(state, encoder, parameters);
     }
 }

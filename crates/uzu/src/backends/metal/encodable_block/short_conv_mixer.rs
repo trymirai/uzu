@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
@@ -128,26 +129,46 @@ impl ShortConvMixer {
 
         self.in_projection.encode(state, command_buffer, parameters);
 
+        let root = command_buffer.root_command_buffer().to_owned();
+        let encoder = root.new_compute_command_encoder();
         if active_suffix_length == 1 {
-            self.run_decode_conv(state, command_buffer, active_suffix_length);
+            self.run_decode_conv(state, &encoder, active_suffix_length);
         } else {
-            self.run_prefill_conv(state, command_buffer, active_suffix_length);
+            self.run_prefill_conv(state, &encoder, active_suffix_length);
         }
+        encoder.end_encoding();
 
         self.out_projection.encode(state, command_buffer, parameters);
+    }
 
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+    fn encode_pipeline_with_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        let active_suffix_length = state.active_suffix_length();
+        if active_suffix_length == 0 {
+            return;
         }
+
+        self.in_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        if active_suffix_length == 1 {
+            self.run_decode_conv(state, encoder, active_suffix_length);
+        } else {
+            self.run_prefill_conv(state, encoder, active_suffix_length);
+        }
+
+        self.out_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
     }
 
     fn run_prefill_conv(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        compute: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let padded = state
@@ -179,13 +200,9 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
-
         self.short_conv_kernel
             .encode_pack(
-                &compute,
+                compute,
                 ShortConvPackArguments {
                     state_in: &state_buf,
                     in_proj: &in_proj_buf,
@@ -200,7 +217,7 @@ impl ShortConvMixer {
 
         self.short_conv_kernel
             .encode_prefill(
-                &compute,
+                compute,
                 ShortConvPrefillArguments {
                     padded: &padded_buf,
                     in_proj: &in_proj_buf,
@@ -216,14 +233,12 @@ impl ShortConvMixer {
                 },
             )
             .expect("Failed to encode short conv prefill kernel");
-
-        compute.end_encoding();
     }
 
     fn run_decode_conv(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        compute: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -249,13 +264,9 @@ impl ShortConvMixer {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
-
         self.short_conv_kernel
             .encode_decode(
-                &compute,
+                compute,
                 ShortConvDecodeArguments {
                     in_proj: &in_proj_buf,
                     w: &weight_buf,
@@ -271,8 +282,6 @@ impl ShortConvMixer {
                 },
             )
             .expect("Failed to encode short conv decode kernel");
-
-        compute.end_encoding();
     }
 }
 
@@ -283,6 +292,27 @@ impl EncodableBlock for ShortConvMixer {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
-        self.encode_pipeline(state, command_buffer, parameters);
+        if self.supports_shared_encoder() {
+            let root = command_buffer.root_command_buffer().to_owned();
+            let encoder = root.new_compute_command_encoder();
+            self.encode_pipeline_with_encoder(state, &encoder, parameters);
+            encoder.end_encoding();
+        } else {
+            self.encode_pipeline(state, command_buffer, parameters);
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.in_projection.supports_shared_encoder()
+            && self.out_projection.supports_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_pipeline_with_encoder(state, encoder, parameters);
     }
 }

@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputePipelineState as MTLComputePipelineState,
+    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
 };
 
 use super::{
@@ -39,7 +39,17 @@ impl TensorAddSwapKernel {
         command_buffer: &MTLCommandBuffer,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_encoder(skip_buffer, main_buffer, length, &compute_encoder);
+        compute_encoder.end_encoding();
+    }
 
+    pub fn encode_with_encoder(
+        &self,
+        skip_buffer: &MTLBuffer,
+        main_buffer: &MTLBuffer,
+        length: usize,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) {
         compute_encoder.set_label("Tensor Add-Swap");
 
         compute_encoder.set_buffer(0, Some(skip_buffer), 0);
@@ -52,7 +62,5 @@ impl TensorAddSwapKernel {
         );
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
-
-        compute_encoder.end_encoding();
     }
 }

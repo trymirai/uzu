@@ -1,5 +1,6 @@
 //! Attention kernel encodable.
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -49,6 +50,28 @@ impl EncodableBlock for Attention {
         &self,
         state: &mut ForwardPassState,
         command_buffer: &MPSCommandBuffer,
+        parameters: &EncodingParameters,
+    ) {
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        compute_encoder: &ComputeCommandEncoderRef,
         parameters: &EncodingParameters,
     ) {
         let (
@@ -144,11 +167,6 @@ impl EncodableBlock for Attention {
         let mut qkv_array = qkv_binding[0].borrow_mut();
         let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
 
-        // Prepare command encoder early (used for optional value extraction)
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
         let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
@@ -238,7 +256,7 @@ impl EncodableBlock for Attention {
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
             if let Err(e) = self.kernel.encode_kv_cache_update(
-                &compute_encoder,
+                compute_encoder,
                 KVCacheUpdateArguments {
                     rotated_keys_buffer: &rotated_keys_buffer,
                     qkv_buffer: &qkv_buffer,
@@ -253,7 +271,6 @@ impl EncodableBlock for Attention {
                 },
             ) {
                 eprintln!("Failed to encode KV cache update: {:?}", e);
-                compute_encoder.end_encoding();
                 return;
             }
         }
@@ -266,7 +283,7 @@ impl EncodableBlock for Attention {
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if let Err(e) = self.kernel.encode_single_pass(
-                    &compute_encoder,
+                    compute_encoder,
                     AttentionSinglePassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -298,7 +315,7 @@ impl EncodableBlock for Attention {
             },
             AttentionKernelVariant::TwoPass => {
                 if let Err(e) = self.kernel.encode_two_pass(
-                    &compute_encoder,
+                    compute_encoder,
                     AttentionTwoPassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -328,13 +345,6 @@ impl EncodableBlock for Attention {
                     eprintln!("Failed to encode two-pass attention: {:?}", e);
                 }
             },
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
         }
     }
 }

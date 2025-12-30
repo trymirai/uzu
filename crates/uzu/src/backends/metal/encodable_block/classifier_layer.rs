@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use metal::ComputeCommandEncoderRef;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 use objc2::rc::autoreleasepool;
 
@@ -278,6 +279,23 @@ impl EncodableBlock for ClassifierLayer {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let root = command_buffer.root_command_buffer().to_owned();
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            if self.supports_shared_encoder() {
+                let encoder = root.new_compute_command_encoder();
+                self.encode_with_shared_encoder(state, &encoder, parameters);
+                encoder.end_encoding();
+
+                if parameters.wait_until_completed {
+                    command_buffer.commit_and_continue();
+                    root.wait_until_completed();
+                }
+                return;
+            }
+        }
+
         #[cfg(feature = "tracing")]
         let layer_traces = state
             .traces()
@@ -407,5 +425,96 @@ impl EncodableBlock for ClassifierLayer {
                 layer_traces.borrow().outputs.clone(),
             );
         }
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            root.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.copy_main_to_shortcut_mixer.supports_shared_encoder()
+            && self
+                .pre_attention_norm
+                .as_ref()
+                .map(|b| b.supports_shared_encoder())
+                .unwrap_or(true)
+            && self.qkv_projection.supports_shared_encoder()
+            && self
+                .qk_norm
+                .as_ref()
+                .map(|b| b.supports_shared_encoder())
+                .unwrap_or(true)
+            && self.rope.supports_shared_encoder()
+            && self.attention.supports_shared_encoder()
+            && self.out_projection.supports_shared_encoder()
+            && self
+                .post_attention_norm
+                .as_ref()
+                .map(|b| b.supports_shared_encoder())
+                .unwrap_or(true)
+            && self.mixer_residual_add.supports_shared_encoder()
+            && self.copy_main_to_shortcut_mlp.supports_shared_encoder()
+            && self.pre_mlp_norm.supports_shared_encoder()
+            && self.mlp.supports_shared_encoder()
+            && self
+                .post_mlp_norm
+                .as_ref()
+                .map(|b| b.supports_shared_encoder())
+                .unwrap_or(true)
+            && self.mlp_residual_add.supports_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        debug_assert!(
+            self.supports_shared_encoder(),
+            "encode_with_shared_encoder called on unsupported ClassifierLayer"
+        );
+
+        self.copy_main_to_shortcut_mixer
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref pre_attn_norm) = self.pre_attention_norm {
+            pre_attn_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.qkv_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+        if let Some(ref qk_norm) = self.qk_norm {
+            qk_norm.encode_with_shared_encoder(state, encoder, parameters);
+        }
+        self.rope.encode_with_shared_encoder(state, encoder, parameters);
+        self.attention.encode_with_shared_encoder(state, encoder, parameters);
+        self.out_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref post_attn_norm) = self.post_attention_norm {
+            post_attn_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.mixer_residual_add
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        self.copy_main_to_shortcut_mlp
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        self.pre_mlp_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
+        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref post_mlp_norm) = self.post_mlp_norm {
+            post_mlp_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.mlp_residual_add
+            .encode_with_shared_encoder(state, encoder, parameters);
     }
 }

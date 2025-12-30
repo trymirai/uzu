@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use metal::ComputeCommandEncoderRef;
 use metal::Buffer as MTLBuffer;
 use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
@@ -166,6 +167,28 @@ impl EncodableBlock for QKNorm {
         command_buffer: &MPSCommandBuffer,
         parameters: &EncodingParameters,
     ) {
+        let mtl_command_buffer =
+            command_buffer.root_command_buffer().to_owned();
+        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit_and_continue();
+            mtl_command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        compute_encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {
             let qkv_array = qkv_binding[0].borrow();
@@ -178,10 +201,6 @@ impl EncodableBlock for QKNorm {
         let batch_size = qkv_shape[0] as i32;
         let head_dim = self.head_dim as i32;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         // Process query normalization if configured
         if let (
             Some(query_kernel),
@@ -191,7 +210,7 @@ impl EncodableBlock for QKNorm {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             if let Err(e) = query_kernel.encode_qk_norm(
-                &compute_encoder,
+                compute_encoder,
                 QKNormArguments {
                     qkv_input_buffer: &qkv_buffer,
                     scales_buffer: query_scales_buffer,
@@ -218,7 +237,7 @@ impl EncodableBlock for QKNorm {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             if let Err(e) = key_kernel.encode_qk_norm(
-                &compute_encoder,
+                compute_encoder,
                 QKNormArguments {
                     qkv_input_buffer: &qkv_buffer,
                     scales_buffer: key_scales_buffer,
@@ -235,13 +254,6 @@ impl EncodableBlock for QKNorm {
             ) {
                 eprintln!("Failed to encode key normalization kernel: {:?}", e);
             }
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
         }
     }
 }

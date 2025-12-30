@@ -73,4 +73,17 @@ impl EncodableBlock for MPSGraphBlock {
             }
         }
     }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        _state: &mut ForwardPassState,
+        _encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        unreachable!("MPSGraphBlock does not support shared compute encoder");
+    }
 }
