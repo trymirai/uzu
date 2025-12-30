@@ -94,9 +94,9 @@ DECL_GEMV(gemv_bf16_rows8, bfloat, float, 8, 128)
 #include <metal_stdlib>
 using namespace metal;
 
-#define MLX_MTL_PRAGMA_UNROLL _Pragma("unroll")
+#define UZU_PRAGMA_UNROLL _Pragma("unroll")
 
-// Simplified MLX-style GEMV without bias/axpby; compact signature.
+// Vectorized GEMV without bias/axpby; compact signature.
 template <
     typename T,
     const int BM,
@@ -123,12 +123,12 @@ struct GEMVKernel {
       const int src_offset,
       const int src_size) {
     if (src_offset + TN <= src_size) {
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int tn = 0; tn < TN; tn++) {
         dst[tn] = static_cast<U>(src[src_offset + tn]);
       }
     } else {
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int tn = 0; tn < TN; tn++) {
         dst[tn] = src_offset + tn < src_size
             ? static_cast<U>(src[src_offset + tn])
@@ -183,10 +183,10 @@ struct GEMVKernel {
       load_safe<float>(in_vec, v_coeff, bn, TN);
 
       int mat_offset = 0;
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int tm = 0; tm < TM; tm++) {
         load_safe(mat, inter, mat_offset + bn, TN);
-        MLX_MTL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (int tn = 0; tn < TN; tn++) {
           result[tm] += inter[tn] * v_coeff[tn];
         }
@@ -199,19 +199,19 @@ struct GEMVKernel {
     if (leftover > 0) {
       load_safe<float>(in_vec, v_coeff, bn, in_size);
 
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int tm = 0; tm < TM; tm++) {
         load_safe(&mat[tm * matrix_ld], inter, bn, in_size);
-        MLX_MTL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (int tn = 0; tn < TN; tn++) {
           result[tm] += inter[tn] * v_coeff[tn];
         }
       }
     }
 
-    MLX_MTL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (int tm = 0; tm < TM; tm++) {
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (ushort sn = (SN / 2); sn >= 1; sn >>= 1) {
         result[tm] += simd_shuffle_down(result[tm], sn);
       }
@@ -220,7 +220,7 @@ struct GEMVKernel {
     if (BN > 1) {
       threadgroup float* tgp_results = tgp_memory + sgN * (blockM + TM) + bm;
       if (thrN == 0) {
-        MLX_MTL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (int tm = 0; tm < TM; tm++) {
           tgp_results[tm] = result[tm];
         }
@@ -228,9 +228,9 @@ struct GEMVKernel {
         threadgroup_barrier(mem_flags::mem_none);
 
         if (sgN == 0) {
-          MLX_MTL_PRAGMA_UNROLL
+          UZU_PRAGMA_UNROLL
           for (int sgn = 1; sgn < BN; sgn++) {
-            MLX_MTL_PRAGMA_UNROLL
+            UZU_PRAGMA_UNROLL
             for (int tm = 0; tm < TM; tm++) {
               result[tm] += tgp_results[sgn * (blockM + TM) + tm];
             }
@@ -240,7 +240,7 @@ struct GEMVKernel {
     }
 
     if (simdN == 0 && thrN == 0) {
-      MLX_MTL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int tm = 0; tm < TM; tm++) {
         out_vec[out_row + tm] = static_cast<T>(result[tm]);
       }

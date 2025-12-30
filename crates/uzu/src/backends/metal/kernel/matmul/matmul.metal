@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 // General matrix multiplication kernels for uzu
-// Adapted from MLX steel GEMM implementation
 
 #include <metal_stdlib>
 #include "gemm.h"

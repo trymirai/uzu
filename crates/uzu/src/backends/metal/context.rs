@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, env};
+use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
     CommandQueue as MTLCommandQueue,
@@ -98,15 +98,8 @@ impl DeviceArchitecture {
         }
     }
 
-    fn parse_architecture_info(
-        arch: &str,
-    ) -> (DeviceGeneration, DeviceClass) {
-        // Try to extract from GPU architecture string if available
-        // MLX uses device_->architecture()->name() which gives "applegpu_gXXY"
-        // where XX is generation and Y is class (p/g/d)
-        // The metal crate's device.name() gives the marketing name like "Apple M3 Pro"
-
-        // For now, we'll use a heuristic based on the device name
+    fn parse_architecture_info(arch: &str) -> (DeviceGeneration, DeviceClass) {
+        // Parse generation and class from device name (e.g. "Apple M3 Pro")
         let generation = if arch.contains("M4") {
             DeviceGeneration::Gen17
         } else if arch.contains("M3") {
@@ -205,7 +198,7 @@ impl MTLContext {
         self.architecture.device_class
     }
 
-    /// TF32 toggle similar to MLX env::enable_tf32().
+    /// TF32 toggle via UZU_TF32 environment variable.
     pub fn tf32_enabled(&self) -> bool {
         env::var("UZU_TF32")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))

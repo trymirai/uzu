@@ -146,7 +146,7 @@ impl MatmulKernel {
         let large_mat =
             (batch_size_out as i64) * (m as i64) * (n as i64) >= (1_i64 << 20);
 
-        // Prefer NAX tiles when available (mirrors MLX fused_nax path).
+        // Prefer NAX tiles when available on M4+ hardware.
         if mtl.is_nax_available()
             && (!matches!(self.dt, DataType::F32) || mtl.tf32_enabled())
         {
@@ -368,7 +368,7 @@ impl MatmulKernel {
         // Params
         let tiles_n = (n + bn - 1) / bn;
         let tiles_m = (m + bm - 1) / bm;
-        // Swizzle like MLX: small tm -> no swizzle, otherwise simple 2-way.
+        // Swizzle: small tm -> no swizzle, otherwise simple 2-way.
         let swizzle_log = if tiles_m <= 3 {
             0
         } else {

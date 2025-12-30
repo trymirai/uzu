@@ -1,6 +1,5 @@
-// Masked and gather GEMV variants (simplified). Masks/indices are honored only
-// for output write; data loads remain dense. This keeps parity with MLX kernel
-// signatures while avoiding redundant specialization.
+// Masked and gather GEMV variants. Masks/indices are honored only for output
+// write; data loads remain dense.
 
 #include <metal_stdlib>
 using namespace metal;
