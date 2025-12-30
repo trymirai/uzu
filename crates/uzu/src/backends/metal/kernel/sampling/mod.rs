@@ -59,6 +59,8 @@ pub struct SamplingKernel {
     topk_applied_logits: MTLBuffer,
     topp_pipeline: MTLComputePipelineState,
     topp_applied_logits: MTLBuffer,
+    minp_pipeline: MTLComputePipelineState,
+    minp_applied_logits: MTLBuffer,
     gumbel_pipeline: MTLComputePipelineState,
     gumbel_applied_logits: MTLBuffer,
     argmax_implementation: ArgmaxImplementation,
@@ -162,6 +164,20 @@ impl SamplingKernel {
             MTLResourceOptions::StorageModeShared,
         );
 
+        let minp_pipeline = context
+            .compute_pipeline_state_with_reflection(
+                &format!("batched_minp_{}", data_suffix),
+                None,
+            )
+            .map(|(pipeline, _)| pipeline)
+            .map_err(SamplingError::MetalError)?;
+
+        let minp_applied_logits = context.device.new_buffer(
+            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
+                as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let gumbel_pipeline = context
             .compute_pipeline_state_with_reflection(
                 &format!("batched_gumbel_{}", data_suffix),
@@ -236,6 +252,8 @@ impl SamplingKernel {
             topk_applied_logits,
             topp_pipeline,
             topp_applied_logits,
+            minp_pipeline,
+            minp_applied_logits,
             gumbel_pipeline,
             gumbel_applied_logits,
             argmax_implementation,
@@ -315,6 +333,7 @@ impl SamplingKernel {
             temperature,
             top_k,
             top_p,
+            min_p,
         } = sampling_method
         {
             if let Some(temperature) = temperature {
@@ -351,6 +370,18 @@ impl SamplingKernel {
                     compute_encoder,
                 )?;
                 last_logits_buffer = &self.topp_applied_logits;
+            }
+
+            if let Some(min_p) = min_p {
+                self.encode_minp(
+                    last_logits_buffer,
+                    &self.minp_applied_logits,
+                    batch_size as u32,
+                    vocab_size as u32,
+                    min_p,
+                    compute_encoder,
+                )?;
+                last_logits_buffer = &self.minp_applied_logits;
             }
 
             self.encode_gumbel(
@@ -515,6 +546,38 @@ impl SamplingKernel {
             3,
             size_of::<f32>() as u64,
             &top_p as *const f32 as *const std::ffi::c_void,
+        );
+
+        compute_encoder.dispatch_thread_groups(
+            MTLSize::new(batch_size as u64, 1, 1),
+            MTLSize::new(BLOCK_SIZE as u64, 1, 1),
+        );
+
+        Ok(())
+    }
+
+    pub fn encode_minp(
+        &self,
+        logits_buffer: &MTLBuffer,
+        processed_logits_buffer: &MTLBuffer,
+        batch_size: u32,
+        vocab_size: u32,
+        min_p: f32,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) -> Result<(), SamplingError> {
+        compute_encoder.set_compute_pipeline_state(&self.minp_pipeline);
+
+        compute_encoder.set_buffer(0, Some(logits_buffer), 0);
+        compute_encoder.set_buffer(1, Some(processed_logits_buffer), 0);
+        compute_encoder.set_bytes(
+            2,
+            size_of::<u32>() as u64,
+            &vocab_size as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            3,
+            size_of::<f32>() as u64,
+            &min_p as *const f32 as *const std::ffi::c_void,
         );
 
         compute_encoder.dispatch_thread_groups(

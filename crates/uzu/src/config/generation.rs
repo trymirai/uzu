@@ -6,5 +6,6 @@ pub struct GenerationConfig {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
+    pub min_p: Option<f32>,
     pub banned_tokens: Option<Vec<u32>>,
 }
