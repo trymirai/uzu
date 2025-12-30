@@ -17,7 +17,9 @@ pub mod utils;
 pub use array::MetalArray;
 pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;
-pub use context::MTLContext;
+pub use context::{
+    DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext,
+};
 pub use encodable_block::Decoder;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
