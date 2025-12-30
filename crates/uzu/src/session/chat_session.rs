@@ -143,7 +143,8 @@ impl ChatSession {
             &tokenizer,
             None,
             Some(&stop_token_ids),
-        );
+        )
+        .map_err(|error_message| Error::GrammarError(error_message))?;
 
         let input_processor = InputProcessorDefault::new(
             language_model_config.message_processor_config.clone(),

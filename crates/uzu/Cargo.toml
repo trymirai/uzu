@@ -5,13 +5,13 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-xgrammar = { package = "xgrammar-rs", version = "0.1.28", features = ["hf"] }
+xgrammar = { package = "xgrammar-rs", version = "0.1.29", features = ["hf"] }
 half = { version = "2.6.0", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17.1"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
+serde_json = "1.0.148"
 thiserror = "2.0.16"
-tokenizers = "0.22.0"
+tokenizers = "0.22.2"
 mpsgraph = "0.2.0"
 objc2 = "0.6.2"
 objc2-foundation = "0.3.1"

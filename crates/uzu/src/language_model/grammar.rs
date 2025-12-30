@@ -108,16 +108,22 @@ impl CompiledGrammar {
                     None,
                     false,
                 )
+                .map_err(|error_message| Error::GrammarError(error_message))?
             },
             GrammarConfig::Regex {
                 pattern,
                 print_converted_ebnf,
-            } => Grammar::from_regex(pattern, *print_converted_ebnf),
+            } => Grammar::from_regex(pattern, *print_converted_ebnf)
+                .map_err(|error_message| Error::GrammarError(error_message))?,
             GrammarConfig::BuiltinJson => Grammar::builtin_json_grammar(),
         };
-        let mut compiler = GrammarCompiler::new(tokenizer_info, 8, true, -1);
-        let compiled = compiler.compile_grammar(&grammar);
-        let matcher = GrammarMatcher::new(&compiled, None, true, -1);
+        let mut compiler = GrammarCompiler::new(tokenizer_info, 8, true, -1)
+            .map_err(|error_message| Error::GrammarError(error_message))?;
+        let compiled = compiler
+            .compile_grammar(&grammar)
+            .map_err(|error_message| Error::GrammarError(error_message))?;
+        let matcher = GrammarMatcher::new(&compiled, None, true, -1)
+            .map_err(|error_message| Error::GrammarError(error_message))?;
 
         let engagement_state = if let Some(trigger_token_id) = trigger_token_id
         {
@@ -165,7 +171,9 @@ impl CompiledGrammar {
                 false,
             );
             if !success {
-                return Err(Error::GrammarError);
+                return Err(Error::GrammarError(
+                    "Failed to fill next token bitmask".to_string(),
+                ));
             }
 
             Ok(Some(cpu_mask))
