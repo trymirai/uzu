@@ -9,14 +9,6 @@ pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
 pub fn get_test_model_path() -> PathBuf {
-    if let Ok(path_str) = std::env::var("UZU_TEST_MODEL_PATH") {
-        let path = PathBuf::from(path_str);
-        if !path.exists() {
-            panic!("UZU_TEST_MODEL_PATH points to missing path: {:?}", path);
-        }
-        return path;
-    }
-
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
