@@ -41,6 +41,7 @@ fn request(
                 SamplingPolicy::Custom {
                     value: SamplingMethod::Greedy,
                 },
+                None,
             ),
             None::<fn(Output) -> bool>,
         )

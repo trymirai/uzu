@@ -6,7 +6,6 @@ pub struct RunConfig {
     pub enable_thinking: bool,
     pub sampling_policy: SamplingPolicy,
     pub grammar_config: Option<GrammarConfig>,
-    pub stop_on_grammar_complete: bool,
 }
 
 impl RunConfig {
@@ -14,13 +13,13 @@ impl RunConfig {
         tokens_limit: u64,
         enable_thinking: bool,
         sampling_policy: SamplingPolicy,
+        grammar_config: Option<GrammarConfig>,
     ) -> Self {
         Self {
             tokens_limit,
             enable_thinking,
             sampling_policy,
-            grammar_config: None,
-            stop_on_grammar_complete: false,
+            grammar_config: grammar_config,
         }
     }
 
@@ -55,18 +54,10 @@ impl RunConfig {
         self.grammar_config = Some(grammar_config);
         self
     }
-
-    pub fn stop_on_grammar_complete(
-        mut self,
-        stop_on_grammar_complete: bool,
-    ) -> Self {
-        self.stop_on_grammar_complete = stop_on_grammar_complete;
-        self
-    }
 }
 
 impl Default for RunConfig {
     fn default() -> Self {
-        Self::new(1024, true, SamplingPolicy::Default)
+        Self::new(1024, true, SamplingPolicy::Default, None)
     }
 }

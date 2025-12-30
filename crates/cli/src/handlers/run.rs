@@ -93,7 +93,12 @@ pub fn handle_run(
 
         let session_output = match session.run(
             Input::Text(input.to_string()),
-            RunConfig::new(tokens_limit as u64, true, SamplingPolicy::Default),
+            RunConfig::new(
+                tokens_limit as u64,
+                true,
+                SamplingPolicy::Default,
+                None,
+            ),
             Some(session_progress),
         ) {
             Ok(output) => output,

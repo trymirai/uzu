@@ -80,7 +80,7 @@ pub fn handle_chat_completions(
         .collect();
     let input = Input::Messages(messages);
     let run_config =
-        RunConfig::new(tokens_limit, true, SamplingPolicy::Default);
+        RunConfig::new(tokens_limit, true, SamplingPolicy::Default, None);
 
     let start_time = std::time::Instant::now();
     let mut session = state.session_wrapper.lock();
