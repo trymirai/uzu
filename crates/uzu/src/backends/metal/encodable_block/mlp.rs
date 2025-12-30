@@ -2,7 +2,7 @@
 
 use metal::CommandBufferRef;
 
-use super::{EncodableBlock, EncodingParameters, QuantizedLinear};
+use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
     forward_pass::{ArrayId, ForwardPassState},
     kernel::mlp::MlpGateActMulEncodable,

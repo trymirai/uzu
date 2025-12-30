@@ -24,6 +24,7 @@ pub struct QuantizedEmbeddingLookup {
     weights_buffer: MTLBuffer,
     scales_buffer: MTLBuffer,
     biases_buffer: MTLBuffer,
+    input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
     group_size: u32,
@@ -37,6 +38,7 @@ impl QuantizedEmbeddingLookup {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
+        input_scale: f32,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
@@ -46,6 +48,7 @@ impl QuantizedEmbeddingLookup {
             model_dim,
             group_size,
             mode,
+            input_scale,
             "weights",
             "scales",
             "biases",
@@ -60,6 +63,7 @@ impl QuantizedEmbeddingLookup {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
+        input_scale: f32,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
@@ -69,6 +73,7 @@ impl QuantizedEmbeddingLookup {
             model_dim,
             group_size,
             mode,
+            input_scale,
             "input_weights",
             "input_scales",
             "input_biases",
@@ -83,6 +88,7 @@ impl QuantizedEmbeddingLookup {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
+        input_scale: f32,
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
@@ -102,13 +108,13 @@ impl QuantizedEmbeddingLookup {
         })?;
 
         if weights.data_type() != mode.storage_type() {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Expected packed weights of type {:?}, got {:?}",
                     mode.storage_type(),
                     weights.data_type()
-                )),
-            ));
+                ),
+            )));
         }
 
         // Load scales [vocab_size, num_groups]
@@ -122,24 +128,24 @@ impl QuantizedEmbeddingLookup {
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding lookup weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
                     model_dim / packing_divisor
-                )),
-            ));
+                ),
+            )));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding lookup scales shape mismatch: got {:?}, expected [{}, {}]",
                     scales.shape(),
                     vocab_size,
                     num_groups
-                )),
-            ));
+                ),
+            )));
         }
         if scales.data_type() != data_type {
             return Err(EmbeddingError::UnsupportedDataType(
@@ -151,14 +157,14 @@ impl QuantizedEmbeddingLookup {
         let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(
-                        MTLError::Generic(format!(
+                    return Err(EmbeddingError::MetalError(MTLError::Generic(
+                        format!(
                             "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
                             vocab_size,
                             num_groups
-                        )),
-                    ));
+                        ),
+                    )));
                 }
                 if deq_biases.data_type() != data_type {
                     return Err(EmbeddingError::UnsupportedDataType(
@@ -172,9 +178,7 @@ impl QuantizedEmbeddingLookup {
                     DataType::F16 | DataType::BF16 => 2,
                     DataType::F32 => 4,
                     other => {
-                        return Err(
-                            EmbeddingError::UnsupportedDataType(other),
-                        );
+                        return Err(EmbeddingError::UnsupportedDataType(other));
                     },
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
@@ -201,6 +205,7 @@ impl QuantizedEmbeddingLookup {
             weights_buffer,
             scales_buffer,
             biases_buffer,
+            input_scale,
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             group_size: group_size as u32,
@@ -235,6 +240,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             group_size: self.group_size,
+            input_scale: self.input_scale,
         };
 
         self.kernel

@@ -148,21 +148,15 @@ impl ShortConvMixer {
         command_buffer: &CommandBufferRef,
         suffix_length: usize,
     ) {
-        let padded = state
-            .short_conv_padded_buffer()
-            .expect("short_conv_padded scratch buffer not initialized");
-
         let arrays = state.arrays(&[
             ArrayId::SsmInProj,
             ArrayId::ShortConvState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
-        let mut padded = padded.borrow_mut();
         let mut in_proj = arrays[0].borrow_mut();
         let mut conv_state = arrays[1].borrow_mut();
         let mut out = arrays[2].borrow_mut();
 
-        let padded_buf = unsafe { padded.mtl_buffer().to_owned() };
         let in_proj_buf = unsafe { in_proj.mtl_buffer().to_owned() };
         let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
         let out_buf = unsafe { out.mtl_buffer().to_owned() };
@@ -189,9 +183,7 @@ impl ShortConvMixer {
             metal::MTLResourceOptions::StorageModePrivate,
         );
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
+        let compute = command_buffer.new_compute_command_encoder();
 
         self.short_conv_kernel
             .encode_pack(
