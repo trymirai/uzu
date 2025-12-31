@@ -92,12 +92,39 @@ impl MatmulKernel {
         enc: &ComputeCommandEncoderRef,
         args: MatmulArguments,
     ) -> Result<bool, MTLError> {
-        // Apply GEMV when batch (M) is 1 or output_dim (N) is 1, and when A is not transposed.
+        // Apply GEMV when batch (M) is small or output_dim (N) is 1, and A is not transposed.
         let m = args.batch;
         let n = args.output_dim;
         if self.transpose_a {
             return Ok(false);
         }
+
+        // For small M (≤ 8), treat as M independent GEMV operations in batch dimension
+        // This is more efficient than using GEMM with mostly empty tiles
+        let use_batched_gemv =
+            m > 1 && m <= 8 && n > 1 && args.batch_count == 1;
+        if use_batched_gemv {
+            // Reshape: treat M rows as M batches of 1-row GEMV
+            let batched_args = MatmulArguments {
+                a: args.a,
+                b: args.b,
+                d: args.d,
+                batch: 1,
+                input_dim: args.input_dim,
+                output_dim: args.output_dim,
+                lda: args.lda, // stride between input vectors
+                ldb: args.ldb,
+                ldd: args.ldd,  // stride between output vectors
+                batch_count: m, // M becomes batch count
+            };
+            let rows = self.select_gemv_rows(n);
+            let gemv =
+                self.gemv.get_or_insert_with(|| GemvKernel::new(self.dt));
+            gemv.encode(mtl, enc, batched_args, rows)?;
+            return Ok(true);
+        }
+
+        // Standard GEMV for M=1 or N=1
         if m != 1 && n != 1 {
             return Ok(false);
         }
@@ -145,6 +172,14 @@ impl MatmulKernel {
         let batch_size_out = args.batch_count;
         let large_mat =
             (batch_size_out as i64) * (m as i64) * (n as i64) >= (1_i64 << 20);
+
+        // Small M optimization: use smaller BM tiles to avoid wasted computation
+        // For M <= 32, use 32×32 tiles for better efficiency
+        let small_m = m <= 32;
+        if small_m && !self.transpose_a {
+            // 32×32×16 tiles with 2×2 warp config work well for small M
+            return (32, 32, 16, 2, 2);
+        }
 
         // Prefer NAX tiles when available on M4+ hardware.
         if mtl.is_nax_available()

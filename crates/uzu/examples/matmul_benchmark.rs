@@ -370,8 +370,9 @@ fn main() {
         let _ = std::io::stdout().flush();
 
         let result = run_benchmark(&ctx, name, *m, *k, *n, warmup, iters);
-        let speedup = result.metal_ms / result.mpsgraph_ms;
-        let speedup_str = if speedup > 1.0 {
+        // Speedup = MPS time / Metal time. >1.0 means Metal is faster.
+        let speedup = result.mpsgraph_ms / result.metal_ms;
+        let speedup_str = if speedup >= 1.0 {
             format!("{:.2}x ✓", speedup)
         } else {
             format!("{:.2}x", speedup)
@@ -395,6 +396,7 @@ fn main() {
     }
 
     println!("\n=== Summary ===");
-    println!("Speedup > 1.0 means MPSGraph is faster");
-    println!("Speedup < 1.0 means Metal GEMM is faster");
+    println!("Speedup = MPS time / Metal time");
+    println!("Speedup > 1.0 means Metal is faster ✓");
+    println!("Speedup < 1.0 means MPS is faster");
 }

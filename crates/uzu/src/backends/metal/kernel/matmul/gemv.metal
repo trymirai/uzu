@@ -1,8 +1,263 @@
+// SPDX-License-Identifier: MIT
+// Optimized GEMV kernels:
+// - Multi-row output per simdgroup with input vector reuse
+// - Vectorized loads (4 elements per thread)
+// - simd_sum for fast K-dimension reduction
+// - Register-only (no threadgroup memory)
+//
+// Two variants:
+// - gemv_fast_*: 4 rows per simdgroup, best for large K (≥4096)
+// - gemv_wide_*: 16 rows per simdgroup, best for small K with large N (MLP up pattern)
+
 #include <metal_stdlib>
 using namespace metal;
 
-// Tiled GEMV with vector blocking in threadgroup memory.
-// Signature matches existing Rust dispatch (no bias/axpby).
+// Elements loaded per thread per K iteration (4 elements vectorized)
+#define ELEMS_PER_THREAD 4
+
+// Templated GEMV implementation with configurable rows per simdgroup
+// y = A * x where A is [N, K] row-major
+template <typename T, typename AccT, int ROWS>
+METAL_FUNC void gemv_impl(
+    const device T* __restrict A,
+    const device T* __restrict x,
+    device T* __restrict y,
+    const int K,
+    const int N,
+    const int lda,
+    const int batch_idx,
+    const int batch_stride_x,
+    const int batch_stride_y,
+    uint row_base,
+    uint simd_lid) {
+
+    // Block size in K dimension: 32 threads * 4 elements = 128
+    constexpr int BLOCK_K = 32 * ELEMS_PER_THREAD;
+
+    // Position pointers for this batch
+    x += batch_idx * batch_stride_x;
+    y += batch_idx * batch_stride_y;
+
+    // Bounds check
+    if (row_base >= static_cast<uint>(N)) {
+        return;
+    }
+
+    const int rows_to_compute = min(ROWS, N - static_cast<int>(row_base));
+
+    // Accumulators in registers
+    AccT result[ROWS];
+    #pragma unroll(ROWS)
+    for (int r = 0; r < ROWS; ++r) {
+        result[r] = AccT(0);
+    }
+
+    // Input vector cache
+    AccT x_cache[ELEMS_PER_THREAD];
+
+    // Weight row pointers
+    const device T* row_ptrs[ROWS];
+    #pragma unroll(ROWS)
+    for (int r = 0; r < ROWS; ++r) {
+        row_ptrs[r] = A + (row_base + r) * lda;
+    }
+
+    // Main K loop
+    int k = 0;
+    for (; k + BLOCK_K <= K; k += BLOCK_K) {
+        const int thread_k = k + simd_lid * ELEMS_PER_THREAD;
+
+        // Load input vector chunk
+        #pragma unroll(ELEMS_PER_THREAD)
+        for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+            x_cache[e] = static_cast<AccT>(x[thread_k + e]);
+        }
+
+        // Dot product for each row
+        #pragma unroll(ROWS)
+        for (int r = 0; r < ROWS; ++r) {
+            AccT dot = 0;
+            #pragma unroll(ELEMS_PER_THREAD)
+            for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+                dot += x_cache[e] * static_cast<AccT>(row_ptrs[r][thread_k + e]);
+            }
+            result[r] += dot;
+        }
+    }
+
+    // Handle leftover K elements
+    if (k < K) {
+        const int thread_k = k + simd_lid * ELEMS_PER_THREAD;
+        const int remaining = K - k;
+
+        #pragma unroll(ELEMS_PER_THREAD)
+        for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+            const int idx = simd_lid * ELEMS_PER_THREAD + e;
+            x_cache[e] = (idx < remaining) ? static_cast<AccT>(x[thread_k + e]) : AccT(0);
+        }
+
+        #pragma unroll(ROWS)
+        for (int r = 0; r < ROWS; ++r) {
+            AccT dot = 0;
+            #pragma unroll(ELEMS_PER_THREAD)
+            for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+                const int idx = simd_lid * ELEMS_PER_THREAD + e;
+                if (idx < remaining) {
+                    dot += x_cache[e] * static_cast<AccT>(row_ptrs[r][thread_k + e]);
+                }
+            }
+            result[r] += dot;
+        }
+    }
+
+    // Reduce across simdgroup
+    #pragma unroll(ROWS)
+    for (int r = 0; r < ROWS; ++r) {
+        result[r] = simd_sum(result[r]);
+    }
+
+    // Write output
+    if (simd_lid == 0) {
+        #pragma unroll(ROWS)
+        for (int r = 0; r < rows_to_compute; ++r) {
+            y[row_base + r] = static_cast<T>(result[r]);
+        }
+    }
+}
+
+// Standard GEMV: 4 rows per simdgroup (best for large K)
+#define DECL_GEMV_FAST(NAME, TYPE, ACC)                                         \
+    [[kernel]] void NAME(                                                       \
+        const device TYPE* A [[buffer(0)]],                                     \
+        const device TYPE* x [[buffer(1)]],                                     \
+        device TYPE* y [[buffer(2)]],                                           \
+        constant int& K [[buffer(3)]],                                          \
+        constant int& N [[buffer(4)]],                                          \
+        constant int& lda [[buffer(5)]],                                        \
+        constant int& batch_stride_x [[buffer(6)]],                             \
+        constant int& batch_stride_y [[buffer(7)]],                             \
+        uint3 tgid [[threadgroup_position_in_grid]],                            \
+        uint simd_lid [[thread_index_in_simdgroup]]) {                          \
+        constexpr int ROWS = 4;                                                 \
+        const uint row_base = tgid.x * ROWS;                                    \
+        gemv_impl<TYPE, ACC, ROWS>(                                             \
+            A, x, y, K, N, lda, tgid.z, batch_stride_x, batch_stride_y,         \
+            row_base, simd_lid);                                                \
+    }
+
+// Wide GEMV: 8 rows per simdgroup (balanced for small K, large N)
+#define DECL_GEMV_WIDE(NAME, TYPE, ACC)                                         \
+    [[kernel]] void NAME(                                                       \
+        const device TYPE* A [[buffer(0)]],                                     \
+        const device TYPE* x [[buffer(1)]],                                     \
+        device TYPE* y [[buffer(2)]],                                           \
+        constant int& K [[buffer(3)]],                                          \
+        constant int& N [[buffer(4)]],                                          \
+        constant int& lda [[buffer(5)]],                                        \
+        constant int& batch_stride_x [[buffer(6)]],                             \
+        constant int& batch_stride_y [[buffer(7)]],                             \
+        uint3 tgid [[threadgroup_position_in_grid]],                            \
+        uint simd_lid [[thread_index_in_simdgroup]]) {                          \
+        constexpr int ROWS = 8;                                                 \
+        const uint row_base = tgid.x * ROWS;                                    \
+        gemv_impl<TYPE, ACC, ROWS>(                                             \
+            A, x, y, K, N, lda, tgid.z, batch_stride_x, batch_stride_y,         \
+            row_base, simd_lid);                                                \
+    }
+
+// Instantiate standard (4-row) kernels
+DECL_GEMV_FAST(gemv_fast_f16, half, float)
+DECL_GEMV_FAST(gemv_fast_bf16, bfloat, float)
+DECL_GEMV_FAST(gemv_fast_f32, float, float)
+
+// Instantiate wide (8-row) kernels
+DECL_GEMV_WIDE(gemv_wide_f16, half, float)
+DECL_GEMV_WIDE(gemv_wide_bf16, bfloat, float)
+DECL_GEMV_WIDE(gemv_wide_f32, float, float)
+
+// =============================================================================
+// Parallel GEMV: Multiple simdgroups per threadgroup with shared input vector
+// Best for small K with large N (reduces threadgroup count, amortizes overhead)
+// =============================================================================
+
+template <typename T, typename AccT, int SIMDGROUPS_PER_TG, int BK>
+[[kernel, max_total_threads_per_threadgroup(SIMDGROUPS_PER_TG * 32)]]
+void gemv_parallel_impl(
+    const device T* __restrict A [[buffer(0)]],
+    const device T* __restrict x [[buffer(1)]],
+    device T* __restrict y [[buffer(2)]],
+    constant int& K [[buffer(3)]],
+    constant int& N [[buffer(4)]],
+    constant int& lda [[buffer(5)]],
+    constant int& batch_stride_x [[buffer(6)]],
+    constant int& batch_stride_y [[buffer(7)]],
+    uint3 tgid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]],
+    uint tid [[thread_index_in_threadgroup]]) {
+
+    // Shared memory for input vector tile
+    threadgroup AccT x_shared[BK];
+
+    // Position pointers for this batch
+    const int batch_idx = tgid.z;
+    x += batch_idx * batch_stride_x;
+    y += batch_idx * batch_stride_y;
+
+    // Each simdgroup computes one output row
+    const uint row = tgid.x * SIMDGROUPS_PER_TG + simd_gid;
+    if (row >= static_cast<uint>(N)) {
+        return;
+    }
+
+    const device T* row_ptr = A + row * lda;
+    AccT acc = AccT(0);
+
+    // Process K in tiles
+    for (int k_start = 0; k_start < K; k_start += BK) {
+        const int remaining = K - k_start;
+        const int tile_k = remaining < BK ? remaining : BK;
+
+        // Cooperative load of input vector tile into shared memory
+        for (int idx = tid; idx < tile_k; idx += SIMDGROUPS_PER_TG * 32) {
+            x_shared[idx] = static_cast<AccT>(x[k_start + idx]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Each thread in simdgroup processes part of the tile
+        for (int idx = simd_lid; idx < tile_k; idx += 32) {
+            acc += static_cast<AccT>(row_ptr[k_start + idx]) * x_shared[idx];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Reduce within simdgroup
+    acc = simd_sum(acc);
+
+    // Write output
+    if (simd_lid == 0) {
+        y[row] = static_cast<T>(acc);
+    }
+}
+
+// Parallel kernels: 32 simdgroups per threadgroup, BK=1024 for maximum occupancy
+template [[host_name("gemv_parallel_f16")]] kernel void gemv_parallel_impl<half, float, 32, 1024>(
+    const device half*, const device half*, device half*,
+    constant int&, constant int&, constant int&, constant int&, constant int&,
+    uint3, uint, uint, uint);
+template [[host_name("gemv_parallel_bf16")]] kernel void gemv_parallel_impl<bfloat, float, 32, 1024>(
+    const device bfloat*, const device bfloat*, device bfloat*,
+    constant int&, constant int&, constant int&, constant int&, constant int&,
+    uint3, uint, uint, uint);
+template [[host_name("gemv_parallel_f32")]] kernel void gemv_parallel_impl<float, float, 32, 1024>(
+    const device float*, const device float*, device float*,
+    constant int&, constant int&, constant int&, constant int&, constant int&,
+    uint3, uint, uint, uint);
+
+// =============================================================================
+// Legacy kernels for backwards compatibility (used by existing Rust dispatcher)
+// =============================================================================
+
 template <typename T, typename AccT, ushort ROWS_PER_TG, ushort BK>
 METAL_FUNC void gemv_impl_tiled(
     const device T* __restrict matrix [[buffer(0)]],
@@ -34,25 +289,21 @@ METAL_FUNC void gemv_impl_tiled(
 
     AccT acc = static_cast<AccT>(0);
 
-    // Cooperative load of vector tile into threadgroup memory.
     for (uint k_block = 0; k_block < k; k_block += BK) {
         const uint remaining = k - k_block;
         const uint tile_elems = remaining < BK ? remaining : BK;
 
-        // Each thread loads at most one element of the vector tile.
         if (tid < tile_elems && tid < TG_THREADS) {
             vec_tile[tid] = static_cast<AccT>(vec_ptr[k_block + tid]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Accumulate over this tile.
         for (uint idx = simd_lid; idx < tile_elems; idx += 32) {
             acc += static_cast<AccT>(row_ptr[k_block + idx]) * vec_tile[idx];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // Reduce within simdgroup.
     for (ushort offset = 16; offset > 0; offset >>= 1) {
         acc += simd_shuffle_down(acc, offset);
     }
@@ -62,219 +313,32 @@ METAL_FUNC void gemv_impl_tiled(
     }
 }
 
-#define DECL_GEMV(NAME, TYPE, ACC, ROWS, BK)                                      \
-    [[kernel, max_total_threads_per_threadgroup(ROWS * 32)]] void NAME(           \
-        const device TYPE* matrix [[buffer(0)]],                                  \
-        const device TYPE* vector [[buffer(1)]],                                  \
-        device TYPE* output [[buffer(2)]],                                        \
-        constant uint& k [[buffer(3)]],                                           \
-        constant uint& n [[buffer(4)]],                                           \
-        constant uint& ldb [[buffer(5)]],                                         \
-        constant uint& lda [[buffer(6)]],                                         \
-        constant uint& ldd [[buffer(7)]],                                         \
-        uint3 tgid [[threadgroup_position_in_grid]],                              \
-        uint simd_gid [[simdgroup_index_in_threadgroup]],                         \
-        uint simd_lid [[thread_index_in_simdgroup]],                              \
-        uint tid [[thread_index_in_threadgroup]]) {                               \
-        threadgroup ACC vec_tile[BK];                                             \
-        gemv_impl_tiled<TYPE, ACC, ROWS, BK>(                                     \
-            matrix, vector, output, k, n, ldb, lda, ldd,                          \
-            tgid, simd_gid, simd_lid, tid, vec_tile);                             \
+#define DECL_GEMV_LEGACY(NAME, TYPE, ACC, ROWS, BK)                             \
+    [[kernel, max_total_threads_per_threadgroup(ROWS * 32)]] void NAME(         \
+        const device TYPE* matrix [[buffer(0)]],                                \
+        const device TYPE* vector [[buffer(1)]],                                \
+        device TYPE* output [[buffer(2)]],                                      \
+        constant uint& k [[buffer(3)]],                                         \
+        constant uint& n [[buffer(4)]],                                         \
+        constant uint& ldb [[buffer(5)]],                                       \
+        constant uint& lda [[buffer(6)]],                                       \
+        constant uint& ldd [[buffer(7)]],                                       \
+        uint3 tgid [[threadgroup_position_in_grid]],                            \
+        uint simd_gid [[simdgroup_index_in_threadgroup]],                       \
+        uint simd_lid [[thread_index_in_simdgroup]],                            \
+        uint tid [[thread_index_in_threadgroup]]) {                             \
+        threadgroup ACC vec_tile[BK];                                           \
+        gemv_impl_tiled<TYPE, ACC, ROWS, BK>(                                   \
+            matrix, vector, output, k, n, ldb, lda, ldd,                        \
+            tgid, simd_gid, simd_lid, tid, vec_tile);                           \
     }
 
-// half variants
-DECL_GEMV(gemv_f16_rows2, half, float, 2, 128)
-DECL_GEMV(gemv_f16_rows4, half, float, 4, 128)
-DECL_GEMV(gemv_f16_rows8, half, float, 8, 128)
+// Legacy half variants
+DECL_GEMV_LEGACY(gemv_f16_rows2, half, float, 2, 128)
+DECL_GEMV_LEGACY(gemv_f16_rows4, half, float, 4, 128)
+DECL_GEMV_LEGACY(gemv_f16_rows8, half, float, 8, 128)
 
-// bfloat16 variants
-DECL_GEMV(gemv_bf16_rows2, bfloat, float, 2, 128)
-DECL_GEMV(gemv_bf16_rows4, bfloat, float, 4, 128)
-DECL_GEMV(gemv_bf16_rows8, bfloat, float, 8, 128)
-#include <metal_stdlib>
-using namespace metal;
-
-#define UZU_PRAGMA_UNROLL _Pragma("unroll")
-
-// Vectorized GEMV without bias/axpby; compact signature.
-template <
-    typename T,
-    const int BM,
-    const int BN,
-    const int SM,
-    const int SN,
-    const int TM,
-    const int TN>
-struct GEMVKernel {
-  enum : int {
-    threadsM = BM * SM,
-    threadsN = BN * SN,
-    blockM = threadsM * TM,
-    blockN = threadsN * TN,
-  };
-
-  static_assert(SM * SN == 32, "simdgroup must be 32 threads");
-  static_assert(SN == 4 || SN == 8 || SN == 16 || SN == 32, "SN must divide 32");
-
-  template <typename U = T>
-  static METAL_FUNC void load_safe(
-      const device T* src,
-      thread U dst[TN],
-      const int src_offset,
-      const int src_size) {
-    if (src_offset + TN <= src_size) {
-      UZU_PRAGMA_UNROLL
-      for (int tn = 0; tn < TN; tn++) {
-        dst[tn] = static_cast<U>(src[src_offset + tn]);
-      }
-    } else {
-      UZU_PRAGMA_UNROLL
-      for (int tn = 0; tn < TN; tn++) {
-        dst[tn] = src_offset + tn < src_size
-            ? static_cast<U>(src[src_offset + tn])
-            : U(0);
-      }
-    }
-  }
-
-  static METAL_FUNC void run(
-      const device T* mat [[buffer(0)]],
-      const device T* in_vec [[buffer(1)]],
-      device T* out_vec [[buffer(2)]],
-      const constant int& in_vec_size [[buffer(3)]],
-      const constant int& out_vec_size [[buffer(4)]],
-      const constant int& matrix_ld [[buffer(5)]],
-      threadgroup float* tgp_memory [[threadgroup(0)]],
-      uint3 tid [[threadgroup_position_in_grid]],
-      uint3 lid [[thread_position_in_threadgroup]],
-      uint simd_gid [[simdgroup_index_in_threadgroup]],
-      uint simd_lid [[thread_index_in_simdgroup]]) {
-    (void)lid;
-
-    thread float result[TM] = {0};
-    thread T inter[TN];
-    thread float v_coeff[TN];
-
-    const int thrM = SN != 32 ? simd_lid / SN : 0;
-    const int thrN = SN != 32 ? simd_lid % SN : int(simd_lid);
-
-    const int sgN = BN != 1 ? (simd_gid % BN) : 0;
-
-    const int simdM = BN != 1 ? SM * (simd_gid / BN) : int(SM * simd_gid);
-    const int simdN = BN != 1 ? SN * (simd_gid % BN) : 0;
-
-    int bm = (simdM + thrM) * TM;
-    int bn = (simdN + thrN) * TN;
-
-    int out_row = tid.x * blockM + bm;
-    if (out_row >= out_vec_size) {
-      return;
-    }
-    out_row = out_row + TM <= out_vec_size ? out_row : out_vec_size - TM;
-
-    mat += out_row * matrix_ld;
-
-    const int loop_stride = blockN;
-    const int in_size = in_vec_size;
-    const int n_iter = in_size / loop_stride;
-    const int leftover = in_size - loop_stride * n_iter;
-
-    for (int i = 0; i < n_iter; ++i) {
-      load_safe<float>(in_vec, v_coeff, bn, TN);
-
-      int mat_offset = 0;
-      UZU_PRAGMA_UNROLL
-      for (int tm = 0; tm < TM; tm++) {
-        load_safe(mat, inter, mat_offset + bn, TN);
-        UZU_PRAGMA_UNROLL
-        for (int tn = 0; tn < TN; tn++) {
-          result[tm] += inter[tn] * v_coeff[tn];
-        }
-        mat_offset += matrix_ld;
-      }
-
-      bn += blockN;
-    }
-
-    if (leftover > 0) {
-      load_safe<float>(in_vec, v_coeff, bn, in_size);
-
-      UZU_PRAGMA_UNROLL
-      for (int tm = 0; tm < TM; tm++) {
-        load_safe(&mat[tm * matrix_ld], inter, bn, in_size);
-        UZU_PRAGMA_UNROLL
-        for (int tn = 0; tn < TN; tn++) {
-          result[tm] += inter[tn] * v_coeff[tn];
-        }
-      }
-    }
-
-    UZU_PRAGMA_UNROLL
-    for (int tm = 0; tm < TM; tm++) {
-      UZU_PRAGMA_UNROLL
-      for (ushort sn = (SN / 2); sn >= 1; sn >>= 1) {
-        result[tm] += simd_shuffle_down(result[tm], sn);
-      }
-    }
-
-    if (BN > 1) {
-      threadgroup float* tgp_results = tgp_memory + sgN * (blockM + TM) + bm;
-      if (thrN == 0) {
-        UZU_PRAGMA_UNROLL
-        for (int tm = 0; tm < TM; tm++) {
-          tgp_results[tm] = result[tm];
-        }
-
-        threadgroup_barrier(mem_flags::mem_none);
-
-        if (sgN == 0) {
-          UZU_PRAGMA_UNROLL
-          for (int sgn = 1; sgn < BN; sgn++) {
-            UZU_PRAGMA_UNROLL
-            for (int tm = 0; tm < TM; tm++) {
-              result[tm] += tgp_results[sgn * (blockM + TM) + tm];
-            }
-          }
-        }
-      }
-    }
-
-    if (simdN == 0 && thrN == 0) {
-      UZU_PRAGMA_UNROLL
-      for (int tm = 0; tm < TM; tm++) {
-        out_vec[out_row + tm] = static_cast<T>(result[tm]);
-      }
-    }
-  }
-};
-
-#define DECL_GEMV(name, itype, bm, bn, sm, sn, tm, tn)                  \
-  [[kernel, max_total_threads_per_threadgroup(bm * sm * bn * sn)]] void \
-  name(                                                                 \
-      const device itype* mat [[buffer(0)]],                            \
-      const device itype* in_vec [[buffer(1)]],                         \
-      device itype* out_vec [[buffer(2)]],                              \
-      const constant int& in_vec_size [[buffer(3)]],                    \
-      const constant int& out_vec_size [[buffer(4)]],                   \
-      const constant int& matrix_ld [[buffer(5)]],                      \
-      uint3 tid [[threadgroup_position_in_grid]],                       \
-      uint3 lid [[thread_position_in_threadgroup]],                     \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                 \
-      uint simd_lid [[thread_index_in_simdgroup]],                      \
-      threadgroup float* tgp_memory [[threadgroup(0)]]) {               \
-    GEMVKernel<itype, bm, bn, sm, sn, tm, tn>::run(                     \
-        mat, in_vec, out_vec, in_vec_size, out_vec_size,                \
-        matrix_ld, tgp_memory,                                         \
-        tid, lid, simd_gid, simd_lid);                                  \
-  }
-
-#define DECL_GEMV_BLOCKS(name, itype)                                   \
-  DECL_GEMV(name##_bm2_bn1_sm4_sn8_tm1_tn4, itype, 2, 1, 4, 8, 1, 4)    \
-  DECL_GEMV(name##_bm2_bn1_sm4_sn8_tm4_tn4, itype, 2, 1, 4, 8, 4, 4)    \
-  DECL_GEMV(name##_bm2_bn1_sm2_sn16_tm1_tn4, itype, 2, 1, 2, 16, 1, 4)  \
-  DECL_GEMV(name##_bm2_bn1_sm2_sn16_tm4_tn4, itype, 2, 1, 2, 16, 4, 4)  \
-  DECL_GEMV(name##_bm4_bn1_sm2_sn16_tm4_tn4, itype, 4, 1, 2, 16, 4, 4)
-
-DECL_GEMV_BLOCKS(gemv_f32, float)
-DECL_GEMV_BLOCKS(gemv_f16, half)
-DECL_GEMV_BLOCKS(gemv_bf16, bfloat)
+// Legacy bfloat16 variants
+DECL_GEMV_LEGACY(gemv_bf16_rows2, bfloat, float, 2, 128)
+DECL_GEMV_LEGACY(gemv_bf16_rows4, bfloat, float, 4, 128)
+DECL_GEMV_LEGACY(gemv_bf16_rows8, bfloat, float, 8, 128)
