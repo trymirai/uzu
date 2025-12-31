@@ -2,7 +2,10 @@ use half::f16;
 use metal::MTLResourceOptions;
 use uzu::{
     DataType,
-    backends::metal::{MTLContext, MatmulArguments, MatmulKernel},
+    backends::metal::{
+        MTLContext,
+        kernel::{MatmulArguments, MatmulKernel},
+    },
 };
 
 fn make_context() -> MTLContext {
