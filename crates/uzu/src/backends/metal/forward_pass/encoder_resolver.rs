@@ -11,10 +11,6 @@ pub struct EncoderResolver<'a> {
 }
 
 impl<'a> EncoderResolver<'a> {
-    fn debug_enabled() -> bool {
-        std::env::var_os("UZU_DEBUG_SHARED_ENCODER").is_some()
-    }
-
     pub fn new(command_buffer: &'a CommandBufferRef) -> Self {
         Self {
             command_buffer,
@@ -42,11 +38,6 @@ impl<'a> EncoderResolver<'a> {
                 parameters,
             );
         } else {
-            if Self::debug_enabled() && self.encoder.is_some() {
-                eprintln!(
-                    "[UZU_DEBUG_SHARED_ENCODER] end shared compute encoder (before non-shared block)"
-                );
-            }
             self.end_current_encoder();
             block.encode(state, self.command_buffer, parameters);
         }
