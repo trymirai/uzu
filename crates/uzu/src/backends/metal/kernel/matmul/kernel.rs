@@ -92,10 +92,13 @@ impl MatmulKernel {
         enc: &ComputeCommandEncoderRef,
         args: MatmulArguments,
     ) -> Result<bool, MTLError> {
-        // Apply GEMV when batch (M) is small or output_dim (N) is 1, and A is not transposed.
+        // GEMV kernel requires:
+        // - A not transposed (input vector is contiguous)
+        // - B transposed (weight matrix is [N, K] row-major, each row contiguous)
+        // Without transpose_b, B is [K, N] and columns are not contiguous
         let m = args.batch;
         let n = args.output_dim;
-        if self.transpose_a {
+        if self.transpose_a || !self.transpose_b {
             return Ok(false);
         }
 

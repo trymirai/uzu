@@ -48,10 +48,12 @@ fn benchmark_metal_gemm(
     warmup_iters: usize,
     bench_iters: usize,
 ) -> f64 {
+    // A is [M, K] row-major
     let a: Vec<bf16> = (0..(m * k))
         .map(|i| bf16::from_f32(((i % 13) as f32) * 0.01))
         .collect();
-    let b: Vec<bf16> = (0..(k * n))
+    // B is [N, K] row-major (transpose_b = true, like LLM weight matrices)
+    let b: Vec<bf16> = (0..(n * k))
         .map(|i| bf16::from_f32(((i % 17) as f32) * 0.02 - 0.1))
         .collect();
 
@@ -70,7 +72,8 @@ fn benchmark_metal_gemm(
         MTLResourceOptions::StorageModeShared,
     );
 
-    let mut kernel = MatmulKernel::new(ctx, DataType::BF16, false, false)
+    // transpose_b = true: B is stored as [N, K], matching LLM weight layout
+    let mut kernel = MatmulKernel::new(ctx, DataType::BF16, false, true)
         .expect("kernel new");
 
     // Warmup
@@ -89,7 +92,7 @@ fn benchmark_metal_gemm(
                     input_dim: k as i32,
                     output_dim: n as i32,
                     lda: k as i32,
-                    ldb: n as i32,
+                    ldb: k as i32, // B is [N, K], stride = K
                     ldd: n as i32,
                     batch_count: 1,
                 },
@@ -117,7 +120,7 @@ fn benchmark_metal_gemm(
                     input_dim: k as i32,
                     output_dim: n as i32,
                     lda: k as i32,
-                    ldb: n as i32,
+                    ldb: k as i32, // B is [N, K], stride = K
                     ldd: n as i32,
                     batch_count: 1,
                 },
