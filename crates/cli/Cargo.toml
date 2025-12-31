@@ -18,6 +18,6 @@ console = "0.16.0"
 rocket = { version = "0.5.1", features = ["json"] }
 tokio = { version = "1.45.1", features = ["full"] }
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
+serde_json = "1.0.148"
 uuid = { version = "1.17.0", features = ["v4"] }
 comfy-table = "7.2.1"

@@ -59,6 +59,26 @@ fn cpu_reference_top_p(
     dist
 }
 
+fn cpu_reference_min_p(
+    row_logits: &[f32],
+    min_p: f32,
+) -> Vec<f32> {
+    let max_logit =
+        row_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let threshold = max_logit + min_p.ln();
+
+    row_logits
+        .iter()
+        .map(|&logit| {
+            if logit >= threshold {
+                logit
+            } else {
+                f32::NEG_INFINITY
+            }
+        })
+        .collect()
+}
+
 fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let context = match create_test_context() {
         Ok(ctx) => ctx,
@@ -256,6 +276,7 @@ fn test_topp_sampling_from_prob_exact_match(
                     temperature: None,
                     top_k: None,
                     top_p: Some(p),
+                    min_p: None,
                 },
                 batch_size,
                 vocab_size,
@@ -385,6 +406,7 @@ fn test_topp_sampling_statistical_large() {
                     temperature: None,
                     top_k: None,
                     top_p: Some(TOP_P),
+                    min_p: None,
                 },
                 BATCH,
                 VOCAB,
@@ -495,6 +517,7 @@ fn perf_topp_128k_vocab() {
                 temperature: None,
                 top_k: None,
                 top_p: Some(TOP_P),
+                min_p: None,
             },
             BATCH,
             VOCAB,
@@ -725,6 +748,7 @@ fn test_categorical_sampling() {
                     temperature: None,
                     top_k: None,
                     top_p: None,
+                    min_p: None,
                 },
                 batch_size,
                 vocab_size,
@@ -870,6 +894,7 @@ fn test_categorical_sampling_statistical() {
                     temperature: None,
                     top_k: None,
                     top_p: None,
+                    min_p: None,
                 },
                 BATCH,
                 VOCAB,
@@ -978,6 +1003,7 @@ fn perf_categorical_128k_vocab() {
                 temperature: None,
                 top_k: None,
                 top_p: None,
+                min_p: None,
             },
             BATCH,
             VOCAB,
@@ -1258,6 +1284,216 @@ fn test_topp_gpu_cpu_match() {
     }
 
     println!("✓ Topp processor gpu cpu match (topp={})", TOPP);
+}
+
+#[test]
+fn test_minp_gpu_cpu_match() {
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Skipping minp gpu cpu match test: {}", e);
+            return;
+        },
+    };
+
+    const BATCH: usize = 4;
+    const VOCAB: usize = 1024;
+    const MINP: f32 = 0.1;
+
+    let kernel =
+        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+            .expect("Failed to create sampling kernel");
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut logits = vec![0.0f32; BATCH * VOCAB];
+    for x in logits.iter_mut() {
+        *x = rng.random_range(-16.0f32..16.0f32);
+    }
+
+    let logits_buffer = context.device.new_buffer_with_data(
+        logits.as_ptr() as *const _,
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let processed_buffer = context.device.new_buffer(
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer = command_buffer_ref.to_owned();
+
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+    kernel
+        .encode_minp(
+            &logits_buffer,
+            &processed_buffer,
+            BATCH as u32,
+            VOCAB as u32,
+            MINP,
+            compute_encoder,
+        )
+        .expect("encode_minp");
+    compute_encoder.end_encoding();
+
+    command_buffer_ref.commit();
+    command_buffer_ref.wait_until_completed();
+
+    let results_ptr = processed_buffer.contents() as *const f32;
+    let all_results =
+        unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
+
+    for batch_idx in 0..BATCH {
+        let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+        let cpu_processed_logits = cpu_reference_min_p(cpu_logits, MINP);
+
+        let gpu_processed_logits =
+            &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
+
+        assert_eq!(&cpu_processed_logits, gpu_processed_logits);
+    }
+
+    println!("✓ Minp processor gpu cpu match (minp={})", MINP);
+}
+
+fn test_minp_sampling_exact_match(
+    batch_size: usize,
+    min_p: f32,
+    vocab_size: usize,
+) {
+    use std::collections::HashSet;
+
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let context = match create_test_context() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("Skipping minp exact match test: {}", e);
+            return;
+        },
+    };
+
+    let kernel = SamplingKernel::new(
+        &context,
+        KernelDataType::Float32,
+        batch_size,
+        vocab_size,
+    )
+    .expect("Failed to create sampling kernel");
+
+    // Build logits where some tokens have high probability and others have low
+    // For min_p filtering, tokens with probability < min_p * max_prob are masked
+    // We set k tokens to have probability 0.1 each (high), rest get very low probability
+    let k = 10;
+    let high_logit = 0.0f32; // exp(0) = 1
+    let low_logit = -50.0f32; // exp(-50) ≈ 0
+
+    let mut logits = vec![low_logit; batch_size * vocab_size];
+    let mut high_prob_token_sets: Vec<HashSet<usize>> =
+        Vec::with_capacity(batch_size);
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut all_token_ids: Vec<usize> = (0..vocab_size).collect();
+
+    for b in 0..batch_size {
+        all_token_ids.shuffle(&mut rng);
+        let high_prob_tokens: HashSet<usize> =
+            all_token_ids[..k].iter().cloned().collect();
+
+        for &token_id in &high_prob_tokens {
+            logits[b * vocab_size + token_id] = high_logit;
+        }
+        high_prob_token_sets.push(high_prob_tokens);
+    }
+
+    let logits_buf = context.device.new_buffer_with_data(
+        logits.as_ptr() as *const _,
+        (logits.len() * std::mem::size_of::<f32>()) as u64,
+        metal::MTLResourceOptions::StorageModeShared,
+    );
+    let output_buf = context.device.new_buffer(
+        (batch_size * std::mem::size_of::<u32>()) as u64,
+        metal::MTLResourceOptions::StorageModeShared,
+    );
+
+    let num_samples = 1000;
+    let mut counter = vec![0i32; batch_size * vocab_size];
+
+    for draw in 0..num_samples {
+        let seeds_buf = context.device.new_buffer_with_data(
+            vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
+                as *const _,
+            (batch_size * std::mem::size_of::<u64>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
+        let cb_ref = context.command_queue.new_command_buffer();
+        let cb = cb_ref.to_owned();
+        kernel
+            .encode(
+                &logits_buf,
+                Some(&seeds_buf),
+                0,
+                None,
+                &output_buf,
+                SamplingMethod::Stochastic {
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                    min_p: Some(min_p),
+                },
+                batch_size,
+                vocab_size,
+                &cb,
+            )
+            .expect("encode");
+        cb_ref.commit();
+        cb_ref.wait_until_completed();
+
+        let ptr = output_buf.contents() as *const u32;
+        let sampled_ids =
+            unsafe { std::slice::from_raw_parts(ptr, batch_size) };
+
+        for (i, &sampled_id) in sampled_ids.iter().enumerate() {
+            assert!(
+                (sampled_id as usize) < vocab_size,
+                "Sampled token out of range"
+            );
+            counter[i * vocab_size + sampled_id as usize] += 1;
+        }
+    }
+
+    for i in 0..batch_size {
+        for j in 0..vocab_size {
+            if counter[i * vocab_size + j] > 0 {
+                assert!(
+                    high_prob_token_sets[i].contains(&j),
+                    "high_prob_token_sets[{}] does not contain {} (appeared {} times)",
+                    i,
+                    j,
+                    counter[i * vocab_size + j]
+                );
+            }
+        }
+    }
+
+    println!(
+        "batch_size: {}, min_p: {:.2}, vocab_size: {}, accuracy test passed.",
+        batch_size, min_p, vocab_size
+    );
+}
+
+#[test]
+fn test_minp_sampling_match_small() {
+    test_minp_sampling_exact_match(8, 0.1, 1024);
+}
+
+#[test]
+fn test_minp_sampling_match_large() {
+    test_minp_sampling_exact_match(32, 0.05, 4096);
 }
 
 #[test]

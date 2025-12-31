@@ -45,7 +45,7 @@ fn person_schema_metal_bitmask() {
     let tokenizer =
         Tokenizer::from_file(&tokenizer_path).expect("load tokenizer.json");
     let tokenizer_info =
-        TokenizerInfo::from_huggingface(&tokenizer, None, None);
+        TokenizerInfo::from_huggingface(&tokenizer, None, None).unwrap();
 
     let grammar = Grammar::from_json_schema(
         &schema_str,
@@ -55,11 +55,13 @@ fn person_schema_metal_bitmask() {
         true,
         None,
         false,
-    );
-    let mut compiler = GrammarCompiler::new(&tokenizer_info, 8, true, -1);
-    let compiled = compiler.compile_grammar(&grammar);
+    )
+    .unwrap();
+    let mut compiler =
+        GrammarCompiler::new(&tokenizer_info, 8, true, -1).unwrap();
+    let compiled = compiler.compile_grammar(&grammar).unwrap();
 
-    let mut matcher = GrammarMatcher::new(&compiled, None, true, -1);
+    let mut matcher = GrammarMatcher::new(&compiled, None, true, -1).unwrap();
 
     let device = match MTLDevice::system_default() {
         Some(d) => d,

@@ -13,9 +13,9 @@ pub enum ConfigDataType {
     Int8,
 }
 
-impl Into<DataType> for ConfigDataType {
-    fn into(self) -> DataType {
-        match self {
+impl From<ConfigDataType> for DataType {
+    fn from(val: ConfigDataType) -> Self {
+        match val {
             ConfigDataType::BFloat16 => DataType::BF16,
             ConfigDataType::Float16 => DataType::F16,
             ConfigDataType::Float32 => DataType::F32,
@@ -64,9 +64,9 @@ impl QuantizationMode {
     }
 }
 
-impl Into<DataType> for QuantizationMode {
-    fn into(self) -> DataType {
-        match self {
+impl From<QuantizationMode> for DataType {
+    fn from(val: QuantizationMode) -> Self {
+        match val {
             QuantizationMode::UInt4 => DataType::U4,
             QuantizationMode::Int8 => DataType::I8,
             QuantizationMode::UInt8 => DataType::U8,

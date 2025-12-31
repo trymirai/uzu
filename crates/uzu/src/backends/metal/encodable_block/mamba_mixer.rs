@@ -2,8 +2,7 @@
 
 use std::{env, rc::Rc};
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
@@ -45,7 +44,7 @@ impl MambaMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         num_heads: usize,
@@ -83,8 +82,8 @@ impl MambaMixer {
             ),
             ArrayId::Main,
             ArrayId::SsmInProj,
-            &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &mamba_config.out_projection_config,
@@ -98,8 +97,8 @@ impl MambaMixer {
             ),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-            &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {
@@ -508,14 +507,18 @@ impl EncodableBlock for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let root = command_buffer.root_command_buffer().to_owned();
-            let encoder = root.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder();
             self.encode_pipeline_with_encoder(state, &encoder, parameters);
             encoder.end_encoding();
+
+            if parameters.wait_until_completed {
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            }
             return;
         }
 
@@ -526,8 +529,7 @@ impl EncodableBlock for MambaMixer {
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        let root = command_buffer.root_command_buffer().to_owned();
-        let encoder = root.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
         self.run_split_inproj(state, &encoder, active_suffix_length);
         self.run_conv_scan(state, &encoder, active_suffix_length);
         if active_suffix_length == 1 {
@@ -540,10 +542,8 @@ impl EncodableBlock for MambaMixer {
         self.out_projection.encode(state, command_buffer, parameters);
 
         if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 

@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -115,8 +114,8 @@ impl LayerExecutables {
                             .unwrap(),
                         ArrayId::Main,
                         ArrayId::QKV,
-                        &compilation_config.descriptor_mlp,
-                    );
+                    )
+                    .expect("Failed to create qkv projection");
 
                     let qk_norm: Option<Box<dyn EncodableBlock>> =
                         if attention_config.query_norm_config.is_some()
@@ -155,8 +154,8 @@ impl LayerExecutables {
                             .unwrap(),
                         ArrayId::AttentionOutput,
                         ArrayId::Main,
-                        &compilation_config.descriptor_mlp,
-                    );
+                    )
+                    .expect("Failed to create out projection");
 
                     let attention = Box::new(
                         Attention::new(
@@ -262,8 +261,8 @@ impl LayerExecutables {
                 hidden_dim,
                 mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create mlp block");
 
             let post_mlp_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
@@ -303,24 +302,17 @@ impl EncodableBlock for LayerExecutables {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root = command_buffer.root_command_buffer().to_owned();
-
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder = root.new_compute_command_encoder();
+                let encoder = command_buffer.new_compute_command_encoder();
                 self.encode_with_shared_encoder(state, &encoder, parameters);
                 encoder.end_encoding();
-
-                if parameters.wait_until_completed {
-                    command_buffer.commit_and_continue();
-                    root.wait_until_completed();
-                }
                 return;
             }
         }
@@ -372,7 +364,8 @@ impl EncodableBlock for LayerExecutables {
                 out_projection.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );
@@ -384,7 +377,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );
@@ -396,7 +390,8 @@ impl EncodableBlock for LayerExecutables {
                 mixer.encode(state, command_buffer, parameters);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.copy_array(
+                    state.encode_copy_array(
+                        command_buffer,
                         ArrayId::Main,
                         layer_traces.borrow().attention.clone(),
                     );
@@ -474,54 +469,59 @@ impl EncodableBlock for LayerExecutables {
             );
         }
 
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root.wait_until_completed();
-        }
+        let _ = parameters;
     }
 
     fn supports_shared_encoder(&self) -> bool {
-        let mixer_ok = match &self.mixer {
-            MixerExecutables::Attention {
-                qkv_projection,
-                qk_norm,
-                rope,
-                attention,
-                out_projection,
-            } => {
-                qkv_projection.supports_shared_encoder()
-                    && qk_norm
-                        .as_ref()
-                        .map(|b| b.supports_shared_encoder())
-                        .unwrap_or(true)
-                    && rope.supports_shared_encoder()
-                    && attention.supports_shared_encoder()
-                    && out_projection.supports_shared_encoder()
-            },
-            MixerExecutables::StateSpace {
-                mixer,
-            } => mixer.supports_shared_encoder(),
-            MixerExecutables::ShortConv {
-                mixer,
-            } => mixer.supports_shared_encoder(),
-        };
+        #[cfg(feature = "tracing")]
+        {
+            false
+        }
 
-        self.copy_main_to_shortcut.supports_shared_encoder()
-            && self.pre_attention_norm.supports_shared_encoder()
-            && mixer_ok
-            && self
-                .post_attention_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
-            && self.main_shortcut_add_swap.supports_shared_encoder()
-            && self.pre_mlp_norm.supports_shared_encoder()
-            && self.mlp.supports_shared_encoder()
-            && self
-                .post_mlp_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
+        #[cfg(not(feature = "tracing"))]
+        {
+            let mixer_ok = match &self.mixer {
+                MixerExecutables::Attention {
+                    qkv_projection,
+                    qk_norm,
+                    rope,
+                    attention,
+                    out_projection,
+                } => {
+                    qkv_projection.supports_shared_encoder()
+                        && qk_norm
+                            .as_ref()
+                            .map(|b| b.supports_shared_encoder())
+                            .unwrap_or(true)
+                        && rope.supports_shared_encoder()
+                        && attention.supports_shared_encoder()
+                        && out_projection.supports_shared_encoder()
+                },
+                MixerExecutables::StateSpace {
+                    mixer,
+                } => mixer.supports_shared_encoder(),
+                MixerExecutables::ShortConv {
+                    mixer,
+                } => mixer.supports_shared_encoder(),
+            };
+
+            self.copy_main_to_shortcut.supports_shared_encoder()
+                && self.pre_attention_norm.supports_shared_encoder()
+                && mixer_ok
+                && self
+                    .post_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.main_shortcut_add_swap.supports_shared_encoder()
+                && self.pre_mlp_norm.supports_shared_encoder()
+                && self.mlp.supports_shared_encoder()
+                && self
+                    .post_mlp_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+        }
     }
 
     fn encode_with_shared_encoder(

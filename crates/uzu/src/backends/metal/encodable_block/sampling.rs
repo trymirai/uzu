@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
@@ -58,18 +57,16 @@ impl EncodableBlock for Sampling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 

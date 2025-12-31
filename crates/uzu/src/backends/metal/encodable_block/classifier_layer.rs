@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -41,7 +40,7 @@ impl ClassifierLayer {
     pub fn new(
         mtl_context: &MTLContext,
         layer_config: &TransformerLayerConfig,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -113,8 +112,8 @@ impl ClassifierLayer {
                 &layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 ArrayId::Main,
                 ArrayId::QKV,
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create qkv projection");
 
             let qk_norm: Option<Box<dyn EncodableBlock>> = if attention_config
                 .query_norm_config
@@ -151,8 +150,8 @@ impl ClassifierLayer {
                 &layer_loader.subtree("mixer.out_projection").unwrap(),
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create out projection");
 
             let post_attention_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) =
@@ -209,8 +208,8 @@ impl ClassifierLayer {
                 hidden_dim,
                 mtl_context,
                 &layer_loader.subtree("mlp").unwrap(),
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create mlp block");
 
             let post_mlp_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
@@ -276,22 +275,15 @@ impl EncodableBlock for ClassifierLayer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root = command_buffer.root_command_buffer().to_owned();
-
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder = root.new_compute_command_encoder();
+                let encoder = command_buffer.new_compute_command_encoder();
                 self.encode_with_shared_encoder(state, &encoder, parameters);
                 encoder.end_encoding();
-
-                if parameters.wait_until_completed {
-                    command_buffer.commit_and_continue();
-                    root.wait_until_completed();
-                }
                 return;
             }
         }
@@ -426,43 +418,48 @@ impl EncodableBlock for ClassifierLayer {
             );
         }
 
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root.wait_until_completed();
-        }
+        let _ = parameters;
     }
 
     fn supports_shared_encoder(&self) -> bool {
-        self.copy_main_to_shortcut_mixer.supports_shared_encoder()
-            && self
-                .pre_attention_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
-            && self.qkv_projection.supports_shared_encoder()
-            && self
-                .qk_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
-            && self.rope.supports_shared_encoder()
-            && self.attention.supports_shared_encoder()
-            && self.out_projection.supports_shared_encoder()
-            && self
-                .post_attention_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
-            && self.mixer_residual_add.supports_shared_encoder()
-            && self.copy_main_to_shortcut_mlp.supports_shared_encoder()
-            && self.pre_mlp_norm.supports_shared_encoder()
-            && self.mlp.supports_shared_encoder()
-            && self
-                .post_mlp_norm
-                .as_ref()
-                .map(|b| b.supports_shared_encoder())
-                .unwrap_or(true)
-            && self.mlp_residual_add.supports_shared_encoder()
+        #[cfg(feature = "tracing")]
+        {
+            false
+        }
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            self.copy_main_to_shortcut_mixer.supports_shared_encoder()
+                && self
+                    .pre_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.qkv_projection.supports_shared_encoder()
+                && self
+                    .qk_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.rope.supports_shared_encoder()
+                && self.attention.supports_shared_encoder()
+                && self.out_projection.supports_shared_encoder()
+                && self
+                    .post_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.mixer_residual_add.supports_shared_encoder()
+                && self.copy_main_to_shortcut_mlp.supports_shared_encoder()
+                && self.pre_mlp_norm.supports_shared_encoder()
+                && self.mlp.supports_shared_encoder()
+                && self
+                    .post_mlp_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.mlp_residual_add.supports_shared_encoder()
+        }
     }
 
     fn encode_with_shared_encoder(

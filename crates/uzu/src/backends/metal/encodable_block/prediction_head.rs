@@ -1,7 +1,6 @@
 //! Prediction head encodable for classification output.
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -41,13 +40,11 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root = command_buffer.root_command_buffer().to_owned();
-
         if self.supports_shared_encoder() {
-            let encoder = root.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder();
             self.encode_with_shared_encoder(state, &encoder, parameters);
             encoder.end_encoding();
         } else {
@@ -79,8 +76,7 @@ impl EncodableBlock for ClassifierPredictionHead {
                 (batch_size * self.num_labels * data_type.size_in_bytes())
                     as u64;
 
-            let root = command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
+            let blit = command_buffer.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &linear_output_buffer,
                 0,
@@ -92,8 +88,8 @@ impl EncodableBlock for ClassifierPredictionHead {
         }
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 

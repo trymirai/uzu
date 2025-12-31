@@ -1,7 +1,6 @@
 //! Tensor copy encodable.
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -36,17 +35,16 @@ impl EncodableBlock for TensorCopy {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root = command_buffer.root_command_buffer().to_owned();
-        let encoder = root.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 
@@ -70,7 +68,11 @@ impl EncodableBlock for TensorCopy {
         let source_mtl_buffer = unsafe { source_array.mtl_buffer() };
         let destination_mtl_buffer = unsafe { destination_array.mtl_buffer() };
 
-        self.kernel
-            .encode_with_encoder(&source_mtl_buffer, &destination_mtl_buffer, length, encoder);
+        self.kernel.encode_with_encoder(
+            &source_mtl_buffer,
+            &destination_mtl_buffer,
+            length,
+            encoder,
+        );
     }
 }

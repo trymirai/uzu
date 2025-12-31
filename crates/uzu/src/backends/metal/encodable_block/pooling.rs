@@ -1,7 +1,6 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -38,11 +37,10 @@ impl EncodableBlock for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let root = command_buffer.root_command_buffer().to_owned();
-        let encoder = root.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder();
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -66,8 +64,7 @@ impl EncodableBlock for Pooling {
             drop(trace_arr);
             drop(traces_ref);
 
-            let root = command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
+            let blit = command_buffer.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &output_buffer,
                 0,
@@ -80,8 +77,8 @@ impl EncodableBlock for Pooling {
         }
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            root.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
     }
 

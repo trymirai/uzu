@@ -143,7 +143,8 @@ impl ChatSession {
             &tokenizer,
             None,
             Some(&stop_token_ids),
-        );
+        )
+        .map_err(|error_message| Error::GrammarError(error_message))?;
 
         let input_processor = InputProcessorDefault::new(
             language_model_config.message_processor_config.clone(),
@@ -352,11 +353,10 @@ impl ChatSession {
             run_start,
         };
 
-        let grammar_terminated = config.stop_on_grammar_complete
-            && compiled_grammar
-                .as_ref()
-                .map(|g| g.is_terminated())
-                .unwrap_or(false);
+        let grammar_terminated = compiled_grammar
+            .as_ref()
+            .map(|g| g.is_terminated())
+            .unwrap_or(false);
 
         let prefill_finish_reason = if grammar_terminated {
             Some(FinishReason::Stop)
@@ -422,7 +422,6 @@ impl ChatSession {
                 language_model_generator,
                 compiled_grammar.as_mut(),
                 sampling_method,
-                config.stop_on_grammar_complete,
                 &progress,
             )?
         };
@@ -440,7 +439,6 @@ impl ChatSession {
         language_model_generator: &mut LanguageModelGenerator,
         compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: super::parameter::SamplingMethod,
-        stop_on_grammar_complete: bool,
         progress: &Option<F>,
     ) -> Result<Output, Error>
     where
@@ -461,11 +459,10 @@ impl ChatSession {
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
-            let grammar_terminated = stop_on_grammar_complete
-                && compiled_grammar_mut
-                    .as_ref()
-                    .map(|g| g.is_terminated())
-                    .unwrap_or(false);
+            let grammar_terminated = compiled_grammar_mut
+                .as_ref()
+                .map(|g| g.is_terminated())
+                .unwrap_or(false);
 
             let generate_finish_reason = if grammar_terminated {
                 Some(FinishReason::Stop)

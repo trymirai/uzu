@@ -1,11 +1,10 @@
 use std::mem;
 
 use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
+    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer, CommandBufferRef,
     ComputeCommandEncoder, ComputePipelineState, MTLSize,
     foreign_types::{ForeignType, ForeignTypeRef},
 };
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
 
 use crate::backends::metal::{
     MTLContext,
@@ -86,7 +85,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         _parameters: &EncodingParameters,
     ) {
         let _ = command_buffer;

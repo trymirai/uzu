@@ -9,6 +9,7 @@ pub enum SamplingMethod {
         temperature: Option<f32>,
         top_k: Option<u32>,
         top_p: Option<f32>,
+        min_p: Option<f32>,
     },
 }
 
@@ -45,6 +46,7 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod>
                 temperature: generation_config.temperature,
                 top_k: generation_config.top_k,
                 top_p: generation_config.top_p,
+                min_p: generation_config.min_p,
             },
             SamplingPolicy::Custom {
                 value,

@@ -40,8 +40,8 @@ pub enum Error {
     GenerateFailed,
     #[error("Sampling failed")]
     SamplingFailed,
-    #[error("Grammar error")]
-    GrammarError,
+    #[error("Grammar error: {0}")]
+    GrammarError(String),
     #[error("Grammar rejected the token")]
     GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]
