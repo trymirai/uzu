@@ -190,14 +190,18 @@ impl EmbeddingsBuffers {
                                 embedding_quantization_mode.storage_type(),
                             ),
                         ),
-                        input_scales: RefCell::new(context.array_uninitialized(
-                            &[vocab_size, num_groups],
-                            model_shape.activation_data_type(),
-                        )),
-                        input_biases: RefCell::new(context.array_uninitialized(
-                            &[vocab_size, num_groups],
-                            model_shape.activation_data_type(),
-                        )),
+                        input_scales: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
+                        input_biases: RefCell::new(
+                            context.array_uninitialized(
+                                &[vocab_size, num_groups],
+                                model_shape.activation_data_type(),
+                            ),
+                        ),
                         packed_output_weights: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, model_dim / pack],

@@ -33,9 +33,7 @@ impl FullPrecisionEmbeddingReadout {
     ) -> Result<Self, EmbeddingError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
         {
-            return Err(EmbeddingError::UnsupportedDataType(
-                data_type,
-            ));
+            return Err(EmbeddingError::UnsupportedDataType(data_type));
         }
 
         let mut weights = match parameter_tree.leaf("weights") {
@@ -49,24 +47,24 @@ impl FullPrecisionEmbeddingReadout {
         };
 
         if weights.shape() != [vocab_size, model_dim] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
                     model_dim
-                )),
-            ));
+                ),
+            )));
         }
 
         if weights.data_type() != data_type {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Weights dtype mismatch: got {:?}, expected {:?}",
                     weights.data_type(),
                     data_type
-                )),
-            ));
+                ),
+            )));
         }
 
         let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };

@@ -6,8 +6,8 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array,
     backends::metal::{
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::mlp::MlpGateActMulEncodable,
+        forward_pass::{ArrayId, ForwardPassState},
+        kernel::mlp::MlpGateActMulEncodable,
     },
 };
 

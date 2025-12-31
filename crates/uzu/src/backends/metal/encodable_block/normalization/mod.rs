@@ -6,9 +6,9 @@ mod rms_norm;
 
 use std::rc::Rc;
 
-use metal::ComputeCommandEncoderRef;
 pub use layer_norm::LayerNorm;
 use metal::CommandBufferRef;
+use metal::ComputeCommandEncoderRef;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
@@ -109,9 +109,8 @@ impl EncodableBlock for Normalization {
         parameters: &EncodingParameters,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => {
-                layer_norm.encode_with_shared_encoder(state, encoder, parameters)
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm
+                .encode_with_shared_encoder(state, encoder, parameters),
             Normalization::RMSNorm(rms_norm) => {
                 rms_norm.encode_with_shared_encoder(state, encoder, parameters)
             },

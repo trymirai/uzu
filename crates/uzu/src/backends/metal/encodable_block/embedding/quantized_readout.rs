@@ -111,24 +111,24 @@ impl QuantizedEmbeddingReadout {
         let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
                     model_dim / packing_divisor
-                )),
-            ));
+                ),
+            )));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
                     scales.shape(),
                     vocab_size,
                     num_groups
-                )),
-            ));
+                ),
+            )));
         }
         if scales.data_type() != data_type {
             return Err(EmbeddingError::UnsupportedDataType(
@@ -140,14 +140,14 @@ impl QuantizedEmbeddingReadout {
         let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(
-                        MTLError::Generic(format!(
+                    return Err(EmbeddingError::MetalError(MTLError::Generic(
+                        format!(
                             "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
                             vocab_size,
                             num_groups
-                        )),
-                    ));
+                        ),
+                    )));
                 }
                 if deq_biases.data_type() != data_type {
                     return Err(EmbeddingError::UnsupportedDataType(
@@ -162,9 +162,7 @@ impl QuantizedEmbeddingReadout {
                     DataType::F16 | DataType::BF16 => 2,
                     DataType::F32 => 4,
                     other => {
-                        return Err(
-                            EmbeddingError::UnsupportedDataType(other),
-                        );
+                        return Err(EmbeddingError::UnsupportedDataType(other));
                     },
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;

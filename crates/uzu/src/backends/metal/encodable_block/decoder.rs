@@ -13,7 +13,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
-        forward_pass::{ArrayId, EncoderResolver, ForwardPassState, RopeType},
+        forward_pass::{ArrayId, ForwardPassState, RopeType},
     },
     config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
@@ -204,23 +204,19 @@ impl EncodableBlock for Decoder {
         command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let mut resolver = EncoderResolver::new(command_buffer);
-
-        resolver.encode(self.embed.as_ref(), state, parameters);
+        self.embed.encode(state, command_buffer, parameters);
 
         for layer in self.layers.iter() {
-            resolver.encode(layer, state, parameters);
+            layer.encode(state, command_buffer, parameters);
         }
 
         if state.is_prefilling() {
-            resolver.finish();
             return;
         }
 
-        resolver.encode(self.norm.as_ref(), state, parameters);
+        self.norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         {
-            resolver.end_current_encoder();
             let traces = state.traces().clone();
             state.encode_copy_array(
                 command_buffer,
@@ -229,10 +225,9 @@ impl EncodableBlock for Decoder {
             );
         }
 
-        resolver.encode(self.readout.as_ref(), state, parameters);
+        self.readout.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         {
-            resolver.end_current_encoder();
             let traces = state.traces().clone();
             state.encode_copy_array(
                 command_buffer,
@@ -240,7 +235,5 @@ impl EncodableBlock for Decoder {
                 traces.borrow().logits.clone(),
             );
         }
-
-        resolver.finish();
     }
 }

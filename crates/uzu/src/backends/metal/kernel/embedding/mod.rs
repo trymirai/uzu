@@ -38,9 +38,7 @@ impl FullPrecisionEmbeddingLookupKernel {
             DataType::F16 => "f16",
             DataType::BF16 => "bf16",
             other => {
-                return Err(EmbeddingError::UnsupportedDataType(
-                    other,
-                ));
+                return Err(EmbeddingError::UnsupportedDataType(other));
             },
         };
         let kernel_name =
@@ -132,9 +130,7 @@ impl QuantizedEmbeddingLookupKernel {
             DataType::F16 => "f16",
             DataType::BF16 => "bf16",
             other => {
-                return Err(EmbeddingError::UnsupportedDataType(
-                    other,
-                ));
+                return Err(EmbeddingError::UnsupportedDataType(other));
             },
         };
         let mode_suffix = match mode {

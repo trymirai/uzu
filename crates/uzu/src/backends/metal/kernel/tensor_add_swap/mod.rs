@@ -39,7 +39,12 @@ impl TensorAddSwapKernel {
         command_buffer: &CommandBufferRef,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder();
-        self.encode_with_encoder(skip_buffer, main_buffer, length, &compute_encoder);
+        self.encode_with_encoder(
+            skip_buffer,
+            main_buffer,
+            length,
+            &compute_encoder,
+        );
         compute_encoder.end_encoding();
     }
 
