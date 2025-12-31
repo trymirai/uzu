@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 pub use layer_norm::LayerNorm;
 use metal::CommandBufferRef;
+use metal::ComputeCommandEncoderRef;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
@@ -86,6 +87,32 @@ impl EncodableBlock for Normalization {
             },
             Normalization::RMSNorm(rms_norm) => {
                 rms_norm.encode(state, command_buffer, parameters)
+            },
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        match self {
+            Normalization::LayerNorm(layer_norm) => {
+                layer_norm.supports_shared_encoder()
+            },
+            Normalization::RMSNorm(rms_norm) => {
+                rms_norm.supports_shared_encoder()
+            },
+        }
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        match self {
+            Normalization::LayerNorm(layer_norm) => layer_norm
+                .encode_with_shared_encoder(state, encoder, parameters),
+            Normalization::RMSNorm(rms_norm) => {
+                rms_norm.encode_with_shared_encoder(state, encoder, parameters)
             },
         }
     }

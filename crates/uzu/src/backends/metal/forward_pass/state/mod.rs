@@ -917,9 +917,7 @@ impl ForwardPassState {
     }
 
     pub fn short_conv_padded_buffer(&self) -> Option<ArrayCell> {
-        self.llm_aux
-            .as_ref()
-            .and_then(|aux| aux.short_conv_padded.clone())
+        self.llm_aux.as_ref().and_then(|aux| aux.short_conv_padded.clone())
     }
 
     // ========================================================================

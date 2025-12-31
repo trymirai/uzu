@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef};
+use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -111,24 +111,24 @@ impl QuantizedEmbeddingReadout {
         let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                     weights.shape(),
                     vocab_size,
                     model_dim / packing_divisor
-                )),
-            ));
+                ),
+            )));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(
-                MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MTLError::Generic(
+                format!(
                     "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
                     scales.shape(),
                     vocab_size,
                     num_groups
-                )),
-            ));
+                ),
+            )));
         }
         if scales.data_type() != data_type {
             return Err(EmbeddingError::UnsupportedDataType(
@@ -140,14 +140,14 @@ impl QuantizedEmbeddingReadout {
         let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(
-                        MTLError::Generic(format!(
+                    return Err(EmbeddingError::MetalError(MTLError::Generic(
+                        format!(
                             "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                             deq_biases.shape(),
                             vocab_size,
                             num_groups
-                        )),
-                    ));
+                        ),
+                    )));
                 }
                 if deq_biases.data_type() != data_type {
                     return Err(EmbeddingError::UnsupportedDataType(
@@ -162,9 +162,7 @@ impl QuantizedEmbeddingReadout {
                     DataType::F16 | DataType::BF16 => 2,
                     DataType::F32 => 4,
                     other => {
-                        return Err(
-                            EmbeddingError::UnsupportedDataType(other),
-                        );
+                        return Err(EmbeddingError::UnsupportedDataType(other));
                     },
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
@@ -221,6 +219,26 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
+        let encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, parameters);
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.active_suffix_length();
         let mut input_array_mut = arrays[0].borrow_mut();
@@ -228,8 +246,6 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
 
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let encoder = command_buffer.new_compute_command_encoder();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -246,12 +262,5 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         self.kernel
             .encode(encoder, args)
             .expect("Failed to encode quantized embedding readout kernel");
-
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        }
     }
 }

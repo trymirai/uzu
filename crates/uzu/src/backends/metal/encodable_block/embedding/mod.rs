@@ -11,4 +11,3 @@ pub use full_precision_lookup::FullPrecisionEmbeddingLookup;
 pub use full_precision_readout::FullPrecisionEmbeddingReadout;
 pub use quantized_lookup::QuantizedEmbeddingLookup;
 pub use quantized_readout::QuantizedEmbeddingReadout;
-
