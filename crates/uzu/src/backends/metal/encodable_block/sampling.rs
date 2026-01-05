@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::CommandBufferRef;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
@@ -60,6 +60,26 @@ impl EncodableBlock for Sampling {
         command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
+        let encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, parameters);
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
         assert!(
             state.sampling_output().is_some(),
             "Sampling output buffer must be pre-allocated"
@@ -84,11 +104,10 @@ impl EncodableBlock for Sampling {
         let sampling_method = state.sampling_method().unwrap();
         let seeds_offset = seeds.buffer_offset();
 
-        let root_command_buffer = command_buffer.to_owned();
         let bitmask_buffer = state
             .token_bitmask()
             .map(|cell| unsafe { cell.borrow_mut().mtl_buffer().clone() });
-        if let Err(e) = self.kernel.encode(
+        if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             seeds_offset,
@@ -97,14 +116,9 @@ impl EncodableBlock for Sampling {
             sampling_method,
             batch_size,
             vocab_size,
-            &root_command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
-        }
-
-        if parameters.wait_until_completed {
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         }
     }
 }

@@ -87,4 +87,3 @@ impl ActivationKernel {
         Ok(())
     }
 }
-

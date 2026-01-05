@@ -67,6 +67,9 @@ pub trait EncodableBlock {
     );
 
     /// Returns true if this block supports using a shared compute encoder.
+    ///
+    /// If true, `encode_with_shared_encoder` must correctly encode into the
+    /// provided encoder without creating or ending encoders internally.
     fn supports_shared_encoder(&self) -> bool {
         false
     }

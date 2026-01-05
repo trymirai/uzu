@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::CommandBufferRef;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -305,6 +305,18 @@ impl EncodableBlock for LayerExecutables {
         command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
+        // In non-tracing builds, if every sub-block supports shared encoding,
+        // we can run the entire layer in a single compute encoder.
+        #[cfg(not(feature = "tracing"))]
+        {
+            if self.supports_shared_encoder() {
+                let encoder = command_buffer.new_compute_command_encoder();
+                self.encode_with_shared_encoder(state, &encoder, parameters);
+                encoder.end_encoding();
+                return;
+            }
+        }
+
         #[cfg(feature = "tracing")]
         let layer_traces = state
             .traces()
@@ -456,5 +468,127 @@ impl EncodableBlock for LayerExecutables {
                 layer_traces.borrow().outputs.clone(),
             );
         }
+
+        let _ = parameters;
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        #[cfg(feature = "tracing")]
+        {
+            false
+        }
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            let mixer_ok = match &self.mixer {
+                MixerExecutables::Attention {
+                    qkv_projection,
+                    qk_norm,
+                    rope,
+                    attention,
+                    out_projection,
+                } => {
+                    qkv_projection.supports_shared_encoder()
+                        && qk_norm
+                            .as_ref()
+                            .map(|b| b.supports_shared_encoder())
+                            .unwrap_or(true)
+                        && rope.supports_shared_encoder()
+                        && attention.supports_shared_encoder()
+                        && out_projection.supports_shared_encoder()
+                },
+                MixerExecutables::StateSpace {
+                    mixer,
+                } => mixer.supports_shared_encoder(),
+                MixerExecutables::ShortConv {
+                    mixer,
+                } => mixer.supports_shared_encoder(),
+            };
+
+            self.copy_main_to_shortcut.supports_shared_encoder()
+                && self.pre_attention_norm.supports_shared_encoder()
+                && mixer_ok
+                && self
+                    .post_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.main_shortcut_add_swap.supports_shared_encoder()
+                && self.pre_mlp_norm.supports_shared_encoder()
+                && self.mlp.supports_shared_encoder()
+                && self
+                    .post_mlp_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+        }
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        debug_assert!(
+            self.supports_shared_encoder(),
+            "encode_with_shared_encoder called on unsupported LayerExecutables"
+        );
+
+        self.copy_main_to_shortcut
+            .encode_with_shared_encoder(state, encoder, parameters);
+        self.pre_attention_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                qkv_projection
+                    .encode_with_shared_encoder(state, encoder, parameters);
+                if let Some(norm) = qk_norm {
+                    norm.encode_with_shared_encoder(state, encoder, parameters);
+                }
+                rope.encode_with_shared_encoder(state, encoder, parameters);
+                attention
+                    .encode_with_shared_encoder(state, encoder, parameters);
+                out_projection
+                    .encode_with_shared_encoder(state, encoder, parameters);
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                mixer.encode_with_shared_encoder(state, encoder, parameters);
+            },
+            MixerExecutables::ShortConv {
+                mixer,
+            } => {
+                mixer.encode_with_shared_encoder(state, encoder, parameters);
+            },
+        }
+
+        if let Some(post_attention_norm) = &self.post_attention_norm {
+            post_attention_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.main_shortcut_add_swap
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        self.pre_mlp_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
+        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(post_mlp_norm) = &self.post_mlp_norm {
+            post_mlp_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.main_shortcut_add_swap
+            .encode_with_shared_encoder(state, encoder, parameters);
     }
 }

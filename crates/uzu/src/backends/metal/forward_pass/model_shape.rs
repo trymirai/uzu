@@ -452,7 +452,9 @@ impl ModelShape {
             .layer_types
             .iter()
             .filter_map(|layer_type| match layer_type {
-                DecoderLayerType::ShortConv { kernel_size } => Some(*kernel_size),
+                DecoderLayerType::ShortConv {
+                    kernel_size,
+                } => Some(*kernel_size),
                 _ => None,
             })
             .max()
