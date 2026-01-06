@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use metal::{
+    Buffer as MTLBuffer,
     ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
     MTLSize,
 };
@@ -10,6 +11,7 @@ use super::{
     shared_types::GEMMParams, splitk::SplitKGemm,
     transpose::transpose_configuration,
 };
+use super::super::{KernelDataType, TensorAddBias};
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
@@ -21,6 +23,7 @@ pub struct MatmulKernel {
     transpose_b: bool,
     gemv: Option<GemvKernel>,
     splitk: Option<SplitKGemm>,
+    bias_add: Option<TensorAddBias>,
     pipelines: HashMap<PipelineKey, MTLComputePipelineState>,
 }
 
@@ -69,6 +72,7 @@ impl MatmulKernel {
             transpose_b,
             gemv: None,
             splitk: None,
+            bias_add: None,
             pipelines: HashMap::new(),
         })
     }
@@ -86,11 +90,12 @@ impl MatmulKernel {
         }
     }
 
-    fn maybe_use_gemv(
+    fn maybe_use_gemv_impl(
         &mut self,
         mtl: &MTLContext,
         enc: &ComputeCommandEncoderRef,
         args: MatmulArguments,
+        bias: Option<&MTLBuffer>,
     ) -> Result<bool, MTLError> {
         // GEMV kernel requires:
         // - A not transposed (input vector is contiguous)
@@ -123,7 +128,11 @@ impl MatmulKernel {
             let rows = self.select_gemv_rows(n);
             let gemv =
                 self.gemv.get_or_insert_with(|| GemvKernel::new(self.dt));
-            gemv.encode(mtl, enc, batched_args, rows)?;
+            if let Some(bias) = bias {
+                gemv.encode_with_bias(mtl, enc, batched_args, rows, bias)?;
+            } else {
+                gemv.encode(mtl, enc, batched_args, rows)?;
+            }
             return Ok(true);
         }
 
@@ -133,8 +142,31 @@ impl MatmulKernel {
         }
         let rows = self.select_gemv_rows(n);
         let gemv = self.gemv.get_or_insert_with(|| GemvKernel::new(self.dt));
-        gemv.encode(mtl, enc, args, rows)?;
+        if let Some(bias) = bias {
+            gemv.encode_with_bias(mtl, enc, args, rows, bias)?;
+        } else {
+            gemv.encode(mtl, enc, args, rows)?;
+        }
         Ok(true)
+    }
+
+    fn maybe_use_gemv(
+        &mut self,
+        mtl: &MTLContext,
+        enc: &ComputeCommandEncoderRef,
+        args: MatmulArguments,
+    ) -> Result<bool, MTLError> {
+        self.maybe_use_gemv_impl(mtl, enc, args, None)
+    }
+
+    fn maybe_use_gemv_with_bias(
+        &mut self,
+        mtl: &MTLContext,
+        enc: &ComputeCommandEncoderRef,
+        args: MatmulArguments,
+        bias: &MTLBuffer,
+    ) -> Result<bool, MTLError> {
+        self.maybe_use_gemv_impl(mtl, enc, args, Some(bias))
     }
 
     fn maybe_use_splitk(
@@ -367,24 +399,12 @@ impl MatmulKernel {
         Ok(self.pipelines.get(&key).unwrap())
     }
 
-    pub fn encode(
+    fn encode_gemm(
         &mut self,
         mtl: &MTLContext,
         enc: &ComputeCommandEncoderRef,
-        mut args: MatmulArguments,
+        args: MatmulArguments,
     ) -> Result<(), MTLError> {
-        self.apply_batch_collapse(&mut args);
-
-        // Try GEMV fast path for decode shapes.
-        if self.maybe_use_gemv(mtl, enc, args)? {
-            return Ok(());
-        }
-
-        // Try Split-K for small M*N and large K.
-        if self.maybe_use_splitk(mtl, enc, args)? {
-            return Ok(());
-        }
-
         let (bm, bn, bk, wm, wn) = self.select_tiles(mtl, &args);
         let kname = self.kernel_name(bm, bn, bk, wm, wn);
 
@@ -409,11 +429,7 @@ impl MatmulKernel {
         let tiles_n = (n + bn - 1) / bn;
         let tiles_m = (m + bm - 1) / bm;
         // Swizzle: small tm -> no swizzle, otherwise simple 2-way.
-        let swizzle_log = if tiles_m <= 3 {
-            0
-        } else {
-            1
-        };
+        let swizzle_log = if tiles_m <= 3 { 0 } else { 1 };
 
         let tile = 1 << swizzle_log;
         let tm_swizzled = (tiles_m + tile - 1) / tile;
@@ -449,6 +465,83 @@ impl MatmulKernel {
         let tg_z = args.batch_count as u64;
         let tgs = MTLSize::new(tg_x, tg_y, tg_z);
         enc.dispatch_thread_groups(tgs, threads_per_tg);
+        Ok(())
+    }
+
+    pub fn encode(
+        &mut self,
+        mtl: &MTLContext,
+        enc: &ComputeCommandEncoderRef,
+        mut args: MatmulArguments,
+    ) -> Result<(), MTLError> {
+        self.apply_batch_collapse(&mut args);
+
+        // Try GEMV fast path for decode shapes.
+        if self.maybe_use_gemv(mtl, enc, args)? {
+            return Ok(());
+        }
+
+        // Try Split-K for small M*N and large K.
+        if self.maybe_use_splitk(mtl, enc, args)? {
+            return Ok(());
+        }
+        self.encode_gemm(mtl, enc, args)
+    }
+
+    pub fn encode_with_bias(
+        &mut self,
+        mtl: &MTLContext,
+        enc: &ComputeCommandEncoderRef,
+        mut args: MatmulArguments,
+        bias: &MTLBuffer,
+    ) -> Result<(), MTLError> {
+        self.apply_batch_collapse(&mut args);
+
+        if self.maybe_use_gemv_with_bias(mtl, enc, args, bias)? {
+            return Ok(());
+        }
+
+        if self.maybe_use_splitk(mtl, enc, args)? {
+            self.apply_bias_add(mtl, enc, args, bias)?;
+            return Ok(());
+        }
+
+        self.encode_gemm(mtl, enc, args)?;
+        self.apply_bias_add(mtl, enc, args, bias)?;
+        Ok(())
+    }
+
+    fn apply_bias_add(
+        &mut self,
+        mtl: &MTLContext,
+        enc: &ComputeCommandEncoderRef,
+        args: MatmulArguments,
+        bias: &MTLBuffer,
+    ) -> Result<(), MTLError> {
+        let m = args.batch as usize;
+        let n = args.output_dim as usize;
+        let batch_count = args.batch_count as usize;
+        let total_len = m * n * batch_count;
+        if total_len == 0 {
+            return Ok(());
+        }
+
+        if self.bias_add.is_none() {
+            self.bias_add = Some(TensorAddBias::new(
+                mtl,
+                KernelDataType::from(self.dt),
+            )?);
+        }
+        let bias_add = self.bias_add.as_ref().unwrap();
+        bias_add.encode_with_encoder(
+            args.d,
+            bias,
+            args.d,
+            n,
+            total_len,
+            enc,
+            None,
+        );
         Ok(())
     }
 

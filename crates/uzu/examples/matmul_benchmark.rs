@@ -134,6 +134,96 @@ fn benchmark_metal_gemm(
     (elapsed.as_secs_f64() * 1000.0) / bench_iters as f64
 }
 
+fn benchmark_metal_gemv(
+    ctx: &MTLContext,
+    m: usize,
+    k: usize,
+    n: usize,
+    warmup_iters: usize,
+    bench_iters: usize,
+) -> f64 {
+    // GEMV requires transpose_b = true (B stored as [N, K]).
+    let a: Vec<bf16> = (0..(m * k))
+        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.01))
+        .collect();
+    let b: Vec<bf16> = (0..(n * k))
+        .map(|i| bf16::from_f32(((i % 17) as f32) * 0.02 - 0.1))
+        .collect();
+
+    let a_buf = ctx.device.new_buffer_with_data(
+        a.as_ptr() as *const _,
+        (a.len() * core::mem::size_of::<bf16>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let b_buf = ctx.device.new_buffer_with_data(
+        b.as_ptr() as *const _,
+        (b.len() * core::mem::size_of::<bf16>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let d_buf = ctx.device.new_buffer(
+        (m * n * core::mem::size_of::<bf16>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let mut kernel = MatmulKernel::new(ctx, DataType::BF16, false, true)
+        .expect("kernel new");
+
+    for _ in 0..warmup_iters {
+        let cb = ctx.command_queue.new_command_buffer().to_owned();
+        let enc = cb.new_compute_command_encoder();
+        kernel
+            .encode(
+                ctx,
+                &enc,
+                MatmulArguments {
+                    a: &a_buf,
+                    b: &b_buf,
+                    d: &d_buf,
+                    batch: m as i32,
+                    input_dim: k as i32,
+                    output_dim: n as i32,
+                    lda: k as i32,
+                    ldb: k as i32,
+                    ldd: n as i32,
+                    batch_count: 1,
+                },
+            )
+            .expect("encode");
+        enc.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+    }
+
+    let start = Instant::now();
+    for _ in 0..bench_iters {
+        let cb = ctx.command_queue.new_command_buffer().to_owned();
+        let enc = cb.new_compute_command_encoder();
+        kernel
+            .encode(
+                ctx,
+                &enc,
+                MatmulArguments {
+                    a: &a_buf,
+                    b: &b_buf,
+                    d: &d_buf,
+                    batch: m as i32,
+                    input_dim: k as i32,
+                    output_dim: n as i32,
+                    lda: k as i32,
+                    ldb: k as i32,
+                    ldd: n as i32,
+                    batch_count: 1,
+                },
+            )
+            .expect("encode");
+        enc.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+    }
+    let elapsed = start.elapsed();
+    (elapsed.as_secs_f64() * 1000.0) / bench_iters as f64
+}
+
 fn benchmark_mpsgraph_matmul(
     device: &metal::Device,
     m: usize,
@@ -297,7 +387,11 @@ fn run_benchmark(
 ) -> BenchmarkResult {
     print!("[Metal] ");
     let _ = std::io::stdout().flush();
-    let metal_ms = benchmark_metal_gemm(ctx, m, k, n, warmup, iters);
+    let metal_ms = if m <= 8 || n == 1 {
+        benchmark_metal_gemv(ctx, m, k, n, warmup, iters)
+    } else {
+        benchmark_metal_gemm(ctx, m, k, n, warmup, iters)
+    };
     print!("{:.2}ms ", metal_ms);
     let _ = std::io::stdout().flush();
 
