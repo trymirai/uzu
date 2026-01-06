@@ -148,13 +148,15 @@ impl MatmulKernel {
         let k = args.input_dim;
         let batch_count = args.batch_count;
 
-        let splitk =
-            self.splitk.get_or_insert_with(|| SplitKGemm::new(self.dt));
-        if splitk.should_use_splitk(m, n, k, batch_count) {
-            splitk.encode(mtl, enc, args)?;
-            return Ok(true);
+        if !SplitKGemm::should_use_splitk(m, n, k, batch_count) {
+            return Ok(false);
         }
-        Ok(false)
+
+        let splitk = self.splitk.get_or_insert_with(|| {
+            SplitKGemm::new(self.dt, self.transpose_a, self.transpose_b)
+        });
+        splitk.encode(mtl, enc, args)?;
+        Ok(true)
     }
 
     fn select_tiles(

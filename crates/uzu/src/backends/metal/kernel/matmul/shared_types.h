@@ -59,6 +59,24 @@ struct GEMMAddMMParams {
   float beta;
 };
 
+struct SplitKGEMMParams {
+  int m;
+  int n;
+  int k;
+
+  int leading_dim_a;
+  int leading_dim_b;
+  int leading_dim_accumulator;
+
+  int tile_count_n;
+  int tile_count_m;
+
+  int partition_count;
+  int output_elements_per_partition;
+  int k_elements_per_partition;
+  int gemm_k_iterations_aligned;
+};
+
 // Close Metal namespace
 #ifdef __METAL_VERSION__
 } // namespace matmul
