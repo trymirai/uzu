@@ -423,8 +423,11 @@ impl MatmulKernel {
             lda: args.lda,
             ldb: args.ldb,
             ldd: args.ldd,
-            tiles_n: tn_swizzled,
-            tiles_m: tm_swizzled,
+            // NOTE: tiles_{n,m} are the *unswizzled* tile counts used for bounds
+            // checks inside the GEMM kernel. The dispatched grid dimensions are
+            // swizzled separately via tn_swizzled/tm_swizzled.
+            tiles_n,
+            tiles_m,
             batch_stride_a: (args.lda as i64) * (k as i64),
             batch_stride_b: (args.ldb as i64) * (n as i64),
             batch_stride_d: (args.ldd as i64) * (n as i64),
