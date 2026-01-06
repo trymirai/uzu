@@ -4,6 +4,24 @@
 #include <metal_stdlib>
 using namespace metal;
 
+template <typename DataType>
+struct VectorType4 {};
+
+template <>
+struct VectorType4<half> {
+    using type = half4;
+};
+
+template <>
+struct VectorType4<bfloat> {
+    using type = vec<bfloat, 4>;
+};
+
+template <>
+struct VectorType4<float> {
+    using type = float4;
+};
+
 template <
     typename DataType,
     typename AccumulatorType,
@@ -16,6 +34,8 @@ template <
     bool HAS_BIAS>
 struct GemvKernel {
 
+    using Vector4 = typename VectorType4<DataType>::type;
+
     static constant constexpr ushort TOTAL_THREADS_ROW = SIMDGROUPS_PER_ROW * THREADS_PER_SIMDGROUP_ROW;
     static constant constexpr ushort TOTAL_THREADS_COL = SIMDGROUPS_PER_REDUCTION * THREADS_PER_SIMDGROUP_COL;
     static constant constexpr ushort OUTPUT_ELEMENTS_PER_THREADGROUP = TOTAL_THREADS_ROW * ELEMENTS_PER_THREAD_ROW;
@@ -24,36 +44,32 @@ struct GemvKernel {
     static constant constexpr ushort THREADGROUP_MEMORY_SIZE = NEEDS_THREADGROUP_REDUCTION
         ? SIMDGROUPS_PER_REDUCTION * (OUTPUT_ELEMENTS_PER_THREADGROUP + ELEMENTS_PER_THREAD_ROW)
         : 0;
+    static constant constexpr bool CAN_USE_VECTOR_LOADS = (ELEMENTS_PER_THREAD_COL == 4);
 
     static_assert(THREADS_PER_SIMDGROUP_ROW * THREADS_PER_SIMDGROUP_COL == 32,
                   "simdgroup must have exactly 32 threads");
 
-    template <typename DestinationType>
-    static METAL_FUNC void load_input_elements_unchecked(
-        const device DataType* source,
-        thread DestinationType destination[ELEMENTS_PER_THREAD_COL],
-        int source_offset
-    ) {
-        #pragma unroll(ELEMENTS_PER_THREAD_COL)
-        for (ushort element_index = 0; element_index < ELEMENTS_PER_THREAD_COL; ++element_index) {
-            destination[element_index] = static_cast<DestinationType>(source[source_offset + element_index]);
-        }
+    static METAL_FUNC float4 load_as_float4(const device DataType* source, int offset) {
+        const device Vector4* vector_ptr = reinterpret_cast<const device Vector4*>(source + offset);
+        return float4(*vector_ptr);
     }
 
-    template <typename DestinationType>
-    static METAL_FUNC void load_input_elements_checked(
-        const device DataType* source,
-        thread DestinationType destination[ELEMENTS_PER_THREAD_COL],
-        int source_offset,
-        int source_size
-    ) {
-        #pragma unroll(ELEMENTS_PER_THREAD_COL)
-        for (ushort element_index = 0; element_index < ELEMENTS_PER_THREAD_COL; ++element_index) {
-            int global_index = source_offset + element_index;
-            destination[element_index] = (global_index < source_size)
-                ? static_cast<DestinationType>(source[global_index])
-                : DestinationType(0);
+    static METAL_FUNC float4 load_as_float4_checked(const device DataType* source, int offset, int source_size) {
+        float4 result = float4(0.0f);
+        if (offset + 4 <= source_size) {
+            const device Vector4* vector_ptr = reinterpret_cast<const device Vector4*>(source + offset);
+            result = float4(*vector_ptr);
+        } else {
+            if (offset + 0 < source_size) result.x = static_cast<float>(source[offset + 0]);
+            if (offset + 1 < source_size) result.y = static_cast<float>(source[offset + 1]);
+            if (offset + 2 < source_size) result.z = static_cast<float>(source[offset + 2]);
+            if (offset + 3 < source_size) result.w = static_cast<float>(source[offset + 3]);
         }
+        return result;
+    }
+
+    static METAL_FUNC AccumulatorType dot_product(float4 a, float4 b) {
+        return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
     }
 
     static METAL_FUNC void execute(
@@ -72,8 +88,6 @@ struct GemvKernel {
         uint thread_index_in_simdgroup
     ) {
         thread AccumulatorType accumulated_results[ELEMENTS_PER_THREAD_ROW] = {0};
-        thread DataType weight_elements[ELEMENTS_PER_THREAD_COL];
-        thread AccumulatorType input_elements[ELEMENTS_PER_THREAD_COL];
 
         int thread_row_in_simdgroup = (THREADS_PER_SIMDGROUP_COL != 32)
             ? (thread_index_in_simdgroup / THREADS_PER_SIMDGROUP_COL)
@@ -110,47 +124,99 @@ struct GemvKernel {
 
         const device DataType* batch_input = input_vector + batch_index * input_batch_stride;
         device DataType* batch_output = output_vector + batch_index * output_batch_stride;
-        const device DataType* weight_rows = weight_matrix + output_row_start * weight_row_stride;
 
         int full_iterations = input_dimension / INPUT_ELEMENTS_PER_ITERATION;
         int remaining_elements = input_dimension - (full_iterations * INPUT_ELEMENTS_PER_ITERATION);
 
         int current_input_offset = thread_input_offset;
 
-        for (int iteration = 0; iteration < full_iterations; ++iteration) {
-            load_input_elements_unchecked<AccumulatorType>(batch_input, input_elements, current_input_offset);
+        if (CAN_USE_VECTOR_LOADS) {
+            const device Vector4* input_vectors = reinterpret_cast<const device Vector4*>(batch_input);
+            const device Vector4* weight_row_vectors[ELEMENTS_PER_THREAD_ROW];
 
-            int weight_offset = 0;
             #pragma unroll(ELEMENTS_PER_THREAD_ROW)
             for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
-                load_input_elements_unchecked<DataType>(weight_rows, weight_elements, weight_offset + current_input_offset);
-
-                #pragma unroll(ELEMENTS_PER_THREAD_COL)
-                for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
-                    accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
-                }
-
-                weight_offset += weight_row_stride;
+                weight_row_vectors[row] = reinterpret_cast<const device Vector4*>(
+                    weight_matrix + (output_row_start + row) * weight_row_stride
+                );
             }
 
-            current_input_offset += INPUT_ELEMENTS_PER_ITERATION;
-        }
+            for (int iteration = 0; iteration < full_iterations; ++iteration) {
+                int vector_index = current_input_offset / ELEMENTS_PER_THREAD_COL;
+                float4 input_float4 = float4(input_vectors[vector_index]);
 
-        if (remaining_elements > 0) {
-            load_input_elements_checked<AccumulatorType>(batch_input, input_elements, current_input_offset, input_dimension);
+                #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                    float4 weight_float4 = float4(weight_row_vectors[row][vector_index]);
+                    accumulated_results[row] += dot_product(input_float4, weight_float4);
+                }
 
-            #pragma unroll(ELEMENTS_PER_THREAD_ROW)
-            for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
-                load_input_elements_checked<DataType>(
-                    weight_rows + row * weight_row_stride,
-                    weight_elements,
-                    current_input_offset,
-                    input_dimension
-                );
+                current_input_offset += INPUT_ELEMENTS_PER_ITERATION;
+            }
 
+            if (remaining_elements > 0) {
+                float4 input_float4 = load_as_float4_checked(batch_input, current_input_offset, input_dimension);
+
+                #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                    const device DataType* weight_row = weight_matrix + (output_row_start + row) * weight_row_stride;
+                    float4 weight_float4 = load_as_float4_checked(weight_row, current_input_offset, input_dimension);
+                    accumulated_results[row] += dot_product(input_float4, weight_float4);
+                }
+            }
+        } else {
+            thread DataType weight_elements[ELEMENTS_PER_THREAD_COL];
+            thread AccumulatorType input_elements[ELEMENTS_PER_THREAD_COL];
+            const device DataType* weight_rows = weight_matrix + output_row_start * weight_row_stride;
+
+            for (int iteration = 0; iteration < full_iterations; ++iteration) {
                 #pragma unroll(ELEMENTS_PER_THREAD_COL)
                 for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
-                    accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
+                    input_elements[col] = static_cast<AccumulatorType>(batch_input[current_input_offset + col]);
+                }
+
+                int weight_offset = 0;
+                #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                    #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                    for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                        weight_elements[col] = weight_rows[weight_offset + current_input_offset + col];
+                    }
+
+                    #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                    for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                        accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
+                    }
+
+                    weight_offset += weight_row_stride;
+                }
+
+                current_input_offset += INPUT_ELEMENTS_PER_ITERATION;
+            }
+
+            if (remaining_elements > 0) {
+                #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                    int idx = current_input_offset + col;
+                    input_elements[col] = (idx < input_dimension)
+                        ? static_cast<AccumulatorType>(batch_input[idx])
+                        : AccumulatorType(0);
+                }
+
+                #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                    const device DataType* weight_row = weight_rows + row * weight_row_stride;
+
+                    #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                    for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                        int idx = current_input_offset + col;
+                        weight_elements[col] = (idx < input_dimension) ? weight_row[idx] : DataType(0);
+                    }
+
+                    #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                    for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                        accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
+                    }
                 }
             }
         }
