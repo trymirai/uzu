@@ -40,6 +40,7 @@ fn generate_metal_bindings() {
         // Only generate types we care about
         .allowlist_type("GEMMParams")
         .allowlist_type("GEMMAddMMParams")
+        .allowlist_type("SplitKGEMMParams")
         // Use core types
         .use_core()
         .generate()

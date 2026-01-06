@@ -81,3 +81,61 @@ const _: () = {
     ["Offset of field: GEMMAddMMParams::beta"]
         [::core::mem::offset_of!(GEMMAddMMParams, beta) - 20usize];
 };
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct SplitKGEMMParams {
+    pub m: ::core::ffi::c_int,
+    pub n: ::core::ffi::c_int,
+    pub k: ::core::ffi::c_int,
+    pub leading_dim_a: ::core::ffi::c_int,
+    pub leading_dim_b: ::core::ffi::c_int,
+    pub leading_dim_accumulator: ::core::ffi::c_int,
+    pub tile_count_n: ::core::ffi::c_int,
+    pub tile_count_m: ::core::ffi::c_int,
+    pub partition_count: ::core::ffi::c_int,
+    pub output_elements_per_partition: ::core::ffi::c_int,
+    pub k_elements_per_partition: ::core::ffi::c_int,
+    pub gemm_k_iterations_aligned: ::core::ffi::c_int,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of SplitKGEMMParams"]
+        [::core::mem::size_of::<SplitKGEMMParams>() - 48usize];
+    ["Alignment of SplitKGEMMParams"]
+        [::core::mem::align_of::<SplitKGEMMParams>() - 4usize];
+    ["Offset of field: SplitKGEMMParams::m"]
+        [::core::mem::offset_of!(SplitKGEMMParams, m) - 0usize];
+    ["Offset of field: SplitKGEMMParams::n"]
+        [::core::mem::offset_of!(SplitKGEMMParams, n) - 4usize];
+    ["Offset of field: SplitKGEMMParams::k"]
+        [::core::mem::offset_of!(SplitKGEMMParams, k) - 8usize];
+    ["Offset of field: SplitKGEMMParams::leading_dim_a"]
+        [::core::mem::offset_of!(SplitKGEMMParams, leading_dim_a) - 12usize];
+    ["Offset of field: SplitKGEMMParams::leading_dim_b"]
+        [::core::mem::offset_of!(SplitKGEMMParams, leading_dim_b) - 16usize];
+    ["Offset of field: SplitKGEMMParams::leading_dim_accumulator"][::core::mem::offset_of!(
+        SplitKGEMMParams,
+        leading_dim_accumulator
+    ) - 20usize];
+    ["Offset of field: SplitKGEMMParams::tile_count_n"]
+        [::core::mem::offset_of!(SplitKGEMMParams, tile_count_n) - 24usize];
+    ["Offset of field: SplitKGEMMParams::tile_count_m"]
+        [::core::mem::offset_of!(SplitKGEMMParams, tile_count_m) - 28usize];
+    ["Offset of field: SplitKGEMMParams::partition_count"]
+        [::core::mem::offset_of!(SplitKGEMMParams, partition_count) - 32usize];
+    ["Offset of field: SplitKGEMMParams::output_elements_per_partition"][::core::mem::offset_of!(
+        SplitKGEMMParams,
+        output_elements_per_partition
+    )
+        - 36usize];
+    ["Offset of field: SplitKGEMMParams::k_elements_per_partition"][::core::mem::offset_of!(
+        SplitKGEMMParams,
+        k_elements_per_partition
+    )
+        - 40usize];
+    ["Offset of field: SplitKGEMMParams::gemm_k_iterations_aligned"][::core::mem::offset_of!(
+        SplitKGEMMParams,
+        gemm_k_iterations_aligned
+    )
+        - 44usize];
+};

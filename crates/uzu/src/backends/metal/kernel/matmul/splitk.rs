@@ -6,27 +6,11 @@ use metal::{
 };
 
 use super::arguments::MatmulArguments;
+use super::shared_types::SplitKGEMMParams;
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
 };
-
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-struct SplitKGEMMParams {
-    m: i32,
-    n: i32,
-    k: i32,
-    leading_dim_a: i32,
-    leading_dim_b: i32,
-    leading_dim_accumulator: i32,
-    tile_count_n: i32,
-    tile_count_m: i32,
-    partition_count: i32,
-    output_elements_per_partition: i32,
-    k_elements_per_partition: i32,
-    gemm_k_iterations_aligned: i32,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TileConfig {
