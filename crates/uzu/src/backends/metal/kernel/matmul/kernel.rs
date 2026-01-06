@@ -77,19 +77,6 @@ impl MatmulKernel {
         })
     }
 
-    fn select_gemv_rows(
-        &self,
-        output_dim: i32,
-    ) -> u32 {
-        if output_dim >= 2048 {
-            8
-        } else if output_dim >= 512 {
-            4
-        } else {
-            2
-        }
-    }
-
     fn maybe_use_gemv_impl(
         &mut self,
         mtl: &MTLContext,
@@ -112,7 +99,6 @@ impl MatmulKernel {
         let use_batched_gemv =
             m > 1 && m <= 8 && n > 1 && args.batch_count == 1;
         if use_batched_gemv {
-            // Reshape: treat M rows as M batches of 1-row GEMV
             let batched_args = MatmulArguments {
                 a: args.a,
                 b: args.b,
@@ -120,32 +106,29 @@ impl MatmulKernel {
                 batch: 1,
                 input_dim: args.input_dim,
                 output_dim: args.output_dim,
-                lda: args.lda, // stride between input vectors
+                lda: args.lda,
                 ldb: args.ldb,
-                ldd: args.ldd,  // stride between output vectors
-                batch_count: m, // M becomes batch count
+                ldd: args.ldd,
+                batch_count: m,
             };
-            let rows = self.select_gemv_rows(n);
             let gemv =
                 self.gemv.get_or_insert_with(|| GemvKernel::new(self.dt));
             if let Some(bias) = bias {
-                gemv.encode_with_bias(mtl, enc, batched_args, rows, bias)?;
+                gemv.encode_with_bias(mtl, enc, batched_args, 0, bias)?;
             } else {
-                gemv.encode(mtl, enc, batched_args, rows)?;
+                gemv.encode(mtl, enc, batched_args, 0)?;
             }
             return Ok(true);
         }
 
-        // Standard GEMV for M=1 or N=1
         if m != 1 && n != 1 {
             return Ok(false);
         }
-        let rows = self.select_gemv_rows(n);
         let gemv = self.gemv.get_or_insert_with(|| GemvKernel::new(self.dt));
         if let Some(bias) = bias {
-            gemv.encode_with_bias(mtl, enc, args, rows, bias)?;
+            gemv.encode_with_bias(mtl, enc, args, 0, bias)?;
         } else {
-            gemv.encode(mtl, enc, args, rows)?;
+            gemv.encode(mtl, enc, args, 0)?;
         }
         Ok(true)
     }

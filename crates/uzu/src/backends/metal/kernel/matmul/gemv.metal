@@ -1,600 +1,276 @@
 // SPDX-License-Identifier: MIT
 
+#include <metal_simdgroup>
 #include <metal_stdlib>
 using namespace metal;
 
 template <
-    typename T,
-    typename AccT,
-    int ROWS_PER_SIMDGROUP,
-    int ELEMS_PER_THREAD>
-METAL_FUNC void gemv_multirow(
-    const device T* __restrict weights,
-    const device T* __restrict input,
-    device T* __restrict output,
-    const int input_dim,
-    const int output_dim,
-    const int weight_stride,
-    const int batch_idx,
-    const int input_batch_stride,
-    const int output_batch_stride,
-    uint row_base,
-    uint simd_lid
-) {
+    typename DataType,
+    typename AccumulatorType,
+    ushort SIMDGROUPS_PER_ROW,
+    ushort SIMDGROUPS_PER_REDUCTION,
+    ushort THREADS_PER_SIMDGROUP_ROW,
+    ushort THREADS_PER_SIMDGROUP_COL,
+    ushort ELEMENTS_PER_THREAD_ROW,
+    ushort ELEMENTS_PER_THREAD_COL,
+    bool HAS_BIAS>
+struct GemvKernel {
 
-  constexpr int BLOCK_K = 32 * ELEMS_PER_THREAD;
+    static constant constexpr ushort TOTAL_THREADS_ROW = SIMDGROUPS_PER_ROW * THREADS_PER_SIMDGROUP_ROW;
+    static constant constexpr ushort TOTAL_THREADS_COL = SIMDGROUPS_PER_REDUCTION * THREADS_PER_SIMDGROUP_COL;
+    static constant constexpr ushort OUTPUT_ELEMENTS_PER_THREADGROUP = TOTAL_THREADS_ROW * ELEMENTS_PER_THREAD_ROW;
+    static constant constexpr ushort INPUT_ELEMENTS_PER_ITERATION = TOTAL_THREADS_COL * ELEMENTS_PER_THREAD_COL;
+    static constant constexpr bool NEEDS_THREADGROUP_REDUCTION = SIMDGROUPS_PER_REDUCTION > 1;
+    static constant constexpr ushort THREADGROUP_MEMORY_SIZE = NEEDS_THREADGROUP_REDUCTION
+        ? SIMDGROUPS_PER_REDUCTION * (OUTPUT_ELEMENTS_PER_THREADGROUP + ELEMENTS_PER_THREAD_ROW)
+        : 0;
 
-  input += batch_idx * input_batch_stride;
-  output += batch_idx * output_batch_stride;
+    static_assert(THREADS_PER_SIMDGROUP_ROW * THREADS_PER_SIMDGROUP_COL == 32,
+                  "simdgroup must have exactly 32 threads");
 
-  if (row_base >= static_cast<uint>(output_dim)) {
-    return;
-  }
-
-  const int rows_to_compute =
-      min(ROWS_PER_SIMDGROUP, output_dim - static_cast<int>(row_base));
-
-  AccT accumulators[ROWS_PER_SIMDGROUP];
-#pragma unroll(ROWS_PER_SIMDGROUP)
-  for (int r = 0; r < ROWS_PER_SIMDGROUP; ++r) {
-    accumulators[r] = AccT(0);
-  }
-
-  AccT input_cache[ELEMS_PER_THREAD];
-
-  const device T* weight_row_ptrs[ROWS_PER_SIMDGROUP];
-#pragma unroll(ROWS_PER_SIMDGROUP)
-  for (int r = 0; r < ROWS_PER_SIMDGROUP; ++r) {
-    weight_row_ptrs[r] = weights + (row_base + r) * weight_stride;
-  }
-
-  int k = 0;
-  for (; k + BLOCK_K <= input_dim; k += BLOCK_K) {
-    const int thread_k = k + simd_lid * ELEMS_PER_THREAD;
-
-#pragma unroll(ELEMS_PER_THREAD)
-    for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
-      input_cache[e] = static_cast<AccT>(input[thread_k + e]);
-    }
-
-#pragma unroll(ROWS_PER_SIMDGROUP)
-    for (int r = 0; r < ROWS_PER_SIMDGROUP; ++r) {
-      AccT dot = 0;
-#pragma unroll(ELEMS_PER_THREAD)
-      for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
-        dot += input_cache[e] *
-               static_cast<AccT>(weight_row_ptrs[r][thread_k + e]);
-      }
-      accumulators[r] += dot;
-    }
-  }
-
-  if (k < input_dim) {
-    const int thread_k = k + simd_lid * ELEMS_PER_THREAD;
-    const int remaining = input_dim - k;
-
-#pragma unroll(ELEMS_PER_THREAD)
-    for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
-      const int idx = simd_lid * ELEMS_PER_THREAD + e;
-      input_cache[e] =
-          (idx < remaining) ? static_cast<AccT>(input[thread_k + e]) : AccT(0);
-    }
-
-#pragma unroll(ROWS_PER_SIMDGROUP)
-    for (int r = 0; r < ROWS_PER_SIMDGROUP; ++r) {
-      AccT dot = 0;
-#pragma unroll(ELEMS_PER_THREAD)
-      for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
-        const int idx = simd_lid * ELEMS_PER_THREAD + e;
-        if (idx < remaining) {
-          dot += input_cache[e] *
-                 static_cast<AccT>(weight_row_ptrs[r][thread_k + e]);
+    template <typename DestinationType>
+    static METAL_FUNC void load_input_elements_unchecked(
+        const device DataType* source,
+        thread DestinationType destination[ELEMENTS_PER_THREAD_COL],
+        int source_offset
+    ) {
+        #pragma unroll(ELEMENTS_PER_THREAD_COL)
+        for (ushort element_index = 0; element_index < ELEMENTS_PER_THREAD_COL; ++element_index) {
+            destination[element_index] = static_cast<DestinationType>(source[source_offset + element_index]);
         }
-      }
-      accumulators[r] += dot;
     }
-  }
 
-#pragma unroll(ROWS_PER_SIMDGROUP)
-  for (int r = 0; r < ROWS_PER_SIMDGROUP; ++r) {
-    accumulators[r] = simd_sum(accumulators[r]);
-  }
-
-  if (simd_lid == 0) {
-#pragma unroll(ROWS_PER_SIMDGROUP)
-    for (int r = 0; r < rows_to_compute; ++r) {
-      output[row_base + r] = static_cast<T>(accumulators[r]);
-    }
-  }
-}
-
-#define DECL_GEMV_FAST(NAME, TYPE, ACC)                                        \
-  [[kernel]] void NAME(                                                        \
-      const device TYPE* weights [[buffer(0)]],                                \
-      const device TYPE* input [[buffer(1)]],                                  \
-      device TYPE* output [[buffer(2)]],                                       \
-      constant int& input_dim [[buffer(3)]],                                   \
-      constant int& output_dim [[buffer(4)]],                                  \
-      constant int& weight_stride [[buffer(5)]],                               \
-      constant int& input_batch_stride [[buffer(6)]],                          \
-      constant int& output_batch_stride [[buffer(7)]],                         \
-      uint3 tgid [[threadgroup_position_in_grid]],                             \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    constexpr int ROWS_PER_SIMDGROUP = 4;                                      \
-    constexpr int ELEMS_PER_THREAD = 4;                                        \
-    const uint row_base = tgid.x * ROWS_PER_SIMDGROUP;                         \
-    gemv_multirow<TYPE, ACC, ROWS_PER_SIMDGROUP, ELEMS_PER_THREAD>(            \
-        weights,                                                               \
-        input,                                                                 \
-        output,                                                                \
-        input_dim,                                                             \
-        output_dim,                                                            \
-        weight_stride,                                                         \
-        tgid.z,                                                                \
-        input_batch_stride,                                                    \
-        output_batch_stride,                                                   \
-        row_base,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-DECL_GEMV_FAST(gemv_fast_f16, half, float)
-DECL_GEMV_FAST(gemv_fast_bf16, bfloat, float)
-DECL_GEMV_FAST(gemv_fast_f32, float, float)
-
-#define DECL_GEMV_FAST_BIAS(NAME, TYPE, ACC)                                   \
-  [[kernel]] void NAME(                                                        \
-      const device TYPE* weights [[buffer(0)]],                                \
-      const device TYPE* input [[buffer(1)]],                                  \
-      const device TYPE* bias [[buffer(2)]],                                   \
-      device TYPE* output [[buffer(3)]],                                       \
-      constant int& input_dim [[buffer(4)]],                                   \
-      constant int& output_dim [[buffer(5)]],                                  \
-      constant int& weight_stride [[buffer(6)]],                               \
-      constant int& input_batch_stride [[buffer(7)]],                          \
-      constant int& output_batch_stride [[buffer(8)]],                         \
-      uint3 tgid [[threadgroup_position_in_grid]],                             \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    constexpr int ROWS_PER_SIMDGROUP = 4;                                      \
-    constexpr int ELEMS_PER_THREAD = 4;                                        \
-    const uint row_base = tgid.x * ROWS_PER_SIMDGROUP;                         \
-    gemv_multirow<TYPE, ACC, ROWS_PER_SIMDGROUP, ELEMS_PER_THREAD>(            \
-        weights,                                                               \
-        input,                                                                 \
-        output,                                                                \
-        input_dim,                                                             \
-        output_dim,                                                            \
-        weight_stride,                                                         \
-        tgid.z,                                                                \
-        input_batch_stride,                                                    \
-        output_batch_stride,                                                   \
-        row_base,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-    if (simd_lid == 0 && row_base < static_cast<uint>(output_dim)) {           \
-      const int rows_to_compute =                                              \
-          min(ROWS_PER_SIMDGROUP, output_dim - static_cast<int>(row_base));    \
-      device TYPE* out_ptr = output + tgid.z * output_batch_stride;            \
-      for (int r = 0; r < rows_to_compute; ++r) {                              \
-        const uint row = row_base + static_cast<uint>(r);                      \
-        out_ptr[row] = out_ptr[row] + bias[row];                               \
-      }                                                                        \
-    }                                                                          \
-  }
-
-DECL_GEMV_FAST_BIAS(gemv_fast_f16_bias, half, float)
-DECL_GEMV_FAST_BIAS(gemv_fast_bf16_bias, bfloat, float)
-DECL_GEMV_FAST_BIAS(gemv_fast_f32_bias, float, float)
-
-template <typename T, typename AccT, ushort ROWS_PER_THREADGROUP, ushort TILE_K>
-METAL_FUNC void gemv_tiled(
-    const device T* __restrict weights,
-    const device T* __restrict input,
-    device T* __restrict output,
-    constant uint& input_dim,
-    constant uint& output_dim,
-    constant uint& weight_stride,
-    constant uint& input_stride,
-    constant uint& output_stride,
-    uint3 tgid,
-    uint simd_gid,
-    uint simd_lid,
-    uint tid,
-    threadgroup AccT* input_tile
-) {
-
-  const ushort THREADS_PER_THREADGROUP = ROWS_PER_THREADGROUP * 32;
-  if (simd_gid >= ROWS_PER_THREADGROUP) {
-    return;
-  }
-
-  const uint row = tgid.x * ROWS_PER_THREADGROUP + simd_gid;
-  if (row >= output_dim) {
-    return;
-  }
-
-  const uint batch = tgid.z;
-  const device T* weight_row = weights + row * weight_stride;
-  const device T* input_ptr = input + batch * input_stride;
-  device T* output_ptr = output + batch * output_stride;
-
-  AccT accumulator = AccT(0);
-
-  for (uint k_block = 0; k_block < input_dim; k_block += TILE_K) {
-    const uint remaining = input_dim - k_block;
-    const uint tile_size = remaining < TILE_K ? remaining : TILE_K;
-
-    if (tid < tile_size && tid < THREADS_PER_THREADGROUP) {
-      input_tile[tid] = static_cast<AccT>(input_ptr[k_block + tid]);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint idx = simd_lid; idx < tile_size; idx += 32) {
-      accumulator +=
-          static_cast<AccT>(weight_row[k_block + idx]) * input_tile[idx];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
-
-  for (ushort offset = 16; offset > 0; offset >>= 1) {
-    accumulator += simd_shuffle_down(accumulator, offset);
-  }
-
-  if (simd_lid == 0) {
-    output_ptr[row] = static_cast<T>(accumulator);
-  }
-}
-
-#define DECL_GEMV_TILED(NAME, TYPE, ACC, ROWS, TILE_K)                         \
-  [[kernel, max_total_threads_per_threadgroup(ROWS * 32)]] void NAME(          \
-      const device TYPE* weights [[buffer(0)]],                                \
-      const device TYPE* input [[buffer(1)]],                                  \
-      device TYPE* output [[buffer(2)]],                                       \
-      constant uint& input_dim [[buffer(3)]],                                  \
-      constant uint& output_dim [[buffer(4)]],                                 \
-      constant uint& weight_stride [[buffer(5)]],                              \
-      constant uint& input_stride [[buffer(6)]],                               \
-      constant uint& output_stride [[buffer(7)]],                              \
-      uint3 tgid [[threadgroup_position_in_grid]],                             \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]],                             \
-      uint tid [[thread_index_in_threadgroup]]                                 \
-  ) {                                                                          \
-    threadgroup ACC input_tile[TILE_K];                                        \
-    gemv_tiled<TYPE, ACC, ROWS, TILE_K>(                                       \
-        weights,                                                               \
-        input,                                                                 \
-        output,                                                                \
-        input_dim,                                                             \
-        output_dim,                                                            \
-        weight_stride,                                                         \
-        input_stride,                                                          \
-        output_stride,                                                         \
-        tgid,                                                                  \
-        simd_gid,                                                              \
-        simd_lid,                                                              \
-        tid,                                                                   \
-        input_tile                                                             \
-    );                                                                         \
-  }
-
-#define DECL_GEMV_TILED_BIAS(NAME, TYPE, ACC, ROWS, TILE_K)                    \
-  [[kernel, max_total_threads_per_threadgroup(ROWS * 32)]] void NAME(          \
-      const device TYPE* weights [[buffer(0)]],                                \
-      const device TYPE* input [[buffer(1)]],                                  \
-      const device TYPE* bias [[buffer(2)]],                                   \
-      device TYPE* output [[buffer(3)]],                                       \
-      constant uint& input_dim [[buffer(4)]],                                  \
-      constant uint& output_dim [[buffer(5)]],                                 \
-      constant uint& weight_stride [[buffer(6)]],                              \
-      constant uint& input_stride [[buffer(7)]],                               \
-      constant uint& output_stride [[buffer(8)]],                              \
-      uint3 tgid [[threadgroup_position_in_grid]],                             \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]],                             \
-      uint tid [[thread_index_in_threadgroup]]                                 \
-  ) {                                                                          \
-    threadgroup ACC input_tile[TILE_K];                                        \
-    gemv_tiled<TYPE, ACC, ROWS, TILE_K>(                                       \
-        weights,                                                               \
-        input,                                                                 \
-        output,                                                                \
-        input_dim,                                                             \
-        output_dim,                                                            \
-        weight_stride,                                                         \
-        input_stride,                                                          \
-        output_stride,                                                         \
-        tgid,                                                                  \
-        simd_gid,                                                              \
-        simd_lid,                                                              \
-        tid,                                                                   \
-        input_tile                                                             \
-    );                                                                         \
-    const uint row = tgid.x * ROWS + simd_gid;                                 \
-    if (simd_lid == 0 && simd_gid < ROWS && row < output_dim) {                \
-      device TYPE* out_ptr = output + tgid.z * output_stride;                  \
-      out_ptr[row] = out_ptr[row] + bias[row];                                 \
-    }                                                                          \
-  }
-
-DECL_GEMV_TILED_BIAS(gemv_f16_rows2_bias, half, float, 2, 128)
-DECL_GEMV_TILED_BIAS(gemv_f16_rows4_bias, half, float, 4, 128)
-DECL_GEMV_TILED_BIAS(gemv_f16_rows8_bias, half, float, 8, 128)
-DECL_GEMV_TILED_BIAS(gemv_f16_rows16_bias, half, float, 16, 128)
-
-DECL_GEMV_TILED_BIAS(gemv_bf16_rows2_bias, bfloat, float, 2, 128)
-DECL_GEMV_TILED_BIAS(gemv_bf16_rows4_bias, bfloat, float, 4, 128)
-DECL_GEMV_TILED_BIAS(gemv_bf16_rows8_bias, bfloat, float, 8, 128)
-DECL_GEMV_TILED_BIAS(gemv_bf16_rows16_bias, bfloat, float, 16, 128)
-
-DECL_GEMV_TILED_BIAS(gemv_f32_rows2_bias, float, float, 2, 128)
-DECL_GEMV_TILED_BIAS(gemv_f32_rows4_bias, float, float, 4, 128)
-DECL_GEMV_TILED_BIAS(gemv_f32_rows8_bias, float, float, 8, 128)
-DECL_GEMV_TILED_BIAS(gemv_f32_rows16_bias, float, float, 16, 128)
-
-DECL_GEMV_TILED(gemv_f16_rows2, half, float, 2, 128)
-DECL_GEMV_TILED(gemv_f16_rows4, half, float, 4, 128)
-DECL_GEMV_TILED(gemv_f16_rows8, half, float, 8, 128)
-DECL_GEMV_TILED(gemv_f16_rows16, half, float, 16, 128)
-
-DECL_GEMV_TILED(gemv_bf16_rows2, bfloat, float, 2, 128)
-DECL_GEMV_TILED(gemv_bf16_rows4, bfloat, float, 4, 128)
-DECL_GEMV_TILED(gemv_bf16_rows8, bfloat, float, 8, 128)
-DECL_GEMV_TILED(gemv_bf16_rows16, bfloat, float, 16, 128)
-
-DECL_GEMV_TILED(gemv_f32_rows2, float, float, 2, 128)
-DECL_GEMV_TILED(gemv_f32_rows4, float, float, 4, 128)
-DECL_GEMV_TILED(gemv_f32_rows8, float, float, 8, 128)
-DECL_GEMV_TILED(gemv_f32_rows16, float, float, 16, 128)
-
-template <typename T, typename AccT, ushort KPARTS>
-METAL_FUNC void gemv_split_k_rows16_impl(
-    const device T* __restrict weights,
-    const device T* __restrict input,
-    const device T* __restrict bias,
-    device T* __restrict output,
-    const int input_dim,
-    const int output_dim,
-    const int weight_stride,
-    const int input_batch_stride,
-    const int output_batch_stride,
-    uint3 tgid,
-    uint simd_gid,
-    uint simd_lid,
-    threadgroup AccT* partial_sums
-) {
-  constexpr ushort rows_per_threadgroup = 16;
-  constexpr ushort rows_per_rowgroup = 2;
-  constexpr ushort rowgroups = rows_per_threadgroup / rows_per_rowgroup;
-  constexpr ushort elems_per_thread = 4;
-  constexpr int block_k = 32 * elems_per_thread;
-
-  const uint rowgroup_idx = simd_gid / KPARTS;
-  const uint kpart_idx = simd_gid - rowgroup_idx * KPARTS;
-
-  const uint batch = tgid.z;
-  const uint row_base =
-      tgid.x * rows_per_threadgroup + rowgroup_idx * rows_per_rowgroup;
-
-  const bool valid_rowgroup = row_base < static_cast<uint>(output_dim);
-  const uint rows_to_compute = valid_rowgroup
-      ? min(static_cast<uint>(rows_per_rowgroup),
-            static_cast<uint>(output_dim) - row_base)
-      : 0;
-
-  const device T* input_ptr = input + batch * input_batch_stride;
-  device T* output_ptr = output + batch * output_batch_stride;
-
-  AccT accumulators[rows_per_rowgroup] = {AccT(0), AccT(0)};
-
-  if (valid_rowgroup) {
-    const device T* weight_row_ptrs[rows_per_rowgroup];
-    weight_row_ptrs[0] = weights + (row_base + 0) * weight_stride;
-    weight_row_ptrs[1] = weights + (row_base + 1) * weight_stride;
-
-    for (int k_block = static_cast<int>(kpart_idx) * block_k;
-         k_block < input_dim;
-         k_block += block_k * static_cast<int>(KPARTS))
-    {
-      AccT input_cache[elems_per_thread];
-
-#pragma unroll(elems_per_thread)
-      for (int e = 0; e < elems_per_thread; ++e) {
-        const int col = k_block + static_cast<int>(simd_lid) * elems_per_thread + e;
-        input_cache[e] =
-            (col < input_dim) ? static_cast<AccT>(input_ptr[col]) : AccT(0);
-      }
-
-#pragma unroll(rows_per_rowgroup)
-      for (int r = 0; r < rows_per_rowgroup; ++r) {
-        AccT dot = 0;
-#pragma unroll(elems_per_thread)
-        for (int e = 0; e < elems_per_thread; ++e) {
-          const int col =
-              k_block + static_cast<int>(simd_lid) * elems_per_thread + e;
-          if (col < input_dim) {
-            dot += input_cache[e] * static_cast<AccT>(weight_row_ptrs[r][col]);
-          }
+    template <typename DestinationType>
+    static METAL_FUNC void load_input_elements_checked(
+        const device DataType* source,
+        thread DestinationType destination[ELEMENTS_PER_THREAD_COL],
+        int source_offset,
+        int source_size
+    ) {
+        #pragma unroll(ELEMENTS_PER_THREAD_COL)
+        for (ushort element_index = 0; element_index < ELEMENTS_PER_THREAD_COL; ++element_index) {
+            int global_index = source_offset + element_index;
+            destination[element_index] = (global_index < source_size)
+                ? static_cast<DestinationType>(source[global_index])
+                : DestinationType(0);
         }
-        accumulators[r] += dot;
-      }
     }
+
+    static METAL_FUNC void execute(
+        const device DataType* weight_matrix,
+        const device DataType* input_vector,
+        const device DataType* bias_vector,
+        device DataType* output_vector,
+        constant int& input_dimension,
+        constant int& output_dimension,
+        constant int& weight_row_stride,
+        constant int& input_batch_stride,
+        constant int& output_batch_stride,
+        threadgroup AccumulatorType* shared_memory,
+        uint3 threadgroup_position,
+        uint simdgroup_index,
+        uint thread_index_in_simdgroup
+    ) {
+        thread AccumulatorType accumulated_results[ELEMENTS_PER_THREAD_ROW] = {0};
+        thread DataType weight_elements[ELEMENTS_PER_THREAD_COL];
+        thread AccumulatorType input_elements[ELEMENTS_PER_THREAD_COL];
+
+        int thread_row_in_simdgroup = (THREADS_PER_SIMDGROUP_COL != 32)
+            ? (thread_index_in_simdgroup / THREADS_PER_SIMDGROUP_COL)
+            : 0;
+        int thread_col_in_simdgroup = (THREADS_PER_SIMDGROUP_COL != 32)
+            ? (thread_index_in_simdgroup % THREADS_PER_SIMDGROUP_COL)
+            : int(thread_index_in_simdgroup);
+
+        int simdgroup_reduction_index = NEEDS_THREADGROUP_REDUCTION
+            ? (simdgroup_index % SIMDGROUPS_PER_REDUCTION)
+            : 0;
+
+        int simdgroup_row_offset = NEEDS_THREADGROUP_REDUCTION
+            ? THREADS_PER_SIMDGROUP_ROW * (simdgroup_index / SIMDGROUPS_PER_REDUCTION)
+            : int(THREADS_PER_SIMDGROUP_ROW * simdgroup_index);
+
+        int simdgroup_col_offset = NEEDS_THREADGROUP_REDUCTION
+            ? THREADS_PER_SIMDGROUP_COL * simdgroup_reduction_index
+            : 0;
+
+        int thread_output_offset = (simdgroup_row_offset + thread_row_in_simdgroup) * ELEMENTS_PER_THREAD_ROW;
+        int thread_input_offset = (simdgroup_col_offset + thread_col_in_simdgroup) * ELEMENTS_PER_THREAD_COL;
+
+        int batch_index = threadgroup_position.z;
+        int output_row_start = threadgroup_position.x * OUTPUT_ELEMENTS_PER_THREADGROUP + thread_output_offset;
+
+        if (output_row_start >= output_dimension) {
+    return;
   }
 
-#pragma unroll(rows_per_rowgroup)
-  for (int r = 0; r < rows_per_rowgroup; ++r) {
-    accumulators[r] = simd_sum(accumulators[r]);
-  }
+        output_row_start = (output_row_start + ELEMENTS_PER_THREAD_ROW <= output_dimension)
+            ? output_row_start
+            : (output_dimension - ELEMENTS_PER_THREAD_ROW);
 
-  const uint partial_base =
-      rowgroup_idx * (KPARTS * rows_per_rowgroup) + kpart_idx * rows_per_rowgroup;
+        const device DataType* batch_input = input_vector + batch_index * input_batch_stride;
+        device DataType* batch_output = output_vector + batch_index * output_batch_stride;
+        const device DataType* weight_rows = weight_matrix + output_row_start * weight_row_stride;
 
-  if (simd_lid == 0) {
-    partial_sums[partial_base + 0] = accumulators[0];
-    partial_sums[partial_base + 1] = accumulators[1];
-  }
+        int full_iterations = input_dimension / INPUT_ELEMENTS_PER_ITERATION;
+        int remaining_elements = input_dimension - (full_iterations * INPUT_ELEMENTS_PER_ITERATION);
 
-  threadgroup_barrier(mem_flags::mem_threadgroup);
+        int current_input_offset = thread_input_offset;
 
-  if (kpart_idx == 0 && simd_lid == 0 && rows_to_compute > 0) {
-    for (uint r = 0; r < rows_to_compute; ++r) {
-      AccT sum = 0;
-      for (uint kp = 0; kp < KPARTS; ++kp) {
-        sum += partial_sums[rowgroup_idx * (KPARTS * rows_per_rowgroup) +
-                            kp * rows_per_rowgroup + r];
-      }
-      const uint row = row_base + r;
-      if (bias != nullptr) {
-        sum += static_cast<AccT>(bias[row]);
-      }
-      output_ptr[row] = static_cast<T>(sum);
+        for (int iteration = 0; iteration < full_iterations; ++iteration) {
+            load_input_elements_unchecked<AccumulatorType>(batch_input, input_elements, current_input_offset);
+
+            int weight_offset = 0;
+            #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+            for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                load_input_elements_unchecked<DataType>(weight_rows, weight_elements, weight_offset + current_input_offset);
+
+                #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                    accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
+                }
+
+                weight_offset += weight_row_stride;
+            }
+
+            current_input_offset += INPUT_ELEMENTS_PER_ITERATION;
+        }
+
+        if (remaining_elements > 0) {
+            load_input_elements_checked<AccumulatorType>(batch_input, input_elements, current_input_offset, input_dimension);
+
+            #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+            for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                load_input_elements_checked<DataType>(
+                    weight_rows + row * weight_row_stride,
+                    weight_elements,
+                    current_input_offset,
+                    input_dimension
+                );
+
+                #pragma unroll(ELEMENTS_PER_THREAD_COL)
+                for (ushort col = 0; col < ELEMENTS_PER_THREAD_COL; ++col) {
+                    accumulated_results[row] += static_cast<AccumulatorType>(weight_elements[col]) * input_elements[col];
+                }
+            }
+        }
+
+        #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+        for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+            #pragma unroll
+            for (ushort shuffle_offset = (THREADS_PER_SIMDGROUP_COL / 2); shuffle_offset >= 1; shuffle_offset >>= 1) {
+                accumulated_results[row] += simd_shuffle_down(accumulated_results[row], shuffle_offset);
+            }
+        }
+
+        if (NEEDS_THREADGROUP_REDUCTION) {
+            threadgroup AccumulatorType* reduction_memory =
+                shared_memory + simdgroup_reduction_index * (OUTPUT_ELEMENTS_PER_THREADGROUP + ELEMENTS_PER_THREAD_ROW)
+                + thread_output_offset;
+
+            if (thread_col_in_simdgroup == 0) {
+                #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                    reduction_memory[row] = accumulated_results[row];
+                }
+
+                threadgroup_barrier(mem_flags::mem_none);
+
+                if (simdgroup_reduction_index == 0) {
+                    #pragma unroll
+                    for (ushort other_simdgroup = 1; other_simdgroup < SIMDGROUPS_PER_REDUCTION; ++other_simdgroup) {
+                        #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+                        for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                            accumulated_results[row] +=
+                                reduction_memory[other_simdgroup * (OUTPUT_ELEMENTS_PER_THREADGROUP + ELEMENTS_PER_THREAD_ROW) + row];
+                        }
+                    }
+                }
+            }
+        }
+
+        bool is_first_thread_in_reduction = (simdgroup_col_offset == 0) && (thread_col_in_simdgroup == 0);
+
+        if (is_first_thread_in_reduction) {
+            #pragma unroll(ELEMENTS_PER_THREAD_ROW)
+            for (ushort row = 0; row < ELEMENTS_PER_THREAD_ROW; ++row) {
+                int output_index = output_row_start + row;
+                if (HAS_BIAS) {
+                    batch_output[output_index] =
+                        static_cast<DataType>(accumulated_results[row]) + bias_vector[output_index];
+                } else {
+                    batch_output[output_index] = static_cast<DataType>(accumulated_results[row]);
+                }
+            }
+        }
     }
-  }
+};
+
+#define INSTANTIATE_GEMV_KERNEL(                                                              \
+    kernel_name, data_type, accumulator_type,                                                 \
+    simdgroups_per_row, simdgroups_per_reduction,                                             \
+    threads_per_simdgroup_row, threads_per_simdgroup_col,                                     \
+    elements_per_thread_row, elements_per_thread_col, has_bias)                               \
+                                                                                              \
+[[kernel, max_total_threads_per_threadgroup(                                                  \
+    simdgroups_per_row * simdgroups_per_reduction * 32)]]                                     \
+void kernel_name(                                                                             \
+    const device data_type* weight_matrix [[buffer(0)]],                                      \
+    const device data_type* input_vector [[buffer(1)]],                                       \
+    const device data_type* bias_vector [[buffer(2)]],                                        \
+    device data_type* output_vector [[buffer(3)]],                                            \
+    constant int& input_dimension [[buffer(4)]],                                              \
+    constant int& output_dimension [[buffer(5)]],                                             \
+    constant int& weight_row_stride [[buffer(6)]],                                            \
+    constant int& input_batch_stride [[buffer(7)]],                                           \
+    constant int& output_batch_stride [[buffer(8)]],                                          \
+    uint3 threadgroup_position [[threadgroup_position_in_grid]],                              \
+    uint simdgroup_index [[simdgroup_index_in_threadgroup]],                                  \
+    uint thread_index_in_simdgroup [[thread_index_in_simdgroup]]                              \
+) {                                                                                           \
+    using Kernel = GemvKernel<                                                                \
+        data_type, accumulator_type,                                                          \
+        simdgroups_per_row, simdgroups_per_reduction,                                         \
+        threads_per_simdgroup_row, threads_per_simdgroup_col,                                 \
+        elements_per_thread_row, elements_per_thread_col, has_bias>;                          \
+                                                                                              \
+    threadgroup accumulator_type shared_memory[                                               \
+        Kernel::THREADGROUP_MEMORY_SIZE == 0 ? 1 : Kernel::THREADGROUP_MEMORY_SIZE];          \
+                                                                                              \
+    Kernel::execute(                                                                          \
+        weight_matrix,                                                                        \
+        input_vector,                                                                         \
+        bias_vector,                                                                          \
+        output_vector,                                                                        \
+        input_dimension,                                                                      \
+        output_dimension,                                                                     \
+        weight_row_stride,                                                                    \
+        input_batch_stride,                                                                   \
+        output_batch_stride,                                                                  \
+        shared_memory,                                                                        \
+        threadgroup_position,                                                                 \
+        simdgroup_index,                                                                      \
+        thread_index_in_simdgroup                                                             \
+    );                                                                                        \
 }
 
-#define DECL_GEMV_SPLIT_K_KPARTS2(NAME, TYPE, ACC)                              \
-  [[kernel, max_total_threads_per_threadgroup(512)]] void NAME(                 \
-      const device TYPE* weights [[buffer(0)]],                                 \
-      const device TYPE* input [[buffer(1)]],                                   \
-      device TYPE* output [[buffer(2)]],                                        \
-      constant int& input_dim [[buffer(3)]],                                    \
-      constant int& output_dim [[buffer(4)]],                                   \
-      constant int& weight_stride [[buffer(5)]],                                \
-      constant int& input_batch_stride [[buffer(6)]],                           \
-      constant int& output_batch_stride [[buffer(7)]],                          \
-      uint3 tgid [[threadgroup_position_in_grid]],                              \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                         \
-      uint simd_lid [[thread_index_in_simdgroup]]                               \
-  ) {                                                                           \
-    threadgroup ACC partial_sums[8 * 2 * 2];                                    \
-    gemv_split_k_rows16_impl<TYPE, ACC, 2>(                                     \
-        weights,                                                                \
-        input,                                                                  \
-        nullptr,                                                                \
-        output,                                                                 \
-        input_dim,                                                              \
-        output_dim,                                                             \
-        weight_stride,                                                          \
-        input_batch_stride,                                                     \
-        output_batch_stride,                                                    \
-        tgid,                                                                   \
-        simd_gid,                                                               \
-        simd_lid,                                                               \
-        partial_sums                                                            \
-    );                                                                          \
-  }
+#define INSTANTIATE_GEMV_CONFIG(dtype, acc_type, rows, reduction, thr_row, thr_col, elem_row, elem_col) \
+    INSTANTIATE_GEMV_KERNEL(                                                                            \
+        gemv_##dtype##_rows##rows##_reduction##reduction##_elements##elem_row,                          \
+        dtype, acc_type, rows, reduction, thr_row, thr_col, elem_row, elem_col, false)                  \
+    INSTANTIATE_GEMV_KERNEL(                                                                            \
+        gemv_##dtype##_rows##rows##_reduction##reduction##_elements##elem_row##_bias,                   \
+        dtype, acc_type, rows, reduction, thr_row, thr_col, elem_row, elem_col, true)
 
-#define DECL_GEMV_SPLIT_K_KPARTS4(NAME, TYPE, ACC)                              \
-  [[kernel, max_total_threads_per_threadgroup(1024)]] void NAME(                \
-      const device TYPE* weights [[buffer(0)]],                                 \
-      const device TYPE* input [[buffer(1)]],                                   \
-      device TYPE* output [[buffer(2)]],                                        \
-      constant int& input_dim [[buffer(3)]],                                    \
-      constant int& output_dim [[buffer(4)]],                                   \
-      constant int& weight_stride [[buffer(5)]],                                \
-      constant int& input_batch_stride [[buffer(6)]],                           \
-      constant int& output_batch_stride [[buffer(7)]],                          \
-      uint3 tgid [[threadgroup_position_in_grid]],                              \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                         \
-      uint simd_lid [[thread_index_in_simdgroup]]                               \
-  ) {                                                                           \
-    threadgroup ACC partial_sums[8 * 4 * 2];                                    \
-    gemv_split_k_rows16_impl<TYPE, ACC, 4>(                                     \
-        weights,                                                                \
-        input,                                                                  \
-        nullptr,                                                                \
-        output,                                                                 \
-        input_dim,                                                              \
-        output_dim,                                                             \
-        weight_stride,                                                          \
-        input_batch_stride,                                                     \
-        output_batch_stride,                                                    \
-        tgid,                                                                   \
-        simd_gid,                                                               \
-        simd_lid,                                                               \
-        partial_sums                                                            \
-    );                                                                          \
-  }
+#define INSTANTIATE_ALL_CONFIGS_FOR_DTYPE(dtype, acc_type)                                              \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 1, 8, 1, 32, 4, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 1, 8, 1, 32, 1, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 1, 1, 8,  4, 4, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 1, 1, 8,  4, 1, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 4, 1, 1, 32, 1, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 4, 1, 1, 32, 4, 4)                                          \
+    INSTANTIATE_GEMV_CONFIG(dtype, acc_type, 8, 1, 1, 32, 4, 4)
 
-#define DECL_GEMV_SPLIT_K_KPARTS2_BIAS(NAME, TYPE, ACC)                         \
-  [[kernel, max_total_threads_per_threadgroup(512)]] void NAME(                 \
-      const device TYPE* weights [[buffer(0)]],                                 \
-      const device TYPE* input [[buffer(1)]],                                   \
-      const device TYPE* bias [[buffer(2)]],                                    \
-      device TYPE* output [[buffer(3)]],                                        \
-      constant int& input_dim [[buffer(4)]],                                    \
-      constant int& output_dim [[buffer(5)]],                                   \
-      constant int& weight_stride [[buffer(6)]],                                \
-      constant int& input_batch_stride [[buffer(7)]],                           \
-      constant int& output_batch_stride [[buffer(8)]],                          \
-      uint3 tgid [[threadgroup_position_in_grid]],                              \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                         \
-      uint simd_lid [[thread_index_in_simdgroup]]                               \
-  ) {                                                                           \
-    threadgroup ACC partial_sums[8 * 2 * 2];                                    \
-    gemv_split_k_rows16_impl<TYPE, ACC, 2>(                                     \
-        weights,                                                                \
-        input,                                                                  \
-        bias,                                                                   \
-        output,                                                                 \
-        input_dim,                                                              \
-        output_dim,                                                             \
-        weight_stride,                                                          \
-        input_batch_stride,                                                     \
-        output_batch_stride,                                                    \
-        tgid,                                                                   \
-        simd_gid,                                                               \
-        simd_lid,                                                               \
-        partial_sums                                                            \
-    );                                                                          \
-  }
-
-#define DECL_GEMV_SPLIT_K_KPARTS4_BIAS(NAME, TYPE, ACC)                         \
-  [[kernel, max_total_threads_per_threadgroup(1024)]] void NAME(                \
-      const device TYPE* weights [[buffer(0)]],                                 \
-      const device TYPE* input [[buffer(1)]],                                   \
-      const device TYPE* bias [[buffer(2)]],                                    \
-      device TYPE* output [[buffer(3)]],                                        \
-      constant int& input_dim [[buffer(4)]],                                    \
-      constant int& output_dim [[buffer(5)]],                                   \
-      constant int& weight_stride [[buffer(6)]],                                \
-      constant int& input_batch_stride [[buffer(7)]],                           \
-      constant int& output_batch_stride [[buffer(8)]],                          \
-      uint3 tgid [[threadgroup_position_in_grid]],                              \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                         \
-      uint simd_lid [[thread_index_in_simdgroup]]                               \
-  ) {                                                                           \
-    threadgroup ACC partial_sums[8 * 4 * 2];                                    \
-    gemv_split_k_rows16_impl<TYPE, ACC, 4>(                                     \
-        weights,                                                                \
-        input,                                                                  \
-        bias,                                                                   \
-        output,                                                                 \
-        input_dim,                                                              \
-        output_dim,                                                             \
-        weight_stride,                                                          \
-        input_batch_stride,                                                     \
-        output_batch_stride,                                                    \
-        tgid,                                                                   \
-        simd_gid,                                                               \
-        simd_lid,                                                               \
-        partial_sums                                                            \
-    );                                                                          \
-  }
-
-DECL_GEMV_SPLIT_K_KPARTS2(gemv_split_k_f16_rows16_kparts2, half, float)
-DECL_GEMV_SPLIT_K_KPARTS4(gemv_split_k_f16_rows16_kparts4, half, float)
-DECL_GEMV_SPLIT_K_KPARTS2_BIAS(gemv_split_k_f16_rows16_kparts2_bias, half, float)
-DECL_GEMV_SPLIT_K_KPARTS4_BIAS(gemv_split_k_f16_rows16_kparts4_bias, half, float)
-
-DECL_GEMV_SPLIT_K_KPARTS2(gemv_split_k_bf16_rows16_kparts2, bfloat, float)
-DECL_GEMV_SPLIT_K_KPARTS4(gemv_split_k_bf16_rows16_kparts4, bfloat, float)
-DECL_GEMV_SPLIT_K_KPARTS2_BIAS(gemv_split_k_bf16_rows16_kparts2_bias, bfloat, float)
-DECL_GEMV_SPLIT_K_KPARTS4_BIAS(gemv_split_k_bf16_rows16_kparts4_bias, bfloat, float)
-
-DECL_GEMV_SPLIT_K_KPARTS2(gemv_split_k_f32_rows16_kparts2, float, float)
-DECL_GEMV_SPLIT_K_KPARTS4(gemv_split_k_f32_rows16_kparts4, float, float)
-DECL_GEMV_SPLIT_K_KPARTS2_BIAS(gemv_split_k_f32_rows16_kparts2_bias, float, float)
-DECL_GEMV_SPLIT_K_KPARTS4_BIAS(gemv_split_k_f32_rows16_kparts4_bias, float, float)
+INSTANTIATE_ALL_CONFIGS_FOR_DTYPE(half, float)
+INSTANTIATE_ALL_CONFIGS_FOR_DTYPE(bfloat, float)
+INSTANTIATE_ALL_CONFIGS_FOR_DTYPE(float, float)
