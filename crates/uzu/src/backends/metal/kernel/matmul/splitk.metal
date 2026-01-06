@@ -32,7 +32,8 @@ void splitk_partial_gemm(
     uint simd_lane_id [[thread_index_in_simdgroup]],
     uint simd_group_id [[simdgroup_index_in_threadgroup]],
     uint3 threadgroup_id [[threadgroup_position_in_grid]],
-    uint3 thread_id [[thread_position_in_threadgroup]]) {
+    uint3 thread_id [[thread_position_in_threadgroup]]
+) {
   (void)thread_id;
 
   using gemm_kernel = GEMMKernel<
@@ -66,7 +67,8 @@ void splitk_partial_gemm(
 
   const int output_row = tile_y * TileRows;
   const int output_col = tile_x * TileCols;
-  const int k_partition_start = params->k_elements_per_partition * partition_index;
+  const int k_partition_start =
+      params->k_elements_per_partition * partition_index;
 
   const size_t output_row_long = size_t(output_row);
   const size_t output_col_long = size_t(output_col);
@@ -76,18 +78,31 @@ void splitk_partial_gemm(
   const device InputType* b_ptr = input_b;
 
   a_ptr += TransposeA
-      ? (output_row_long + k_start_long * params->leading_dim_a)
-      : (k_start_long + output_row_long * params->leading_dim_a);
+               ? (output_row_long + k_start_long * params->leading_dim_a)
+               : (k_start_long + output_row_long * params->leading_dim_a);
   b_ptr += TransposeB
-      ? (k_start_long + output_col_long * params->leading_dim_b)
-      : (output_col_long + k_start_long * params->leading_dim_b);
+               ? (k_start_long + output_col_long * params->leading_dim_b)
+               : (output_col_long + k_start_long * params->leading_dim_b);
 
-  device AccumulatorType* output_ptr = accumulator +
+  device AccumulatorType* output_ptr =
+      accumulator +
       (size_t(params->output_elements_per_partition) * partition_index) +
       (output_row_long * params->leading_dim_accumulator + output_col_long);
 
-  thread loader_a_t loader_a(a_ptr, params->leading_dim_a, shared_a, simd_group_id, simd_lane_id);
-  thread loader_b_t loader_b(b_ptr, params->leading_dim_b, shared_b, simd_group_id, simd_lane_id);
+  thread loader_a_t loader_a(
+      a_ptr,
+      params->leading_dim_a,
+      shared_a,
+      simd_group_id,
+      simd_lane_id
+  );
+  thread loader_b_t loader_b(
+      b_ptr,
+      params->leading_dim_b,
+      shared_b,
+      simd_group_id,
+      simd_lane_id
+  );
   thread mma_t mma_op(simd_group_id, simd_lane_id);
 
   int gemm_k_iterations = params->gemm_k_iterations_aligned;
@@ -96,57 +111,93 @@ void splitk_partial_gemm(
   short tile_bound_n = min(TileCols, params->n - output_col);
   short leftover_k = params->k % TileDepth;
 
-  const bool is_last_partition = (partition_index + 1) == params->partition_count;
+  const bool is_last_partition =
+      (partition_index + 1) == params->partition_count;
 
   if (MNAligned || (tile_bound_m == TileRows && tile_bound_n == TileCols)) {
     gemm_kernel::gemm_loop(
-        shared_a, shared_b,
+        shared_a,
+        shared_b,
         gemm_k_iterations,
-        loader_a, loader_b, mma_op,
-        tile_bound_m, tile_bound_n, leftover_k,
-        LoopAlignment<true, true, true>{});
+        loader_a,
+        loader_b,
+        mma_op,
+        tile_bound_m,
+        tile_bound_n,
+        leftover_k,
+        LoopAlignment<true, true, true>{}
+    );
   } else if (tile_bound_n == TileCols) {
     gemm_kernel::gemm_loop(
-        shared_a, shared_b,
+        shared_a,
+        shared_b,
         gemm_k_iterations,
-        loader_a, loader_b, mma_op,
-        tile_bound_m, tile_bound_n, leftover_k,
-        LoopAlignment<false, true, true>{});
+        loader_a,
+        loader_b,
+        mma_op,
+        tile_bound_m,
+        tile_bound_n,
+        leftover_k,
+        LoopAlignment<false, true, true>{}
+    );
   } else if (tile_bound_m == TileRows) {
     gemm_kernel::gemm_loop(
-        shared_a, shared_b,
+        shared_a,
+        shared_b,
         gemm_k_iterations,
-        loader_a, loader_b, mma_op,
-        tile_bound_m, tile_bound_n, leftover_k,
-        LoopAlignment<true, false, true>{});
+        loader_a,
+        loader_b,
+        mma_op,
+        tile_bound_m,
+        tile_bound_n,
+        leftover_k,
+        LoopAlignment<true, false, true>{}
+    );
   } else {
     gemm_kernel::gemm_loop(
-        shared_a, shared_b,
+        shared_a,
+        shared_b,
         gemm_k_iterations,
-        loader_a, loader_b, mma_op,
-        tile_bound_m, tile_bound_n, leftover_k,
-        LoopAlignment<false, false, true>{});
+        loader_a,
+        loader_b,
+        mma_op,
+        tile_bound_m,
+        tile_bound_n,
+        leftover_k,
+        LoopAlignment<false, false, true>{}
+    );
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   if (is_last_partition) {
     int remaining_k_iterations =
-        (params->k - (k_partition_start + params->k_elements_per_partition)) / TileDepth;
+        (params->k - (k_partition_start + params->k_elements_per_partition)) /
+        TileDepth;
     if (!KAligned || remaining_k_iterations > 0) {
       gemm_kernel::gemm_loop(
-          shared_a, shared_b,
+          shared_a,
+          shared_b,
           remaining_k_iterations,
-          loader_a, loader_b, mma_op,
-          tile_bound_m, tile_bound_n, leftover_k,
-          LoopAlignment<false, false, KAligned>{});
+          loader_a,
+          loader_b,
+          mma_op,
+          tile_bound_m,
+          tile_bound_n,
+          leftover_k,
+          LoopAlignment<false, false, KAligned>{}
+      );
     }
   }
 
   if (MNAligned || (tile_bound_m == TileRows && tile_bound_n == TileCols)) {
     mma_op.store_result(output_ptr, params->leading_dim_accumulator);
   } else {
-    mma_op.store_result_safe(output_ptr, params->leading_dim_accumulator, short2(tile_bound_n, tile_bound_m));
+    mma_op.store_result_safe(
+        output_ptr,
+        params->leading_dim_accumulator,
+        short2(tile_bound_n, tile_bound_m)
+    );
   }
 }
 
@@ -161,7 +212,8 @@ template <typename OutputType, typename AccumulatorType>
     constant int& partition_count [[buffer(2)]],
     constant int& output_elements_per_partition [[buffer(3)]],
     constant int& leading_dim_output [[buffer(4)]],
-    uint2 thread_position [[thread_position_in_grid]]) {
+    uint2 thread_position [[thread_position_in_grid]]
+) {
   const size_t col = thread_position.x;
   const size_t row = thread_position.y;
 
@@ -184,18 +236,33 @@ template <typename OutputType, typename AccumulatorType>
 ///////////////////////////////////////////////////////////////////////////////
 
 #define INSTANTIATE_SPLITK_PARTIAL(                                            \
-    transpose_name, transpose_a, transpose_b,                                  \
-    type_name, input_type,                                                     \
-    tile_rows, tile_cols, tile_depth, warps_row, warps_col)                    \
+    transpose_name,                                                            \
+    transpose_a,                                                               \
+    transpose_b,                                                               \
+    type_name,                                                                 \
+    input_type,                                                                \
+    tile_rows,                                                                 \
+    tile_cols,                                                                 \
+    tile_depth,                                                                \
+    warps_row,                                                                 \
+    warps_col                                                                  \
+)                                                                              \
   template [[host_name(                                                        \
-      "splitk_partial_" #transpose_name "_" #type_name                         \
-      "_tm" #tile_rows "_tn" #tile_cols "_tk" #tile_depth                      \
-      "_wm" #warps_row "_wn" #warps_col                                        \
+      "splitk_partial_" #transpose_name "_" #type_name "_tm" #tile_rows        \
+      "_tn" #tile_cols "_tk" #tile_depth "_wm" #warps_row "_wn" #warps_col     \
   )]] [[kernel]] void                                                          \
   splitk_partial_gemm<                                                         \
-      input_type, float,                                                       \
-      tile_rows, tile_cols, tile_depth, warps_row, warps_col,                  \
-      transpose_a, transpose_b, false, false>(                                 \
+      input_type,                                                              \
+      float,                                                                   \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col,                                                               \
+      transpose_a,                                                             \
+      transpose_b,                                                             \
+      false,                                                                   \
+      false>(                                                                  \
       const device input_type* input_a [[buffer(0)]],                          \
       const device input_type* input_b [[buffer(1)]],                          \
       device float* accumulator [[buffer(2)]],                                 \
@@ -203,18 +270,66 @@ template <typename OutputType, typename AccumulatorType>
       uint simd_lane_id [[thread_index_in_simdgroup]],                         \
       uint simd_group_id [[simdgroup_index_in_threadgroup]],                   \
       uint3 threadgroup_id [[threadgroup_position_in_grid]],                   \
-      uint3 thread_id [[thread_position_in_threadgroup]]);
+      uint3 thread_id [[thread_position_in_threadgroup]]                       \
+  );
 
 #define INSTANTIATE_SPLITK_TRANSPOSE_HELPER(                                   \
-    type_name, input_type, tile_rows, tile_cols, tile_depth, warps_row, warps_col) \
-  INSTANTIATE_SPLITK_PARTIAL(nn, false, false, type_name, input_type,          \
-      tile_rows, tile_cols, tile_depth, warps_row, warps_col)                  \
-  INSTANTIATE_SPLITK_PARTIAL(nt, false, true, type_name, input_type,           \
-      tile_rows, tile_cols, tile_depth, warps_row, warps_col)                  \
-  INSTANTIATE_SPLITK_PARTIAL(tn, true, false, type_name, input_type,           \
-      tile_rows, tile_cols, tile_depth, warps_row, warps_col)                  \
-  INSTANTIATE_SPLITK_PARTIAL(tt, true, true, type_name, input_type,            \
-      tile_rows, tile_cols, tile_depth, warps_row, warps_col)
+    type_name,                                                                 \
+    input_type,                                                                \
+    tile_rows,                                                                 \
+    tile_cols,                                                                 \
+    tile_depth,                                                                \
+    warps_row,                                                                 \
+    warps_col                                                                  \
+)                                                                              \
+  INSTANTIATE_SPLITK_PARTIAL(                                                  \
+      nn,                                                                      \
+      false,                                                                   \
+      false,                                                                   \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col                                                                \
+  )                                                                            \
+  INSTANTIATE_SPLITK_PARTIAL(                                                  \
+      nt,                                                                      \
+      false,                                                                   \
+      true,                                                                    \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col                                                                \
+  )                                                                            \
+  INSTANTIATE_SPLITK_PARTIAL(                                                  \
+      tn,                                                                      \
+      true,                                                                    \
+      false,                                                                   \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col                                                                \
+  )                                                                            \
+  INSTANTIATE_SPLITK_PARTIAL(                                                  \
+      tt,                                                                      \
+      true,                                                                    \
+      true,                                                                    \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col                                                                \
+  )
 
 #define INSTANTIATE_SPLITK_SHAPES_HELPER(type_name, input_type)                \
   INSTANTIATE_SPLITK_TRANSPOSE_HELPER(type_name, input_type, 16, 16, 16, 2, 2) \
@@ -234,7 +349,8 @@ INSTANTIATE_SPLITK_SHAPES_HELPER(f32, float)
       constant int& partition_count [[buffer(2)]],                             \
       constant int& output_elements_per_partition [[buffer(3)]],               \
       constant int& leading_dim_output [[buffer(4)]],                          \
-      uint2 thread_position [[thread_position_in_grid]]);
+      uint2 thread_position [[thread_position_in_grid]]                        \
+  );
 
 INSTANTIATE_SPLITK_ACCUM(f16, half)
 INSTANTIATE_SPLITK_ACCUM(bf16, bfloat)

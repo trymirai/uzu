@@ -27,9 +27,8 @@ void batched_bitmask(
     if (global_idx < batch_end) {
       uint token_idx = global_idx - batch_idx * vocab_size;
       uint bitmask_idx = batch_idx * bitmask_size + (token_idx / BITS_IN_U32);
-      bool mask = (bitmask_data[bitmask_idx] >>
-                   (token_idx % BITS_IN_U32)) &
-                  0b1;
+      bool mask =
+          (bitmask_data[bitmask_idx] >> (token_idx % BITS_IN_U32)) & 0b1;
       processed_logits[global_idx] =
           select(T(-INFINITY), logits_data[global_idx], mask);
     }

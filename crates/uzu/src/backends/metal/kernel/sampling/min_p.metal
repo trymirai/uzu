@@ -29,7 +29,8 @@ void batched_minp(
       thread_idx
   );
 
-  // Then the threshold is just max_logit + log(min_p), mask everything strictly below it
+  // Then the threshold is just max_logit + log(min_p), mask everything strictly
+  // below it
   T t_threshold = T(max_logit + log(min_p));
 #pragma unroll(4)
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
