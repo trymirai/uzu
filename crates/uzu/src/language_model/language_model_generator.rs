@@ -756,7 +756,7 @@ impl LanguageModelGenerator {
         let output_view = output_buffer
             .as_view::<u32>()
             .map_err(|_| Error::SamplingFailed)?;
-        let batch_size = output_buffer.shape()[0];
+        let batch_size = state.active_suffix_length();
 
         let mut result = Vec::with_capacity(batch_size);
         for i in 0..batch_size {

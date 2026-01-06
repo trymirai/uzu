@@ -39,3 +39,4 @@ crates/uzu/examples/quick_chat.rs
 scripts/run_all_models.sh
 crates/uzu/examples/model_check.rs
 crates/uzu/examples/quick_chats.rs
+.cursor
