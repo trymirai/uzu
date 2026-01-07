@@ -8,9 +8,7 @@ use crate::{
         MTLContext, MTLError,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::{
-            matmul::{MatmulArguments, MatmulKernel},
-        },
+        kernel::matmul::{MatmulArguments, MatmulKernel},
     },
     device::array::Array,
     parameters::ParameterTree,
@@ -125,6 +123,7 @@ impl EncodableBlock for FullPrecisionLinear {
         let args = MatmulArguments {
             a: input_buffer,
             b: &self.weights_buffer,
+            c: None,
             d: output_buffer,
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
@@ -133,6 +132,8 @@ impl EncodableBlock for FullPrecisionLinear {
             ldb: self.input_dim as i32,
             ldd: self.output_dim as i32,
             batch_count: 1,
+            alpha: 1.0,
+            beta: 0.0,
         };
 
         let mut kernel = self.kernel.borrow_mut();
@@ -176,6 +177,7 @@ impl EncodableBlock for FullPrecisionLinear {
         let args = MatmulArguments {
             a: input_buffer,
             b: &self.weights_buffer,
+            c: None,
             d: output_buffer,
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
@@ -184,6 +186,8 @@ impl EncodableBlock for FullPrecisionLinear {
             ldb: self.input_dim as i32,
             ldd: self.output_dim as i32,
             batch_count: 1,
+            alpha: 1.0,
+            beta: 0.0,
         };
 
         let mut kernel = self.kernel.borrow_mut();

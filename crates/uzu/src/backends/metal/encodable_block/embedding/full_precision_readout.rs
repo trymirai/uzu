@@ -121,6 +121,7 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
         let args = MatmulArguments {
             a: input_buffer,
             b: &self.weights_buffer,
+            c: None,
             d: output_buffer,
             batch: batch_size as i32,
             input_dim: self.model_dim as i32,
@@ -129,6 +130,8 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
             ldb: self.model_dim as i32,
             ldd: self.vocab_size as i32,
             batch_count: 1,
+            alpha: 1.0,
+            beta: 0.0,
         };
 
         self.kernel

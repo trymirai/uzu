@@ -46,6 +46,8 @@ struct GEMMParams {
 
   int swizzle_log;
   int gemm_k_iterations_aligned;
+
+  int batch_ndim;
 };
 
 /// Parameters for addmm (alpha * A @ B + beta * C) operations

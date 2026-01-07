@@ -231,9 +231,81 @@ template <typename OutputType, typename AccumulatorType>
   output[0] = OutputType(sum);
 }
 
+template <typename OutputType, typename AccumulatorType>
+[[kernel]] void splitk_accumulate_axpby(
+    const device AccumulatorType* partitioned_accumulator [[buffer(0)]],
+    device OutputType* output [[buffer(1)]],
+    constant int& partition_count [[buffer(2)]],
+    constant int& output_elements_per_partition [[buffer(3)]],
+    constant int& leading_dim_output [[buffer(4)]],
+    const device OutputType* bias_source [[buffer(5)]],
+    constant int& ldc [[buffer(6)]],
+    constant int& fdc [[buffer(7)]],
+    constant float& alpha [[buffer(8)]],
+    constant float& beta [[buffer(9)]],
+    uint2 thread_position [[thread_position_in_grid]]
+) {
+  const size_t col = thread_position.x;
+  const size_t row = thread_position.y;
+
+  bias_source += col * size_t(fdc) + row * size_t(ldc);
+  output += col + row * size_t(leading_dim_output);
+  partitioned_accumulator += col + row * size_t(leading_dim_output);
+
+  AccumulatorType sum = AccumulatorType(0);
+  size_t partition_offset = 0;
+
+  for (int i = 0; i < partition_count; i++) {
+    sum += partitioned_accumulator[partition_offset];
+    partition_offset += output_elements_per_partition;
+  }
+
+  output[0] = OutputType(alpha * sum + beta * AccumulatorType(*bias_source));
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Kernel Instantiation
 ///////////////////////////////////////////////////////////////////////////////
+
+#define INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                    \
+    transpose_name,                                                            \
+    transpose_a,                                                               \
+    transpose_b,                                                               \
+    type_name,                                                                 \
+    input_type,                                                                \
+    tile_rows,                                                                 \
+    tile_cols,                                                                 \
+    tile_depth,                                                                \
+    warps_row,                                                                 \
+    warps_col,                                                                 \
+    mn_aligned,                                                                \
+    k_aligned                                                                  \
+)                                                                              \
+  template [[host_name(                                                        \
+      "splitk_partial_" #transpose_name "_" #type_name "_tm" #tile_rows        \
+      "_tn" #tile_cols "_tk" #tile_depth "_wm" #warps_row "_wn" #warps_col     \
+      "_mn" #mn_aligned "_k" #k_aligned)]][[kernel]] void                      \
+  splitk_partial_gemm<                                                         \
+      input_type,                                                              \
+      float,                                                                   \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col,                                                               \
+      transpose_a,                                                             \
+      transpose_b,                                                             \
+      mn_aligned,                                                              \
+      k_aligned>(                                                              \
+      const device input_type* input_a [[buffer(0)]],                          \
+      const device input_type* input_b [[buffer(1)]],                          \
+      device float* accumulator [[buffer(2)]],                                 \
+      const constant SplitKGEMMParams* params [[buffer(3)]],                   \
+      uint simd_lane_id [[thread_index_in_simdgroup]],                         \
+      uint simd_group_id [[simdgroup_index_in_threadgroup]],                   \
+      uint3 threadgroup_id [[threadgroup_position_in_grid]],                   \
+      uint3 thread_id [[thread_position_in_threadgroup]]                       \
+  );
 
 #define INSTANTIATE_SPLITK_PARTIAL(                                            \
     transpose_name,                                                            \
@@ -247,31 +319,58 @@ template <typename OutputType, typename AccumulatorType>
     warps_row,                                                                 \
     warps_col                                                                  \
 )                                                                              \
-  template [[host_name(                                                        \
-      "splitk_partial_" #transpose_name "_" #type_name "_tm" #tile_rows        \
-      "_tn" #tile_cols "_tk" #tile_depth "_wm" #warps_row "_wn" #warps_col     \
-  )]] [[kernel]] void                                                          \
-  splitk_partial_gemm<                                                         \
+  INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
+      transpose_name,                                                          \
+      transpose_a,                                                             \
+      transpose_b,                                                             \
+      type_name,                                                               \
       input_type,                                                              \
-      float,                                                                   \
       tile_rows,                                                               \
       tile_cols,                                                               \
       tile_depth,                                                              \
       warps_row,                                                               \
       warps_col,                                                               \
+      0,                                                                       \
+      0)                                                                       \
+  INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
+      transpose_name,                                                          \
       transpose_a,                                                             \
       transpose_b,                                                             \
-      false,                                                                   \
-      false>(                                                                  \
-      const device input_type* input_a [[buffer(0)]],                          \
-      const device input_type* input_b [[buffer(1)]],                          \
-      device float* accumulator [[buffer(2)]],                                 \
-      const constant SplitKGEMMParams* params [[buffer(3)]],                   \
-      uint simd_lane_id [[thread_index_in_simdgroup]],                         \
-      uint simd_group_id [[simdgroup_index_in_threadgroup]],                   \
-      uint3 threadgroup_id [[threadgroup_position_in_grid]],                   \
-      uint3 thread_id [[thread_position_in_threadgroup]]                       \
-  );
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col,                                                               \
+      1,                                                                       \
+      0)                                                                       \
+  INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
+      transpose_name,                                                          \
+      transpose_a,                                                             \
+      transpose_b,                                                             \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col,                                                               \
+      0,                                                                       \
+      1)                                                                       \
+  INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
+      transpose_name,                                                          \
+      transpose_a,                                                             \
+      transpose_b,                                                             \
+      type_name,                                                               \
+      input_type,                                                              \
+      tile_rows,                                                               \
+      tile_cols,                                                               \
+      tile_depth,                                                              \
+      warps_row,                                                               \
+      warps_col,                                                               \
+      1,                                                                       \
+      1)
 
 #define INSTANTIATE_SPLITK_TRANSPOSE_HELPER(                                   \
     type_name,                                                                 \
@@ -349,6 +448,20 @@ INSTANTIATE_SPLITK_SHAPES_HELPER(f32, float)
       constant int& partition_count [[buffer(2)]],                             \
       constant int& output_elements_per_partition [[buffer(3)]],               \
       constant int& leading_dim_output [[buffer(4)]],                          \
+      uint2 thread_position [[thread_position_in_grid]]                        \
+  );                                                                           \
+  template [[host_name("splitk_accum_" #type_name "_axpby")]] [[kernel]] void  \
+  splitk_accumulate_axpby<output_type, float>(                                 \
+      const device float* partitioned_accumulator [[buffer(0)]],               \
+      device output_type* output [[buffer(1)]],                                \
+      constant int& partition_count [[buffer(2)]],                             \
+      constant int& output_elements_per_partition [[buffer(3)]],               \
+      constant int& leading_dim_output [[buffer(4)]],                          \
+      const device output_type* bias_source [[buffer(5)]],                     \
+      constant int& ldc [[buffer(6)]],                                         \
+      constant int& fdc [[buffer(7)]],                                         \
+      constant float& alpha [[buffer(8)]],                                     \
+      constant float& beta [[buffer(9)]],                                      \
       uint2 thread_position [[thread_position_in_grid]]                        \
   );
 

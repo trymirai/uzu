@@ -5,7 +5,6 @@
 
 // Constants & Utilities
 // Session Core
-pub use crate::session::ChatSession;
 // Session Config
 pub use crate::session::config::{DecodingConfig, RunConfig, SpeculatorConfig};
 // Session Parameters
@@ -21,6 +20,8 @@ pub use crate::session::types::{
 // Speculators
 pub use crate::speculators::speculator::Speculator;
 pub use crate::{
-    VERSION, session::ClassificationSession,
-    speculators::empty_speculator::EmptySpeculator, storage_path,
+    VERSION,
+    session::{ChatSession, ClassificationSession},
+    speculators::empty_speculator::EmptySpeculator,
+    storage_path,
 };

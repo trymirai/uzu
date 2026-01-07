@@ -1,9 +1,10 @@
 use metal::Buffer as MTLBuffer;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MatmulArguments<'a> {
     pub a: &'a MTLBuffer,
     pub b: &'a MTLBuffer,
+    pub c: Option<&'a MTLBuffer>,
     pub d: &'a MTLBuffer,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
     pub batch: i32,
@@ -16,4 +17,7 @@ pub struct MatmulArguments<'a> {
     pub ldd: i32,
     /// Number of batched matrix multiplications (z-dimension)
     pub batch_count: i32,
+    /// Scaling factors for fused addmm (alpha * A @ B + beta * C)
+    pub alpha: f32,
+    pub beta: f32,
 }

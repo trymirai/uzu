@@ -20,10 +20,11 @@ pub struct GEMMParams {
     pub batch_stride_d: i64,
     pub swizzle_log: ::core::ffi::c_int,
     pub gemm_k_iterations_aligned: ::core::ffi::c_int,
+    pub batch_ndim: ::core::ffi::c_int,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of GEMMParams"][::core::mem::size_of::<GEMMParams>() - 64usize];
+    ["Size of GEMMParams"][::core::mem::size_of::<GEMMParams>() - 72usize];
     ["Alignment of GEMMParams"][::core::mem::align_of::<GEMMParams>() - 8usize];
     ["Offset of field: GEMMParams::batch"]
         [::core::mem::offset_of!(GEMMParams, batch) - 0usize];
@@ -53,6 +54,8 @@ const _: () = {
         GEMMParams,
         gemm_k_iterations_aligned
     ) - 60usize];
+    ["Offset of field: GEMMParams::batch_ndim"]
+        [::core::mem::offset_of!(GEMMParams, batch_ndim) - 64usize];
 };
 #[doc = " Parameters for addmm (alpha * A @ B + beta * C) operations"]
 #[repr(C)]

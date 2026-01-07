@@ -477,13 +477,15 @@ template <
 
 // clang-format off
 #define instantiate_gemm_shapes_helper(type_name, element_type)                 \
+  instantiate_gemm_transpose_helper(type_name, element_type, 64, 64, 16, 2, 2)  \
+  instantiate_gemm_transpose_helper(type_name, element_type, 64, 64, 32, 2, 2)  \
   instantiate_gemm_transpose_helper(type_name, element_type, 64, 64, 16, 1, 2)  \
   instantiate_gemm_transpose_helper(type_name, element_type, 64, 32, 32, 2, 2)  \
   instantiate_gemm_transpose_helper(type_name, element_type, 32, 64, 16, 1, 2)  \
   instantiate_gemm_transpose_helper(type_name, element_type, 32, 32, 16, 2, 2)  \
-  /* NAX-oriented larger tiles (safe BK=32) */                                  \
-  instantiate_gemm_transpose_helper(type_name, element_type, 64, 64, 32, 2, 2)  \
-  instantiate_gemm_transpose_helper(type_name, element_type, 128, 128, 32, 2, 2)
+  instantiate_gemm_transpose_helper(type_name, element_type, 128, 128, 32, 2, 2) \
+  /* Small-gemm variant for complex/float32 */                                  \
+  instantiate_gemm_transpose_helper(type_name, element_type, 64, 32,  8, 4, 1)
 // clang-format on
 
 // Instantiate for float16, bfloat16, and float32

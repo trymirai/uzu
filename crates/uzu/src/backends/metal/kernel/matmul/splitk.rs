@@ -5,8 +5,7 @@ use metal::{
     MTLSize,
 };
 
-use super::arguments::MatmulArguments;
-use super::shared_types::SplitKGEMMParams;
+use super::{arguments::MatmulArguments, shared_types::SplitKGEMMParams};
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
@@ -24,6 +23,8 @@ struct TileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PartialKernelKey {
     tile_config: TileConfig,
+    mn_aligned: bool,
+    k_aligned: bool,
 }
 
 pub struct SplitKGemm {
@@ -73,18 +74,22 @@ impl SplitKGemm {
     fn partial_kernel_name(
         &self,
         config: &TileConfig,
+        mn_aligned: bool,
+        k_aligned: bool,
     ) -> Result<String, MTLError> {
         let type_suffix = self.type_suffix()?;
         let transpose_suffix = self.transpose_suffix();
         Ok(format!(
-            "splitk_partial_{}_{}_tm{}_tn{}_tk{}_wm{}_wn{}",
+            "splitk_partial_{}_{}_tm{}_tn{}_tk{}_wm{}_wn{}_mn{}_k{}",
             transpose_suffix,
             type_suffix,
             config.tile_rows,
             config.tile_cols,
             config.tile_depth,
             config.warps_per_row,
-            config.warps_per_col
+            config.warps_per_col,
+            mn_aligned as u8,
+            k_aligned as u8,
         ))
     }
 
@@ -97,12 +102,17 @@ impl SplitKGemm {
         &mut self,
         mtl: &MTLContext,
         config: TileConfig,
+        mn_aligned: bool,
+        k_aligned: bool,
     ) -> Result<&MTLComputePipelineState, MTLError> {
         let key = PartialKernelKey {
             tile_config: config,
+            mn_aligned,
+            k_aligned,
         };
         if !self.partial_pipelines.contains_key(&key) {
-            let name = self.partial_kernel_name(&config)?;
+            let name =
+                self.partial_kernel_name(&config, mn_aligned, k_aligned)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
             self.partial_pipelines.insert(key.clone(), ps);
         }
@@ -125,8 +135,16 @@ impl SplitKGemm {
         m: i32,
         n: i32,
     ) -> TileConfig {
-        let tile_rows = if m < 40 { 16 } else { 32 };
-        let tile_cols = if n < 40 { 16 } else { 32 };
+        let tile_rows = if m < 40 {
+            16
+        } else {
+            32
+        };
+        let tile_cols = if n < 40 {
+            16
+        } else {
+            32
+        };
         TileConfig {
             tile_rows,
             tile_cols,
@@ -171,7 +189,7 @@ impl SplitKGemm {
         &mut self,
         mtl: &MTLContext,
         enc: &ComputeCommandEncoderRef,
-        args: MatmulArguments,
+        args: &MatmulArguments,
     ) -> Result<(), MTLError> {
         let m = args.batch;
         let n = args.output_dim;
@@ -179,12 +197,18 @@ impl SplitKGemm {
 
         let tile_config = Self::select_tile_config(m, n);
         let partition_count = Self::compute_partition_count(k);
+        let mn_aligned = (m % tile_config.tile_rows) == 0
+            && (n % tile_config.tile_cols) == 0;
+        let k_aligned = (k % tile_config.tile_depth) == 0;
 
-        let tile_count_m = (m + tile_config.tile_rows - 1) / tile_config.tile_rows;
-        let tile_count_n = (n + tile_config.tile_cols - 1) / tile_config.tile_cols;
+        let tile_count_m =
+            (m + tile_config.tile_rows - 1) / tile_config.tile_rows;
+        let tile_count_n =
+            (n + tile_config.tile_cols - 1) / tile_config.tile_cols;
 
         let gemm_k_iterations = (k / tile_config.tile_depth) / partition_count;
-        let k_elements_per_partition = gemm_k_iterations * tile_config.tile_depth;
+        let k_elements_per_partition =
+            gemm_k_iterations * tile_config.tile_depth;
         let output_elements_per_partition = m * n;
 
         let accumulator_element_count =
@@ -211,7 +235,8 @@ impl SplitKGemm {
             gemm_k_iterations_aligned: gemm_k_iterations,
         };
 
-        let partial_ps = self.get_partial_pipeline(mtl, tile_config)?;
+        let partial_ps =
+            self.get_partial_pipeline(mtl, tile_config, mn_aligned, k_aligned)?;
 
         enc.set_compute_pipeline_state(partial_ps);
         enc.set_buffer(0, Some(args.a), 0);
@@ -247,7 +272,8 @@ impl SplitKGemm {
         enc.set_bytes(
             3,
             4,
-            &output_elements_per_partition as *const i32 as *const std::ffi::c_void,
+            &output_elements_per_partition as *const i32
+                as *const std::ffi::c_void,
         );
         enc.set_bytes(
             4,
@@ -256,12 +282,12 @@ impl SplitKGemm {
         );
 
         let accum_total_threads = MTLSize::new(n as u64, m as u64, 1);
-        let accum_threads_per_threadgroup = MTLSize::new(
-            16.min(n as u64),
-            16.min(m as u64),
-            1,
+        let accum_threads_per_threadgroup =
+            MTLSize::new(16.min(n as u64), 16.min(m as u64), 1);
+        enc.dispatch_threads(
+            accum_total_threads,
+            accum_threads_per_threadgroup,
         );
-        enc.dispatch_threads(accum_total_threads, accum_threads_per_threadgroup);
 
         Ok(())
     }
