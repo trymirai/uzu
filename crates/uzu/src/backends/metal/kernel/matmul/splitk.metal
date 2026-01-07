@@ -284,7 +284,8 @@ template <typename OutputType, typename AccumulatorType>
   template [[host_name(                                                        \
       "splitk_partial_" #transpose_name "_" #type_name "_tm" #tile_rows        \
       "_tn" #tile_cols "_tk" #tile_depth "_wm" #warps_row "_wn" #warps_col     \
-      "_mn" #mn_aligned "_k" #k_aligned)]][[kernel]] void                      \
+      "_mn" #mn_aligned "_k" #k_aligned                                        \
+  )]] [[kernel]] void                                                          \
   splitk_partial_gemm<                                                         \
       input_type,                                                              \
       float,                                                                   \
@@ -331,7 +332,8 @@ template <typename OutputType, typename AccumulatorType>
       warps_row,                                                               \
       warps_col,                                                               \
       0,                                                                       \
-      0)                                                                       \
+      0                                                                        \
+  )                                                                            \
   INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
       transpose_name,                                                          \
       transpose_a,                                                             \
@@ -344,7 +346,8 @@ template <typename OutputType, typename AccumulatorType>
       warps_row,                                                               \
       warps_col,                                                               \
       1,                                                                       \
-      0)                                                                       \
+      0                                                                        \
+  )                                                                            \
   INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
       transpose_name,                                                          \
       transpose_a,                                                             \
@@ -357,7 +360,8 @@ template <typename OutputType, typename AccumulatorType>
       warps_row,                                                               \
       warps_col,                                                               \
       0,                                                                       \
-      1)                                                                       \
+      1                                                                        \
+  )                                                                            \
   INSTANTIATE_SPLITK_PARTIAL_ALIGNED(                                          \
       transpose_name,                                                          \
       transpose_a,                                                             \
@@ -370,7 +374,8 @@ template <typename OutputType, typename AccumulatorType>
       warps_row,                                                               \
       warps_col,                                                               \
       1,                                                                       \
-      1)
+      1                                                                        \
+  )
 
 #define INSTANTIATE_SPLITK_TRANSPOSE_HELPER(                                   \
     type_name,                                                                 \
