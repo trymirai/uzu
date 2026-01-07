@@ -368,7 +368,6 @@ impl ChatSession {
             )
         };
         let prefill_output = Self::build_output(
-            &self.model_metadata,
             &self.tokenizer,
             &self.output_parser,
             &run_context,
@@ -404,7 +403,6 @@ impl ChatSession {
                 .async_batch_size
                 .resolve(&self.model_path);
             Self::run_async_batch(
-                &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
                 &run_context,
@@ -415,7 +413,6 @@ impl ChatSession {
             )?
         } else {
             Self::run_sync_generate(
-                &self.model_metadata,
                 &self.tokenizer,
                 &self.output_parser,
                 &run_context,
@@ -432,7 +429,6 @@ impl ChatSession {
     }
 
     fn run_sync_generate<F>(
-        model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
@@ -474,7 +470,6 @@ impl ChatSession {
                 )
             };
             let generate_output = Self::build_output(
-                model_metadata,
                 tokenizer,
                 output_parser,
                 run_context,
@@ -503,7 +498,6 @@ impl ChatSession {
     }
 
     fn run_async_batch<F>(
-        model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
@@ -587,7 +581,6 @@ impl ChatSession {
                     true
                 } else if let Some(progress_fn) = progress {
                     let output = Self::build_output(
-                        model_metadata,
                         tokenizer,
                         output_parser,
                         run_context,
@@ -622,7 +615,6 @@ impl ChatSession {
                         }
                     }
                     return Self::build_output(
-                        model_metadata,
                         tokenizer,
                         output_parser,
                         run_context,
@@ -636,7 +628,6 @@ impl ChatSession {
         }
 
         Self::build_output(
-            model_metadata,
             tokenizer,
             output_parser,
             run_context,
@@ -780,7 +771,6 @@ impl ChatSession {
     }
 
     fn build_output(
-        model_metadata: &ModelMetadata,
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
@@ -803,7 +793,6 @@ impl ChatSession {
         Ok(Output {
             text: parsed,
             stats: Self::build_stats(
-                model_metadata,
                 run_context.prefill_result.clone(),
                 run_context.prefill_duration,
                 run_context.prefill_suffix_length,
@@ -821,7 +810,6 @@ impl ChatSession {
     }
 
     fn build_stats(
-        model_metadata: &ModelMetadata,
         prefill_result: PrefillResult,
         prefill_duration: f64,
         prefill_suffix_length: usize,
