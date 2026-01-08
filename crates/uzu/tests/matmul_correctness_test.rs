@@ -65,6 +65,7 @@ fn run_metal_matmul(
             MatmulArguments {
                 a: &a_buf,
                 b: &b_buf,
+                c: None,
                 d: &d_buf,
                 batch: m as i32,
                 input_dim: k as i32,
@@ -73,6 +74,8 @@ fn run_metal_matmul(
                 ldb: ldb as i32,
                 ldd: n as i32,
                 batch_count: 1,
+                alpha: 1.0,
+                beta: 0.0,
             },
         )
         .expect("encode");
