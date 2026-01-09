@@ -1,7 +1,8 @@
 // Shared types for GEMM kernel - used by both Metal shaders and Rust (via
 // bindgen). This header must be C-compatible for bindgen to parse it.
-
-#pragma once
+// Keep an include guard to avoid clang's "pragma once in main file" warning.
+#ifndef UZU_MATMUL_SHARED_TYPES_H
+#define UZU_MATMUL_SHARED_TYPES_H
 
 // Metal and C have different type systems
 // __METAL_VERSION__ is defined when compiling with the Metal shader compiler
@@ -82,3 +83,5 @@ struct GEMMAddMMParams {
 } // namespace matmul
 } // namespace uzu
 #endif
+
+#endif // UZU_MATMUL_SHARED_TYPES_H

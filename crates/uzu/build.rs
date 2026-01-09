@@ -34,6 +34,8 @@ fn generate_metal_bindings() {
         // Generate for C mode (no Metal-specific stuff)
         .clang_arg("-x")
         .clang_arg("c")
+        // Allow uppercase field names to match the C header without warnings
+        .raw_line("#![allow(non_snake_case)]")
         // Derive common traits
         .derive_default(true)
         .derive_copy(true)
@@ -310,6 +312,10 @@ fn compile_metal_files(
     // Create temp directory for .air files
     let air_dir = out_dir.join("air");
     fs::create_dir_all(&air_dir).unwrap();
+    // Keep clang's module cache inside the build output to avoid writing to
+    // system-wide cache directories that may not be writable.
+    let module_cache_dir = out_dir.join("clang-module-cache");
+    fs::create_dir_all(&module_cache_dir).unwrap();
 
     // Collect include directories (parents of each metal file + src dir)
     let mut include_dirs = HashSet::new();
@@ -409,12 +415,17 @@ fn compile_metal_files(
         let mut cmd = Command::new("xcrun");
         cmd.args(&["-sdk", sdk, "metal", metal_opt_flag]);
         cmd.arg(format!("-std={}", metal_std));
+        cmd.arg(format!(
+            "-fmodules-cache-path={}",
+            module_cache_dir.to_string_lossy()
+        ));
         for flag in &platform_flags {
             cmd.arg(flag);
         }
         for inc in &include_dirs {
             cmd.args(&["-I", inc.to_str().unwrap()]);
         }
+        cmd.env("CLANG_MODULE_CACHE_PATH", &module_cache_dir);
         if opt == "0" {
             cmd.arg("-gline-tables-only");
             if sdk == "macosx" {
