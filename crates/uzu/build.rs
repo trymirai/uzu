@@ -305,13 +305,7 @@ fn needs_compilation(
     };
     match fs::read_to_string(metallib_path.with_extension("nax")) {
         Ok(prev_nax) if prev_nax.trim() == desired_nax => {},
-        _ => {
-            println!(
-                "cargo:warning=Metal NAX mode changed; recompiling shaders (nax={})",
-                desired_nax
-            );
-            return true;
-        },
+        _ => return true,
     }
     // If any source file is newer than the metallib, recompile
     let metallib_mtime = fs::metadata(metallib_path)
