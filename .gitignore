@@ -33,10 +33,4 @@ external/
 
 # Local-only dev examples
 crates/uzu/examples/quick_chat.rs
-crates/uzu/examples/chat_output_validator.rs
-crates/uzu/examples/validate_model.rs
-crates/uzu/examples/quick_chat.rs
-scripts/run_all_models.sh
-crates/uzu/examples/model_check.rs
-crates/uzu/examples/quick_chats.rs
 .cursor
