@@ -228,6 +228,7 @@ fn is_nax_kernel(path: &Path) -> bool {
 }
 
 const NAX_MIN_OS_MAJOR: u32 = 26;
+const NAX_MIN_SDK_VERSION: (u32, u32) = (26, 2);
 
 fn host_macos_major_version() -> Option<u32> {
     if !cfg!(target_os = "macos") {
@@ -243,10 +244,23 @@ fn host_macos_major_version() -> Option<u32> {
     Some(major)
 }
 
-fn should_enable_nax(
-    target_os: &str,
-    sdk: &str,
-) -> bool {
+fn macos_sdk_version(sdk: &str) -> Option<(u32, u32)> {
+    let output = Command::new("xcrun")
+        .args(["--sdk", sdk, "--show-sdk-version"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout);
+    let version = version.trim();
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    Some((major, minor))
+}
+
+fn should_enable_nax(target_os: &str, sdk: &str) -> bool {
     if target_os != "macos" && target_os != "ios" {
         return false;
     }
@@ -254,7 +268,15 @@ fn should_enable_nax(
     if sdk == "iphonesimulator" {
         return false;
     }
-    host_macos_major_version().is_some_and(|major| major >= NAX_MIN_OS_MAJOR)
+    // Check host OS version
+    let os_ok =
+        host_macos_major_version().is_some_and(|major| major >= NAX_MIN_OS_MAJOR);
+    if !os_ok {
+        return false;
+    }
+    // Check SDK version (NAX APIs require SDK >= 26.2)
+    macos_sdk_version(sdk)
+        .is_some_and(|(major, minor)| (major, minor) >= NAX_MIN_SDK_VERSION)
 }
 
 // Recursively find all .metal files in the given directory
