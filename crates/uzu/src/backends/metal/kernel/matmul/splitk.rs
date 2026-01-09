@@ -5,7 +5,10 @@ use metal::{
     MTLSize,
 };
 
-use super::{arguments::MatmulArguments, shared_types::SplitKGEMMParams};
+use super::{
+    arguments::MatmulArguments,
+    shared_types::GEMMSpiltKParams as SplitKGEMMParams,
+};
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
@@ -50,16 +53,22 @@ impl SplitKGemm {
         }
     }
 
-    fn type_suffix(&self) -> Result<&'static str, MTLError> {
+    fn steel_type_name(&self) -> Result<&'static str, MTLError> {
         match self.data_type {
-            DataType::F16 => Ok("f16"),
-            DataType::BF16 => Ok("bf16"),
-            DataType::F32 => Ok("f32"),
+            DataType::F16 => Ok("float16"),
+            DataType::BF16 => Ok("bfloat16"),
+            DataType::F32 => Ok("float32"),
             _ => Err(MTLError::Generic(format!(
                 "Unsupported dtype for Split-K: {:?}",
                 self.data_type
             ))),
         }
+    }
+
+    fn splitk_partial_out_name(&self) -> &'static str {
+        // In steel_gemm_splitk.metal, float16/bfloat16/float32 partial outputs
+        // are accumulated into float32.
+        "float32"
     }
 
     fn transpose_suffix(&self) -> &'static str {
@@ -77,25 +86,41 @@ impl SplitKGemm {
         mn_aligned: bool,
         k_aligned: bool,
     ) -> Result<String, MTLError> {
-        let type_suffix = self.type_suffix()?;
+        let in_name = self.steel_type_name()?;
+        let out_name = self.splitk_partial_out_name();
         let transpose_suffix = self.transpose_suffix();
+        let mn_tag = if mn_aligned {
+            "taligned"
+        } else {
+            "naligned"
+        };
+        let k_tag = if k_aligned {
+            "taligned"
+        } else {
+            "naligned"
+        };
         Ok(format!(
-            "splitk_partial_{}_{}_tm{}_tn{}_tk{}_wm{}_wn{}_mn{}_k{}",
+            "steel_gemm_splitk_{}_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}_MN_{}_K_{}",
             transpose_suffix,
-            type_suffix,
+            in_name,
+            out_name,
             config.tile_rows,
             config.tile_cols,
             config.tile_depth,
             config.warps_per_row,
             config.warps_per_col,
-            mn_aligned as u8,
-            k_aligned as u8,
+            mn_tag,
+            k_tag,
         ))
     }
 
     fn accum_kernel_name(&self) -> Result<String, MTLError> {
-        let type_suffix = self.type_suffix()?;
-        Ok(format!("splitk_accum_{}", type_suffix))
+        let out_name = self.steel_type_name()?;
+        Ok(format!(
+            "steel_gemm_splitk_accum_{}_{}",
+            out_name,
+            self.splitk_partial_out_name()
+        ))
     }
 
     fn get_partial_pipeline(
@@ -221,17 +246,17 @@ impl SplitKGemm {
         );
 
         let params = SplitKGEMMParams {
-            m,
-            n,
-            k,
-            leading_dim_a: args.lda,
-            leading_dim_b: args.ldb,
-            leading_dim_accumulator: n,
-            tile_count_n,
-            tile_count_m,
-            partition_count,
-            output_elements_per_partition,
-            k_elements_per_partition,
+            M: m,
+            N: n,
+            K: k,
+            lda: args.lda,
+            ldb: args.ldb,
+            ldc: n,
+            tiles_n: tile_count_n,
+            tiles_m: tile_count_m,
+            split_k_partitions: partition_count,
+            split_k_partition_stride: output_elements_per_partition,
+            split_k_partition_size: k_elements_per_partition,
             gemm_k_iterations_aligned: gemm_k_iterations,
         };
 

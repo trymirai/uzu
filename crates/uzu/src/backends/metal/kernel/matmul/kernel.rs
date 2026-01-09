@@ -60,11 +60,11 @@ pub struct MatmulKernel {
 }
 
 impl MatmulKernel {
-    fn dtype_suffix(dt: DataType) -> &'static str {
+    fn steel_type_name(dt: DataType) -> &'static str {
         match dt {
-            DataType::F16 => "f16",
-            DataType::BF16 => "bf16",
-            DataType::F32 => "f32",
+            DataType::F16 => "float16",
+            DataType::BF16 => "bfloat16",
+            DataType::F32 => "float32",
             _ => unreachable!(),
         }
     }
@@ -73,15 +73,22 @@ impl MatmulKernel {
         &self,
         tile: &TileSelection,
     ) -> String {
-        let dtype_suffix = Self::dtype_suffix(self.data_type);
+        let type_name = Self::steel_type_name(self.data_type);
         let transpose_suffix = transpose_configuration(
             self.lhs_is_transposed,
             self.rhs_is_transposed,
         );
+        let prefix = if tile.block_depth >= 256 {
+            "steel_gemm_fused_nax"
+        } else {
+            "steel_gemm_fused"
+        };
         format!(
-            "gemm_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}",
+            "{}_{}_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}",
+            prefix,
             transpose_suffix.as_str(),
-            dtype_suffix,
+            type_name,
+            type_name,
             tile.block_rows,
             tile.block_cols,
             tile.block_depth,
@@ -210,7 +217,7 @@ impl MatmulKernel {
         // NAX path: prefer deeper K tiles on NAX-capable devices.
         if mtl.is_nax_available() && prefer_half_or_tf32 {
             let base_tile = TileSelection::new(
-                128, 128, 32, 2, 2, /*swizzle_log2=*/ 0,
+                128, 128, 512, 4, 4, /*swizzle_log2=*/ 0,
             );
             let tile_rows =
                 (args.batch + base_tile.block_rows - 1) / base_tile.block_rows;
@@ -420,9 +427,9 @@ impl MatmulKernel {
         let elements_per_matrix_d = (args.batch as i64) * (args.ldd as i64);
         let batch_ndim = 1;
         let params = GEMMParams {
-            batch: m,
-            output_dim: n,
-            input_dim: k,
+            M: m,
+            N: n,
+            K: k,
             lda: args.lda,
             ldb: args.ldb,
             ldd: args.ldd,

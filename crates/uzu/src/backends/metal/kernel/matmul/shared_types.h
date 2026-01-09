@@ -20,18 +20,14 @@ namespace matmul {
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// GEMM Parameters
+// GEMM Parameters (mirrors steel/gemm/params.h, but C-compatible)
 ///////////////////////////////////////////////////////////////////////////////
 
-/// Parameters for the main GEMM kernel.
-/// Layout: 8 x int32, 3 x int64, 2 x int32 = 64 bytes total
+// Main GEMM parameters
 struct GEMMParams {
-  /// M dimension - batch/number of tokens (rows of A, rows of D)
-  int batch;
-  /// N dimension - output_dim (cols of B, cols of D)
-  int output_dim;
-  /// K dimension - input_dim/reduction dimension (cols of A, rows of B)
-  int input_dim;
+  int M;
+  int N;
+  int K;
 
   int lda;
   int ldb;
@@ -50,7 +46,27 @@ struct GEMMParams {
   int batch_ndim;
 };
 
-/// Parameters for addmm (alpha * A @ B + beta * C) operations
+// Split-K GEMM parameters
+struct GEMMSpiltKParams {
+  int M;
+  int N;
+  int K;
+
+  int lda;
+  int ldb;
+  int ldc;
+
+  int tiles_n;
+  int tiles_m;
+
+  int split_k_partitions;
+  int split_k_partition_stride;
+  int split_k_partition_size;
+
+  int gemm_k_iterations_aligned;
+};
+
+// AddMM parameters (alpha * A @ B + beta * C)
 struct GEMMAddMMParams {
   int ldc;
   int fdc;
@@ -59,24 +75,6 @@ struct GEMMAddMMParams {
 
   float alpha;
   float beta;
-};
-
-struct SplitKGEMMParams {
-  int m;
-  int n;
-  int k;
-
-  int leading_dim_a;
-  int leading_dim_b;
-  int leading_dim_accumulator;
-
-  int tile_count_n;
-  int tile_count_m;
-
-  int partition_count;
-  int output_elements_per_partition;
-  int k_elements_per_partition;
-  int gemm_k_iterations_aligned;
 };
 
 // Close Metal namespace

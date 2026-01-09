@@ -40,7 +40,7 @@ fn generate_metal_bindings() {
         // Only generate types we care about
         .allowlist_type("GEMMParams")
         .allowlist_type("GEMMAddMMParams")
-        .allowlist_type("SplitKGEMMParams")
+        .allowlist_type("GEMMSpiltKParams")
         // Use core types
         .use_core()
         .generate()
@@ -82,6 +82,13 @@ fn compile_metal_shaders() {
 
     println!("cargo:info=Compiling Metal shaders for SDK: {}", sdk);
 
+    // Re-run build script if the host OS version changes (affects Metal feature availability)
+    if cfg!(target_os = "macos") {
+        println!(
+            "cargo:rerun-if-changed=/System/Library/CoreServices/SystemVersion.plist"
+        );
+    }
+
     // Gather all .metal files in the project (src directory and subdirs)
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src_dir = manifest_dir.join("src");
@@ -118,25 +125,59 @@ fn compile_metal_shaders() {
     let metallib_path =
         metallib_dir.join(format!("shaders_{}.metallib", platform_suffix));
 
+    let nax_enabled = should_enable_nax(&target_os, sdk);
+    if nax_enabled {
+        println!("cargo:info=Metal NAX kernels enabled (Metal 4, OS 26+)");
+    } else {
+        println!("cargo:info=Metal NAX kernels disabled");
+    }
+
+    let metal_files_to_compile: Vec<PathBuf> = if nax_enabled {
+        metal_files.clone()
+    } else {
+        metal_files.iter().filter(|p| !is_nax_kernel(p)).cloned().collect()
+    };
+
     // Decide whether to compile (if metallib missing or any source changed)
-    let should_compile =
-        needs_compilation(&metal_files, &metallib_path, &target);
+    let should_compile = needs_compilation(
+        &metal_files_to_compile,
+        &metallib_path,
+        &target,
+        nax_enabled,
+    );
     if should_compile {
-        compile_metal_files(&metal_files, &metallib_dir, sdk, &src_dir);
+        compile_metal_files(
+            &metal_files_to_compile,
+            &metallib_dir,
+            sdk,
+            &src_dir,
+            nax_enabled,
+        );
         // Record the target triple for which we built the metallib
         let _ = fs::write(metallib_path.with_extension("target"), &target);
+        // Record whether we built with NAX kernels enabled
+        let _ = fs::write(
+            metallib_path.with_extension("nax"),
+            if nax_enabled {
+                "1"
+            } else {
+                "0"
+            },
+        );
     } else {
         println!(
             "cargo:info=Metal shaders are up-to-date; skipping compilation"
         );
     }
 
-    // Read the (new or existing) metallib bytes
-    let metallib_data = fs::read(&metallib_path)
-        .or_else(|_| fs::read(metallib_dir.join("shaders.metallib")))
-        .expect("Failed to read metallib data");
-    // Write bytes into a Rust source file as a static array
-    write_metallib_as_bytes(&metallib_data, &out_dir.join("metal_lib.rs"));
+    if !metallib_path.exists() {
+        panic!("Metal library not found at {}", metallib_path.display());
+    }
+
+    // Generate a tiny Rust source file that uses include_bytes! to embed the
+    // compiled metallib. This avoids generating a massive Rust file containing
+    // a hex-encoded byte array (which is slow to write/compile).
+    write_metallib_include(platform_suffix, &out_dir.join("metal_lib.rs"));
 
     // Tell Cargo when to re-run this build script: all shader files, plus build.rs and any FFI headers
     let mut sorted_files: Vec<&PathBuf> = metal_files.iter().collect();
@@ -145,6 +186,43 @@ fn compile_metal_shaders() {
         println!("cargo:rerun-if-changed={}", file.display());
     }
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+fn is_nax_kernel(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.contains("_nax"))
+        .unwrap_or(false)
+}
+
+const NAX_MIN_OS_MAJOR: u32 = 26;
+
+fn host_macos_major_version() -> Option<u32> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let output =
+        Command::new("sw_vers").arg("-productVersion").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout);
+    let major = version.trim().split('.').next()?.parse::<u32>().ok()?;
+    Some(major)
+}
+
+fn should_enable_nax(
+    target_os: &str,
+    sdk: &str,
+) -> bool {
+    if target_os != "macos" && target_os != "ios" {
+        return false;
+    }
+    // Conservative: don't enable NAX for simulator builds
+    if sdk == "iphonesimulator" {
+        return false;
+    }
+    host_macos_major_version().is_some_and(|major| major >= NAX_MIN_OS_MAJOR)
 }
 
 // Recursively find all .metal files in the given directory
@@ -169,6 +247,7 @@ fn needs_compilation(
     metal_files: &[PathBuf],
     metallib_path: &Path,
     target: &str,
+    nax_enabled: bool,
 ) -> bool {
     // If output metallib doesn't exist, need to compile
     if !metallib_path.exists() {
@@ -185,6 +264,22 @@ fn needs_compilation(
             );
             return true;
         }
+    }
+    // If the previous NAX mode differs, force a rebuild (affects metallib compatibility)
+    let desired_nax = if nax_enabled {
+        "1"
+    } else {
+        "0"
+    };
+    match fs::read_to_string(metallib_path.with_extension("nax")) {
+        Ok(prev_nax) if prev_nax.trim() == desired_nax => {},
+        _ => {
+            println!(
+                "cargo:warning=Metal NAX mode changed; recompiling shaders (nax={})",
+                desired_nax
+            );
+            return true;
+        },
     }
     // If any source file is newer than the metallib, recompile
     let metallib_mtime = fs::metadata(metallib_path)
@@ -210,6 +305,7 @@ fn compile_metal_files(
     out_dir: &Path,
     sdk: &str,
     src_dir: &Path,
+    nax_enabled: bool,
 ) {
     // Create temp directory for .air files
     let air_dir = out_dir.join("air");
@@ -218,9 +314,52 @@ fn compile_metal_files(
     // Collect include directories (parents of each metal file + src dir)
     let mut include_dirs = HashSet::new();
     include_dirs.insert(src_dir.to_path_buf());
+
+    // Add kernel root and common/matmul subdirectories to satisfy kernel includes
+    let kernel_dir = src_dir.join("backends/metal/kernel");
+    if kernel_dir.exists() {
+        include_dirs.insert(kernel_dir.clone());
+        let common_dir = kernel_dir.join("common");
+        if common_dir.exists() {
+            include_dirs.insert(common_dir);
+        }
+
+        let matmul_dir = kernel_dir.join("matmul");
+        if matmul_dir.exists() {
+            include_dirs.insert(matmul_dir.clone());
+
+            let gemv_dir = matmul_dir.join("gemv");
+            if gemv_dir.exists() {
+                include_dirs.insert(gemv_dir);
+            }
+
+            let steel_dir = matmul_dir.join("steel");
+            if steel_dir.exists() {
+                include_dirs.insert(steel_dir.clone());
+
+                let steel_gemm_dir = steel_dir.join("gemm");
+                if steel_gemm_dir.exists() {
+                    include_dirs.insert(steel_gemm_dir.clone());
+                    let steel_gemm_kernels_dir = steel_gemm_dir.join("kernels");
+                    if steel_gemm_kernels_dir.exists() {
+                        include_dirs.insert(steel_gemm_kernels_dir);
+                    }
+                }
+
+                let steel_utils_dir = steel_dir.join("utils");
+                if steel_utils_dir.exists() {
+                    include_dirs.insert(steel_utils_dir);
+                }
+            }
+        }
+    }
+
     for metal_file in metal_files {
         if let Some(parent) = metal_file.parent() {
             include_dirs.insert(parent.to_path_buf());
+            if let Some(grand) = parent.parent() {
+                include_dirs.insert(grand.to_path_buf());
+            }
         }
     }
 
@@ -232,8 +371,22 @@ fn compile_metal_files(
         _ => "-O2", // treat levels 2,3,s,z as O2 for metal
     };
 
-    // Platform-specific min version flags (Metal 3.1 requires macOS 14 / iOS 17)
-    let platform_flags = if sdk == "macosx" || sdk == "maccatalyst" {
+    let metal_std = if nax_enabled {
+        "metal4.0"
+    } else {
+        "metal3.1"
+    };
+
+    // Platform-specific min version flags.
+    // - Metal 3.1 requires macOS 14 / iOS 17
+    // - NAX kernels require macOS/iOS 26+ (Metal 4)
+    let platform_flags = if nax_enabled {
+        if sdk == "macosx" || sdk == "maccatalyst" {
+            vec!["-mmacosx-version-min=26.0"]
+        } else {
+            vec!["-mios-version-min=26.0"]
+        }
+    } else if sdk == "macosx" || sdk == "maccatalyst" {
         vec!["-mmacosx-version-min=14.0"]
     } else {
         vec!["-mios-version-min=17.0"]
@@ -255,7 +408,7 @@ fn compile_metal_files(
         // Invoke Metal compiler
         let mut cmd = Command::new("xcrun");
         cmd.args(&["-sdk", sdk, "metal", metal_opt_flag]);
-        cmd.arg(format!("-std={}", "metal3.1")); // target Metal 3.1 shading language
+        cmd.arg(format!("-std={}", metal_std));
         for flag in &platform_flags {
             cmd.arg(flag);
         }
@@ -325,21 +478,19 @@ fn compile_metal_files(
     );
 }
 
-fn write_metallib_as_bytes(
-    metallib_data: &[u8],
+fn write_metallib_include(
+    platform_suffix: &str,
     out_path: &Path,
 ) {
     let mut f = fs::File::create(out_path).expect("Cannot create metal_lib.rs");
-    writeln!(f, "// AUTO-GENERATED Metal library byte array").unwrap();
-    writeln!(f, "pub const METAL_LIBRARY_DATA: &[u8] = &[").unwrap();
-    for chunk in metallib_data.chunks(16) {
-        write!(f, "    ").unwrap();
-        for byte in chunk {
-            write!(f, "0x{:02x}, ", byte).unwrap();
-        }
-        writeln!(f).unwrap();
-    }
-    writeln!(f, "];").unwrap();
+    let metallib_file_name = format!("shaders_{}.metallib", platform_suffix);
+    writeln!(f, "// AUTO-GENERATED Metal library include").unwrap();
+    writeln!(
+        f,
+        "pub const METAL_LIBRARY_DATA: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/metallib/{}\"));",
+        metallib_file_name
+    )
+    .unwrap();
 }
 
 fn write_empty_metallib() {
