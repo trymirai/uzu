@@ -7,11 +7,27 @@ use crate::backends::metal::{
     KernelDataType, MTLContext,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
-        AttentionError, AttentionKernel, AttentionKernelVariant,
-        AttentionSinglePassArguments, AttentionTwoPassArguments,
-        KVCacheUpdateArguments,
+        AttentionError, AttentionGemmArguments, AttentionKernel,
+        AttentionKernelVariant, AttentionSinglePassArguments,
+        AttentionTwoPassArguments, KVCacheUpdateArguments,
     },
 };
+
+fn env_gemm_attention_enabled() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        let raw = std::env::var("UZU_USE_GEMM_ATTENTION").ok();
+        let Some(raw) = raw else {
+            return true;
+        };
+        let v = raw.trim().to_ascii_uppercase();
+        match v.as_str() {
+            "1" | "YES" | "TRUE" | "ON" => true,
+            "0" | "NO" | "FALSE" | "OFF" => false,
+            _ => true,
+        }
+    })
+}
 
 pub struct Attention {
     kernel: AttentionKernel,
@@ -134,11 +150,40 @@ impl EncodableBlock for Attention {
         let scale =
             self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
-        let variant = self.kernel.choose_variant(
-            sequence_length,
-            head_dim,
-            self.is_causal,
-        );
+        let gemm_enabled = env_gemm_attention_enabled();
+        let use_gemm = gemm_enabled
+            && suffix_length > 8
+            && matches!(head_dim, 64 | 128 | 256);
+        if !gemm_enabled {
+            static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
+            PRINT_ONCE.call_once(|| {
+                eprintln!(
+                    "[uzu] Gemm attention disabled via UZU_USE_GEMM_ATTENTION"
+                );
+            });
+        }
+        if use_gemm {
+            static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
+            PRINT_ONCE.call_once(|| {
+                eprintln!(
+                    "[uzu] Using Gemm attention (suffix_len={}, seq_len={}, head_dim={}, gqa_factor={}, causal={})",
+                    suffix_length,
+                    sequence_length,
+                    head_dim,
+                    gqa_factor,
+                    self.is_causal
+                );
+            });
+        }
+        let variant = if use_gemm {
+            AttentionKernelVariant::SinglePass
+        } else {
+            self.kernel.choose_variant(
+                sequence_length,
+                head_dim,
+                self.is_causal,
+            )
+        };
 
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
@@ -279,7 +324,32 @@ impl EncodableBlock for Attention {
 
         match variant {
             AttentionKernelVariant::SinglePass => {
-                if let Err(e) = self.kernel.encode_single_pass(
+                if use_gemm {
+                    let mtl = &**state.mtl_context();
+                    if let Err(e) = self.kernel.encode_gemm(
+                        mtl,
+                        compute_encoder,
+                        AttentionGemmArguments {
+                            queries_buffer: &queries_buffer,
+                            keys_buffer: &key_cache_buffer,
+                            values_buffer: &value_cache_buffer,
+                            output_buffer: &attention_output_buffer,
+                            mask_buffer: Some(&attention_bias_buffer),
+                            sinks_buffer: sinks_buffer.as_ref(),
+                            num_heads,
+                            num_groups,
+                            suffix_length,
+                            sequence_length,
+                            segment_prefix_length,
+                            max_sequence_length,
+                            head_dim,
+                            is_causal: self.is_causal,
+                            scale,
+                        },
+                    ) {
+                        eprintln!("Failed to encode gemm attention: {:?}", e);
+                    }
+                } else if let Err(e) = self.kernel.encode_single_pass(
                     compute_encoder,
                     AttentionSinglePassArguments {
                         queries_buffer: &queries_buffer,

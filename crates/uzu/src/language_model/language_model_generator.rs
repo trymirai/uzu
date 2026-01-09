@@ -101,6 +101,8 @@ impl LanguageModelGenerator {
         let flat_trie = suffix_root.linearize();
         let active_suffix_length = flat_trie.len() - 1;
 
+        let has_grammar = compiled_grammar.is_some();
+
         let token_ids = tokens
             .iter()
             .copied()
@@ -141,7 +143,7 @@ impl LanguageModelGenerator {
             (
                 step_token_ids,
                 step_token_positions,
-                step_token_bitmask,
+                step_token_bitmasks,
                 step_token_seeds,
             ),
         ) in
@@ -154,25 +156,6 @@ impl LanguageModelGenerator {
             let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
             let step_token_positions =
                 step_token_positions.collect::<Box<[usize]>>();
-            let step_token_bitmask = step_token_bitmask
-                .map(|mask| match mask {
-                    Some(mask) => Either::Left(
-                        mask.iter()
-                            .copied()
-                            .take(single_token_bitmask_size)
-                            .chain(repeat_n(
-                                0u32,
-                                single_token_bitmask_size
-                                    .saturating_sub(mask.len()),
-                            )),
-                    ),
-                    None => Either::Right(repeat_n(
-                        u32::MAX,
-                        single_token_bitmask_size,
-                    )),
-                })
-                .flatten()
-                .collect::<Box<[u32]>>();
             let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
 
             let active_suffix_length = step_token_positions
@@ -182,6 +165,53 @@ impl LanguageModelGenerator {
             let is_last_prefill_step = step == prefill_steps - 1;
             let should_sample_after_step =
                 sample_suffix && is_last_prefill_step;
+
+            // If we sample on the last prefill step, we only need logits/sampling
+            // for tokens that are beyond the prompt prefix (i.e. starting at the
+            // suffix-root token, which is the last prompt token).
+            let (sampling_start, sampling_length) = if should_sample_after_step
+            {
+                let suffix_root_index_in_step =
+                    (tokens_length - 1).saturating_sub(tokens_start_index);
+                let sampling_length = active_suffix_length
+                    .saturating_sub(suffix_root_index_in_step);
+                debug_assert!(
+                    sampling_length > 0,
+                    "Expected at least one token to sample on the last prefill step"
+                );
+                (suffix_root_index_in_step, sampling_length)
+            } else {
+                (0, 0)
+            };
+
+            let step_token_bitmask: Option<Box<[u32]>> =
+                if has_grammar && sampling_length > 0 {
+                    Some(
+                        step_token_bitmasks
+                            .map(|mask| match mask {
+                                Some(mask) => Either::Left(
+                                    mask.iter()
+                                        .copied()
+                                        .take(single_token_bitmask_size)
+                                        .chain(repeat_n(
+                                            0u32,
+                                            single_token_bitmask_size
+                                                .saturating_sub(mask.len()),
+                                        )),
+                                ),
+                                None => Either::Right(repeat_n(
+                                    u32::MAX,
+                                    single_token_bitmask_size,
+                                )),
+                            })
+                            .flatten()
+                            .collect::<Box<[u32]>>(),
+                    )
+                } else {
+                    // Drain the chunk iterator to keep the other chunked iterators aligned.
+                    let _ = step_token_bitmasks.count();
+                    None
+                };
 
             let should_capture =
                 self.gpu_capture.should_capture_prefill(step == 0);
@@ -199,10 +229,12 @@ impl LanguageModelGenerator {
             let task = LanguageModelGeneratorRunTask {
                 token_ids: &step_token_ids,
                 token_positions: &step_token_positions,
-                token_bitmask: Some(&step_token_bitmask),
+                token_bitmask: step_token_bitmask.as_deref(),
                 token_seeds: &step_token_seeds,
                 expected_number_of_new_tokens: prefill_step_size,
                 active_suffix_length,
+                sampling_start,
+                sampling_length,
                 is_prefilling: !should_sample_after_step,
             };
 
@@ -273,10 +305,8 @@ impl LanguageModelGenerator {
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(
-            &sampled_tokens[suffix_root_index..],
-            compiled_grammar.as_deref_mut(),
-        );
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
         self.update_cache_layers(
             &accepted_token_indices
@@ -321,27 +351,32 @@ impl LanguageModelGenerator {
             .chain(repeat_n(0, suffix_length - active_suffix_length))
             .collect::<Box<[u64]>>();
 
-        let single_token_bitmask_size =
-            self.context.model_shape.bitmask_shape(1)[1];
-        let token_bitmask = flat_trie
-            .token_masks()
-            .chain(repeat_n(None, suffix_length - active_suffix_length))
-            .map(|mask| match mask {
-                Some(mask) => Either::Left(
-                    mask.iter().copied().take(single_token_bitmask_size).chain(
-                        repeat_n(
-                            0u32,
-                            single_token_bitmask_size
-                                .saturating_sub(mask.len()),
+        let token_bitmask: Option<Box<[u32]>> =
+            compiled_grammar.is_some().then(|| {
+                let single_token_bitmask_size =
+                    self.context.model_shape.bitmask_shape(1)[1];
+                flat_trie
+                    .token_masks()
+                    .chain(repeat_n(None, suffix_length - active_suffix_length))
+                    .map(|mask| match mask {
+                        Some(mask) => Either::Left(
+                            mask.iter()
+                                .copied()
+                                .take(single_token_bitmask_size)
+                                .chain(repeat_n(
+                                    0u32,
+                                    single_token_bitmask_size
+                                        .saturating_sub(mask.len()),
+                                )),
                         ),
-                    ),
-                ),
-                None => {
-                    Either::Right(repeat_n(u32::MAX, single_token_bitmask_size))
-                },
-            })
-            .flatten()
-            .collect::<Box<[u32]>>();
+                        None => Either::Right(repeat_n(
+                            u32::MAX,
+                            single_token_bitmask_size,
+                        )),
+                    })
+                    .flatten()
+                    .collect::<Box<[u32]>>()
+            });
 
         let start_position = self.tokens.len() - 1;
         let token_positions = flat_trie
@@ -361,10 +396,12 @@ impl LanguageModelGenerator {
         let task = LanguageModelGeneratorRunTask {
             token_ids: &token_ids,
             token_positions: &token_positions,
-            token_bitmask: Some(&token_bitmask),
+            token_bitmask: token_bitmask.as_deref(),
             token_seeds: &token_seeds,
             expected_number_of_new_tokens: 1,
             active_suffix_length,
+            sampling_start: 0,
+            sampling_length: active_suffix_length,
             is_prefilling: false,
         };
 
@@ -466,6 +503,8 @@ impl LanguageModelGenerator {
             token_seeds: &[0], // Ignored, using async buffer
             expected_number_of_new_tokens: 1,
             active_suffix_length: 1,
+            sampling_start: 0,
+            sampling_length: 1,
             is_prefilling: false,
         };
 
@@ -489,6 +528,8 @@ impl LanguageModelGenerator {
             task.token_bitmask,
             &task.token_seeds,
             task.active_suffix_length,
+            /*sampling_start=*/ 0,
+            /*sampling_length=*/ task.active_suffix_length,
             task.is_prefilling,
             None,
             skip_token_ids_copy,
@@ -651,6 +692,8 @@ impl LanguageModelGenerator {
             token_seeds: &token_seeds,
             expected_number_of_new_tokens: suffix_length,
             active_suffix_length: suffix_length,
+            sampling_start: 0,
+            sampling_length: suffix_length,
             is_prefilling: false,
         };
 
@@ -736,7 +779,6 @@ impl LanguageModelGenerator {
 
             root_command_buffer.wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
-
             if should_capture {
                 self.gpu_capture.stop_capture("decode");
             }
@@ -756,7 +798,7 @@ impl LanguageModelGenerator {
         let output_view = output_buffer
             .as_view::<u32>()
             .map_err(|_| Error::SamplingFailed)?;
-        let batch_size = state.active_suffix_length();
+        let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);
         for i in 0..batch_size {

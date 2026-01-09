@@ -264,7 +264,7 @@ impl SplitKGemm {
             self.get_partial_pipeline(mtl, tile_config, mn_aligned, k_aligned)?;
 
         enc.set_compute_pipeline_state(partial_ps);
-        enc.set_buffer(0, Some(args.a), 0);
+        enc.set_buffer(0, Some(args.a), args.a_offset);
         enc.set_buffer(1, Some(args.b), 0);
         enc.set_buffer(2, Some(&accumulator_buffer), 0);
         enc.set_bytes(

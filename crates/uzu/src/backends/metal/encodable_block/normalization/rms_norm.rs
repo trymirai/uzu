@@ -24,6 +24,7 @@ pub struct RMSNorm {
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     scales_buffer: MTLBuffer,
+    use_sampling_range: bool,
 }
 
 impl RMSNorm {
@@ -84,7 +85,15 @@ impl RMSNorm {
             input_array_id,
             output_array_id,
             scales_buffer,
+            use_sampling_range: false,
         })
+    }
+
+    /// When enabled, this RMSNorm only runs on `state.sampling_start()..+state.sampling_length()`.
+    /// This is useful for the final output norm before readout/sampling in prefill.
+    pub fn with_sampling_range(mut self) -> Self {
+        self.use_sampling_range = true;
+        self
     }
 }
 
@@ -126,18 +135,39 @@ impl EncodableBlock for RMSNorm {
         let mut input_array = input_binding[0].borrow_mut();
         let mut output_array = output_binding[0].borrow_mut();
 
+        let suffix_length = input_shape[0];
+        let input_elem_size = input_array.data_type().size_in_bytes();
+        let output_elem_size = output_array.data_type().size_in_bytes();
         let input_buffer = unsafe { input_array.mtl_buffer() };
         let output_buffer = unsafe { output_array.mtl_buffer() };
 
-        let batch_size = input_shape[0] as i32;
+        let (batch_start, batch_len) = if self.use_sampling_range {
+            (state.sampling_start(), state.sampling_length())
+        } else {
+            (0, state.active_suffix_length())
+        };
+        let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
+        if batch_len == 0 {
+            return;
+        }
+
+        let row_size_in_bytes = input_shape[1] * input_elem_size;
+        let input_offset = (batch_start * row_size_in_bytes) as u64;
+
+        let output_row_size_in_bytes = input_shape[1] * output_elem_size;
+        let output_offset = (batch_start * output_row_size_in_bytes) as u64;
+
+        let batch_size = batch_len as i32;
         let model_dim = input_shape[1] as i32;
 
         if let Err(e) = self.kernel.encode(
             compute_encoder,
             RMSNormArguments {
                 input_buffer: &input_buffer,
+                input_offset,
                 scales_buffer: &self.scales_buffer,
                 output_buffer: &output_buffer,
+                output_offset,
                 batch_size,
                 model_dim,
                 epsilon: self.config.epsilon,

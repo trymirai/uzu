@@ -3,6 +3,8 @@ use metal::Buffer as MTLBuffer;
 #[derive(Debug, Clone)]
 pub struct MatmulArguments<'a> {
     pub a: &'a MTLBuffer,
+    /// Byte offset into `a` (used for slicing the batch dimension).
+    pub a_offset: u64,
     pub b: &'a MTLBuffer,
     pub c: Option<&'a MTLBuffer>,
     pub d: &'a MTLBuffer,

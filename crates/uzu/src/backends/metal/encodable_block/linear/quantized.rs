@@ -241,6 +241,7 @@ impl EncodableBlock for QuantizedLinear {
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
+            a_offset: 0,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
             zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
@@ -299,6 +300,7 @@ impl EncodableBlock for QuantizedLinear {
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
+            a_offset: 0,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
             zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,

@@ -43,6 +43,8 @@ pub struct QuantizedMatmulKernel {
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulArguments<'a> {
     pub a_buffer: &'a MTLBuffer,
+    /// Byte offset into `a_buffer` (used for slicing the batch dimension).
+    pub a_offset: u64,
     pub b_buffer: &'a MTLBuffer,
     pub scales_buffer: &'a MTLBuffer,
     pub zero_points_or_biases_buffer: &'a MTLBuffer,
@@ -203,7 +205,7 @@ impl QuantizedMatmulKernel {
         encoder.set_buffer(0, Some(args.b_buffer), 0);
         encoder.set_buffer(1, Some(args.scales_buffer), 0);
         encoder.set_buffer(2, Some(args.zero_points_or_biases_buffer), 0);
-        encoder.set_buffer(3, Some(args.a_buffer), 0);
+        encoder.set_buffer(3, Some(args.a_buffer), args.a_offset);
         encoder.set_buffer(4, Some(args.output_buffer), 0);
 
         let k: i32 = args.input_dim;

@@ -239,7 +239,7 @@ impl MatmulKernel {
             DeviceClass::Unknown(_) => 'g',
         };
 
-        // Default steel matmul heuristics (non-NAX), matching observed
+        // Default gemm matmul heuristics (non-NAX), matching observed
         // choices on M2 Max: prefer 64x64x16 wm2/wn2 for large shapes and
         // fall back to 64x32x32 when transpose_b=true and not N-aligned.
         match device_class_code {
@@ -401,7 +401,7 @@ impl MatmulKernel {
         enc.set_compute_pipeline_state(ps);
 
         // Set buffers
-        enc.set_buffer(0, Some(args.a), 0);
+        enc.set_buffer(0, Some(args.a), args.a_offset);
         enc.set_buffer(1, Some(args.b), 0);
         if use_out_source {
             if let Some(c_buf) = args.c {

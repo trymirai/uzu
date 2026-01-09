@@ -155,6 +155,7 @@ impl Decoder {
                 ArrayId::Main,
                 &decoder_weight_loader.subtree("output_norm").unwrap(),
             )
+            .map(RMSNorm::with_sampling_range)
             .expect("Failed to create output RMS norm kernel"),
         );
 

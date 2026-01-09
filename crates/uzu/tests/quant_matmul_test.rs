@@ -538,6 +538,7 @@ fn execute_quantized_matmul(
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
                 a_buffer: &x_buf,
+                a_offset: 0,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
                 zero_points_or_biases_buffer: &b_buf,
@@ -560,6 +561,7 @@ fn execute_quantized_matmul(
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
             a_buffer: &x_buf,
+            a_offset: 0,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
             zero_points_or_biases_buffer: &b_buf,

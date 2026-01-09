@@ -220,25 +220,19 @@ impl GemvKernel {
         let pipeline = self.get_pipeline(context, configuration)?;
         encoder.set_compute_pipeline_state(pipeline);
 
-        encoder.set_buffer(
-            0,
-            Some(if matrix_is_rhs {
-                arguments.b
-            } else {
-                arguments.a
-            }),
-            0,
-        );
+        let (buf0, off0) = if matrix_is_rhs {
+            (arguments.b, 0)
+        } else {
+            (arguments.a, arguments.a_offset)
+        };
+        encoder.set_buffer(0, Some(buf0), off0);
 
-        encoder.set_buffer(
-            1,
-            Some(if matrix_is_rhs {
-                arguments.a
-            } else {
-                arguments.b
-            }),
-            0,
-        );
+        let (buf1, off1) = if matrix_is_rhs {
+            (arguments.a, arguments.a_offset)
+        } else {
+            (arguments.b, 0)
+        };
+        encoder.set_buffer(1, Some(buf1), off1);
 
         if configuration.do_axpby {
             if let Some(bias) = bias_buffer {

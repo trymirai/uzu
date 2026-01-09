@@ -106,6 +106,8 @@ impl ForwardPassState {
         token_bitmask: Option<&[u32]>,
         token_seeds: &[u64],
         active_suffix_length: usize,
+        sampling_start: usize,
+        sampling_length: usize,
         is_prefilling: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
@@ -254,6 +256,8 @@ impl ForwardPassState {
                 #[cfg(feature = "tracing")]
                 traces,
                 active_suffix_length,
+                sampling_start,
+                sampling_length,
                 is_prefilling,
             },
         );
@@ -946,6 +950,26 @@ impl ForwardPassState {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
                 state.active_suffix_length
+            },
+            ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
+        }
+    }
+
+    /// Start index (within the suffix batch) for which we need logits/sampling.
+    pub fn sampling_start(&self) -> usize {
+        match &self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_start
+            },
+            ForwardPassMode::Classifier(_) => 0,
+        }
+    }
+
+    /// Number of batch items for which we need logits/sampling.
+    pub fn sampling_length(&self) -> usize {
+        match &self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_length
             },
             ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
         }

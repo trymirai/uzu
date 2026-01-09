@@ -122,6 +122,7 @@ impl EncodableBlock for FullPrecisionLinear {
 
         let args = MatmulArguments {
             a: input_buffer,
+            a_offset: 0,
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
@@ -176,6 +177,7 @@ impl EncodableBlock for FullPrecisionLinear {
 
         let args = MatmulArguments {
             a: input_buffer,
+            a_offset: 0,
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,

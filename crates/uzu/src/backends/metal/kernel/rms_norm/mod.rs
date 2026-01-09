@@ -41,8 +41,10 @@ pub struct RMSNormKernel {
 #[derive(Debug)]
 pub struct RMSNormArguments<'a> {
     pub input_buffer: &'a MTLBuffer,
+    pub input_offset: u64,
     pub scales_buffer: &'a MTLBuffer,
     pub output_buffer: &'a MTLBuffer,
+    pub output_offset: u64,
     pub batch_size: i32,
     pub model_dim: i32,
     pub epsilon: f32,
@@ -207,9 +209,10 @@ impl RMSNormKernel {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers
-        compute_encoder.set_buffer(0, Some(args.input_buffer), 0);
+        compute_encoder.set_buffer(0, Some(args.input_buffer), args.input_offset);
         compute_encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.output_buffer), 0);
+        compute_encoder
+            .set_buffer(2, Some(args.output_buffer), args.output_offset);
 
         // Set parameters
         compute_encoder.set_bytes(

@@ -2,6 +2,19 @@ use crate::{
     config::LanguageModelConfig, session::parameter::ConfigResolvableValue,
 };
 
+fn env_prefill_step_size_default_override() -> Option<usize> {
+    static OVERRIDE: std::sync::OnceLock<Option<usize>> =
+        std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        let raw = std::env::var("UZU_PREFILL_STEP_SIZE").ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        trimmed.parse::<usize>().ok()
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PrefillStepSize {
     Default,
@@ -20,7 +33,7 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         &self,
         config: &LanguageModelConfig,
     ) -> usize {
-        let default_limit: usize = 1024;
+        let default_limit: usize = 2048;
         let model_context_length =
             config.model_config.transformer_config.context_length;
 
@@ -44,7 +57,9 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
 
         let proposed_value = match self {
             PrefillStepSize::Default => {
-                if cfg!(target_os = "ios") {
+                if let Some(v) = env_prefill_step_size_default_override() {
+                    v
+                } else if cfg!(target_os = "ios") {
                     64
                 } else {
                     256

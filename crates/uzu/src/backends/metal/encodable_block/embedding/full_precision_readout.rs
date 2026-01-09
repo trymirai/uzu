@@ -111,15 +111,22 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
-        let batch_size = state.active_suffix_length();
+        let batch_size = state.sampling_length();
+        if batch_size == 0 {
+            return;
+        }
+        let sampling_start = state.sampling_start();
         let mut input_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
 
+        let elem_size = input_array_mut.data_type().size_in_bytes();
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let a_offset = (sampling_start * self.model_dim * elem_size) as u64;
 
         let args = MatmulArguments {
             a: input_buffer,
+            a_offset,
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,

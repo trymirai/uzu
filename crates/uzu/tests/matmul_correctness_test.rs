@@ -64,6 +64,7 @@ fn run_metal_matmul(
             &enc,
             MatmulArguments {
                 a: &a_buf,
+                a_offset: 0,
                 b: &b_buf,
                 c: None,
                 d: &d_buf,

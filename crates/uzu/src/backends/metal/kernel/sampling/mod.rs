@@ -268,6 +268,7 @@ impl SamplingKernel {
         seeds_buffer: Option<&MTLBuffer>,
         seeds_offset: usize,
         bitmask_buffer: Option<&MTLBuffer>,
+        bitmask_offset: usize,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -280,6 +281,7 @@ impl SamplingKernel {
             seeds_buffer,
             seeds_offset,
             bitmask_buffer,
+            bitmask_offset,
             sampled_tokens_buffer,
             sampling_method,
             batch_size,
@@ -296,6 +298,7 @@ impl SamplingKernel {
         seeds_buffer: Option<&MTLBuffer>,
         seeds_offset: usize,
         bitmask_buffer: Option<&MTLBuffer>,
+        bitmask_offset: usize,
         sampled_tokens_buffer: &MTLBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -321,6 +324,7 @@ impl SamplingKernel {
             self.encode_bitmask(
                 last_logits_buffer,
                 bitmask_buffer,
+                bitmask_offset,
                 &self.bitmask_applied_logits,
                 batch_size as u32,
                 vocab_size as u32,
@@ -428,6 +432,7 @@ impl SamplingKernel {
         &self,
         logits_buffer: &MTLBuffer,
         bitmask_buffer: &MTLBuffer,
+        bitmask_offset: usize,
         processed_logits_buffer: &MTLBuffer,
         batch_size: u32,
         vocab_size: u32,
@@ -436,7 +441,11 @@ impl SamplingKernel {
         compute_encoder.set_compute_pipeline_state(&self.bitmask_pipeline);
 
         compute_encoder.set_buffer(0, Some(logits_buffer), 0);
-        compute_encoder.set_buffer(1, Some(bitmask_buffer), 0);
+        compute_encoder.set_buffer(
+            1,
+            Some(bitmask_buffer),
+            bitmask_offset as u64,
+        );
         compute_encoder.set_buffer(2, Some(processed_logits_buffer), 0);
         compute_encoder.set_bytes(
             3,

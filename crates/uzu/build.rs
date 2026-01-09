@@ -53,6 +53,36 @@ fn generate_metal_bindings() {
     bindings
         .write_to_file(&bindings_path)
         .expect("Failed to write shared_types.rs");
+
+    // ---------------------------------------------------------------------
+    // Gemm attention shared types
+    // ---------------------------------------------------------------------
+    let attention_dir =
+        manifest_dir.join("src/backends/metal/kernel/attention");
+    let attn_types_header = attention_dir.join("gemm_types.h");
+
+    println!("cargo:rerun-if-changed={}", attn_types_header.display());
+
+    let attn_bindings = bindgen::Builder::default()
+        .header(attn_types_header.to_string_lossy())
+        // Generate for C mode (no Metal-specific stuff)
+        .clang_arg("-x")
+        .clang_arg("c")
+        // Derive common traits
+        .derive_default(true)
+        .derive_copy(true)
+        // Only generate types we care about
+        .allowlist_type("AttnParams")
+        .allowlist_type("AttnMaskParams")
+        // Use core types
+        .use_core()
+        .generate()
+        .expect("Failed to generate bindings from gemm_types.h");
+
+    let attn_bindings_path = attention_dir.join("gemm_types.rs");
+    attn_bindings
+        .write_to_file(&attn_bindings_path)
+        .expect("Failed to write gemm_types.rs");
 }
 
 fn compile_metal_shaders() {
