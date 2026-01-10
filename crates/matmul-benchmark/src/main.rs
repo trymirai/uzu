@@ -519,6 +519,7 @@ fn benchmark_uzu(
                 &enc,
                 MatmulArguments {
                     a: &a_buf,
+                    a_offset: 0,
                     b: &b_buf,
                     c: None,
                     d: &d_buf,
@@ -549,6 +550,7 @@ fn benchmark_uzu(
                 &enc,
                 MatmulArguments {
                     a: &a_buf,
+                    a_offset: 0,
                     b: &b_buf,
                     c: None,
                     d: &d_buf,
@@ -788,6 +790,7 @@ fn run_accuracy_test_f16(
             &enc,
             MatmulArguments {
                 a: &a_buf,
+                a_offset: 0,
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
@@ -852,6 +855,7 @@ fn run_accuracy_test_f32(
             &enc,
             MatmulArguments {
                 a: &a_buf,
+                a_offset: 0,
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
@@ -927,6 +931,7 @@ fn run_accuracy_test_bf16(
             &enc,
             MatmulArguments {
                 a: &a_buf,
+                a_offset: 0,
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
