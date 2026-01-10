@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/cli", "crates/uzu", "crates/benchmarks"]
+members = [
+    "crates/cli",
+    "crates/uzu",
+    "crates/benchmarks",
+    "crates/matmul-benchmark",
+]
 resolver = "3"
 
 [workspace.package]
