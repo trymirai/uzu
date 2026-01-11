@@ -709,7 +709,7 @@ fn test_single_pass_attention_basic() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -759,12 +759,62 @@ fn test_gemm_attention_basic() {
     )
     .expect("run gemm attention");
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
         tolerance,
         "Gemm attention",
+    ) {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_gemm_attention_f32_head_dim_128() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 4;
+    let num_kv_heads = 4;
+    let seq_len = 32;
+    let head_dim = 128;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (queries, keys, values, _mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        456,
+    );
+
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create AttentionKernel");
+
+    let reference_output =
+        reference_attention(&queries, &keys, &values, None, None, scale);
+
+    let kernel_output = run_gemm_attention(
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
+        /*is_causal=*/ false,
+    )
+    .expect("run gemm attention f32 head_dim=128");
+
+    let tolerance = 1e-2;
+    if let Err(e) = compare_results(
+        &kernel_output,
+        &reference_output,
+        tolerance,
+        "Gemm attention f32 head_dim=128",
     ) {
         panic!("{}", e);
     }
@@ -1158,7 +1208,7 @@ fn test_single_pass_attention_gqa() {
     let reference_output =
         reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -1322,7 +1372,7 @@ fn test_two_pass_attention() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -1392,7 +1442,7 @@ fn test_two_pass_attention_gqa() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,

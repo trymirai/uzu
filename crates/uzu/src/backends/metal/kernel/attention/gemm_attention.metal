@@ -442,18 +442,18 @@ template <
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Kernel instantiations (BQ=32, BK=32, WM=2, WN=2)
+// Kernel instantiations (BQ=32, BK in {32,16}, WM=2, WN=2)
 ///////////////////////////////////////////////////////////////////////////////
 
-#define instantiate_attention_gemm(type_name, element_type, head_dim_value)   \
-  template [[host_name("attention_gemm_" #type_name "_" #head_dim_value)]]    \
+#define instantiate_attention_gemm(type_name, element_type, head_dim_value, bk_value) \
+  template [[host_name("attention_gemm_" #type_name "_" #head_dim_value "_bk" #bk_value)]] \
   [[kernel]] void attention_gemm<                                             \
       element_type,                                                            \
       32,                                                                      \
-      32,                                                                      \
+      bk_value,                                                                \
       head_dim_value,                                                          \
-      2,                                                                       \
-      2,                                                                       \
+      4,                                                                       \
+      1,                                                                       \
       float>(                                                                  \
       const device element_type* Q [[buffer(0)]],                              \
       const device element_type* K [[buffer(1)]],                              \
@@ -469,17 +469,17 @@ template <
       uint3 tid [[threadgroup_position_in_grid]],                              \
       uint3 lid [[thread_position_in_threadgroup]]);
 
-instantiate_attention_gemm(f16, half, 64)
-instantiate_attention_gemm(f16, half, 128)
-instantiate_attention_gemm(f16, half, 256)
+instantiate_attention_gemm(f16, half, 64, 32)
+instantiate_attention_gemm(f16, half, 128, 16)
+instantiate_attention_gemm(f16, half, 256, 16)
 
-instantiate_attention_gemm(bf16, bfloat, 64)
-instantiate_attention_gemm(bf16, bfloat, 128)
-instantiate_attention_gemm(bf16, bfloat, 256)
+instantiate_attention_gemm(bf16, bfloat, 64, 32)
+instantiate_attention_gemm(bf16, bfloat, 128, 16)
+instantiate_attention_gemm(bf16, bfloat, 256, 16)
 
-instantiate_attention_gemm(f32, float, 64)
-instantiate_attention_gemm(f32, float, 128)
-instantiate_attention_gemm(f32, float, 256)
+instantiate_attention_gemm(f32, float, 64, 32)
+instantiate_attention_gemm(f32, float, 128, 16)
+instantiate_attention_gemm(f32, float, 256, 16)
 
 #undef instantiate_attention_gemm
 

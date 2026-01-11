@@ -585,16 +585,21 @@ impl AttentionKernel {
         args: AttentionGemmArguments,
     ) -> Result<(), AttentionError> {
         const BQ: usize = 32;
-        const BK: usize = 32;
-        const WM: u64 = 2;
-        const WN: u64 = 2;
+        const WM: u64 = 4;
+        const WN: u64 = 1;
 
         if !matches!(args.head_dim, 64 | 128 | 256) {
             return Err(AttentionError::UnsupportedHeadDim(args.head_dim));
         }
 
+        let bk: usize = if args.head_dim < 128 {
+            32
+        } else {
+            16
+        };
+
         let align_q = (args.suffix_length % BQ) == 0;
-        let align_k = (args.sequence_length % BK) == 0;
+        let align_k = (args.sequence_length % bk) == 0;
         let has_mask = args.mask_buffer.is_some();
         let has_sinks = args.sinks_buffer.is_some();
 
@@ -626,7 +631,7 @@ impl AttentionKernel {
         );
 
         // Kernel name matches gemm_attention.metal instantiations:
-        // attention_gemm_{f16|bf16|f32}_{head_dim}
+        // attention_gemm_{f16|bf16|f32}_{head_dim}_bk{bk}
         let type_name = match self.data_type {
             KernelDataType::Float16 => "f16",
             KernelDataType::BFloat16 => "bf16",
@@ -634,7 +639,7 @@ impl AttentionKernel {
         };
 
         let function_name =
-            format!("attention_gemm_{}_{}", type_name, args.head_dim);
+            format!("attention_gemm_{}_{}_bk{}", type_name, args.head_dim, bk);
 
         let cache_key = format!(
             "{}_aq{}_ak{}_m{}_c{}_s{}",
@@ -673,9 +678,9 @@ impl AttentionKernel {
         let o_seq_stride = (args.num_heads * args.head_dim) as i64;
 
         let nq = (args.suffix_length + BQ - 1) / BQ;
-        let nk = (args.sequence_length + BK - 1) / BK;
+        let nk = (args.sequence_length + bk - 1) / bk;
         let nq_aligned = args.suffix_length / BQ;
-        let nk_aligned = args.sequence_length / BK;
+        let nk_aligned = args.sequence_length / bk;
 
         let params = AttnParams {
             q_strides: [0, q_head_stride, q_seq_stride],
@@ -691,7 +696,7 @@ impl AttentionKernel {
             q_rem: (args.suffix_length - nq_aligned * BQ) as i32,
             nk: nk as i32,
             nk_aligned: nk_aligned as i32,
-            k_rem: (args.sequence_length - nk_aligned * BK) as i32,
+            k_rem: (args.sequence_length - nk_aligned * bk) as i32,
         };
 
         compute_encoder.set_bytes(
