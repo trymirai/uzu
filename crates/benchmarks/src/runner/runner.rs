@@ -101,6 +101,8 @@ impl Runner {
             };
             results.push(result);
 
+            std::thread::sleep(std::time::Duration::from_secs(5));
+
             if let Some(progress) = progress.as_mut() {
                 progress(
                     (run_index + 1) as f64 / self.task.number_of_runs as f64,
