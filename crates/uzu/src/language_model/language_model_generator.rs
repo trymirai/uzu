@@ -10,6 +10,7 @@ use super::{
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
+    rng::DerivableSeed,
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
@@ -20,7 +21,7 @@ use crate::{
     },
     session::{
         config::DecodingConfig,
-        parameter::{ConfigResolvableValue, SamplingMethod},
+        parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
     trie::{TrieCreationConfig, TrieNode},
@@ -671,6 +672,10 @@ impl LanguageModelGenerator {
         self.registered_prefix_len = 0;
         self.encoded_tasks.clear();
         self.gpu_capture.reset();
+
+        let base_seed = self.decoding_config.sampling_seed.resolve();
+        self.context.next_seed = DerivableSeed::new(base_seed);
+        self.context.async_buffers.reset_counter();
     }
 
     pub fn prefix_len(&self) -> usize {
