@@ -100,7 +100,6 @@ impl LanguageModelGenerator {
             suffix_length + 1,
         );
         let flat_trie = suffix_root.linearize();
-        let active_suffix_length = flat_trie.len() - 1;
 
         let has_grammar = compiled_grammar.is_some();
 
@@ -109,7 +108,6 @@ impl LanguageModelGenerator {
             .copied()
             .take(tokens_length - 1)
             .chain(flat_trie.token_ids())
-            .chain(repeat_n(0, suffix_length - active_suffix_length))
             .chunks(prefill_step_size);
 
         let token_positions = (prefix_offset
@@ -117,22 +115,16 @@ impl LanguageModelGenerator {
             .chain(flat_trie.token_positions().map(|trie_position| {
                 prefix_offset + tokens_length - 1 + trie_position
             }))
-            .chain(repeat_n(
-                INVALID_POSITION,
-                suffix_length - active_suffix_length,
-            ))
             .chunks(prefill_step_size);
 
         let single_token_bitmask_size =
             self.context.model_shape.bitmask_shape(1)[1];
         let token_bitmasks = repeat_n(None, tokens_length - 1)
             .chain(flat_trie.token_masks())
-            .chain(repeat_n(None, suffix_length - active_suffix_length))
             .chunks(prefill_step_size);
 
         let token_seeds = repeat_n(0, tokens_length - 1)
             .chain(flat_trie.token_seeds())
-            .chain(repeat_n(0, suffix_length - active_suffix_length))
             .chunks(prefill_step_size);
 
         let mut last_state: Option<ForwardPassState> = None;
@@ -159,10 +151,7 @@ impl LanguageModelGenerator {
                 step_token_positions.collect::<Box<[usize]>>();
             let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
 
-            let active_suffix_length = step_token_positions
-                .iter()
-                .position(|&pos| pos == INVALID_POSITION)
-                .unwrap_or(prefill_step_size);
+            let active_suffix_length = step_token_positions.len();
             let is_last_prefill_step = step == prefill_steps - 1;
             let should_sample_after_step =
                 sample_suffix && is_last_prefill_step;
@@ -232,7 +221,7 @@ impl LanguageModelGenerator {
                 token_positions: &step_token_positions,
                 token_bitmask: step_token_bitmask.as_deref(),
                 token_seeds: &step_token_seeds,
-                expected_number_of_new_tokens: prefill_step_size,
+                expected_number_of_new_tokens: step_token_ids.len(),
                 active_suffix_length,
                 sampling_start,
                 sampling_length,
@@ -250,8 +239,7 @@ impl LanguageModelGenerator {
                 self.gpu_capture.stop_capture("prefill");
             }
 
-            // Register the *accepted* real tokens from this step (exclude the
-            // padding token at the very end of the overall prefill).
+            // Register the accepted prompt tokens from this step.
             let step_end_token_index =
                 std::cmp::min(tokens_end_index, tokens_length);
             let tokens_processed_this_step =
