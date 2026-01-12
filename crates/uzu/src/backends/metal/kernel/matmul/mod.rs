@@ -11,7 +11,7 @@ mod transpose;
 
 pub use arguments::MatmulArguments;
 pub use gather::{GatherGemm, GatherMmArguments, GatherMmRhsArguments};
-pub use gemv::GemvKernel;
-pub use kernel::MatmulKernel;
+pub use gemv::{GemvKernel, MlpFusedGemvArguments, MlpFusedGemvKernel};
+pub use kernel::{MatmulKernel, MlpFusedGemmArguments, MlpFusedGemmKernel};
 pub use segmented::{SegmentedGemm, SegmentedMmArguments};
 pub use splitk::SplitKGemm;
