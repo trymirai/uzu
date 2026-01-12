@@ -129,7 +129,6 @@ fn generate_test_data(
 }
 
 struct TestCase {
-    name: &'static str,
     m: usize,
     k: usize,
     n: usize,
@@ -139,9 +138,8 @@ struct TestCase {
 
 fn test_cases() -> Vec<TestCase> {
     vec![
-        // GEMV shapes (m=1)
+        // transpose_b = true cases
         TestCase {
-            name: "gemv_small",
             m: 1,
             k: 2048,
             n: 2048,
@@ -149,7 +147,6 @@ fn test_cases() -> Vec<TestCase> {
             tolerance: 0.01,
         },
         TestCase {
-            name: "gemv_medium",
             m: 1,
             k: 4096,
             n: 4096,
@@ -157,16 +154,13 @@ fn test_cases() -> Vec<TestCase> {
             tolerance: 0.01,
         },
         TestCase {
-            name: "gemv_large",
             m: 1,
             k: 8192,
             n: 8192,
             transpose_b: true,
             tolerance: 0.02,
         },
-        // MLP shapes
         TestCase {
-            name: "mlp_up",
             m: 1,
             k: 2048,
             n: 8192,
@@ -174,182 +168,13 @@ fn test_cases() -> Vec<TestCase> {
             tolerance: 0.01,
         },
         TestCase {
-            name: "mlp_down",
             m: 1,
             k: 8192,
             n: 2048,
             transpose_b: true,
             tolerance: 0.02,
         },
-        // Small batch sizes
         TestCase {
-            name: "batch_8",
-            m: 8,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            name: "batch_16",
-            m: 16,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.03,
-        },
-        TestCase {
-            name: "batch_32",
-            m: 32,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            name: "batch_64",
-            m: 64,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.08,
-        },
-        TestCase {
-            name: "batch_128",
-            m: 128,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        // Prefill shapes
-        TestCase {
-            name: "prefill_256",
-            m: 256,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.15,
-        },
-        TestCase {
-            name: "prefill_512",
-            m: 512,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.2,
-        },
-        TestCase {
-            name: "prefill_1024",
-            m: 1024,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.25,
-        },
-        // Square matrices
-        TestCase {
-            name: "square_128",
-            m: 128,
-            k: 128,
-            n: 128,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            name: "square_256",
-            m: 256,
-            k: 256,
-            n: 256,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            name: "square_512",
-            m: 512,
-            k: 512,
-            n: 512,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            name: "square_1024",
-            m: 1024,
-            k: 1024,
-            n: 1024,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        // Attention shapes
-        TestCase {
-            name: "attention_qk",
-            m: 512,
-            k: 64,
-            n: 512,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            name: "attention_av",
-            m: 512,
-            k: 512,
-            n: 64,
-            transpose_b: false,
-            tolerance: 0.1,
-        },
-        // Non-transposed B
-        TestCase {
-            name: "non_transposed_small",
-            m: 64,
-            k: 128,
-            n: 64,
-            transpose_b: false,
-            tolerance: 0.15,
-        },
-        TestCase {
-            name: "non_transposed_medium",
-            m: 128,
-            k: 256,
-            n: 128,
-            transpose_b: false,
-            tolerance: 0.15,
-        },
-        // Non-aligned sizes
-        TestCase {
-            name: "unaligned_m",
-            m: 17,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            name: "unaligned_n",
-            m: 32,
-            k: 2048,
-            n: 1537,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            name: "unaligned_k",
-            m: 32,
-            k: 1999,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            name: "unaligned_all",
-            m: 33,
-            k: 127,
-            n: 65,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        // Edge cases
-        TestCase {
-            name: "thin_m",
             m: 2,
             k: 4096,
             n: 4096,
@@ -357,7 +182,83 @@ fn test_cases() -> Vec<TestCase> {
             tolerance: 0.02,
         },
         TestCase {
-            name: "thin_n",
+            m: 4,
+            k: 16384,
+            n: 4,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 8,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        TestCase {
+            m: 16,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.03,
+        },
+        TestCase {
+            m: 17,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            m: 32,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            m: 32,
+            k: 2048,
+            n: 1537,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 32,
+            k: 1999,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 33,
+            k: 127,
+            n: 65,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 64,
+            k: 32,
+            n: 64,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            m: 64,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.08,
+        },
+        TestCase {
+            m: 128,
+            k: 128,
+            n: 128,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
             m: 128,
             k: 2048,
             n: 1,
@@ -365,20 +266,81 @@ fn test_cases() -> Vec<TestCase> {
             tolerance: 0.02,
         },
         TestCase {
-            name: "small_k",
-            m: 64,
-            k: 32,
-            n: 64,
+            m: 128,
+            k: 2048,
+            n: 2048,
             transpose_b: true,
-            tolerance: 0.05,
+            tolerance: 0.1,
         },
-        // Large K (tests SplitK path)
         TestCase {
-            name: "large_k_small_mn",
-            m: 4,
-            k: 16384,
-            n: 4,
+            m: 256,
+            k: 256,
+            n: 256,
             transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 256,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.15,
+        },
+        TestCase {
+            m: 512,
+            k: 64,
+            n: 512,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 512,
+            k: 512,
+            n: 512,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 512,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.2,
+        },
+        TestCase {
+            m: 1024,
+            k: 1024,
+            n: 1024,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            m: 1024,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.25,
+        },
+        // transpose_b = false cases
+        TestCase {
+            m: 64,
+            k: 128,
+            n: 64,
+            transpose_b: false,
+            tolerance: 0.15,
+        },
+        TestCase {
+            m: 128,
+            k: 256,
+            n: 128,
+            transpose_b: false,
+            tolerance: 0.15,
+        },
+        TestCase {
+            m: 512,
+            k: 512,
+            n: 64,
+            transpose_b: false,
             tolerance: 0.1,
         },
     ]
@@ -450,23 +412,28 @@ fn matmul_correctness_comprehensive() {
             case.transpose_b,
         );
 
+        let trans_str = if case.transpose_b {
+            "T"
+        } else {
+            "N"
+        };
+
         match compare_results(&metal_result, &reference, case.tolerance) {
             Ok(()) => {
                 passed += 1;
                 eprintln!(
-                    "✓ {} (m={}, k={}, n={}, transpose_b={})",
-                    case.name, case.m, case.k, case.n, case.transpose_b
+                    "✓ m={} k={} n={} B={}",
+                    case.m, case.k, case.n, trans_str
                 );
             },
             Err((max_diff, idx, count)) => {
                 failed.push((case, max_diff, idx, count));
                 eprintln!(
-                    "✗ {} (m={}, k={}, n={}, transpose_b={}) - max_diff={:.6} at idx {} ({} elements exceed tolerance {})",
-                    case.name,
+                    "✗ m={} k={} n={} B={} max_diff={:.6} at idx {} ({} exceed tol {})",
                     case.m,
                     case.k,
                     case.n,
-                    case.transpose_b,
+                    trans_str,
                     max_diff,
                     idx,
                     count,
@@ -481,13 +448,17 @@ fn matmul_correctness_comprehensive() {
     if !failed.is_empty() {
         eprintln!("\nFailed tests:");
         for (case, max_diff, idx, count) in &failed {
+            let trans_str = if case.transpose_b {
+                "T"
+            } else {
+                "N"
+            };
             eprintln!(
-                "  {} ({}x{}x{}, transpose_b={}): max_diff={:.6} at idx {}, {} elements exceed tolerance {}",
-                case.name,
+                "  m={} k={} n={} B={}: max_diff={:.6} at idx {}, {} exceed tol {}",
                 case.m,
                 case.k,
                 case.n,
-                case.transpose_b,
+                trans_str,
                 max_diff,
                 idx,
                 count,
