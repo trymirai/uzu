@@ -362,7 +362,7 @@ fn get_spv_file_name(file_name: &str) -> String {
     format!("{file_name}.spv")
 }
 
-async fn compile_vulkan_shader<'a>(
+async fn compile_vulkan_shader(
     file_path: &PathBuf
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string(file_path)?;
@@ -399,6 +399,7 @@ async fn compile_vulkan_shader<'a>(
     )?;
     let out_path = get_spv_file_name(&file_path.to_string_lossy().to_string().as_str());
     fs::write(&out_path, artifact.as_binary_u8())?;
+    
     Ok(())
 }
 

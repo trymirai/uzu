@@ -5,7 +5,8 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-# without "linked" feature device.device_fn_1_0.allocate_command_buffers have error
+# "linked" link the Vulkan loader at compile time
+# without "linked" device.device_fn_1_0.allocate_command_buffers have error
 # "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
 ash = { version = "0.38.0", features = ["linked"] }
 xgrammar = { package = "xgrammar-rs", version = "0.1.29", features = ["hf"] }
