@@ -1,14 +1,8 @@
-//! Correctness tests comparing Metal matmul kernels against MPSGraph
-
-use std::collections::HashMap;
+//! Correctness tests comparing Metal matmul kernels against ndarray
 
 use half::bf16;
 use metal::{Device, MTLResourceOptions};
-use mpsgraph::{
-    CommandBuffer, Device as MPSDevice, ExecutableExecutionDescriptor, Graph,
-    ShapedType, TensorData,
-};
-use objc2::rc::autoreleasepool;
+use ndarray::Array2;
 use uzu::{
     DataType,
     backends::metal::{
@@ -90,8 +84,7 @@ fn run_metal_matmul(
     }
 }
 
-fn run_mps_matmul(
-    device: &Device,
+fn run_ndarray_matmul(
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
@@ -99,116 +92,20 @@ fn run_mps_matmul(
     n: usize,
     transpose_b: bool,
 ) -> Vec<bf16> {
-    autoreleasepool(|_| {
-        let graph = Graph::new();
+    let a_f32: Vec<f32> = a_data.iter().map(|x| x.to_f32()).collect();
+    let b_f32: Vec<f32> = b_data.iter().map(|x| x.to_f32()).collect();
 
-        let a_shape = [m as isize, k as isize];
-        let b_shape_for_placeholder = if transpose_b {
-            [n as isize, k as isize]
-        } else {
-            [k as isize, n as isize]
-        };
+    let a_arr = Array2::from_shape_vec((m, k), a_f32).expect("A shape");
 
-        let a_placeholder = graph.placeholder(
-            Some(&a_shape),
-            mpsgraph::DataType::BFloat16,
-            Some("A"),
-        );
-        let b_placeholder = graph.placeholder(
-            Some(&b_shape_for_placeholder),
-            mpsgraph::DataType::BFloat16,
-            Some("B"),
-        );
+    let result = if transpose_b {
+        let b_arr = Array2::from_shape_vec((n, k), b_f32).expect("B shape");
+        a_arr.dot(&b_arr.t())
+    } else {
+        let b_arr = Array2::from_shape_vec((k, n), b_f32).expect("B shape");
+        a_arr.dot(&b_arr)
+    };
 
-        let result = if transpose_b {
-            let b_transposed =
-                graph.transpose(&b_placeholder, &[1, 0], Some("B_T"));
-            graph.matrix_multiplication(&a_placeholder, &b_transposed, None)
-        } else {
-            graph.matrix_multiplication(&a_placeholder, &b_placeholder, None)
-        };
-
-        let a_shaped_type = ShapedType::new_with_shape_data_type(
-            Some(&a_shape),
-            mpsgraph::DataType::BFloat16,
-        );
-        let b_shaped_type = ShapedType::new_with_shape_data_type(
-            Some(&b_shape_for_placeholder),
-            mpsgraph::DataType::BFloat16,
-        );
-
-        let feeds = HashMap::from([
-            (&*a_placeholder, &*a_shaped_type),
-            (&*b_placeholder, &*b_shaped_type),
-        ]);
-
-        let mps_device = MPSDevice::with_device(device);
-        let executable =
-            graph.compile(&mps_device, &feeds, &[&result], None, None);
-
-        let a_buf = device.new_buffer_with_data(
-            a_data.as_ptr() as *const _,
-            (a_data.len() * core::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let b_buf = device.new_buffer_with_data(
-            b_data.as_ptr() as *const _,
-            (b_data.len() * core::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let d_buf = device.new_buffer(
-            (m * n * core::mem::size_of::<bf16>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
-        let b_usize_shape: Vec<usize> = if transpose_b {
-            vec![n, k]
-        } else {
-            vec![k, n]
-        };
-
-        let a_tensor = TensorData::new_with_mtl_buffer(
-            &a_buf,
-            &[m, k],
-            mpsgraph::DataType::BFloat16,
-            None,
-        );
-        let b_tensor = TensorData::new_with_mtl_buffer(
-            &b_buf,
-            &b_usize_shape,
-            mpsgraph::DataType::BFloat16,
-            None,
-        );
-        let d_tensor = TensorData::new_with_mtl_buffer(
-            &d_buf,
-            &[m, n],
-            mpsgraph::DataType::BFloat16,
-            None,
-        );
-
-        let inputs: &[&TensorData] = &[&a_tensor, &b_tensor];
-        let outputs: &[&TensorData] = &[&d_tensor];
-
-        let command_queue = device.new_command_queue();
-        let exec_desc = ExecutableExecutionDescriptor::new();
-        exec_desc.set_enable_commit_and_continue(true);
-
-        let command_buffer = CommandBuffer::from_command_queue(&command_queue);
-        let root_cb = command_buffer.root_command_buffer().to_owned();
-        let _ = executable.encode_to_command_buffer(
-            &command_buffer,
-            inputs,
-            Some(outputs),
-            Some(&exec_desc),
-        );
-        root_cb.commit();
-        root_cb.wait_until_completed();
-
-        unsafe {
-            let ptr = d_buf.contents() as *const bf16;
-            std::slice::from_raw_parts(ptr, m * n).to_vec()
-        }
-    })
+    result.iter().map(|&x| bf16::from_f32(x)).collect()
 }
 
 fn generate_test_data(
@@ -231,29 +128,280 @@ fn generate_test_data(
     (a, b)
 }
 
+struct TestCase {
+    name: &'static str,
+    m: usize,
+    k: usize,
+    n: usize,
+    transpose_b: bool,
+    tolerance: f32,
+}
+
+fn test_cases() -> Vec<TestCase> {
+    vec![
+        // GEMV shapes (m=1)
+        TestCase {
+            name: "gemv_small",
+            m: 1,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.01,
+        },
+        TestCase {
+            name: "gemv_medium",
+            m: 1,
+            k: 4096,
+            n: 4096,
+            transpose_b: true,
+            tolerance: 0.01,
+        },
+        TestCase {
+            name: "gemv_large",
+            m: 1,
+            k: 8192,
+            n: 8192,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        // MLP shapes
+        TestCase {
+            name: "mlp_up",
+            m: 1,
+            k: 2048,
+            n: 8192,
+            transpose_b: true,
+            tolerance: 0.01,
+        },
+        TestCase {
+            name: "mlp_down",
+            m: 1,
+            k: 8192,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        // Small batch sizes
+        TestCase {
+            name: "batch_8",
+            m: 8,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        TestCase {
+            name: "batch_16",
+            m: 16,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.03,
+        },
+        TestCase {
+            name: "batch_32",
+            m: 32,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            name: "batch_64",
+            m: 64,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.08,
+        },
+        TestCase {
+            name: "batch_128",
+            m: 128,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        // Prefill shapes
+        TestCase {
+            name: "prefill_256",
+            m: 256,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.15,
+        },
+        TestCase {
+            name: "prefill_512",
+            m: 512,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.2,
+        },
+        TestCase {
+            name: "prefill_1024",
+            m: 1024,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.25,
+        },
+        // Square matrices
+        TestCase {
+            name: "square_128",
+            m: 128,
+            k: 128,
+            n: 128,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            name: "square_256",
+            m: 256,
+            k: 256,
+            n: 256,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            name: "square_512",
+            m: 512,
+            k: 512,
+            n: 512,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            name: "square_1024",
+            m: 1024,
+            k: 1024,
+            n: 1024,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        // Attention shapes
+        TestCase {
+            name: "attention_qk",
+            m: 512,
+            k: 64,
+            n: 512,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            name: "attention_av",
+            m: 512,
+            k: 512,
+            n: 64,
+            transpose_b: false,
+            tolerance: 0.1,
+        },
+        // Non-transposed B
+        TestCase {
+            name: "non_transposed_small",
+            m: 64,
+            k: 128,
+            n: 64,
+            transpose_b: false,
+            tolerance: 0.15,
+        },
+        TestCase {
+            name: "non_transposed_medium",
+            m: 128,
+            k: 256,
+            n: 128,
+            transpose_b: false,
+            tolerance: 0.15,
+        },
+        // Non-aligned sizes
+        TestCase {
+            name: "unaligned_m",
+            m: 17,
+            k: 2048,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        TestCase {
+            name: "unaligned_n",
+            m: 32,
+            k: 2048,
+            n: 1537,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            name: "unaligned_k",
+            m: 32,
+            k: 1999,
+            n: 2048,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        TestCase {
+            name: "unaligned_all",
+            m: 33,
+            k: 127,
+            n: 65,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+        // Edge cases
+        TestCase {
+            name: "thin_m",
+            m: 2,
+            k: 4096,
+            n: 4096,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        TestCase {
+            name: "thin_n",
+            m: 128,
+            k: 2048,
+            n: 1,
+            transpose_b: true,
+            tolerance: 0.02,
+        },
+        TestCase {
+            name: "small_k",
+            m: 64,
+            k: 32,
+            n: 64,
+            transpose_b: true,
+            tolerance: 0.05,
+        },
+        // Large K (tests SplitK path)
+        TestCase {
+            name: "large_k_small_mn",
+            m: 4,
+            k: 16384,
+            n: 4,
+            transpose_b: true,
+            tolerance: 0.1,
+        },
+    ]
+}
+
 fn compare_results(
     metal: &[bf16],
-    mps: &[bf16],
+    reference: &[bf16],
     tolerance: f32,
-    test_name: &str,
-) {
-    assert_eq!(
-        metal.len(),
-        mps.len(),
-        "{}: length mismatch {} vs {}",
-        test_name,
-        metal.len(),
-        mps.len()
-    );
+) -> Result<(), (f32, usize, usize)> {
+    if metal.len() != reference.len() {
+        return Err((f32::INFINITY, 0, metal.len()));
+    }
 
     let mut max_diff: f32 = 0.0;
     let mut max_diff_idx = 0;
     let mut diff_count = 0;
 
-    for (i, (&m_val, &p_val)) in metal.iter().zip(mps.iter()).enumerate() {
+    for (i, (&m_val, &r_val)) in metal.iter().zip(reference.iter()).enumerate()
+    {
         let mf = m_val.to_f32();
-        let pf = p_val.to_f32();
-        let diff = (mf - pf).abs();
+        let rf = r_val.to_f32();
+        let diff = (mf - rf).abs();
         if diff > max_diff {
             max_diff = diff;
             max_diff_idx = i;
@@ -263,237 +411,89 @@ fn compare_results(
         }
     }
 
-    assert!(
-        max_diff <= tolerance,
-        "{}: max diff {} at idx {} exceeds tolerance {} ({} elements differ)",
-        test_name,
-        max_diff,
-        max_diff_idx,
-        tolerance,
-        diff_count
-    );
+    if max_diff <= tolerance {
+        Ok(())
+    } else {
+        Err((max_diff, max_diff_idx, diff_count))
+    }
 }
 
 #[test]
-fn matmul_correctness_gemv_small() {
+fn matmul_correctness_comprehensive() {
     let Some(ctx) = create_test_context() else {
+        eprintln!("No Metal device available, skipping test");
         return;
     };
-    let (m, k, n) = (1, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
 
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
+    let cases = test_cases();
+    let mut passed = 0;
+    let mut failed = Vec::new();
 
-    compare_results(&metal_result, &mps_result, 0.01, "GEMV small");
-}
+    for case in &cases {
+        let (a, b) =
+            generate_test_data(case.m, case.k, case.n, case.transpose_b);
+        let metal_result = run_metal_matmul(
+            &ctx,
+            &a,
+            &b,
+            case.m,
+            case.k,
+            case.n,
+            case.transpose_b,
+        );
+        let reference = run_ndarray_matmul(
+            &a,
+            &b,
+            case.m,
+            case.k,
+            case.n,
+            case.transpose_b,
+        );
 
-#[test]
-fn matmul_correctness_gemv_medium() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (1, 4096, 4096);
-    let (a, b) = generate_test_data(m, k, n, true);
+        match compare_results(&metal_result, &reference, case.tolerance) {
+            Ok(()) => {
+                passed += 1;
+                eprintln!(
+                    "✓ {} (m={}, k={}, n={}, transpose_b={})",
+                    case.name, case.m, case.k, case.n, case.transpose_b
+                );
+            },
+            Err((max_diff, idx, count)) => {
+                failed.push((case, max_diff, idx, count));
+                eprintln!(
+                    "✗ {} (m={}, k={}, n={}, transpose_b={}) - max_diff={:.6} at idx {} ({} elements exceed tolerance {})",
+                    case.name,
+                    case.m,
+                    case.k,
+                    case.n,
+                    case.transpose_b,
+                    max_diff,
+                    idx,
+                    count,
+                    case.tolerance
+                );
+            },
+        }
+    }
 
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
+    eprintln!("\n{}/{} tests passed", passed, cases.len());
 
-    compare_results(&metal_result, &mps_result, 0.01, "GEMV medium");
-}
-
-#[test]
-fn matmul_correctness_gemv_large() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (1, 8192, 8192);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.02, "GEMV large");
-}
-
-#[test]
-fn matmul_correctness_small_batch() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (8, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.02, "Small batch");
-}
-
-#[test]
-fn matmul_correctness_medium_batch() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (32, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.05, "Medium batch");
-}
-
-#[test]
-fn matmul_correctness_large_batch() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (128, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Large batch");
-}
-
-#[test]
-fn matmul_correctness_prefill_small() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (256, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.15, "Prefill small");
-}
-
-#[test]
-fn matmul_correctness_prefill_medium() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (512, 2048, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.2, "Prefill medium");
-}
-
-#[test]
-fn matmul_correctness_mlp_up() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (1, 2048, 8192);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.01, "MLP up");
-}
-
-#[test]
-fn matmul_correctness_mlp_down() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (1, 8192, 2048);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.02, "MLP down");
-}
-
-#[test]
-fn matmul_correctness_square_small() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (256, 256, 256);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Square small");
-}
-
-#[test]
-fn matmul_correctness_square_medium() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (512, 512, 512);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Square medium");
-}
-
-#[test]
-fn matmul_correctness_square_large() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (1024, 1024, 1024);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Square large");
-}
-
-#[test]
-fn matmul_correctness_non_transposed() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (64, 128, 64);
-    let (a, b) = generate_test_data(m, k, n, false);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, false);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, false);
-
-    compare_results(&metal_result, &mps_result, 0.15, "Non-transposed");
-}
-
-#[test]
-fn matmul_correctness_attention_qk() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (512, 64, 512);
-    let (a, b) = generate_test_data(m, k, n, true);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, true);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, true);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Attention Q*K^T");
-}
-
-#[test]
-fn matmul_correctness_attention_av() {
-    let Some(ctx) = create_test_context() else {
-        return;
-    };
-    let (m, k, n) = (512, 512, 64);
-    let (a, b) = generate_test_data(m, k, n, false);
-
-    let metal_result = run_metal_matmul(&ctx, &a, &b, m, k, n, false);
-    let mps_result = run_mps_matmul(&ctx.device, &a, &b, m, k, n, false);
-
-    compare_results(&metal_result, &mps_result, 0.1, "Attention A*V");
+    if !failed.is_empty() {
+        eprintln!("\nFailed tests:");
+        for (case, max_diff, idx, count) in &failed {
+            eprintln!(
+                "  {} ({}x{}x{}, transpose_b={}): max_diff={:.6} at idx {}, {} elements exceed tolerance {}",
+                case.name,
+                case.m,
+                case.k,
+                case.n,
+                case.transpose_b,
+                max_diff,
+                idx,
+                count,
+                case.tolerance
+            );
+        }
+        panic!("{} tests failed", failed.len());
+    }
 }
