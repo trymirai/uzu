@@ -331,6 +331,33 @@ fn bench_gemm_fused(
     BenchResult::new(fused_time, unfused_time)
 }
 
+/// MLP shapes from real model configs
+/// Format: (K=model_dim, H=hidden_dim)
+const MLP_SHAPES: &[(usize, usize)] = &[
+    (896, 4864),   // Qwen2.5-Coder-0.5B
+    (1024, 3072),  // Qwen3-0.6B
+    (1024, 4608),  // LFM2-350M
+    (1152, 6912),  // gemma-3-1b
+    (1536, 6912),  // LFM2-700M
+    (1536, 8960),  // Qwen2.5-Coder-1.5B, DeepSeek-R1-Distill-Qwen-1.5B
+    (2048, 6144),  // Qwen3-1.7B
+    (2048, 8192),  // Llamba-1B, SmolLM2-1.7B, Llama-3.2-1B, LFM2-1.2B
+    (2048, 10752), // LFM2-2.6B
+    (2048, 11008), // Qwen2.5-Coder-3B
+    (2560, 9728),  // Qwen3-4B
+    (2560, 10240), // gemma-3-4b
+    (3072, 8192),  // Llama-3.2-3B, Llamba-3B
+    (3584, 18944), // Qwen2.5-Coder-7B
+    (4096, 12288), // Qwen3-8B
+    (4096, 14336), // Llamba-8B, Llama-3.1-8B
+    (4096, 16384), // rnj-1-instruct
+    (5120, 13824), // Qwen2.5-Coder-14B
+    (5120, 17408), // Qwen3-14B
+    (5120, 25600), // Qwen3-32B
+    (5376, 21504), // gemma-3-27b
+    (6144, 16384), // Codestral-22B
+];
+
 pub fn run_mlp_fused_benchmark() {
     autoreleasepool(|_| {
         let ctx = match create_test_context() {
@@ -341,44 +368,62 @@ pub fn run_mlp_fused_benchmark() {
             },
         };
 
-        println!("\n=== MLP Fused Kernel Benchmark ===\n");
-        println!(
-            "{:<40} {:>12} {:>12} {:>10}",
-            "Configuration", "Fused (µs)", "Unfused (µs)", "Speedup"
-        );
-        println!("{}", "-".repeat(76));
+        println!("\n=== MLP Fused Kernel Benchmark (Real Model Shapes) ===\n");
 
         let iterations = 100;
         let warmup = 10;
 
-        // Decode configurations (M=1)
-        for (k, hidden_dim) in [(2048, 4096), (4096, 11008), (8192, 22016)] {
+        // GEMV benchmark (decode path, M=1)
+        println!("=== GEMV (Decode, M=1) ===");
+        println!(
+            "{:<25} {:>12} {:>12} {:>10}",
+            "Shape (K, H)", "Fused (µs)", "Unfused (µs)", "Speedup"
+        );
+        println!("{}", "-".repeat(61));
+
+        for &(k, hidden_dim) in MLP_SHAPES {
             let result =
                 bench_gemv_fused(&ctx, k, hidden_dim, iterations, warmup);
-            println!("GEMV decode K={} H={}", k, hidden_dim);
+            let speedup_str = if result.speedup >= 1.0 {
+                format!("{:.2}x", result.speedup)
+            } else {
+                format!("{:.2}x", result.speedup)
+            };
             println!(
-                "{:<40} {:>12.2} {:>12.2} {:>9.2}x",
-                format!("  M=1, K={}, H={}", k, hidden_dim),
+                "({:>4}, {:>5})              {:>12.1} {:>12.1} {:>10}",
+                k,
+                hidden_dim,
                 result.fused_time_us,
                 result.unfused_time_us,
-                result.speedup
+                speedup_str
             );
         }
 
         println!();
 
-        // Prefill configurations (M>1)
-        for (m, k, hidden_dim) in
-            [(32, 2048, 4096), (128, 2048, 4096), (512, 4096, 11008)]
-        {
+        // GEMM benchmark (prefill path, M=32)
+        println!("=== GEMM (Prefill, M=32) ===");
+        println!(
+            "{:<25} {:>12} {:>12} {:>10}",
+            "Shape (K, H)", "Fused (µs)", "Unfused (µs)", "Speedup"
+        );
+        println!("{}", "-".repeat(61));
+
+        for &(k, hidden_dim) in MLP_SHAPES {
             let result =
-                bench_gemm_fused(&ctx, m, k, hidden_dim, iterations, warmup);
+                bench_gemm_fused(&ctx, 32, k, hidden_dim, iterations, warmup);
+            let speedup_str = if result.speedup >= 1.0 {
+                format!("{:.2}x", result.speedup)
+            } else {
+                format!("{:.2}x", result.speedup)
+            };
             println!(
-                "{:<40} {:>12.2} {:>12.2} {:>9.2}x",
-                format!("GEMM M={}, K={}, H={}", m, k, hidden_dim),
+                "({:>4}, {:>5})              {:>12.1} {:>12.1} {:>10}",
+                k,
+                hidden_dim,
                 result.fused_time_us,
                 result.unfused_time_us,
-                result.speedup
+                speedup_str
             );
         }
 
