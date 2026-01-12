@@ -168,7 +168,6 @@ fn select_gemv_configuration(
     }
 }
 
-
 pub struct GemvKernel {
     data_type: DataType,
     lhs_is_transposed: bool,
@@ -430,6 +429,21 @@ impl GemvKernel {
             has_non_contiguous_batch,
             do_axpby,
         );
+
+        if crate::utils::env_utils::debug_matmul_enabled() {
+            let kernel_name = gemv_kernel_name(self.data_type, &configuration)
+                .unwrap_or_default();
+            eprintln!(
+                "[matmul] GEMV m={} k={} n={} batch={} dtype={:?} transpose={} kernel={}",
+                arguments.batch,
+                arguments.input_dim,
+                arguments.output_dim,
+                arguments.batch_count,
+                self.data_type,
+                configuration.transpose_matrix,
+                kernel_name
+            );
+        }
 
         self.encode_with_configuration(
             context,

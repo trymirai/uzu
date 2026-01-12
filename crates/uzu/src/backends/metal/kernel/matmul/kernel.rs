@@ -17,6 +17,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
+    utils::env_utils::debug_matmul_enabled,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -494,13 +495,25 @@ impl MatmulKernel {
 
         // Try GEMV fast path for decode shapes.
         if self.maybe_use_gemv(mtl, enc, &args)? {
+            if debug_matmul_enabled() {
+                self.log_gemv(&args);
+            }
             return Ok(());
         }
 
         // Try Split-K for small M*N and large K.
         if self.maybe_use_splitk(mtl, enc, &args)? {
+            if debug_matmul_enabled() {
+                self.log_splitk(&args);
+            }
             return Ok(());
         }
+
+        if debug_matmul_enabled() {
+            let tile = self.select_tile_configuration(mtl, &args);
+            self.log_gemm(&args, &tile);
+        }
+
         self.encode_gemm(mtl, enc, &args)
     }
 
@@ -514,12 +527,23 @@ impl MatmulKernel {
         self.apply_batch_collapse(&mut args);
 
         if self.maybe_use_gemv_with_bias(mtl, enc, &args, bias)? {
+            if debug_matmul_enabled() {
+                self.log_gemv(&args);
+            }
             return Ok(());
         }
 
         if self.maybe_use_splitk(mtl, enc, &args)? {
+            if debug_matmul_enabled() {
+                self.log_splitk(&args);
+            }
             self.apply_bias_add(mtl, enc, &args, bias)?;
             return Ok(());
+        }
+
+        if debug_matmul_enabled() {
+            let tile = self.select_tile_configuration(mtl, &args);
+            self.log_gemm(&args, &tile);
         }
 
         self.encode_gemm(mtl, enc, &args)?;
@@ -569,5 +593,53 @@ impl MatmulKernel {
             args.batch *= args.batch_count;
             args.batch_count = 1;
         }
+    }
+
+    fn log_gemv(
+        &self,
+        args: &MatmulArguments,
+    ) {
+        eprintln!(
+            "[matmul] GEMV m={} k={} n={} batch={} dtype={:?}",
+            args.batch,
+            args.input_dim,
+            args.output_dim,
+            args.batch_count,
+            self.data_type
+        );
+    }
+
+    fn log_splitk(
+        &self,
+        args: &MatmulArguments,
+    ) {
+        eprintln!(
+            "[matmul] SplitK m={} k={} n={} batch={} dtype={:?}",
+            args.batch,
+            args.input_dim,
+            args.output_dim,
+            args.batch_count,
+            self.data_type
+        );
+    }
+
+    fn log_gemm(
+        &self,
+        args: &MatmulArguments,
+        tile: &TileSelection,
+    ) {
+        let kernel_name = self.kernel_name(tile);
+        eprintln!(
+            "[matmul] GEMM m={} k={} n={} batch={} dtype={:?} tile={}x{}x{} kernel={}",
+            args.batch,
+            args.input_dim,
+            args.output_dim,
+            args.batch_count,
+            self.data_type,
+            tile.block_rows,
+            tile.block_cols,
+            tile.block_depth,
+            kernel_name
+        );
     }
 }

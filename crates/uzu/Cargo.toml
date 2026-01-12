@@ -42,7 +42,6 @@ mpsgraph = "0.2.0"
 [features]
 default = ["metal-shaders"]
 metal-shaders = []
-tracing = []
 
 [[test]]
 name = "moe"
