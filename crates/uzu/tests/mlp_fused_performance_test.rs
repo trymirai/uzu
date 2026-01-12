@@ -54,7 +54,6 @@ fn benchmark_gemv_fused(
     iteration_count: usize,
     warmup_count: usize,
 ) -> BenchmarkResult {
-    // Allocate buffers
     let input_buffer = context.device.new_buffer(
         (input_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
@@ -124,7 +123,7 @@ fn benchmark_gemv_fused(
     }
     let fused_duration = fused_start.elapsed() / iteration_count as u32;
 
-    // Warmup unfused (matmul only - simplified comparison)
+    // Warmup unfused
     for _ in 0..warmup_count {
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
@@ -156,7 +155,7 @@ fn benchmark_gemv_fused(
         command_buffer.wait_until_completed();
     }
 
-    // Benchmark unfused (matmul + separate activation would add more time)
+    // Benchmark unfused
     let unfused_start = Instant::now();
     for _ in 0..iteration_count {
         let command_buffer =
@@ -371,7 +370,9 @@ const MLP_SHAPES: &[(usize, usize)] = &[
 /// Batch sizes to test: decode (1) and prefill sizes
 const BATCH_SIZES: &[usize] = &[1, 8, 16, 32, 64, 128, 256, 512];
 
-pub fn run_mlp_fused_benchmark() {
+#[test]
+#[ignore] // Run with: cargo test --package uzu --test mlp_fused_performance_test -- --ignored --nocapture
+fn mlp_fused_performance_benchmark() {
     autoreleasepool(|_| {
         let context = match create_test_context() {
             Some(context) => context,
@@ -428,25 +429,4 @@ pub fn run_mlp_fused_benchmark() {
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_benchmark_runs() {
-        // Just verify the benchmark doesn't crash
-        autoreleasepool(|_| {
-            if let Some(context) = create_test_context() {
-                let _ = benchmark_gemv_fused(&context, 512, 256, 5, 2);
-            }
-        });
-    }
-
-    #[test]
-    #[ignore] // Run with: cargo test --package benchmarks -- run_full_benchmark --ignored --nocapture
-    fn run_full_benchmark() {
-        run_mlp_fused_benchmark();
-    }
 }
