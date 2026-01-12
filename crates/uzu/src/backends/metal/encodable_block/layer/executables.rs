@@ -256,14 +256,14 @@ impl LayerExecutables {
                 .expect("Failed to create RMS norm kernel"),
             );
 
-            let mlp = transformer_layer::mlp_block(
+            let mlp = transformer_layer::mlp_fused_block(
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                ctx,
+                mtl_context.clone(),
                 &decoder_layer_loader.subtree("mlp").unwrap(),
             )
-            .expect("Failed to create mlp block");
+            .expect("Failed to create mlp fused block");
 
             let post_mlp_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
