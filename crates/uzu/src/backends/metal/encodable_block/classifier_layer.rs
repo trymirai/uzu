@@ -38,7 +38,7 @@ pub struct ClassifierLayer {
 
 impl ClassifierLayer {
     pub fn new(
-        mtl_context: &MTLContext,
+        mtl_context: Rc<MTLContext>,
         layer_config: &TransformerLayerConfig,
         _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
@@ -52,6 +52,7 @@ impl ClassifierLayer {
         rope: Rc<Box<dyn EncodableBlock>>,
     ) -> Self {
         autoreleasepool(|_| {
+            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
             let attention_config = layer_config
                 .mixer_config
                 .as_attention()
@@ -65,7 +66,7 @@ impl ClassifierLayer {
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock> = Box::new(
                 TensorCopy::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
                 )
@@ -79,7 +80,7 @@ impl ClassifierLayer {
                     if layer_loader.subtree("pre_mixer_norm").is_ok() {
                         Some(Box::new(
                             Normalization::new(
-                                mtl_context,
+                                ctx,
                                 intermediate_data_type,
                                 norm_config.clone(),
                                 ArrayId::Main,
@@ -108,7 +109,7 @@ impl ClassifierLayer {
                     num_groups * head_dim,
                     num_groups * head_dim,
                 ],
-                mtl_context,
+                ctx,
                 &layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 ArrayId::Main,
                 ArrayId::QKV,
@@ -121,7 +122,7 @@ impl ClassifierLayer {
                 || attention_config.key_norm_config.is_some()
             {
                 match QKNorm::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     attention_config.query_norm_config.clone(),
                     attention_config.key_norm_config.clone(),
@@ -146,7 +147,7 @@ impl ClassifierLayer {
                 attention_config.has_out_biases,
                 num_heads * head_dim,
                 [model_dim],
-                mtl_context,
+                ctx,
                 &layer_loader.subtree("mixer.out_projection").unwrap(),
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
@@ -159,7 +160,7 @@ impl ClassifierLayer {
                 {
                     Some(Box::new(
                         Normalization::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,
@@ -174,7 +175,7 @@ impl ClassifierLayer {
 
             let mixer_residual_add: Box<dyn EncodableBlock> = Box::new(
                 TensorAddSwap::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )
@@ -183,7 +184,7 @@ impl ClassifierLayer {
 
             let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock> = Box::new(
                 TensorCopy::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
                 )
@@ -192,7 +193,7 @@ impl ClassifierLayer {
 
             let pre_mlp_norm: Box<dyn EncodableBlock> = Box::new(
                 Normalization::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
                     ArrayId::Main,
@@ -206,7 +207,7 @@ impl ClassifierLayer {
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                mtl_context,
+                ctx,
                 &layer_loader.subtree("mlp").unwrap(),
             )
             .expect("Failed to create mlp block");
@@ -215,7 +216,7 @@ impl ClassifierLayer {
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
                     Some(Box::new(
                         Normalization::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,
@@ -230,7 +231,7 @@ impl ClassifierLayer {
 
             let attention: Box<dyn EncodableBlock> = Box::new(
                 Attention::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     layer_index,
                     attention_scale,
@@ -243,7 +244,7 @@ impl ClassifierLayer {
 
             let mlp_residual_add: Box<dyn EncodableBlock> = Box::new(
                 TensorAddSwap::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )

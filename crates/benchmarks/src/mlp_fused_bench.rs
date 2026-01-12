@@ -26,313 +26,323 @@ fn create_test_context() -> Option<MTLContext> {
     MTLContext::new(device, command_queue).ok()
 }
 
-struct BenchResult {
-    fused_time_us: f64,
-    unfused_time_us: f64,
+struct BenchmarkResult {
+    fused_time_microseconds: f64,
+    unfused_time_microseconds: f64,
     speedup: f64,
 }
 
-impl BenchResult {
+impl BenchmarkResult {
     fn new(
-        fused: Duration,
-        unfused: Duration,
+        fused_duration: Duration,
+        unfused_duration: Duration,
     ) -> Self {
-        let fused_us = fused.as_secs_f64() * 1_000_000.0;
-        let unfused_us = unfused.as_secs_f64() * 1_000_000.0;
+        let fused_microseconds = fused_duration.as_secs_f64() * 1_000_000.0;
+        let unfused_microseconds = unfused_duration.as_secs_f64() * 1_000_000.0;
         Self {
-            fused_time_us: fused_us,
-            unfused_time_us: unfused_us,
-            speedup: unfused_us / fused_us,
+            fused_time_microseconds: fused_microseconds,
+            unfused_time_microseconds: unfused_microseconds,
+            speedup: unfused_microseconds / fused_microseconds,
         }
     }
 }
 
-fn bench_gemv_fused(
-    ctx: &MTLContext,
-    k: usize,
-    hidden_dim: usize,
-    iterations: usize,
-    warmup: usize,
-) -> BenchResult {
+fn benchmark_gemv_fused(
+    context: &MTLContext,
+    input_dimension: usize,
+    hidden_dimension: usize,
+    iteration_count: usize,
+    warmup_count: usize,
+) -> BenchmarkResult {
     // Allocate buffers
-    let input_buf = ctx.device.new_buffer(
-        (k * std::mem::size_of::<f16>()) as u64,
+    let input_buffer = context.device.new_buffer(
+        (input_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let weights_buf = ctx.device.new_buffer(
-        (2 * hidden_dim * k * std::mem::size_of::<f16>()) as u64,
+    let weights_buffer = context.device.new_buffer(
+        (2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>())
+            as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let output_buf = ctx.device.new_buffer(
-        (hidden_dim * std::mem::size_of::<f16>()) as u64,
+    let output_buffer = context.device.new_buffer(
+        (hidden_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let fused_up_buf = ctx.device.new_buffer(
-        (2 * hidden_dim * std::mem::size_of::<f16>()) as u64,
+    let fused_up_buffer = context.device.new_buffer(
+        (2 * hidden_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
 
     let mut fused_kernel =
         MlpFusedGemvKernel::new(DataType::F16).expect("fused kernel");
     let mut matmul_kernel =
-        MatmulKernel::new(ctx, DataType::F16, false, true).expect("matmul");
+        MatmulKernel::new(context, DataType::F16, false, true).expect("matmul");
 
     // Warmup fused
-    for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
-        let args = MlpFusedGemvArguments {
-            weights: &weights_buf,
-            input: &input_buf,
+    for _ in 0..warmup_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
+        let arguments = MlpFusedGemvArguments {
+            weights: &weights_buffer,
+            input: &input_buffer,
             input_offset: 0,
-            output: &output_buf,
-            input_dim: k as i32,
-            hidden_dim: hidden_dim as i32,
-            weights_ld: k as i32,
+            output: &output_buffer,
+            input_dim: input_dimension as i32,
+            hidden_dim: hidden_dimension as i32,
+            weights_ld: input_dimension as i32,
             batch_count: 1,
             activation: MlpActivationType::SiLU,
         };
-        fused_kernel.encode(ctx, &enc, &args).unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
 
     // Benchmark fused
     let fused_start = Instant::now();
-    for _ in 0..iterations {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
-        let args = MlpFusedGemvArguments {
-            weights: &weights_buf,
-            input: &input_buf,
+    for _ in 0..iteration_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
+        let arguments = MlpFusedGemvArguments {
+            weights: &weights_buffer,
+            input: &input_buffer,
             input_offset: 0,
-            output: &output_buf,
-            input_dim: k as i32,
-            hidden_dim: hidden_dim as i32,
-            weights_ld: k as i32,
+            output: &output_buffer,
+            input_dim: input_dimension as i32,
+            hidden_dim: hidden_dimension as i32,
+            weights_ld: input_dimension as i32,
             batch_count: 1,
             activation: MlpActivationType::SiLU,
         };
-        fused_kernel.encode(ctx, &enc, &args).unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
-    let fused_time = fused_start.elapsed() / iterations as u32;
+    let fused_duration = fused_start.elapsed() / iteration_count as u32;
 
     // Warmup unfused (matmul only - simplified comparison)
-    for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
+    for _ in 0..warmup_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
             .encode(
-                ctx,
-                &enc,
+                context,
+                &encoder,
                 MatmulArguments {
-                    a: &input_buf,
+                    a: &input_buffer,
                     a_offset: 0,
-                    b: &weights_buf,
+                    b: &weights_buffer,
                     c: None,
-                    d: &fused_up_buf,
+                    d: &fused_up_buffer,
                     batch: 1,
-                    input_dim: k as i32,
-                    output_dim: (2 * hidden_dim) as i32,
-                    lda: k as i32,
-                    ldb: k as i32,
-                    ldd: (2 * hidden_dim) as i32,
+                    input_dim: input_dimension as i32,
+                    output_dim: (2 * hidden_dimension) as i32,
+                    lda: input_dimension as i32,
+                    ldb: input_dimension as i32,
+                    ldd: (2 * hidden_dimension) as i32,
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
                 },
             )
             .unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
 
     // Benchmark unfused (matmul + separate activation would add more time)
     let unfused_start = Instant::now();
-    for _ in 0..iterations {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
+    for _ in 0..iteration_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
             .encode(
-                ctx,
-                &enc,
+                context,
+                &encoder,
                 MatmulArguments {
-                    a: &input_buf,
+                    a: &input_buffer,
                     a_offset: 0,
-                    b: &weights_buf,
+                    b: &weights_buffer,
                     c: None,
-                    d: &fused_up_buf,
+                    d: &fused_up_buffer,
                     batch: 1,
-                    input_dim: k as i32,
-                    output_dim: (2 * hidden_dim) as i32,
-                    lda: k as i32,
-                    ldb: k as i32,
-                    ldd: (2 * hidden_dim) as i32,
+                    input_dim: input_dimension as i32,
+                    output_dim: (2 * hidden_dimension) as i32,
+                    lda: input_dimension as i32,
+                    ldb: input_dimension as i32,
+                    ldd: (2 * hidden_dimension) as i32,
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
                 },
             )
             .unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
-    let unfused_time = unfused_start.elapsed() / iterations as u32;
+    let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchResult::new(fused_time, unfused_time)
+    BenchmarkResult::new(fused_duration, unfused_duration)
 }
 
-fn bench_gemm_fused(
-    ctx: &MTLContext,
-    m: usize,
-    k: usize,
-    hidden_dim: usize,
-    iterations: usize,
-    warmup: usize,
-) -> BenchResult {
-    let input_buf = ctx.device.new_buffer(
-        (m * k * std::mem::size_of::<f16>()) as u64,
+fn benchmark_gemm_fused(
+    context: &MTLContext,
+    batch_size: usize,
+    input_dimension: usize,
+    hidden_dimension: usize,
+    iteration_count: usize,
+    warmup_count: usize,
+) -> BenchmarkResult {
+    let input_buffer = context.device.new_buffer(
+        (batch_size * input_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let weights_buf = ctx.device.new_buffer(
-        (2 * hidden_dim * k * std::mem::size_of::<f16>()) as u64,
+    let weights_buffer = context.device.new_buffer(
+        (2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>())
+            as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let output_buf = ctx.device.new_buffer(
-        (m * hidden_dim * std::mem::size_of::<f16>()) as u64,
+    let output_buffer = context.device.new_buffer(
+        (batch_size * hidden_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
-    let fused_up_buf = ctx.device.new_buffer(
-        (m * 2 * hidden_dim * std::mem::size_of::<f16>()) as u64,
+    let fused_up_buffer = context.device.new_buffer(
+        (batch_size * 2 * hidden_dimension * std::mem::size_of::<f16>()) as u64,
         MTLResourceOptions::StorageModeShared,
     );
 
     let mut fused_kernel =
         MlpFusedGemmKernel::new(DataType::F16, true).expect("fused kernel");
     let mut matmul_kernel =
-        MatmulKernel::new(ctx, DataType::F16, false, true).expect("matmul");
+        MatmulKernel::new(context, DataType::F16, false, true).expect("matmul");
 
     // Warmup fused
-    for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
-        let args = MlpFusedGemmArguments {
-            input: &input_buf,
+    for _ in 0..warmup_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
+        let arguments = MlpFusedGemmArguments {
+            input: &input_buffer,
             input_offset: 0,
-            weights: &weights_buf,
-            output: &output_buf,
-            batch: m as i32,
-            input_dim: k as i32,
-            hidden_dim: hidden_dim as i32,
-            lda: k as i32,
-            ldb: k as i32,
-            ldd: hidden_dim as i32,
+            weights: &weights_buffer,
+            output: &output_buffer,
+            batch: batch_size as i32,
+            input_dim: input_dimension as i32,
+            hidden_dim: hidden_dimension as i32,
+            lda: input_dimension as i32,
+            ldb: input_dimension as i32,
+            ldd: hidden_dimension as i32,
             activation: MlpActivationType::SiLU,
         };
-        fused_kernel.encode(ctx, &enc, &args).unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
 
     let fused_start = Instant::now();
-    for _ in 0..iterations {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
-        let args = MlpFusedGemmArguments {
-            input: &input_buf,
+    for _ in 0..iteration_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
+        let arguments = MlpFusedGemmArguments {
+            input: &input_buffer,
             input_offset: 0,
-            weights: &weights_buf,
-            output: &output_buf,
-            batch: m as i32,
-            input_dim: k as i32,
-            hidden_dim: hidden_dim as i32,
-            lda: k as i32,
-            ldb: k as i32,
-            ldd: hidden_dim as i32,
+            weights: &weights_buffer,
+            output: &output_buffer,
+            batch: batch_size as i32,
+            input_dim: input_dimension as i32,
+            hidden_dim: hidden_dimension as i32,
+            lda: input_dimension as i32,
+            ldb: input_dimension as i32,
+            ldd: hidden_dimension as i32,
             activation: MlpActivationType::SiLU,
         };
-        fused_kernel.encode(ctx, &enc, &args).unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
-    let fused_time = fused_start.elapsed() / iterations as u32;
+    let fused_duration = fused_start.elapsed() / iteration_count as u32;
 
     // Warmup unfused
-    for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
+    for _ in 0..warmup_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
             .encode(
-                ctx,
-                &enc,
+                context,
+                &encoder,
                 MatmulArguments {
-                    a: &input_buf,
+                    a: &input_buffer,
                     a_offset: 0,
-                    b: &weights_buf,
+                    b: &weights_buffer,
                     c: None,
-                    d: &fused_up_buf,
-                    batch: m as i32,
-                    input_dim: k as i32,
-                    output_dim: (2 * hidden_dim) as i32,
-                    lda: k as i32,
-                    ldb: k as i32,
-                    ldd: (2 * hidden_dim) as i32,
+                    d: &fused_up_buffer,
+                    batch: batch_size as i32,
+                    input_dim: input_dimension as i32,
+                    output_dim: (2 * hidden_dimension) as i32,
+                    lda: input_dimension as i32,
+                    ldb: input_dimension as i32,
+                    ldd: (2 * hidden_dimension) as i32,
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
                 },
             )
             .unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
 
     let unfused_start = Instant::now();
-    for _ in 0..iterations {
-        let cb = ctx.command_queue.new_command_buffer().to_owned();
-        let enc = cb.new_compute_command_encoder();
+    for _ in 0..iteration_count {
+        let command_buffer =
+            context.command_queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
             .encode(
-                ctx,
-                &enc,
+                context,
+                &encoder,
                 MatmulArguments {
-                    a: &input_buf,
+                    a: &input_buffer,
                     a_offset: 0,
-                    b: &weights_buf,
+                    b: &weights_buffer,
                     c: None,
-                    d: &fused_up_buf,
-                    batch: m as i32,
-                    input_dim: k as i32,
-                    output_dim: (2 * hidden_dim) as i32,
-                    lda: k as i32,
-                    ldb: k as i32,
-                    ldd: (2 * hidden_dim) as i32,
+                    d: &fused_up_buffer,
+                    batch: batch_size as i32,
+                    input_dim: input_dimension as i32,
+                    output_dim: (2 * hidden_dimension) as i32,
+                    lda: input_dimension as i32,
+                    ldb: input_dimension as i32,
+                    ldd: (2 * hidden_dimension) as i32,
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
                 },
             )
             .unwrap();
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
     }
-    let unfused_time = unfused_start.elapsed() / iterations as u32;
+    let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchResult::new(fused_time, unfused_time)
+    BenchmarkResult::new(fused_duration, unfused_duration)
 }
 
 /// MLP shapes from real model configs
-/// Format: (K=model_dim, H=hidden_dim)
+/// Format: (input_dimension, hidden_dimension)
 const MLP_SHAPES: &[(usize, usize)] = &[
     (896, 4864),   // Qwen2.5-Coder-0.5B
     (1024, 3072),  // Qwen3-0.6B
@@ -358,79 +368,65 @@ const MLP_SHAPES: &[(usize, usize)] = &[
     (6144, 16384), // Codestral-22B
 ];
 
+/// Batch sizes to test: decode (1) and prefill sizes
+const BATCH_SIZES: &[usize] = &[1, 8, 16, 32, 64, 128, 256, 512];
+
 pub fn run_mlp_fused_benchmark() {
     autoreleasepool(|_| {
-        let ctx = match create_test_context() {
-            Some(c) => c,
+        let context = match create_test_context() {
+            Some(context) => context,
             None => {
                 eprintln!("No Metal device available");
                 return;
             },
         };
 
-        println!("\n=== MLP Fused Kernel Benchmark (Real Model Shapes) ===\n");
+        let iteration_count = 100;
+        let warmup_count = 10;
 
-        let iterations = 100;
-        let warmup = 10;
-
-        // GEMV benchmark (decode path, M=1)
-        println!("=== GEMV (Decode, M=1) ===");
         println!(
-            "{:<25} {:>12} {:>12} {:>10}",
-            "Shape (K, H)", "Fused (µs)", "Unfused (µs)", "Speedup"
+            "{:>12} {:>12} {:>12} {:>12} {:>12} {:>10}",
+            "batch_size",
+            "input_dim",
+            "hidden_dim",
+            "Fused (µs)",
+            "Unfused (µs)",
+            "Speedup"
         );
-        println!("{}", "-".repeat(61));
+        println!("{}", "-".repeat(74));
 
-        for &(k, hidden_dim) in MLP_SHAPES {
-            let result =
-                bench_gemv_fused(&ctx, k, hidden_dim, iterations, warmup);
-            let speedup_str = if result.speedup >= 1.0 {
-                format!("{:.2}x", result.speedup)
-            } else {
-                format!("{:.2}x", result.speedup)
-            };
-            println!(
-                "({:>4}, {:>5})              {:>12.1} {:>12.1} {:>10}",
-                k,
-                hidden_dim,
-                result.fused_time_us,
-                result.unfused_time_us,
-                speedup_str
-            );
+        for &batch_size in BATCH_SIZES {
+            for &(input_dimension, hidden_dimension) in MLP_SHAPES {
+                let result = if batch_size == 1 {
+                    benchmark_gemv_fused(
+                        &context,
+                        input_dimension,
+                        hidden_dimension,
+                        iteration_count,
+                        warmup_count,
+                    )
+                } else {
+                    benchmark_gemm_fused(
+                        &context,
+                        batch_size,
+                        input_dimension,
+                        hidden_dimension,
+                        iteration_count,
+                        warmup_count,
+                    )
+                };
+                let speedup_string = format!("{:.2}x", result.speedup);
+                println!(
+                    "{:>12} {:>12} {:>12} {:>12.1} {:>12.1} {:>10}",
+                    batch_size,
+                    input_dimension,
+                    hidden_dimension,
+                    result.fused_time_microseconds,
+                    result.unfused_time_microseconds,
+                    speedup_string
+                );
+            }
         }
-
-        println!();
-
-        // GEMM benchmark (prefill path, M=32)
-        println!("=== GEMM (Prefill, M=32) ===");
-        println!(
-            "{:<25} {:>12} {:>12} {:>10}",
-            "Shape (K, H)", "Fused (µs)", "Unfused (µs)", "Speedup"
-        );
-        println!("{}", "-".repeat(61));
-
-        for &(k, hidden_dim) in MLP_SHAPES {
-            let result =
-                bench_gemm_fused(&ctx, 32, k, hidden_dim, iterations, warmup);
-            let speedup_str = if result.speedup >= 1.0 {
-                format!("{:.2}x", result.speedup)
-            } else {
-                format!("{:.2}x", result.speedup)
-            };
-            println!(
-                "({:>4}, {:>5})              {:>12.1} {:>12.1} {:>10}",
-                k,
-                hidden_dim,
-                result.fused_time_us,
-                result.unfused_time_us,
-                speedup_str
-            );
-        }
-
-        println!("\nNote: Unfused time excludes activation kernel overhead.");
-        println!(
-            "      Actual unfused path would be slower due to activation dispatch.\n"
-        );
     });
 }
 
@@ -442,8 +438,8 @@ mod tests {
     fn test_benchmark_runs() {
         // Just verify the benchmark doesn't crash
         autoreleasepool(|_| {
-            if let Some(ctx) = create_test_context() {
-                let _ = bench_gemv_fused(&ctx, 512, 256, 5, 2);
+            if let Some(context) = create_test_context() {
+                let _ = benchmark_gemv_fused(&context, 512, 256, 5, 2);
             }
         });
     }
