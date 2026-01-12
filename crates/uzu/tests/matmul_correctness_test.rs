@@ -137,213 +137,120 @@ struct TestCase {
 }
 
 fn test_cases() -> Vec<TestCase> {
-    vec![
-        // transpose_b = true cases
-        TestCase {
-            m: 1,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.01,
-        },
-        TestCase {
-            m: 1,
-            k: 4096,
-            n: 4096,
-            transpose_b: true,
-            tolerance: 0.01,
-        },
-        TestCase {
-            m: 1,
-            k: 8192,
-            n: 8192,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            m: 1,
-            k: 2048,
-            n: 8192,
-            transpose_b: true,
-            tolerance: 0.01,
-        },
-        TestCase {
-            m: 1,
-            k: 8192,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            m: 2,
-            k: 4096,
-            n: 4096,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            m: 4,
-            k: 16384,
-            n: 4,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 8,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            m: 16,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.03,
-        },
-        TestCase {
-            m: 17,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            m: 32,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            m: 32,
-            k: 2048,
-            n: 1537,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 32,
-            k: 1999,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 33,
-            k: 127,
-            n: 65,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 64,
-            k: 32,
-            n: 64,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            m: 64,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.08,
-        },
-        TestCase {
-            m: 128,
-            k: 128,
-            n: 128,
-            transpose_b: true,
-            tolerance: 0.05,
-        },
-        TestCase {
-            m: 128,
-            k: 2048,
-            n: 1,
-            transpose_b: true,
-            tolerance: 0.02,
-        },
-        TestCase {
-            m: 128,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 256,
-            k: 256,
-            n: 256,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 256,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.15,
-        },
-        TestCase {
-            m: 512,
-            k: 64,
-            n: 512,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 512,
-            k: 512,
-            n: 512,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 512,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.2,
-        },
-        TestCase {
-            m: 1024,
-            k: 1024,
-            n: 1024,
-            transpose_b: true,
-            tolerance: 0.1,
-        },
-        TestCase {
-            m: 1024,
-            k: 2048,
-            n: 2048,
-            transpose_b: true,
-            tolerance: 0.25,
-        },
-        // transpose_b = false cases
-        TestCase {
-            m: 64,
-            k: 128,
-            n: 64,
-            transpose_b: false,
-            tolerance: 0.15,
-        },
-        TestCase {
-            m: 128,
-            k: 256,
-            n: 128,
-            transpose_b: false,
-            tolerance: 0.15,
-        },
-        TestCase {
-            m: 512,
-            k: 512,
-            n: 64,
-            transpose_b: false,
-            tolerance: 0.1,
-        },
-    ]
+    // Shapes derived from actual LLM models in the registry.
+    // Tolerance scales with sqrt(k) due to floating point accumulation.
+    let base_tolerance = 0.01;
+
+    let cases: Vec<(usize, usize, usize, bool)> = vec![
+        // === Decode shapes (m=1) from actual models ===
+        // Qwen2.5-Coder-0.5B
+        (1, 896, 896, true),
+        (1, 896, 1152, true),
+        (1, 896, 4864, true),
+        (1, 4864, 896, true),
+        // Qwen3-0.6B
+        (1, 1024, 1024, true),
+        (1, 1024, 3072, true),
+        (1, 1024, 4096, true),
+        (1, 3072, 1024, true),
+        // Gemma-3-1B
+        (1, 1152, 1152, true),
+        (1, 1152, 1536, true),
+        (1, 1152, 6912, true),
+        (1, 6912, 1152, true),
+        // Qwen2.5-Coder-1.5B
+        (1, 1536, 1536, true),
+        (1, 1536, 2048, true),
+        (1, 1536, 8960, true),
+        (1, 8960, 1536, true),
+        // Llama-3.2-1B / Qwen3-1.7B / SmolLM2-1.7B
+        (1, 2048, 2048, true),
+        (1, 2048, 2560, true),
+        (1, 2048, 3072, true),
+        (1, 2048, 4096, true),
+        (1, 2048, 6144, true),
+        (1, 2048, 8192, true),
+        (1, 2048, 11008, true),
+        (1, 6144, 2048, true),
+        (1, 8192, 2048, true),
+        (1, 11008, 2048, true),
+        // Qwen3-4B / Gemma-3-4B
+        (1, 2560, 2560, true),
+        (1, 2560, 4096, true),
+        (1, 2560, 6144, true),
+        (1, 2560, 9728, true),
+        (1, 2560, 10240, true),
+        (1, 9728, 2560, true),
+        (1, 10240, 2560, true),
+        // Llama-3.2-3B
+        (1, 3072, 3072, true),
+        (1, 3072, 5120, true),
+        (1, 3072, 8192, true),
+        (1, 8192, 3072, true),
+        // Qwen2.5-Coder-7B
+        (1, 3584, 3584, true),
+        (1, 3584, 4608, true),
+        (1, 3584, 18944, true),
+        (1, 18944, 3584, true),
+        // Llama-3.1-8B / Qwen3-8B
+        (1, 4096, 4096, true),
+        (1, 4096, 6144, true),
+        (1, 4096, 12288, true),
+        (1, 4096, 14336, true),
+        (1, 12288, 4096, true),
+        (1, 14336, 4096, true),
+        // Qwen3-14B
+        (1, 5120, 5120, true),
+        (1, 5120, 7168, true),
+        (1, 5120, 17408, true),
+        (1, 17408, 5120, true),
+        // === Prefill shapes (m>1) for representative models ===
+        // Llama-3.2-1B prefill
+        (8, 2048, 3072, true),
+        (16, 2048, 3072, true),
+        (32, 2048, 3072, true),
+        (64, 2048, 3072, true),
+        (128, 2048, 3072, true),
+        (256, 2048, 8192, true),
+        (512, 2048, 8192, true),
+        // Qwen3-4B prefill
+        (8, 2560, 6144, true),
+        (32, 2560, 9728, true),
+        (128, 2560, 9728, true),
+        // Llama-3.1-8B prefill
+        (8, 4096, 6144, true),
+        (32, 4096, 14336, true),
+        (128, 4096, 14336, true),
+        (256, 4096, 14336, true),
+        // === Non-transposed B (for attention AV matmul) ===
+        (1, 1024, 1024, false),
+        (1, 2048, 2048, false),
+        (1, 4096, 4096, false),
+        (64, 2048, 2048, false),
+        (128, 4096, 4096, false),
+        // === Edge cases ===
+        (1, 128, 128, true),
+        (2, 2048, 2048, true),
+        (33, 2048, 2048, true),
+        (17, 4096, 4096, true),
+    ];
+
+    cases
+        .into_iter()
+        .map(|(m, k, n, transpose_b)| {
+            // Tolerance scales with sqrt(k) for accumulation error
+            let tolerance = base_tolerance * (k as f32 / 1024.0).sqrt();
+            // Larger m also contributes slightly to tolerance needs
+            let tolerance = tolerance * (1.0 + (m as f32).log2() * 0.02);
+            TestCase {
+                m,
+                k,
+                n,
+                transpose_b,
+                tolerance,
+            }
+        })
+        .collect()
 }
 
 fn compare_results(
