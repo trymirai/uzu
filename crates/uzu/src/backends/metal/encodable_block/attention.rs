@@ -162,19 +162,6 @@ impl EncodableBlock for Attention {
                 );
             });
         }
-        if use_gemm {
-            static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
-            PRINT_ONCE.call_once(|| {
-                eprintln!(
-                    "[uzu] Using Gemm attention (suffix_len={}, seq_len={}, head_dim={}, gqa_factor={}, causal={})",
-                    suffix_length,
-                    sequence_length,
-                    head_dim,
-                    gqa_factor,
-                    self.is_causal
-                );
-            });
-        }
         let variant = if use_gemm {
             AttentionKernelVariant::SinglePass
         } else {
