@@ -9,7 +9,7 @@ use uzu::{
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
-        parameter::ContextLength,
+        parameter::{ContextLength, SamplingMethod, SamplingPolicy},
         types::{Input, Output},
     },
 };
@@ -90,8 +90,14 @@ impl Runner {
             let timestamp =
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-            let run_config =
+            let mut run_config =
                 RunConfig::default().tokens_limit(self.task.tokens_limit);
+            if self.task.greedy {
+                run_config =
+                    run_config.sampling_policy(SamplingPolicy::Custom {
+                        value: SamplingMethod::Greedy,
+                    });
+            }
             let output = session.run(
                 input.clone(),
                 run_config,

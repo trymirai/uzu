@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from typing import List
 from enum import Enum
+from typing import List
 
 
 @dataclass(frozen=True)
@@ -60,3 +60,4 @@ class BenchmarkTask:
     number_of_runs: int
     tokens_limit: int
     messages: List[Message]
+    greedy: bool
