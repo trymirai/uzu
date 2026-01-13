@@ -71,7 +71,9 @@ static ArgmaxPair threadgroup_cooperative_argmax(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const ArgmaxPair result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 template <ushort GRAIN_SIZE_PARAM>
@@ -146,7 +148,9 @@ static ArgmaxPair threadgroup_raking_argmax(
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  return shared[lid];
+  const ArgmaxPair result = shared[lid];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 template <typename T>

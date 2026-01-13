@@ -30,17 +30,16 @@ void batched_topk(
         logit_value > -INFINITY
     );
   }
-  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
-      local_min,
-      shared_reduce_buffer,
-      thread_idx
-  );
   float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
       local_max,
       shared_reduce_buffer,
       thread_idx
   );
-
+  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
+      local_min,
+      shared_reduce_buffer,
+      thread_idx
+ );
   // Do the binary search on the threshold
   float low = min_logit;
   float high = max_logit;
