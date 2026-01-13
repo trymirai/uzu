@@ -2,13 +2,14 @@
 #include "../definitions.metal"
 
 #define BLOCK_SIZE 1024
+#define BLOCK_SIZE_IN_SIMDS (BLOCK_SIZE / 32)
 #define MAX_ITERS 16
 
 template <typename T>
 void batched_topk(
     device const T* logits_data,
     device T* processed_logits,
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE],
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],
     constant uint& vocab_size,
     constant uint& top_k,
     uint batch_idx,
@@ -29,13 +30,13 @@ void batched_topk(
         logit_value > -INFINITY
     );
   }
-  float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
-      local_max,
+  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
+      local_min,
       shared_reduce_buffer,
       thread_idx
   );
-  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
-      local_min,
+  float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
+      local_max,
       shared_reduce_buffer,
       thread_idx
   );
@@ -102,7 +103,7 @@ void batched_topk(
   [[max_total_threads_per_threadgroup(                                         \
       1024                                                                     \
   )]] kernel void functionName##_##scalarType outerArgs {                      \
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE];                        \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS];                        \
     functionName innerArgs;                                                    \
   }
 
