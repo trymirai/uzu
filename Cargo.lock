@@ -4098,7 +4098,6 @@ dependencies = [
  "bitflags 2.9.4",
  "block",
  "bytemuck",
- "clap",
  "futures",
  "half",
  "is_close",

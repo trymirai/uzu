@@ -15,14 +15,15 @@ async fn main() {
     // Generate Rust bindings from shared Metal/C headers
     generate_metal_bindings();
 
-    if cfg!(feature = "metal-shaders") {
+    if cfg!(feature = "vulkan") {
+        compile_vulkan_shaders().await;
+        write_empty_metallib();
+    } else if cfg!(feature = "metal-shaders") {
         println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
         compile_metal_shaders();
     } else {
         write_empty_metallib();
     }
-
-    compile_vulkan_shaders().await;
 }
 
 /// Generate Rust bindings from shared C headers using bindgen.
@@ -399,7 +400,7 @@ async fn compile_vulkan_shader(
     )?;
     let out_path = get_spv_file_name(&file_path.to_string_lossy().to_string().as_str());
     fs::write(&out_path, artifact.as_binary_u8())?;
-    
+
     Ok(())
 }
 
