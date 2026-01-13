@@ -12,6 +12,7 @@ pub use mlp::{
     MLP_ACTIVATION_FC_INDEX, MLP_FUSED_FC_INDEX, MLP_HIDDEN_DIM_FC_INDEX,
     MlpActivationType, MlpFusedConfig, make_non_fused_function_constants,
 };
+pub mod mlp_fused;
 pub mod moe;
 pub mod pooling;
 pub mod quant_matmul;

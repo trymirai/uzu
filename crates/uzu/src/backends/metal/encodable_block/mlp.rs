@@ -11,11 +11,11 @@ use crate::{
         MTLContext,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            matmul::{
-                MlpFusedGemmArguments, MlpFusedGemmKernel,
-                MlpFusedGemvArguments, MlpFusedGemvKernel,
-            },
             mlp::{MlpActivationType, MlpGateActMulEncodable},
+            mlp_fused::{
+                GemmArguments as MlpFusedGemmArguments, GemmKernel as MlpFusedGemmKernel,
+                GemvArguments as MlpFusedGemvArguments, GemvKernel as MlpFusedGemvKernel,
+            },
             quant_matmul::{
                 MlpFusedQmmArguments, MlpFusedQmmKernel, MlpFusedQmvArguments,
                 MlpFusedQmvKernel,

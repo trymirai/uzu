@@ -11,11 +11,14 @@ use uzu::{
     backends::metal::{
         MTLContext,
         kernel::{
-            matmul::{
-                MatmulArguments, MatmulKernel, MlpFusedGemmArguments,
-                MlpFusedGemmKernel, MlpFusedGemvArguments, MlpFusedGemvKernel,
-            },
+            matmul::{MatmulArguments, MatmulKernel},
             mlp::MlpActivationType,
+            mlp_fused::{
+                GemmArguments as MlpFusedGemmArguments,
+                GemmKernel as MlpFusedGemmKernel,
+                GemvArguments as MlpFusedGemvArguments,
+                GemvKernel as MlpFusedGemvKernel,
+            },
         },
     },
 };

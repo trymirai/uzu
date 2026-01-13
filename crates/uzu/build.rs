@@ -23,8 +23,9 @@ fn main() {
 /// These headers are also used by Metal shaders, ensuring type consistency.
 fn generate_metal_bindings() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let matmul_dir = manifest_dir.join("src/backends/metal/kernel/matmul");
-    let types_header = matmul_dir.join("shared_types.h");
+    let matmul_common_dir =
+        manifest_dir.join("src/backends/metal/kernel/matmul/common");
+    let types_header = matmul_common_dir.join("shared_types.h");
 
     // Only regenerate if header changed
     println!("cargo:rerun-if-changed={}", types_header.display());
@@ -43,13 +44,14 @@ fn generate_metal_bindings() {
         .allowlist_type("GEMMParams")
         .allowlist_type("GEMMAddMMParams")
         .allowlist_type("GEMMSpiltKParams")
+        .allowlist_type("GEMMSpiltKMlpFusedParams")
         // Use core types
         .use_core()
         .generate()
         .expect("Failed to generate bindings from shared_types.h");
 
     // Write bindings to the source directory so it can be checked in
-    let bindings_path = matmul_dir.join("shared_types.rs");
+    let bindings_path = matmul_common_dir.join("shared_types.rs");
     bindings
         .write_to_file(&bindings_path)
         .expect("Failed to write shared_types.rs");
@@ -260,7 +262,10 @@ fn macos_sdk_version(sdk: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-fn should_enable_nax(target_os: &str, sdk: &str) -> bool {
+fn should_enable_nax(
+    target_os: &str,
+    sdk: &str,
+) -> bool {
     if target_os != "macos" && target_os != "ios" {
         return false;
     }
@@ -269,8 +274,8 @@ fn should_enable_nax(target_os: &str, sdk: &str) -> bool {
         return false;
     }
     // Check host OS version
-    let os_ok =
-        host_macos_major_version().is_some_and(|major| major >= NAX_MIN_OS_MAJOR);
+    let os_ok = host_macos_major_version()
+        .is_some_and(|major| major >= NAX_MIN_OS_MAJOR);
     if !os_ok {
         return false;
     }
@@ -379,6 +384,11 @@ fn compile_metal_files(
         let matmul_dir = kernel_dir.join("matmul");
         if matmul_dir.exists() {
             include_dirs.insert(matmul_dir.clone());
+
+            let matmul_common_dir = matmul_dir.join("common");
+            if matmul_common_dir.exists() {
+                include_dirs.insert(matmul_common_dir);
+            }
 
             let gemv_dir = matmul_dir.join("gemv");
             if gemv_dir.exists() {

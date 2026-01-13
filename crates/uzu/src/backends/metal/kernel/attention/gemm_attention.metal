@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 
-#include "../matmul/loader.h"
-#include "../matmul/mma.h"
+#include "../matmul/common/loader.h"
+#include "../matmul/common/mma.h"
 
 #include "gemm_types.h"
 
