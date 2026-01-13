@@ -93,7 +93,7 @@ impl CacheLayers {
         max_prefix_length: usize,
         max_suffix_length: usize,
     ) -> Self {
-        let total_context_length = max_prefix_length + max_suffix_length;
+        let total_context_length = max_prefix_length.max(max_suffix_length);
         let kv_shapes: Vec<[usize; 3]> = model_shape
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .collect();
