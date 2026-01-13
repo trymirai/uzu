@@ -5,6 +5,10 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
+# "linked" link the Vulkan loader at compile time
+# without "linked" device.device_fn_1_0.allocate_command_buffers have error
+# "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
+ash = { version = "0.38.0", features = ["linked"] }
 xgrammar = { package = "xgrammar-rs", version = "0.1.29", features = ["hf"] }
 half = { version = "2.6.0", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17.1"
@@ -30,14 +34,18 @@ sysinfo = "0.37.2"
 itertools = "0.14.0"
 schemars = "1.0.5"
 
-[build-dependencies]
-bindgen = "0.72.1"
-
 [dev-dependencies]
 is_close = "0.1.3"
 serde_json5 = "0.2.1"
 schemars = { version = "1.0.5", features = ["derive"] }
 mpsgraph = "0.2.0"
+
+[build-dependencies]
+bindgen = "0.72.1"
+futures = "0.3"
+shaderc = "0.10.1"
+tokio = { version = "1.49.0", features = ["full"] }
+walkdir = "2.5.0"
 
 [features]
 default = ["metal-shaders"]
