@@ -22,7 +22,8 @@ pub enum DeviceGeneration {
     Gen14, // M2 family
     Gen15, // M3 family
     Gen16, // M3 Pro/Max with enhanced features
-    Gen17, // M4 family (NAX capable)
+    Gen17, // M4 family
+    Gen18, // M5 family (NAX capable)
     Unknown(u8),
 }
 
@@ -34,6 +35,7 @@ impl DeviceGeneration {
             15 => Self::Gen15,
             16 => Self::Gen16,
             17 => Self::Gen17,
+            18 => Self::Gen18,
             n => Self::Unknown(n),
         }
     }
@@ -45,6 +47,7 @@ impl DeviceGeneration {
             Self::Gen15 => 15,
             Self::Gen16 => 16,
             Self::Gen17 => 17,
+            Self::Gen18 => 18,
             Self::Unknown(n) => *n,
         }
     }
@@ -100,7 +103,9 @@ impl DeviceArchitecture {
 
     fn parse_architecture_info(arch: &str) -> (DeviceGeneration, DeviceClass) {
         // Parse generation and class from device name (e.g. "Apple M3 Pro")
-        let generation = if arch.contains("M4") {
+        let generation = if arch.contains("M5") {
+            DeviceGeneration::Gen18
+        } else if arch.contains("M4") {
             DeviceGeneration::Gen17
         } else if arch.contains("M3") {
             if arch.contains("Max") || arch.contains("Ultra") {
@@ -131,11 +136,11 @@ impl DeviceArchitecture {
     }
 
     /// Returns true if NAX (New Accelerator eXtensions) is available.
-    /// NAX requires M4 or later (generation >= 17) and macOS 26.2+.
+    /// NAX requires M5 or later (generation >= 18) and macOS 26.2+.
     /// Since we can't check macOS version at compile time in Rust,
     /// we check generation only - the kernels will fail gracefully if unavailable.
     pub fn is_nax_available(&self) -> bool {
-        self.generation.generation_number() >= 17
+        self.generation.generation_number() >= 18
     }
 
     /// Returns true if this is a high-performance device (Pro/Max class).
