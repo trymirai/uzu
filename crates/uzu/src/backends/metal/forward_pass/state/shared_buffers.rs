@@ -69,6 +69,7 @@ impl SharedBuffers {
                             RefCell::new(context.array_uninitialized(
                                 &[num_heads],
                                 DataType::F32,
+                                String::from("shared_buffers_attention_sinks"),
                             ))
                         })
                         .collect(),

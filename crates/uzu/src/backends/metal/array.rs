@@ -22,6 +22,10 @@ impl Array for MetalArray {
         self.data_type
     }
 
+    fn label(&self) -> String {
+        self.buffer.label().to_string()
+    }
+
     fn buffer(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(

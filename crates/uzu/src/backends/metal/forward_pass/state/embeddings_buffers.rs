@@ -60,6 +60,34 @@ impl EmbeddingsBuffers {
         embeddings_config: &EmbeddingConfig,
         model_shape: &ModelShape,
     ) -> Self {
+        fn array_label(
+            config: &EmbeddingConfig,
+            name: &str,
+        ) -> String {
+            let prefix = "embeddings_buffers";
+            let config_name = match config {
+                EmbeddingConfig::Tied {
+                    ..
+                } => "tied",
+                EmbeddingConfig::Untied {
+                    ..
+                } => "untied",
+                EmbeddingConfig::QuantizedTied {
+                    ..
+                } => "quantized_tied",
+                EmbeddingConfig::MLXQuantizedTied {
+                    ..
+                } => "mlx_quantized_tied",
+                EmbeddingConfig::MLXSemiQuantizedUntied {
+                    ..
+                } => "mlx_semi_quantized_untied",
+                EmbeddingConfig::MLXQuantizedUntied {
+                    ..
+                } => "mlx_quantized_untied",
+            };
+            format!("{prefix}_{config_name}_{name}")
+        }
+
         unsafe {
             match embeddings_config {
                 EmbeddingConfig::Tied {
@@ -69,6 +97,7 @@ impl EmbeddingsBuffers {
                     weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_input_shape(),
                         model_shape.activation_data_type(),
+                        array_label(embeddings_config, "weights"),
                     )),
                 },
                 EmbeddingConfig::Untied {
@@ -78,10 +107,12 @@ impl EmbeddingsBuffers {
                     input_weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_input_shape(),
                         model_shape.activation_data_type(),
+                        array_label(embeddings_config, "input_weights"),
                     )),
                     output_weights: RefCell::new(context.array_uninitialized(
                         &model_shape.embeddings_output_shape(),
                         model_shape.activation_data_type(),
+                        array_label(embeddings_config, "output_weights"),
                     )),
                 },
                 EmbeddingConfig::QuantizedTied {
@@ -100,11 +131,13 @@ impl EmbeddingsBuffers {
                                             .packing_divisor(),
                                 ],
                                 embedding_quantization_mode.storage_type(),
+                                array_label(embeddings_config, "weights"),
                             ),
                         ),
                         scales: RefCell::new(context.array_uninitialized(
                             &model_shape.quantized_embeddings_scales_shape(),
                             model_shape.activation_data_type(),
+                            array_label(embeddings_config, "scales"),
                         )),
                     }
                 },
@@ -126,11 +159,13 @@ impl EmbeddingsBuffers {
                                             .packing_divisor(),
                                 ],
                                 embedding_quantization_mode.storage_type(),
+                                array_label(embeddings_config, "weights"),
                             ),
                         ),
                         scales: RefCell::new(context.array_uninitialized(
                             &[vocab_size, num_groups],
                             model_shape.activation_data_type(),
+                            array_label(embeddings_config, "scales"),
                         )),
                     }
                 },
@@ -147,6 +182,7 @@ impl EmbeddingsBuffers {
                             context.array_uninitialized(
                                 &model_shape.embeddings_input_shape(),
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "input_weights"),
                             ),
                         ),
                         packed_output_weights: RefCell::new(
@@ -158,18 +194,24 @@ impl EmbeddingsBuffers {
                                             .packing_divisor(),
                                 ],
                                 embedding_quantization_mode.storage_type(),
+                                array_label(
+                                    embeddings_config,
+                                    "packed_output_weights",
+                                ),
                             ),
                         ),
                         output_scales: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "output_scales"),
                             ),
                         ),
                         output_biases: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "output_biases"),
                             ),
                         ),
                     }
@@ -188,36 +230,48 @@ impl EmbeddingsBuffers {
                             context.array_uninitialized(
                                 &[vocab_size, model_dim / pack],
                                 embedding_quantization_mode.storage_type(),
+                                array_label(
+                                    embeddings_config,
+                                    "packed_input_weights",
+                                ),
                             ),
                         ),
                         input_scales: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "input_scales"),
                             ),
                         ),
                         input_biases: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "input_biases"),
                             ),
                         ),
                         packed_output_weights: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, model_dim / pack],
                                 embedding_quantization_mode.storage_type(),
+                                array_label(
+                                    embeddings_config,
+                                    "packed_output_weights",
+                                ),
                             ),
                         ),
                         output_scales: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "output_scales"),
                             ),
                         ),
                         output_biases: RefCell::new(
                             context.array_uninitialized(
                                 &[vocab_size, num_groups],
                                 model_shape.activation_data_type(),
+                                array_label(embeddings_config, "output_biases"),
                             ),
                         ),
                     }

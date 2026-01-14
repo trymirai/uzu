@@ -5,11 +5,16 @@ pub struct CPUArray {
     buffer: Box<[u8]>,
     shape: Box<[usize]>,
     data_type: DataType,
+    label: String,
 }
 
 impl Array for CPUArray {
     fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    fn label(&self) -> String {
+        self.label.clone()
     }
 
     fn data_type(&self) -> DataType {
@@ -30,6 +35,7 @@ impl CPUArray {
     pub fn new(
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> Self {
         let buffer_size_bytes = array_size_in_bytes(shape, data_type);
         let buffer =
@@ -38,6 +44,7 @@ impl CPUArray {
             buffer,
             shape: shape.into(),
             data_type,
+            label,
         }
     }
 }
@@ -57,7 +64,8 @@ impl DeviceContext for CPUContext {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> CPUArray {
-        CPUArray::new(shape, data_type)
+        CPUArray::new(shape, data_type, label)
     }
 }

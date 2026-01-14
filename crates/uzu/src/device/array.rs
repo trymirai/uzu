@@ -43,6 +43,8 @@ pub trait Array {
 
     fn data_type(&self) -> DataType;
 
+    fn label(&self) -> String;
+
     /// Returns a reference to the device buffer containing the array's data.
     fn buffer(&self) -> &[u8];
 
