@@ -16,7 +16,7 @@ use crate::{
 
 pub struct FullPrecisionLinear {
     kernel: RefCell<MatmulKernel>,
-    biases_buffer: Option<MTLBuffer>,
+    bias_buffer: Option<MTLBuffer>,
     weights_buffer: MTLBuffer,
     input_dim: usize,
     output_dim: usize,
@@ -26,7 +26,7 @@ pub struct FullPrecisionLinear {
 
 impl FullPrecisionLinear {
     pub fn new(
-        mtl_context: &MTLContext,
+        _mtl_context: &MTLContext,
         precision: DataType,
         input_dim: usize,
         output_dim: usize,
@@ -65,7 +65,7 @@ impl FullPrecisionLinear {
         let weights_buffer: MTLBuffer =
             unsafe { weights.mtl_buffer() }.to_owned();
 
-        let biases_buffer = match parameter_tree.leaf("biases") {
+        let bias_buffer = match parameter_tree.leaf("biases") {
             Ok(mut biases) => {
                 if biases.shape() != [output_dim] {
                     return Err(MTLError::Generic(format!(
@@ -81,18 +81,18 @@ impl FullPrecisionLinear {
                         precision
                     )));
                 }
-                let biases_buffer: MTLBuffer =
+                let bias_buffer: MTLBuffer =
                     unsafe { biases.mtl_buffer() }.to_owned();
-                Some(biases_buffer)
+                Some(bias_buffer)
             },
             Err(_) => None,
         };
 
-        let kernel = MatmulKernel::new(mtl_context, precision, false, true)?;
+        let kernel = MatmulKernel::new(precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            biases_buffer,
+            bias_buffer,
             weights_buffer,
             input_dim,
             output_dim,
@@ -126,6 +126,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
+            bias: self.bias_buffer.as_ref(),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,
@@ -135,18 +136,14 @@ impl EncodableBlock for FullPrecisionLinear {
             batch_count: 1,
             alpha: 1.0,
             beta: 0.0,
+            transpose_a: false,
+            transpose_b: true,
         };
 
         let mut kernel = self.kernel.borrow_mut();
-        if let Some(bias_buf) = &self.biases_buffer {
-            kernel
-                .encode_with_bias(state.mtl_context(), encoder, args, bias_buf)
-                .expect("Failed to encode matmul kernel");
-        } else {
-            kernel
-                .encode(state.mtl_context(), encoder, args)
-                .expect("Failed to encode matmul kernel");
-        }
+        kernel
+            .encode(state.mtl_context(), encoder, args)
+            .expect("Failed to encode matmul kernel");
 
         encoder.end_encoding();
 
@@ -181,6 +178,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
+            bias: self.bias_buffer.as_ref(),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,
@@ -190,17 +188,13 @@ impl EncodableBlock for FullPrecisionLinear {
             batch_count: 1,
             alpha: 1.0,
             beta: 0.0,
+            transpose_a: false,
+            transpose_b: true,
         };
 
         let mut kernel = self.kernel.borrow_mut();
-        if let Some(bias_buf) = &self.biases_buffer {
-            kernel
-                .encode_with_bias(state.mtl_context(), encoder, args, bias_buf)
-                .expect("Failed to encode matmul kernel");
-        } else {
-            kernel
-                .encode(state.mtl_context(), encoder, args)
-                .expect("Failed to encode matmul kernel");
-        }
+        kernel
+            .encode(state.mtl_context(), encoder, args)
+            .expect("Failed to encode matmul kernel");
     }
 }

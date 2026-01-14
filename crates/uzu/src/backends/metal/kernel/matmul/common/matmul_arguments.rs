@@ -8,6 +8,7 @@ pub struct MatmulArguments<'a> {
     pub b: &'a MTLBuffer,
     pub c: Option<&'a MTLBuffer>,
     pub d: &'a MTLBuffer,
+    pub bias: Option<&'a MTLBuffer>,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
     pub batch: i32,
     /// K dimension - input_dim/reduction dimension (cols of A, rows of B)
@@ -22,4 +23,6 @@ pub struct MatmulArguments<'a> {
     /// Scaling factors for fused addmm (alpha * A @ B + beta * C)
     pub alpha: f32,
     pub beta: f32,
+    pub transpose_a: bool,
+    pub transpose_b: bool,
 }

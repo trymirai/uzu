@@ -72,6 +72,7 @@ fn run_metal_matmul(
                 alpha: 1.0,
                 beta: 0.0,
             },
+            None,
         )
         .expect("encode");
     enc.end_encoding();

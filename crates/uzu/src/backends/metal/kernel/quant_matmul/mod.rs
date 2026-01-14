@@ -199,20 +199,6 @@ impl QuantizedMatmulKernel {
                 }
             })?;
 
-        if crate::utils::env_utils::debug_matmul_enabled() {
-            eprintln!(
-                "[qmm] {:?} m={} k={} n={} quant={:?} block={}x{} transposed={}",
-                variant,
-                args.batch,
-                args.input_dim,
-                args.output_dim,
-                args.quantization_type,
-                bm,
-                bn,
-                self.weights_transposed
-            );
-        }
-
         encoder.set_compute_pipeline_state(pipeline);
 
         // Set buffers

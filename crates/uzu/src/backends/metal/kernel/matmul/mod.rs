@@ -1,4 +1,5 @@
 pub mod common;
+mod dispatch_descriptor;
 mod gemm;
 mod gemv;
 mod kernel;

@@ -151,6 +151,7 @@ fn benchmark_gemv_fused(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .unwrap();
         encoder.end_encoding();
@@ -184,6 +185,7 @@ fn benchmark_gemv_fused(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .unwrap();
         encoder.end_encoding();
@@ -300,6 +302,7 @@ fn benchmark_gemm_fused(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .unwrap();
         encoder.end_encoding();
@@ -332,6 +335,7 @@ fn benchmark_gemm_fused(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .unwrap();
         encoder.end_encoding();

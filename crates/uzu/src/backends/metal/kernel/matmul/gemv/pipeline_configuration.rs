@@ -1,7 +1,9 @@
 use metal::MTLSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Configuration {
+pub struct PipelineConfiguration {
+    pub transpose_a: bool,
+    pub transpose_b: bool,
     pub transpose_matrix: bool,
     pub threadgroup_rows: u32,
     pub threadgroup_cols: u32,
@@ -13,7 +15,7 @@ pub struct Configuration {
     pub do_axpby: bool,
 }
 
-impl Configuration {
+impl PipelineConfiguration {
     pub fn output_elements_per_threadgroup(&self) -> u32 {
         if self.transpose_matrix {
             self.threadgroup_cols
@@ -36,12 +38,14 @@ impl Configuration {
 }
 
 pub fn select_configuration(
+    transpose_a: bool,
+    transpose_b: bool,
     transpose_matrix: bool,
     input_dimension: i32,
     output_dimension: i32,
     non_contiguous_batch: bool,
     do_axpby: bool,
-) -> Configuration {
+) -> PipelineConfiguration {
     let (threadgroup_rows, threadgroup_cols);
     let (threads_per_simdgroup_row, threads_per_simdgroup_col);
     let (elements_per_thread_row, elements_per_thread_col);
@@ -107,7 +111,9 @@ pub fn select_configuration(
         elements_per_thread_col = 4;
     }
 
-    Configuration {
+    PipelineConfiguration {
+        transpose_a,
+        transpose_b,
         transpose_matrix,
         threadgroup_rows,
         threadgroup_cols,

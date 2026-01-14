@@ -1,43 +1,48 @@
 use std::collections::HashMap;
 
 use metal::{
-    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
-    MTLSize,
+    Buffer as MTLBuffer, ComputeCommandEncoderRef,
+    ComputePipelineState as MTLComputePipelineState,
 };
 
 use super::{
-    pipeline_configuration::PipelineConfiguration,
-    tile_configuration::{TileConfiguration, select_tile_configuration},
+    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
 };
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError,
-        kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
+        kernel::matmul::common::{
+            GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
+            transpose_configuration,
+        },
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    transpose_a: bool,
-    transpose_b: bool,
     partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
     accum_pipeline: Option<MTLComputePipelineState>,
+    accumulator_buffer: Option<MTLBuffer>,
+    accumulator_buffer_bytes: usize,
 }
 
 impl Kernel {
-    pub fn new(
-        data_type: DataType,
-        transpose_a: bool,
-        transpose_b: bool,
-    ) -> Self {
-        Self {
+    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
+        {
+            return Err(MTLError::Generic(format!(
+                "Unsupported dtype for Split-K: {:?}",
+                data_type
+            )));
+        }
+        Ok(Self {
             data_type,
-            transpose_a,
-            transpose_b,
             partial_pipelines: HashMap::new(),
             accum_pipeline: None,
-        }
+            accumulator_buffer: None,
+            accumulator_buffer_bytes: 0,
+        })
     }
 
     fn steel_type_name(&self) -> Result<&'static str, MTLError> {
@@ -56,36 +61,35 @@ impl Kernel {
         "float32"
     }
 
-    fn transpose_suffix(&self) -> &'static str {
-        match (self.transpose_a, self.transpose_b) {
-            (false, false) => "nn",
-            (false, true) => "nt",
-            (true, false) => "tn",
-            (true, true) => "tt",
-        }
-    }
-
     fn partial_kernel_name(
         &self,
-        tile: &TileConfiguration,
-        mn_aligned: bool,
-        k_aligned: bool,
+        config: &PipelineConfiguration,
     ) -> Result<String, MTLError> {
         let in_name = self.steel_type_name()?;
         let out_name = self.splitk_partial_out_name();
-        let transpose_suffix = self.transpose_suffix();
-        let mn_tag = if mn_aligned { "taligned" } else { "naligned" };
-        let k_tag = if k_aligned { "taligned" } else { "naligned" };
+        let transpose_suffix =
+            transpose_configuration(config.transpose_a, config.transpose_b)
+                .as_str();
+        let mn_tag = if config.mn_aligned {
+            "taligned"
+        } else {
+            "naligned"
+        };
+        let k_tag = if config.k_aligned {
+            "taligned"
+        } else {
+            "naligned"
+        };
         Ok(format!(
             "steel_gemm_splitk_{}_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}_MN_{}_K_{}",
             transpose_suffix,
             in_name,
             out_name,
-            tile.tile_rows,
-            tile.tile_cols,
-            tile.tile_depth,
-            tile.warps_per_row,
-            tile.warps_per_col,
+            config.tile.tile_rows,
+            config.tile.tile_cols,
+            config.tile.tile_depth,
+            config.tile.warps_per_row,
+            config.tile.warps_per_col,
             mn_tag,
             k_tag,
         ))
@@ -106,8 +110,7 @@ impl Kernel {
         config: &PipelineConfiguration,
     ) -> Result<&MTLComputePipelineState, MTLError> {
         if !self.partial_pipelines.contains_key(config) {
-            let name =
-                self.partial_kernel_name(&config.tile, config.mn_aligned, config.k_aligned)?;
+            let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
             self.partial_pipelines.insert(config.clone(), ps);
         }
@@ -124,19 +127,6 @@ impl Kernel {
             self.accum_pipeline = Some(ps);
         }
         Ok(self.accum_pipeline.as_ref().unwrap())
-    }
-
-    fn compute_partition_count(k: i32) -> i32 {
-        let k_tiles = k / 16;
-        if k_tiles < 16 {
-            2
-        } else if k_tiles < 32 {
-            4
-        } else if k_tiles < 64 {
-            8
-        } else {
-            16
-        }
     }
 
     pub fn should_use_splitk(
@@ -157,108 +147,86 @@ impl Kernel {
         (m_tiles * n_tiles) <= 32 && k_tiles >= 8
     }
 
-    pub fn encode(
+    pub(crate) fn encode_descriptor(
         &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-    ) -> Result<(), MTLError> {
-        let m = args.batch;
-        let n = args.output_dim;
-        let k = args.input_dim;
+        context: &MTLContext,
+        encoder: &ComputeCommandEncoderRef,
+        arguments: &MatmulArguments,
+        descriptor: &DispatchDescriptor,
+    ) -> Result<bool, MTLError> {
+        self.ensure_accumulator_buffer(context, descriptor.accumulator_bytes);
+        let accumulator_buffer = self
+            .accumulator_buffer
+            .as_ref()
+            .cloned()
+            .expect("Accumulator buffer must be initialized");
 
-        let tile = select_tile_configuration(m, n);
-        let partition_count = Self::compute_partition_count(k);
-        let mn_aligned =
-            (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
-        let k_aligned = (k % tile.tile_depth) == 0;
+        let partial_pipeline_state = self.get_partial_pipeline(
+            context,
+            &descriptor.pipeline_configuration,
+        )?;
 
-        let config = PipelineConfiguration {
-            tile,
-            mn_aligned,
-            k_aligned,
-        };
-
-        let tile_count_m = (m + tile.tile_rows - 1) / tile.tile_rows;
-        let tile_count_n = (n + tile.tile_cols - 1) / tile.tile_cols;
-
-        let gemm_k_iterations = (k / tile.tile_depth) / partition_count;
-        let k_elements_per_partition = gemm_k_iterations * tile.tile_depth;
-        let output_elements_per_partition = m * n;
-
-        let accumulator_element_count =
-            partition_count * output_elements_per_partition * args.batch_count;
-        let accumulator_bytes =
-            (accumulator_element_count as usize) * std::mem::size_of::<f32>();
-        let accumulator_buffer = mtl.device.new_buffer(
-            accumulator_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        );
-
-        let params = SplitKGEMMParams {
-            M: m,
-            N: n,
-            K: k,
-            lda: args.lda,
-            ldb: args.ldb,
-            ldc: n,
-            tiles_n: tile_count_n,
-            tiles_m: tile_count_m,
-            split_k_partitions: partition_count,
-            split_k_partition_stride: output_elements_per_partition,
-            split_k_partition_size: k_elements_per_partition,
-            gemm_k_iterations_aligned: gemm_k_iterations,
-        };
-
-        let partial_ps = self.get_partial_pipeline(mtl, &config)?;
-
-        enc.set_compute_pipeline_state(partial_ps);
-        enc.set_buffer(0, Some(args.a), args.a_offset);
-        enc.set_buffer(1, Some(args.b), 0);
-        enc.set_buffer(2, Some(&accumulator_buffer), 0);
-        enc.set_bytes(
+        encoder.set_compute_pipeline_state(partial_pipeline_state);
+        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
+        encoder.set_buffer(1, Some(arguments.b), 0);
+        encoder.set_buffer(2, Some(&accumulator_buffer), 0);
+        encoder.set_bytes(
             3,
             std::mem::size_of::<SplitKGEMMParams>() as u64,
-            &params as *const SplitKGEMMParams as *const _,
+            &descriptor.params as *const _ as *const _,
+        );
+        encoder.dispatch_thread_groups(
+            descriptor.partial_threadgroups,
+            descriptor.partial_threads_per_threadgroup,
         );
 
-        let threads_per_threadgroup = MTLSize::new(
-            32,
-            tile.warps_per_col as u64,
-            tile.warps_per_row as u64,
-        );
-        let threadgroups = MTLSize::new(
-            tile_count_n as u64,
-            tile_count_m as u64,
-            partition_count as u64,
-        );
-        enc.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        let accum_pipeline_state = self.get_accum_pipeline(context)?;
+        encoder.set_compute_pipeline_state(accum_pipeline_state);
+        encoder.set_buffer(0, Some(&accumulator_buffer), 0);
+        encoder.set_buffer(1, Some(arguments.d), 0);
 
-        let accum_ps = self.get_accum_pipeline(mtl)?;
-        enc.set_compute_pipeline_state(accum_ps);
-        enc.set_buffer(0, Some(&accumulator_buffer), 0);
-        enc.set_buffer(1, Some(args.d), 0);
-        enc.set_bytes(
+        let partition_count = descriptor.partition_count;
+        let output_elements_per_partition =
+            descriptor.output_elements_per_partition;
+        encoder.set_bytes(
             2,
-            4,
+            std::mem::size_of::<i32>() as u64,
             &partition_count as *const i32 as *const std::ffi::c_void,
         );
-        enc.set_bytes(
+        encoder.set_bytes(
             3,
-            4,
-            &output_elements_per_partition as *const i32 as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u64,
+            &output_elements_per_partition as *const i32
+                as *const std::ffi::c_void,
         );
-        enc.set_bytes(
+        encoder.set_bytes(
             4,
-            4,
-            &(args.ldd) as *const i32 as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u64,
+            &(arguments.ldd) as *const i32 as *const std::ffi::c_void,
         );
 
-        let accum_total_threads = MTLSize::new(n as u64, m as u64, 1);
-        let accum_threads_per_threadgroup =
-            MTLSize::new(16.min(n as u64), 16.min(m as u64), 1);
-        enc.dispatch_threads(accum_total_threads, accum_threads_per_threadgroup);
+        encoder.dispatch_threads(
+            descriptor.accum_total_threads,
+            descriptor.accum_threads_per_threadgroup,
+        );
 
-        Ok(())
+        Ok(false)
+    }
+
+    fn ensure_accumulator_buffer(
+        &mut self,
+        mtl: &MTLContext,
+        required_bytes: usize,
+    ) {
+        if required_bytes <= self.accumulator_buffer_bytes
+            && self.accumulator_buffer.is_some()
+        {
+            return;
+        }
+        self.accumulator_buffer = Some(mtl.device.new_buffer(
+            required_bytes as u64,
+            metal::MTLResourceOptions::StorageModePrivate,
+        ));
+        self.accumulator_buffer_bytes = required_bytes;
     }
 }

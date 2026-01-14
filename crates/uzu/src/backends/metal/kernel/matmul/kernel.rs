@@ -1,8 +1,11 @@
-use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef};
+use metal::ComputeCommandEncoderRef;
 
 use super::{
     super::{KernelDataType, TensorAddBias},
     common::MatmulArguments,
+    dispatch_descriptor::{
+        MatmulDispatchDescriptor, choose_dispatch_descriptor,
+    },
     gemm,
     gemv::GemvKernel,
     split_k::SplitKGemm,
@@ -10,13 +13,10 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{MTLContext, MTLError},
-    utils::env_utils::debug_matmul_enabled,
 };
 
 pub struct MatmulKernel {
     data_type: DataType,
-    lhs_is_transposed: bool,
-    rhs_is_transposed: bool,
     gemm: Option<gemm::GemmKernel>,
     gemv: Option<GemvKernel>,
     splitk: Option<SplitKGemm>,
@@ -24,12 +24,7 @@ pub struct MatmulKernel {
 }
 
 impl MatmulKernel {
-    pub fn new(
-        _mtl: &MTLContext,
-        data_type: DataType,
-        lhs_is_transposed: bool,
-        rhs_is_transposed: bool,
-    ) -> Result<Self, MTLError> {
+    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
         {
             return Err(MTLError::Generic(format!(
@@ -39,8 +34,6 @@ impl MatmulKernel {
 
         Ok(Self {
             data_type,
-            lhs_is_transposed,
-            rhs_is_transposed,
             gemm: None,
             gemv: None,
             splitk: None,
@@ -48,177 +41,90 @@ impl MatmulKernel {
         })
     }
 
-    fn maybe_use_gemv_impl(
-        &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-        bias: Option<&MTLBuffer>,
-    ) -> Result<bool, MTLError> {
-        let m = args.batch;
-        let n = args.output_dim;
-        if self.lhs_is_transposed || !self.rhs_is_transposed {
-            return Ok(false);
-        }
-
-        if m != 1 && n != 1 {
-            return Ok(false);
-        }
-        let gemv = self.gemv.get_or_insert_with(|| {
-            GemvKernel::new(
-                self.data_type,
-                self.lhs_is_transposed,
-                self.rhs_is_transposed,
-            )
-        });
-        if let Some(bias) = bias {
-            gemv.encode_with_bias(mtl, enc, args, bias)?;
-        } else {
-            gemv.encode(mtl, enc, args)?;
-        }
-        Ok(true)
-    }
-
-    fn maybe_use_gemv(
-        &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-    ) -> Result<bool, MTLError> {
-        self.maybe_use_gemv_impl(mtl, enc, args, None)
-    }
-
-    fn maybe_use_gemv_with_bias(
-        &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-        bias: &MTLBuffer,
-    ) -> Result<bool, MTLError> {
-        self.maybe_use_gemv_impl(mtl, enc, args, Some(bias))
-    }
-
-    fn maybe_use_splitk(
-        &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-    ) -> Result<bool, MTLError> {
-        let m = args.batch;
-        let n = args.output_dim;
-        let k = args.input_dim;
-        let batch_count = args.batch_count;
-
-        if !SplitKGemm::should_use_splitk(m, n, k, batch_count) {
-            return Ok(false);
-        }
-
-        let splitk = self.splitk.get_or_insert_with(|| {
-            SplitKGemm::new(
-                self.data_type,
-                self.lhs_is_transposed,
-                self.rhs_is_transposed,
-            )
-        });
-        splitk.encode(mtl, enc, args)?;
-        Ok(true)
-    }
-
     fn get_or_create_gemm(
         &mut self
     ) -> Result<&mut gemm::GemmKernel, MTLError> {
         if self.gemm.is_none() {
-            self.gemm = Some(gemm::GemmKernel::new(
-                self.data_type,
-                self.lhs_is_transposed,
-                self.rhs_is_transposed,
-            )?);
+            self.gemm = Some(gemm::GemmKernel::new(self.data_type)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
 
-    fn encode_gemm(
+    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel, MTLError> {
+        if self.gemv.is_none() {
+            self.gemv = Some(GemvKernel::new(self.data_type)?);
+        }
+        Ok(self.gemv.as_mut().unwrap())
+    }
+
+    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKGemm, MTLError> {
+        if self.splitk.is_none() {
+            self.splitk = Some(SplitKGemm::new(self.data_type)?);
+        }
+        Ok(self.splitk.as_mut().unwrap())
+    }
+
+    fn encode_dispatch_descriptor(
         &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-    ) -> Result<(), MTLError> {
-        let gemm = self.get_or_create_gemm()?;
-        gemm.encode(mtl, enc, args)
+        context: &MTLContext,
+        encoder: &ComputeCommandEncoderRef,
+        arguments: &MatmulArguments,
+        descriptor: &MatmulDispatchDescriptor,
+    ) -> Result<bool, MTLError> {
+        match descriptor {
+            MatmulDispatchDescriptor::Gemv(descriptor) => {
+                let gemv = self.get_or_create_gemv()?;
+                gemv.encode_descriptor(context, encoder, arguments, descriptor)
+            },
+            MatmulDispatchDescriptor::SplitK(descriptor) => {
+                let splitk = self.get_or_create_splitk()?;
+                splitk
+                    .encode_descriptor(context, encoder, arguments, descriptor)
+            },
+            MatmulDispatchDescriptor::Gemm(descriptor) => {
+                let gemm = self.get_or_create_gemm()?;
+                gemm.encode_descriptor(context, encoder, arguments, descriptor)
+            },
+        }
     }
 
     pub fn encode(
         &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        mut args: MatmulArguments,
+        context: &MTLContext,
+        encoder: &ComputeCommandEncoderRef,
+        mut arguments: MatmulArguments,
     ) -> Result<(), MTLError> {
-        self.apply_batch_collapse(&mut args);
+        Self::apply_batch_collapse(&mut arguments);
 
-        if self.maybe_use_gemv(mtl, enc, &args)? {
-            if debug_matmul_enabled() {
-                self.log_gemv(&args);
+        let descriptor =
+            choose_dispatch_descriptor(context, self.data_type, &arguments)?;
+
+        let bias_fused = self.encode_dispatch_descriptor(
+            context,
+            encoder,
+            &arguments,
+            &descriptor,
+        )?;
+
+        if let Some(bias) = arguments.bias {
+            if !bias_fused {
+                self.apply_bias_add(context, encoder, &arguments, bias)?;
             }
-            return Ok(());
         }
 
-        if self.maybe_use_splitk(mtl, enc, &args)? {
-            if debug_matmul_enabled() {
-                self.log_splitk(&args);
-            }
-            return Ok(());
-        }
-
-        if debug_matmul_enabled() {
-            self.log_gemm(&args, mtl);
-        }
-
-        self.encode_gemm(mtl, enc, &args)
-    }
-
-    pub fn encode_with_bias(
-        &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        mut args: MatmulArguments,
-        bias: &MTLBuffer,
-    ) -> Result<(), MTLError> {
-        self.apply_batch_collapse(&mut args);
-
-        if self.maybe_use_gemv_with_bias(mtl, enc, &args, bias)? {
-            if debug_matmul_enabled() {
-                self.log_gemv(&args);
-            }
-            return Ok(());
-        }
-
-        if self.maybe_use_splitk(mtl, enc, &args)? {
-            if debug_matmul_enabled() {
-                self.log_splitk(&args);
-            }
-            self.apply_bias_add(mtl, enc, &args, bias)?;
-            return Ok(());
-        }
-
-        if debug_matmul_enabled() {
-            self.log_gemm(&args, mtl);
-        }
-
-        self.encode_gemm(mtl, enc, &args)?;
-        self.apply_bias_add(mtl, enc, &args, bias)?;
         Ok(())
     }
 
     fn apply_bias_add(
         &mut self,
-        mtl: &MTLContext,
-        enc: &ComputeCommandEncoderRef,
-        args: &MatmulArguments,
-        bias: &MTLBuffer,
+        context: &MTLContext,
+        encoder: &ComputeCommandEncoderRef,
+        arguments: &MatmulArguments,
+        bias: &metal::Buffer,
     ) -> Result<(), MTLError> {
-        let m = args.batch as usize;
-        let n = args.output_dim as usize;
-        let batch_count = args.batch_count as usize;
+        let m = arguments.batch as usize;
+        let n = arguments.output_dim as usize;
+        let batch_count = arguments.batch_count as usize;
         let total_len = m * n * batch_count;
         if total_len == 0 {
             return Ok(());
@@ -226,80 +132,33 @@ impl MatmulKernel {
 
         if self.bias_add.is_none() {
             self.bias_add = Some(TensorAddBias::new(
-                mtl,
+                context,
                 KernelDataType::from(self.data_type),
             )?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add
-            .encode_with_encoder(args.d, bias, args.d, n, total_len, enc, None);
+        bias_add.encode_with_encoder(
+            arguments.d,
+            bias,
+            arguments.d,
+            n,
+            total_len,
+            encoder,
+            None,
+        );
         Ok(())
     }
 
-    fn apply_batch_collapse(
-        &self,
-        args: &mut MatmulArguments,
-    ) {
-        if self.lhs_is_transposed {
+    fn apply_batch_collapse(arguments: &mut MatmulArguments) {
+        if arguments.transpose_a {
             return;
         }
-        if args.batch_count <= 1 {
+        if arguments.batch_count <= 1 {
             return;
         }
-        if args.lda == args.input_dim && self.rhs_is_transposed {
-            args.batch *= args.batch_count;
-            args.batch_count = 1;
-        }
-    }
-
-    fn log_gemv(
-        &self,
-        args: &MatmulArguments,
-    ) {
-        eprintln!(
-            "[matmul] GEMV m={} k={} n={} batch={} dtype={:?}",
-            args.batch,
-            args.input_dim,
-            args.output_dim,
-            args.batch_count,
-            self.data_type
-        );
-    }
-
-    fn log_splitk(
-        &self,
-        args: &MatmulArguments,
-    ) {
-        eprintln!(
-            "[matmul] SplitK m={} k={} n={} batch={} dtype={:?}",
-            args.batch,
-            args.input_dim,
-            args.output_dim,
-            args.batch_count,
-            self.data_type
-        );
-    }
-
-    fn log_gemm(
-        &self,
-        args: &MatmulArguments,
-        mtl: &MTLContext,
-    ) {
-        let gemm_ref = self.gemm.as_ref();
-        if let Some(gemm) = gemm_ref {
-            let tile = gemm.select_tile(mtl, args);
-            eprintln!(
-                "[matmul] GEMM m={} k={} n={} batch={} dtype={:?} tile={}x{}x{} nax={}",
-                args.batch,
-                args.input_dim,
-                args.output_dim,
-                args.batch_count,
-                self.data_type,
-                tile.block_rows,
-                tile.block_cols,
-                tile.block_depth,
-                tile.is_nax()
-            );
+        if arguments.lda == arguments.input_dim && arguments.transpose_b {
+            arguments.batch *= arguments.batch_count;
+            arguments.batch_count = 1;
         }
     }
 }
