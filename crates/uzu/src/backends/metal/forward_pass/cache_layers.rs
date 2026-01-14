@@ -31,6 +31,15 @@ pub enum CacheLayerSlice {
     ShortConv,
 }
 
+const ARRAY_TRANSFORMER_KEYS_LABEL: &str = "cache_layers_transformer_keys";
+const ARRAY_TRANSFORMER_VALUES_LABEL: &str = "cache_layers_transformer_values";
+const ARRAY_STATE_SPACE_CONV_STATE_LABEL: &str =
+    "cache_layers_state_space_conv_state";
+const ARRAY_STATE_SPACE_SSM_STATE_LABEL: &str =
+    "cache_layers_state_space_ssm_state";
+const ARRAY_SHORT_CONV_CONV_STATE_LABEL: &str =
+    "cache_layers_short_conv_conv_state";
+
 impl CacheLayer {
     pub fn as_transformer(&self) -> Option<&KVCacheLayer> {
         match self {
@@ -98,95 +107,111 @@ impl CacheLayers {
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .collect();
 
-        let data: Box<[CacheLayer]> =
-            model_shape
-                .layer_types()
-                .iter()
-                .enumerate()
-                .map(|(layer_idx, layer_type)| match layer_type {
-                    DecoderLayerType::Transformer => {
-                        let shape = kv_shapes[layer_idx];
-                        let window_length = model_shape
-                            .sliding_window_length_per_layer[layer_idx]
-                            .filter(|&window_size| {
-                                window_size < total_context_length
-                            });
+        let data: Box<[CacheLayer]> = model_shape
+            .layer_types()
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer_type)| match layer_type {
+                DecoderLayerType::Transformer => {
+                    let shape = kv_shapes[layer_index];
+                    let window_length = model_shape
+                        .sliding_window_length_per_layer[layer_index]
+                        .filter(|&window_size| {
+                            window_size < total_context_length
+                        });
 
-                        let state = if let Some(w) = window_length {
-                            KVCacheLayerState::Windowed {
-                                ring_offset: 0,
-                                ring_length: 0,
-                                window_length: w,
-                            }
-                        } else {
+                    let state = if let Some(w) = window_length {
+                        KVCacheLayerState::Windowed {
+                            ring_offset: 0,
+                            ring_length: 0,
+                            window_length: w,
+                        }
+                    } else {
+                        KVCacheLayerState::Full {
+                            prefix_len: 0,
+                        }
+                    };
+
+                    CacheLayer::Transformer(KVCacheLayer {
+                        state: state.clone(),
+                        keys: RefCell::new(context.array(
+                            &shape,
+                            model_shape.kv_cache_data_type(),
+                            format!(
+                                "{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"
+                            ),
+                        )),
+                        values: RefCell::new(context.array(
+                            &shape,
+                            model_shape.kv_cache_data_type(),
+                            format!(
+                                "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
+                            ),
+                        )),
+                        prefix_token_positions: match &state {
                             KVCacheLayerState::Full {
-                                prefix_len: 0,
-                            }
-                        };
+                                ..
+                            } => Vec::with_capacity(max_prefix_length),
+                            KVCacheLayerState::Windowed {
+                                window_length,
+                                ..
+                            } => (0..*window_length)
+                                .map(|_| INVALID_POSITION)
+                                .collect(),
+                        },
+                        max_suffix_length,
+                    })
+                },
+                DecoderLayerType::StateSpace {
+                    conv_dim,
+                    kernel_size,
+                    state_dim,
+                    num_heads,
+                    head_dim,
+                    ..
+                } => {
+                    let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
+                    let ssm_shape = [*num_heads, *head_dim, *state_dim];
+                    let dtype = model_shape.activation_data_type();
 
-                        CacheLayer::Transformer(KVCacheLayer {
-                            state: state.clone(),
-                            keys: RefCell::new(context.array(
-                                &shape,
-                                model_shape.kv_cache_data_type(),
-                            )),
-                            values: RefCell::new(context.array(
-                                &shape,
-                                model_shape.kv_cache_data_type(),
-                            )),
-                            prefix_token_positions: match &state {
-                                KVCacheLayerState::Full {
-                                    ..
-                                } => Vec::with_capacity(max_prefix_length),
-                                KVCacheLayerState::Windowed {
-                                    window_length,
-                                    ..
-                                } => (0..*window_length)
-                                    .map(|_| INVALID_POSITION)
-                                    .collect(),
-                            },
-                            max_suffix_length,
-                        })
-                    },
-                    DecoderLayerType::StateSpace {
-                        conv_dim,
-                        kernel_size,
-                        state_dim,
-                        num_heads,
-                        head_dim,
-                        ..
-                    } => {
-                        let conv_shape =
-                            [*conv_dim, kernel_size.saturating_sub(1)];
-                        let ssm_shape = [*num_heads, *head_dim, *state_dim];
-                        let dtype = model_shape.activation_data_type();
+                    CacheLayer::StateSpace(SSMLayer {
+                        conv_state: RefCell::new(context.array(
+                            &conv_shape,
+                            dtype,
+                            format!(
+                                "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
+                            ),
+                        )),
+                        ssm_state: RefCell::new(context.array(
+                            &ssm_shape,
+                            dtype,
+                            format!(
+                                "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
+                            ),
+                        )),
+                    })
+                },
+                DecoderLayerType::ShortConv {
+                    kernel_size,
+                } => {
+                    let conv_shape = [
+                        model_shape.model_dim(),
+                        kernel_size.saturating_sub(1),
+                    ];
+                    let dtype = model_shape.activation_data_type();
 
-                        CacheLayer::StateSpace(SSMLayer {
-                            conv_state: RefCell::new(
-                                context.array(&conv_shape, dtype),
+                    CacheLayer::ShortConv(ShortConvLayer {
+                        conv_state: RefCell::new(context.array(
+                            &conv_shape,
+                            dtype,
+                            format!(
+                                "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
                             ),
-                            ssm_state: RefCell::new(
-                                context.array(&ssm_shape, dtype),
-                            ),
-                        })
-                    },
-                    DecoderLayerType::ShortConv {
-                        kernel_size,
-                    } => {
-                        let conv_shape = [
-                            model_shape.model_dim(),
-                            kernel_size.saturating_sub(1),
-                        ];
-                        let dtype = model_shape.activation_data_type();
-
-                        CacheLayer::ShortConv(ShortConvLayer {
-                            conv_state: RefCell::new(
-                                context.array(&conv_shape, dtype),
-                            ),
-                        })
-                    },
-                })
-                .collect();
+                        )),
+                    })
+                },
+            })
+            .collect();
 
         Self {
             max_suffix_length,
@@ -363,7 +388,8 @@ impl CacheLayers {
         let data: Box<[CacheLayer]> = self
             .data
             .iter()
-            .map(|layer| match layer {
+            .enumerate()
+            .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.keys.borrow().shape().to_vec();
                     let num_groups = shape[0];
@@ -377,8 +403,18 @@ impl CacheLayers {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.array(&new_shape, dtype);
-                    let mut new_values = context.array(&new_shape, dtype);
+                    let mut new_keys = context.array(
+                        &new_shape,
+                        dtype,
+                        format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
+                    );
+                    let mut new_values = context.array(
+                        &new_shape,
+                        dtype,
+                        format!(
+                            "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
+                        ),
+                    );
 
                     if copy_rows > 0 {
                         {
@@ -404,7 +440,13 @@ impl CacheLayers {
                 CacheLayer::StateSpace(layer) => {
                     let conv_shape = layer.conv_state.borrow().shape().to_vec();
                     let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(&conv_shape, conv_dtype);
+                    let mut new_conv = context.array(
+                        &conv_shape,
+                        conv_dtype,
+                        format!(
+                            "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
+                        ),
+                    );
                     {
                         let conv_src = layer.conv_state.borrow();
                         new_conv.copy_from_array(&conv_src);
@@ -412,7 +454,13 @@ impl CacheLayers {
 
                     let ssm_shape = layer.ssm_state.borrow().shape().to_vec();
                     let ssm_dtype = layer.ssm_state.borrow().data_type();
-                    let mut new_ssm = context.array(&ssm_shape, ssm_dtype);
+                    let mut new_ssm = context.array(
+                        &ssm_shape,
+                        ssm_dtype,
+                        format!(
+                            "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
+                        ),
+                    );
                     {
                         let ssm_src = layer.ssm_state.borrow();
                         new_ssm.copy_from_array(&ssm_src);
@@ -426,7 +474,13 @@ impl CacheLayers {
                 CacheLayer::ShortConv(layer) => {
                     let conv_shape = layer.conv_state.borrow().shape().to_vec();
                     let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(&conv_shape, conv_dtype);
+                    let mut new_conv = context.array(
+                        &conv_shape,
+                        conv_dtype,
+                        format!(
+                            "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
+                        ),
+                    );
                     {
                         let conv_src = layer.conv_state.borrow();
                         new_conv.copy_from_array(&conv_src);

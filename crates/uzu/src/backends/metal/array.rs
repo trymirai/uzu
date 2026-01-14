@@ -14,12 +14,18 @@ pub struct MetalArray {
 }
 
 impl Array for MetalArray {
+    type BackendBuffer = MTLBuffer;
+
     fn shape(&self) -> &[usize] {
         &self.shape
     }
 
     fn data_type(&self) -> DataType {
         self.data_type
+    }
+
+    fn label(&self) -> String {
+        self.buffer.label().to_string()
     }
 
     fn buffer(&self) -> &[u8] {
@@ -38,6 +44,10 @@ impl Array for MetalArray {
                 self.size_in_bytes(),
             )
         }
+    }
+
+    fn backend_buffer(&self) -> &MTLBuffer {
+        &self.buffer
     }
 }
 

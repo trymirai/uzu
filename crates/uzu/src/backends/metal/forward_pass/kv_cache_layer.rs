@@ -387,8 +387,16 @@ impl KVCacheLayer {
                 let dtype = keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys = context.array(&slice_shape, dtype);
-                let mut slice_values = context.array(&slice_shape, dtype);
+                let mut slice_keys = context.array(
+                    &slice_shape,
+                    dtype,
+                    String::from("kv_cache_layer_slice_keys"),
+                );
+                let mut slice_values = context.array(
+                    &slice_shape,
+                    dtype,
+                    String::from("kv_cache_layer_slice_values"),
+                );
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()

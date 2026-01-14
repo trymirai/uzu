@@ -271,6 +271,7 @@ impl DeviceContext for MTLContext {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> MetalArray {
         unsafe {
             let buffer_size_bytes = array_size_in_bytes(shape, data_type);
@@ -279,6 +280,7 @@ impl DeviceContext for MTLContext {
                 buffer_size_bytes as u64,
                 metal::MTLResourceOptions::StorageModeShared,
             );
+            buffer.set_label(label.as_str());
             MetalArray::new(buffer, shape, data_type)
         }
     }
@@ -291,7 +293,8 @@ impl DeviceContext for Rc<MTLContext> {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type) }
+        unsafe { (**self).array_uninitialized(shape, data_type, label) }
     }
 }

@@ -432,8 +432,13 @@ impl LanguageModelGenerator {
             &self.context.scratch_buffers.attention_window_size_to_bias
         {
             unsafe {
-                let ptr = mask_buffer.contents() as *mut u8;
-                std::ptr::write_bytes(ptr, 0, mask_buffer.length() as usize);
+                let ptr =
+                    mask_buffer.borrow().backend_buffer().contents() as *mut u8;
+                std::ptr::write_bytes(
+                    ptr,
+                    0,
+                    mask_buffer.borrow().backend_buffer().length() as usize,
+                );
             }
         }
 
@@ -568,7 +573,13 @@ impl LanguageModelGenerator {
             .expect("sampling_output must exist after sampling encode");
         let sampling_output_buffer =
             unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
-        let token_ids_buffer = self.context.scratch_buffers.token_ids.clone();
+        let token_ids_buffer = self
+            .context
+            .scratch_buffers
+            .token_ids
+            .borrow()
+            .backend_buffer()
+            .clone();
 
         let encoder = root_command_buffer.new_compute_command_encoder();
         self.context.token_copy.encode_to_token_ids(
@@ -616,7 +627,7 @@ impl LanguageModelGenerator {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
                             encoder,
-                            mask_buffer,
+                            mask_buffer.borrow().backend_buffer(),
                             update.unmask_col,
                             update.mask_col,
                         );
