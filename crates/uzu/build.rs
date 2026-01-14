@@ -428,7 +428,7 @@ fn compile_metal_files(
     // Optimization level: Metal supports up to -O2
     let opt = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".into());
     let metal_opt_flag = match opt.as_str() {
-        "0" => "-O0",
+        "0" => "-O1", // NOTE TODO FIXME WORKAROUND: matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
         "1" => "-O1",
         _ => "-O2", // treat levels 2,3,s,z as O2 for metal
     };
