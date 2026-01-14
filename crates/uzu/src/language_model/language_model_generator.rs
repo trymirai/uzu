@@ -447,7 +447,7 @@ impl LanguageModelGenerator {
     }
 
     /// Submits a single async forward pass.
-    /// Does NOT block. Callback fires when GPU completes.
+    /// Does NOT block (except when GPU capture is enabled for the first decode).
     ///
     /// - `pass_idx`: Index of this pass (0, 1, 2, ...)
     /// - `sampling_method`: Sampling configuration
@@ -505,6 +505,15 @@ impl LanguageModelGenerator {
 
         let skip_token_ids_copy = pass_idx > 0;
 
+        let is_first_decode = !is_continuation;
+        let should_capture =
+            self.gpu_capture.should_capture_decode(is_first_decode);
+        if should_capture {
+            let _ = self
+                .gpu_capture
+                .start_capture(&self.context.mtl_context, "decode");
+        }
+
         let mut state = ForwardPassState::new_llm(
             self.context.mtl_context.clone(),
             &self.context.decoder_config,
@@ -531,7 +540,7 @@ impl LanguageModelGenerator {
         }
 
         self.context.reset_command_buffer();
-        let root_command_buffer = &self.context.command_buffer;
+        let root_command_buffer = self.context.command_buffer.clone();
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
@@ -541,14 +550,14 @@ impl LanguageModelGenerator {
 
         self.context.executables.encode(
             &mut state,
-            &self.context.command_buffer,
+            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
-            &self.context.command_buffer,
+            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
         );
 
@@ -577,7 +586,7 @@ impl LanguageModelGenerator {
 
         // Scatter + register for all transformer layers
         {
-            let cb = root_command_buffer.to_owned();
+            let cb = root_command_buffer.clone();
             self.context.cache_layers.borrow_mut().update_after_acceptance(
                 &[0],
                 None,
@@ -639,7 +648,12 @@ impl LanguageModelGenerator {
         let block = block.copy();
 
         root_command_buffer.add_completed_handler(&block);
-        self.context.command_buffer.commit();
+        root_command_buffer.commit();
+
+        if should_capture {
+            root_command_buffer.wait_until_completed();
+            self.gpu_capture.stop_capture("decode");
+        }
 
         Ok(())
     }
