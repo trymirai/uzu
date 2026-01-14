@@ -52,13 +52,13 @@ impl ForwardPassState {
 
     fn init_token_ids(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         token_ids: &[u64],
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
         let mut token_ids_array = unsafe {
             MetalArray::new(
-                scratch.token_ids.clone(),
+                scratch.token_ids.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::U64,
             )
@@ -69,13 +69,13 @@ impl ForwardPassState {
 
     fn init_token_positions(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         token_positions: &[usize],
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
         let mut token_positions_array = unsafe {
             MetalArray::new(
-                scratch.token_positions.clone(),
+                scratch.token_positions.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::I32,
             )
@@ -98,7 +98,7 @@ impl ForwardPassState {
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
@@ -130,7 +130,7 @@ impl ForwardPassState {
         let token_ids_cell = if skip_token_ids_copy {
             RefCell::new(unsafe {
                 MetalArray::new(
-                    scratch.token_ids.clone(),
+                    scratch.token_ids.borrow().backend_buffer().clone(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -160,7 +160,7 @@ impl ForwardPassState {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
             let mut bitmask_array = unsafe {
                 MetalArray::new(
-                    scratch.token_bitmask.clone(),
+                    scratch.token_bitmask.borrow().backend_buffer().clone(),
                     &bitmask_shape,
                     DataType::U32,
                 )
@@ -186,7 +186,7 @@ impl ForwardPassState {
         } else {
             let mut token_seeds_array = unsafe {
                 MetalArray::new(
-                    scratch.token_seeds.clone(),
+                    scratch.token_seeds.borrow().backend_buffer().clone(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -198,7 +198,7 @@ impl ForwardPassState {
         // Logits
         let logits_cell = RefCell::new(unsafe {
             MetalArray::new(
-                scratch.logits.clone(),
+                scratch.logits.borrow().backend_buffer().clone(),
                 &model_shape.logits_shape(suffix_length),
                 model_shape.activation_data_type(),
             )
@@ -207,7 +207,7 @@ impl ForwardPassState {
         // Sampling output
         let sampling_output = Some(RefCell::new(unsafe {
             MetalArray::new(
-                scratch.sampling_output.clone(),
+                scratch.sampling_output.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::U32,
             )
@@ -277,7 +277,7 @@ impl ForwardPassState {
 
     fn init_llm_attention_bias(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
         act_dtype: DataType,
@@ -297,7 +297,7 @@ impl ForwardPassState {
                         [suffix_length, suffix_length + prefix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.clone(),
+                            buffer.borrow().backend_buffer().clone(),
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -334,7 +334,7 @@ impl ForwardPassState {
     pub fn new_classifier(
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
@@ -389,7 +389,7 @@ impl ForwardPassState {
 
     fn init_classifier_attention_bias(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         suffix_length: usize,
         act_dtype: DataType,
         bidirectional_attention: bool,
@@ -402,7 +402,7 @@ impl ForwardPassState {
                     let attention_bias_shape = [suffix_length, suffix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.clone(),
+                            buffer.borrow().backend_buffer().clone(),
                             &attention_bias_shape,
                             act_dtype,
                         )

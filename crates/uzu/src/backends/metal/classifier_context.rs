@@ -28,7 +28,7 @@ pub struct ClassifierContext {
     pub command_buffer: CommandBuffer,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers,
+    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
