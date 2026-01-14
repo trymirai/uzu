@@ -139,110 +139,96 @@ struct TestCase {
 }
 
 fn test_cases() -> Vec<TestCase> {
-    // Shapes derived from actual LLM models in the registry.
-    // Tolerance scales with sqrt(k) due to floating point accumulation.
     let base_tolerance = 0.01;
 
-    let cases: Vec<(usize, usize, usize, bool)> = vec![
-        // === Decode shapes (m=1) from actual models ===
+    let batch_sizes: [usize; 12] =
+        [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+
+    let model_shapes: [(usize, usize); 51] = [
         // Qwen2.5-Coder-0.5B
-        (1, 896, 896, true),
-        (1, 896, 1152, true),
-        (1, 896, 4864, true),
-        (1, 4864, 896, true),
+        (896, 896),
+        (896, 1152),
+        (896, 4864),
+        (4864, 896),
         // Qwen3-0.6B
-        (1, 1024, 1024, true),
-        (1, 1024, 3072, true),
-        (1, 1024, 4096, true),
-        (1, 3072, 1024, true),
+        (1024, 1024),
+        (1024, 3072),
+        (1024, 4096),
+        (3072, 1024),
         // Gemma-3-1B
-        (1, 1152, 1152, true),
-        (1, 1152, 1536, true),
-        (1, 1152, 6912, true),
-        (1, 6912, 1152, true),
+        (1152, 1152),
+        (1152, 1536),
+        (1152, 6912),
+        (6912, 1152),
         // Qwen2.5-Coder-1.5B
-        (1, 1536, 1536, true),
-        (1, 1536, 2048, true),
-        (1, 1536, 8960, true),
-        (1, 8960, 1536, true),
+        (1536, 1536),
+        (1536, 2048),
+        (1536, 8960),
+        (8960, 1536),
         // Llama-3.2-1B / Qwen3-1.7B / SmolLM2-1.7B
-        (1, 2048, 2048, true),
-        (1, 2048, 2560, true),
-        (1, 2048, 3072, true),
-        (1, 2048, 4096, true),
-        (1, 2048, 6144, true),
-        (1, 2048, 8192, true),
-        (1, 2048, 11008, true),
-        (1, 6144, 2048, true),
-        (1, 8192, 2048, true),
-        (1, 11008, 2048, true),
+        (2048, 2048),
+        (2048, 2560),
+        (2048, 3072),
+        (2048, 4096),
+        (2048, 6144),
+        (2048, 8192),
+        (2048, 11008),
+        (6144, 2048),
+        (8192, 2048),
+        (11008, 2048),
         // Qwen3-4B / Gemma-3-4B
-        (1, 2560, 2560, true),
-        (1, 2560, 4096, true),
-        (1, 2560, 6144, true),
-        (1, 2560, 9728, true),
-        (1, 2560, 10240, true),
-        (1, 9728, 2560, true),
-        (1, 10240, 2560, true),
+        (2560, 2560),
+        (2560, 4096),
+        (2560, 6144),
+        (2560, 9728),
+        (2560, 10240),
+        (9728, 2560),
+        (10240, 2560),
         // Llama-3.2-3B
-        (1, 3072, 3072, true),
-        (1, 3072, 5120, true),
-        (1, 3072, 8192, true),
-        (1, 8192, 3072, true),
+        (3072, 3072),
+        (3072, 5120),
+        (3072, 8192),
+        (8192, 3072),
         // Qwen2.5-Coder-7B
-        (1, 3584, 3584, true),
-        (1, 3584, 4608, true),
-        (1, 3584, 18944, true),
-        (1, 18944, 3584, true),
+        (3584, 3584),
+        (3584, 4608),
+        (3584, 18944),
+        (18944, 3584),
         // Llama-3.1-8B / Qwen3-8B
-        (1, 4096, 4096, true),
-        (1, 4096, 6144, true),
-        (1, 4096, 12288, true),
-        (1, 4096, 14336, true),
-        (1, 12288, 4096, true),
-        (1, 14336, 4096, true),
+        (4096, 4096),
+        (4096, 6144),
+        (4096, 12288),
+        (4096, 14336),
+        (12288, 4096),
+        (14336, 4096),
         // Qwen3-14B
-        (1, 5120, 5120, true),
-        (1, 5120, 7168, true),
-        (1, 5120, 17408, true),
-        (1, 17408, 5120, true),
-        // === Prefill shapes (m>1) for representative models ===
-        // Llama-3.2-1B prefill
-        (8, 2048, 3072, true),
-        (16, 2048, 3072, true),
-        (32, 2048, 3072, true),
-        (64, 2048, 3072, true),
-        (128, 2048, 3072, true),
-        (256, 2048, 8192, true),
-        (512, 2048, 8192, true),
-        // Qwen3-4B prefill
-        (8, 2560, 6144, true),
-        (32, 2560, 9728, true),
-        (128, 2560, 9728, true),
-        // Llama-3.1-8B prefill
-        (8, 4096, 6144, true),
-        (32, 4096, 14336, true),
-        (128, 4096, 14336, true),
-        (256, 4096, 14336, true),
-        // === Non-transposed B (for attention AV matmul) ===
-        (1, 1024, 1024, false),
-        (1, 2048, 2048, false),
-        (1, 4096, 4096, false),
-        (64, 2048, 2048, false),
-        (128, 4096, 4096, false),
-        // === Edge cases ===
-        (1, 128, 128, true),
-        (2, 2048, 2048, true),
-        (33, 2048, 2048, true),
-        (17, 4096, 4096, true),
+        (5120, 5120),
+        (5120, 7168),
+        (5120, 17408),
+        (17408, 5120),
     ];
+
+    let mut cases: Vec<(usize, usize, usize, bool)> = model_shapes
+        .iter()
+        .flat_map(|&(k, n)| batch_sizes.iter().map(move |&m| (m, k, n, true)))
+        .collect();
+
+    // Non-transposed B (for attention AV matmul)
+    for &(k, n) in &[(1024, 1024), (2048, 2048), (4096, 4096)] {
+        for &m in &[1, 64, 128] {
+            cases.push((m, k, n, false));
+        }
+    }
+
+    // Edge case: small matrix
+    for &m in &batch_sizes {
+        cases.push((m, 128, 128, true));
+    }
 
     cases
         .into_iter()
         .map(|(m, k, n, transpose_b)| {
-            // Tolerance scales with sqrt(k) for accumulation error
             let tolerance = base_tolerance * (k as f32 / 1024.0).sqrt();
-            // Larger m also contributes slightly to tolerance needs
             let tolerance = tolerance * (1.0 + (m as f32).log2() * 0.02);
             TestCase {
                 m,
