@@ -44,7 +44,7 @@ pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
 pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
-pub use mlp::MlpBlock;
+pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{
     LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,

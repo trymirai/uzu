@@ -309,8 +309,11 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "benchmarks"
 version = "0.1.7"
 dependencies = [
+ "half",
  "libc",
  "mach2",
+ "metal",
+ "objc2",
  "serde",
  "serde_json",
  "sysinfo",

@@ -198,7 +198,7 @@ impl ClassifierContext {
                     })?;
 
                 Ok(ClassifierLayer::new(
-                    &mtl_context,
+                    mtl_context.clone(),
                     layer_config,
                     compilation_config.clone(),
                     layer_index,

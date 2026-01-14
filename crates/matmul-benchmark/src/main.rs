@@ -533,6 +533,7 @@ fn benchmark_uzu(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .expect("encode");
         enc.end_encoding();
@@ -564,6 +565,7 @@ fn benchmark_uzu(
                     alpha: 1.0,
                     beta: 0.0,
                 },
+                None,
             )
             .expect("encode");
         enc.end_encoding();
@@ -804,6 +806,7 @@ fn run_accuracy_test_f16(
                 alpha: 1.0,
                 beta: 0.0,
             },
+            None,
         )
         .unwrap();
     enc.end_encoding();
@@ -869,6 +872,7 @@ fn run_accuracy_test_f32(
                 alpha: 1.0,
                 beta: 0.0,
             },
+            None,
         )
         .unwrap();
     enc.end_encoding();
@@ -945,6 +949,7 @@ fn run_accuracy_test_bf16(
                 alpha: 1.0,
                 beta: 0.0,
             },
+            None,
         )
         .unwrap();
     enc.end_encoding();

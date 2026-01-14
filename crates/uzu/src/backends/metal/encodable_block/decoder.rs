@@ -129,7 +129,7 @@ impl Decoder {
                     .unwrap();
 
                 LayerExecutables::new(
-                    &mtl_context,
+                    mtl_context.clone(),
                     layer_config,
                     layer_type,
                     compilation_config.clone(),

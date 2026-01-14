@@ -47,8 +47,7 @@ fn run_metal_matmul(
         n
     };
 
-    let mut kernel = MatmulKernel::new(ctx, DataType::BF16, false, transpose_b)
-        .expect("kernel");
+    let mut kernel = MatmulKernel::new(DataType::BF16).expect("kernel");
 
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
@@ -62,6 +61,7 @@ fn run_metal_matmul(
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
+                bias: None,
                 batch: m as i32,
                 input_dim: k as i32,
                 output_dim: n as i32,
@@ -71,6 +71,8 @@ fn run_metal_matmul(
                 batch_count: 1,
                 alpha: 1.0,
                 beta: 0.0,
+                transpose_a: false,
+                transpose_b,
             },
         )
         .expect("encode");

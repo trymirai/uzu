@@ -8,6 +8,11 @@ pub mod mask_update;
 pub mod matmul;
 pub mod media_kernels;
 pub mod mlp;
+pub use mlp::{
+    MLP_ACTIVATION_FC_INDEX, MLP_FUSED_FC_INDEX, MLP_HIDDEN_DIM_FC_INDEX,
+    MlpActivationType, MlpFusedConfig, make_non_fused_function_constants,
+};
+pub mod mlp_fused;
 pub mod moe;
 pub mod pooling;
 pub mod quant_matmul;
