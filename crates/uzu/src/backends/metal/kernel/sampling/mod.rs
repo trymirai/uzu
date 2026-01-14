@@ -101,15 +101,10 @@ impl SamplingKernel {
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError> {
         let bitmask = BitmaskKernel::new(context, data_type)?;
-
         let temperature = TemperatureKernel::new(context, data_type)?;
-
         let topk = TopKKernel::new(context, data_type)?;
-
         let topp = TopPKernel::new(context, data_type)?;
-
         let minp = MinPKernel::new(context, data_type)?;
-
         let gumbel = GumbelKernel::new(context, data_type)?;
 
         let argmax_implementation = match argmax_strategy {

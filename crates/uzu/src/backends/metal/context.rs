@@ -28,18 +28,6 @@ pub enum DeviceGeneration {
 }
 
 impl DeviceGeneration {
-    fn from_generation_number(r#gen: u8) -> Self {
-        match r#gen {
-            13 => Self::Gen13,
-            14 => Self::Gen14,
-            15 => Self::Gen15,
-            16 => Self::Gen16,
-            17 => Self::Gen17,
-            18 => Self::Gen18,
-            n => Self::Unknown(n),
-        }
-    }
-
     pub fn generation_number(&self) -> u8 {
         match self {
             Self::Gen13 => 13,
@@ -63,15 +51,6 @@ pub enum DeviceClass {
 }
 
 impl DeviceClass {
-    fn from_arch_suffix(c: char) -> Self {
-        match c {
-            'p' => Self::Phone,
-            'g' => Self::Integrated,
-            'd' => Self::Desktop,
-            other => Self::Unknown(other),
-        }
-    }
-
     pub fn is_high_performance(&self) -> bool {
         matches!(self, Self::Desktop)
     }
