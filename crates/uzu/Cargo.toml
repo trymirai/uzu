@@ -2,7 +2,7 @@
 name = "uzu"
 version.workspace = true
 edition = "2024"
-build = "build.rs"
+build = "build/main.rs"
 
 [dependencies]
 # "linked" link the Vulkan loader at compile time
