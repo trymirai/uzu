@@ -23,16 +23,6 @@ pub enum QKNormTarget {
     Both,
 }
 
-impl QKNormTarget {
-    fn to_mask(self) -> u32 {
-        match self {
-            QKNormTarget::QueryHeads => 0b01,
-            QKNormTarget::KeyHeads => 0b10,
-            QKNormTarget::Both => 0b11,
-        }
-    }
-}
-
 pub struct RMSNormKernel {
     pipeline: MTLComputePipelineState,
     kernel_type: RMSNormKernelType,
@@ -311,38 +301,49 @@ impl RMSNormKernel {
             &args.scale_offset as *const f32 as *const std::ffi::c_void,
         );
 
-        let active_type_mask = args.target.to_mask();
+        // Determine which contiguous head range to normalize.
+        //
+        // QKV layout per token: [Q heads][K heads][V heads]
+        // We only ever normalize within [Q] and/or [K].
+        let (head_offset, head_count): (u32, u32) = match args.target {
+            QKNormTarget::QueryHeads => (0, args.num_q_heads as u32),
+            QKNormTarget::KeyHeads => (args.num_q_heads as u32, args.num_kv_heads as u32),
+            QKNormTarget::Both => (0, (args.num_q_heads + args.num_kv_heads) as u32),
+        };
+
+        if args.batch_size <= 0 || args.head_dim <= 0 || head_count == 0 {
+            return Ok(());
+        }
+
+        // Pass head range to the kernel.
         compute_encoder.set_bytes(
             9,
             size_of::<u32>() as u64,
-            &active_type_mask as *const u32 as *const std::ffi::c_void,
+            &head_offset as *const u32 as *const std::ffi::c_void,
+        );
+        compute_encoder.set_bytes(
+            10,
+            size_of::<u32>() as u64,
+            &head_count as *const u32 as *const std::ffi::c_void,
         );
 
-        // Calculate threadgroup dimensions based on target
-        let total_heads_to_dispatch = match args.target {
-            QKNormTarget::QueryHeads => {
-                // Process Q heads only: dispatch for indices 0 to num_q_heads-1
-                args.num_q_heads
-            },
-            QKNormTarget::KeyHeads => {
-                // Process K heads only: dispatch for indices 0 to num_q_heads+num_kv_heads-1
-                // (kernel will skip Q heads based on target enum)
-                args.num_q_heads + args.num_kv_heads
-            },
-            QKNormTarget::Both => {
-                // Process both Q and K heads: dispatch for indices 0 to num_q_heads+num_kv_heads-1
-                args.num_q_heads + args.num_kv_heads
-            },
-        };
+        // One SIMD-group per head, multiple heads per threadgroup.
+        let simd_width = self.pipeline.thread_execution_width() as u64;
+        let max_threads = self.pipeline.max_total_threads_per_threadgroup() as u64;
+        let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
+        let heads_per_threadgroup =
+            (head_count as u64).min(max_heads_per_threadgroup).max(1);
+
+        let num_head_tiles = (head_count as u64).div_ceil(heads_per_threadgroup);
 
         let threadgroups_per_grid = MTLSize {
             width: args.batch_size as u64,
-            height: total_heads_to_dispatch as u64,
+            height: num_head_tiles,
             depth: 1,
         };
 
         let threads_per_threadgroup = MTLSize {
-            width: 1024,
+            width: heads_per_threadgroup * simd_width,
             height: 1,
             depth: 1,
         };

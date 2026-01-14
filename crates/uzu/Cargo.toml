@@ -58,6 +58,7 @@ itertools = "0.14.0"
 build-debug = []
 build-clean = []
 tracing = []
+metal-nax = []
 
 [[test]]
 name = "moe"

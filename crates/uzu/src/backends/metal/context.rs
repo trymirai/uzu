@@ -164,7 +164,7 @@ impl MTLContext {
 
     /// Returns true if NAX kernels are available on this device.
     pub fn is_nax_available(&self) -> bool {
-        self.architecture.is_nax_available()
+        cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
     }
 
     /// Returns true if this is a high-performance device (Pro/Max class).
