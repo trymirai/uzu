@@ -111,11 +111,11 @@ impl CacheLayers {
             .layer_types()
             .iter()
             .enumerate()
-            .map(|(layer_idx, layer_type)| match layer_type {
+            .map(|(layer_index, layer_type)| match layer_type {
                 DecoderLayerType::Transformer => {
-                    let shape = kv_shapes[layer_idx];
+                    let shape = kv_shapes[layer_index];
                     let window_length = model_shape
-                        .sliding_window_length_per_layer[layer_idx]
+                        .sliding_window_length_per_layer[layer_index]
                         .filter(|&window_size| {
                             window_size < total_context_length
                         });
@@ -137,12 +137,16 @@ impl CacheLayers {
                         keys: RefCell::new(context.array(
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            String::from(ARRAY_TRANSFORMER_KEYS_LABEL),
+                            format!(
+                                "{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"
+                            ),
                         )),
                         values: RefCell::new(context.array(
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            String::from(ARRAY_TRANSFORMER_VALUES_LABEL),
+                            format!(
+                                "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
+                            ),
                         )),
                         prefix_token_positions: match &state {
                             KVCacheLayerState::Full {
@@ -174,12 +178,16 @@ impl CacheLayers {
                         conv_state: RefCell::new(context.array(
                             &conv_shape,
                             dtype,
-                            String::from(ARRAY_STATE_SPACE_CONV_STATE_LABEL),
+                            format!(
+                                "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
+                            ),
                         )),
                         ssm_state: RefCell::new(context.array(
                             &ssm_shape,
                             dtype,
-                            String::from(ARRAY_STATE_SPACE_SSM_STATE_LABEL),
+                            format!(
+                                "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
+                            ),
                         )),
                     })
                 },
@@ -196,7 +204,9 @@ impl CacheLayers {
                         conv_state: RefCell::new(context.array(
                             &conv_shape,
                             dtype,
-                            String::from(ARRAY_SHORT_CONV_CONV_STATE_LABEL),
+                            format!(
+                                "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
+                            ),
                         )),
                     })
                 },
@@ -378,7 +388,8 @@ impl CacheLayers {
         let data: Box<[CacheLayer]> = self
             .data
             .iter()
-            .map(|layer| match layer {
+            .enumerate()
+            .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.keys.borrow().shape().to_vec();
                     let num_groups = shape[0];
@@ -395,12 +406,14 @@ impl CacheLayers {
                     let mut new_keys = context.array(
                         &new_shape,
                         dtype,
-                        String::from(ARRAY_TRANSFORMER_KEYS_LABEL),
+                        format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
                     let mut new_values = context.array(
                         &new_shape,
                         dtype,
-                        String::from(ARRAY_TRANSFORMER_VALUES_LABEL),
+                        format!(
+                            "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
+                        ),
                     );
 
                     if copy_rows > 0 {
@@ -430,7 +443,9 @@ impl CacheLayers {
                     let mut new_conv = context.array(
                         &conv_shape,
                         conv_dtype,
-                        String::from(ARRAY_STATE_SPACE_CONV_STATE_LABEL),
+                        format!(
+                            "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
+                        ),
                     );
                     {
                         let conv_src = layer.conv_state.borrow();
@@ -442,7 +457,9 @@ impl CacheLayers {
                     let mut new_ssm = context.array(
                         &ssm_shape,
                         ssm_dtype,
-                        String::from(ARRAY_STATE_SPACE_SSM_STATE_LABEL),
+                        format!(
+                            "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
+                        ),
                     );
                     {
                         let ssm_src = layer.ssm_state.borrow();
@@ -460,7 +477,9 @@ impl CacheLayers {
                     let mut new_conv = context.array(
                         &conv_shape,
                         conv_dtype,
-                        String::from(ARRAY_SHORT_CONV_CONV_STATE_LABEL),
+                        format!(
+                            "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
+                        ),
                     );
                     {
                         let conv_src = layer.conv_state.borrow();

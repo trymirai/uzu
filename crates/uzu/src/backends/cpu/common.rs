@@ -9,6 +9,8 @@ pub struct CPUArray {
 }
 
 impl Array for CPUArray {
+    type BackendBuffer = Box<[u8]>;
+
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -27,6 +29,10 @@ impl Array for CPUArray {
 
     fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer
+    }
+
+    fn backend_buffer(&self) -> &Box<[u8]> {
+        &self.buffer
     }
 }
 

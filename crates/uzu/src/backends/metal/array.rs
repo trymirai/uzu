@@ -14,6 +14,8 @@ pub struct MetalArray {
 }
 
 impl Array for MetalArray {
+    type BackendBuffer = MTLBuffer;
+
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -42,6 +44,10 @@ impl Array for MetalArray {
                 self.size_in_bytes(),
             )
         }
+    }
+
+    fn backend_buffer(&self) -> &MTLBuffer {
+        &self.buffer
     }
 }
 

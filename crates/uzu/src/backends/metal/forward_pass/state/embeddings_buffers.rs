@@ -60,10 +60,7 @@ impl EmbeddingsBuffers {
         embeddings_config: &EmbeddingConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        fn array_label(
-            config: &EmbeddingConfig,
-            name: &str,
-        ) -> String {
+        let array_label = |config: &EmbeddingConfig, name: &str| -> String {
             let prefix = "embeddings_buffers";
             let config_name = match config {
                 EmbeddingConfig::Tied {
@@ -86,7 +83,7 @@ impl EmbeddingsBuffers {
                 } => "mlx_quantized_untied",
             };
             format!("{prefix}_{config_name}_{name}")
-        }
+        };
 
         unsafe {
             match embeddings_config {
