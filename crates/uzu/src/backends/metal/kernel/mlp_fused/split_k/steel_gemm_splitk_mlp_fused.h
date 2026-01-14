@@ -28,7 +28,8 @@ template <
     bool transpose_b,
     bool MN_aligned,
     bool K_aligned>
-[[kernel, max_total_threads_per_threadgroup(WM* WN * 32)]] void gemm_splitk_mlp_fused(
+[[kernel, max_total_threads_per_threadgroup(WM * WN * 32)]] void
+gemm_splitk_mlp_fused(
     const device T* A [[buffer(0)]],
     const device T* B [[buffer(1)]],
     device U* C [[buffer(2)]],
@@ -36,7 +37,8 @@ template <
     uint simd_lane_id [[thread_index_in_simdgroup]],
     uint simd_group_id [[simdgroup_index_in_threadgroup]],
     uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]]) {
+    uint3 lid [[thread_position_in_threadgroup]]
+) {
   (void)lid;
 
   using gemm_kernel = GEMMKernel<
@@ -79,25 +81,33 @@ template <
   const size_t k_start_long = size_t(k_start);
 
   // Pointers to A (input)
-  const device T* A_ptr = A + (transpose_a ? (c_row_long + k_start_long * params->lda)
-                                           : (k_start_long + c_row_long * params->lda));
+  const device T* A_ptr =
+      A + (transpose_a ? (c_row_long + k_start_long * params->lda)
+                       : (k_start_long + c_row_long * params->lda));
 
   // Pointers to B (up and gate weights)
   // B layout: [up_weights | gate_weights] where each is hidden_dim columns
-  const device T* B_up = B + (transpose_b ? (k_start_long + c_col_long * params->ldb)
-                                          : (c_col_long + k_start_long * params->ldb));
-  const device T* B_gate = B_up + (transpose_b ? params->hidden_dim * params->ldb : params->hidden_dim);
+  const device T* B_up =
+      B + (transpose_b ? (k_start_long + c_col_long * params->ldb)
+                       : (c_col_long + k_start_long * params->ldb));
+  const device T* B_gate =
+      B_up +
+      (transpose_b ? params->hidden_dim * params->ldb : params->hidden_dim);
 
   // C output for partial sums (up and gate interleaved in split_k dimension)
   // Layout: [up_partitions, gate_partitions] in the partition stride
   device U* C_up = C + (size_t(params->split_k_partition_stride) * tid_z) +
-      (c_row_long * params->ldc + c_col_long);
-  device U* C_gate = C_up + (size_t(params->split_k_partition_stride) * params->split_k_partitions);
+                   (c_row_long * params->ldc + c_col_long);
+  device U* C_gate = C_up + (size_t(params->split_k_partition_stride) *
+                             params->split_k_partitions);
 
   // Loaders
-  thread loader_a_t loader_a(A_ptr, params->lda, As, simd_group_id, simd_lane_id);
-  thread loader_b_t loader_b_up(B_up, params->ldb, Bs_up, simd_group_id, simd_lane_id);
-  thread loader_b_t loader_b_gate(B_gate, params->ldb, Bs_gate, simd_group_id, simd_lane_id);
+  thread loader_a_t
+      loader_a(A_ptr, params->lda, As, simd_group_id, simd_lane_id);
+  thread loader_b_t
+      loader_b_up(B_up, params->ldb, Bs_up, simd_group_id, simd_lane_id);
+  thread loader_b_t
+      loader_b_gate(B_gate, params->ldb, Bs_gate, simd_group_id, simd_lane_id);
 
   // MMA operations
   thread mma_t mma_up(simd_group_id, simd_lane_id);
@@ -122,8 +132,10 @@ template <
       loader_b_up.load_unsafe();
       loader_b_gate.load_unsafe();
     } else {
-      short2 tile_dims_A = transpose_a ? short2(tgp_bm, BK) : short2(BK, tgp_bm);
-      short2 tile_dims_B = transpose_b ? short2(BK, tgp_bn) : short2(tgp_bn, BK);
+      short2 tile_dims_A =
+          transpose_a ? short2(tgp_bm, BK) : short2(BK, tgp_bm);
+      short2 tile_dims_B =
+          transpose_b ? short2(BK, tgp_bn) : short2(tgp_bn, BK);
       loader_a.load_safe(tile_dims_A);
       loader_b_up.load_safe(tile_dims_B);
       loader_b_gate.load_safe(tile_dims_B);
@@ -149,8 +161,10 @@ template <
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       if (!K_aligned) {
-        short2 tile_dims_A = transpose_a ? short2(tgp_bm, leftover_bk) : short2(leftover_bk, tgp_bm);
-        short2 tile_dims_B = transpose_b ? short2(leftover_bk, tgp_bn) : short2(tgp_bn, leftover_bk);
+        short2 tile_dims_A = transpose_a ? short2(tgp_bm, leftover_bk)
+                                         : short2(leftover_bk, tgp_bm);
+        short2 tile_dims_B = transpose_b ? short2(leftover_bk, tgp_bn)
+                                         : short2(tgp_bn, leftover_bk);
         loader_a.load_safe(tile_dims_A);
         loader_b_up.load_safe(tile_dims_B);
         loader_b_gate.load_safe(tile_dims_B);
@@ -193,7 +207,8 @@ template <typename AccT, typename OutT>
     const constant int& k_partitions [[buffer(2)]],
     const constant int& partition_stride [[buffer(3)]],
     const constant int& ldd [[buffer(4)]],
-    uint2 gid [[thread_position_in_grid]]) {
+    uint2 gid [[thread_position_in_grid]]
+) {
   // Adjust pointers
   D += gid.x + gid.y * size_t(ldd);
   const device AccT* C_up = C_split + gid.x + gid.y * size_t(ldd);
@@ -211,6 +226,9 @@ template <typename AccT, typename OutT>
   }
 
   // Apply MLP fused epilogue: out = up * activation(gate)
-  float fused = mlp_fused_epilogue_f32(static_cast<float>(out_up), static_cast<float>(out_gate));
+  float fused = mlp_fused_epilogue_f32(
+      static_cast<float>(out_up),
+      static_cast<float>(out_gate)
+  );
   D[0] = static_cast<OutT>(fused);
 }

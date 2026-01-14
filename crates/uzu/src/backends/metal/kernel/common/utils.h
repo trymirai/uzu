@@ -29,15 +29,15 @@ struct Limits {
   static const constant U finite_min = metal::numeric_limits<U>::min();
 };
 
-#define instantiate_default_limit(type)                                      \
-  template <>                                                                \
-  struct Limits<type> {                                                      \
-    static constexpr constant type max = metal::numeric_limits<type>::max(); \
-    static constexpr constant type min = metal::numeric_limits<type>::min(); \
-    static constexpr constant type finite_max =                              \
-        metal::numeric_limits<type>::max();                                  \
-    static constexpr constant type finite_min =                              \
-        metal::numeric_limits<type>::min();                                  \
+#define instantiate_default_limit(type)                                        \
+  template <>                                                                  \
+  struct Limits<type> {                                                        \
+    static constexpr constant type max = metal::numeric_limits<type>::max();   \
+    static constexpr constant type min = metal::numeric_limits<type>::min();   \
+    static constexpr constant type finite_max =                                \
+        metal::numeric_limits<type>::max();                                    \
+    static constexpr constant type finite_min =                                \
+        metal::numeric_limits<type>::min();                                    \
   };
 
 instantiate_default_limit(uint8_t);
@@ -49,17 +49,17 @@ instantiate_default_limit(int16_t);
 instantiate_default_limit(int32_t);
 instantiate_default_limit(int64_t);
 
-#define instantiate_float_limit(type)             \
-  template <>                                     \
-  struct Limits<type> {                           \
-    static constexpr constant type max =          \
-        metal::numeric_limits<type>::infinity();  \
-    static constexpr constant type min =          \
-        -metal::numeric_limits<type>::infinity(); \
-    static constexpr constant type finite_max =   \
-        metal::numeric_limits<type>::max();       \
-    static constexpr constant type finite_min =   \
-        -metal::numeric_limits<type>::max();      \
+#define instantiate_float_limit(type)                                          \
+  template <>                                                                  \
+  struct Limits<type> {                                                        \
+    static constexpr constant type max =                                       \
+        metal::numeric_limits<type>::infinity();                               \
+    static constexpr constant type min =                                       \
+        -metal::numeric_limits<type>::infinity();                              \
+    static constexpr constant type finite_max =                                \
+        metal::numeric_limits<type>::max();                                    \
+    static constexpr constant type finite_min =                                \
+        -metal::numeric_limits<type>::max();                                   \
   };
 
 instantiate_float_limit(half);
@@ -76,10 +76,12 @@ template <>
 struct Limits<complex64_t> {
   static constexpr constant complex64_t max = complex64_t(
       metal::numeric_limits<float>::infinity(),
-      metal::numeric_limits<float>::infinity());
+      metal::numeric_limits<float>::infinity()
+  );
   static constexpr constant complex64_t min = complex64_t(
       -metal::numeric_limits<float>::infinity(),
-      -metal::numeric_limits<float>::infinity());
+      -metal::numeric_limits<float>::infinity()
+  );
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -96,7 +98,8 @@ METAL_FUNC IdxT elem_to_loc(
     IdxT elem,
     constant const int* shape,
     constant const int64_t* strides,
-    int ndim) {
+    int ndim
+) {
   IdxT loc = 0;
   for (int i = ndim - 1; i >= 0 && elem > 0; --i) {
     loc += (elem % shape[i]) * IdxT(strides[i]);
@@ -111,7 +114,8 @@ METAL_FUNC IdxT elem_to_loc(
     uint3 elem,
     constant const int* shape,
     constant const int64_t* strides,
-    int ndim) {
+    int ndim
+) {
   IdxT loc =
       elem.x * IdxT(strides[ndim - 1]) + elem.y * IdxT(strides[ndim - 2]);
   for (int d = ndim - 3; d >= 0; --d) {
@@ -137,7 +141,7 @@ METAL_FUNC IdxT elem_to_loc_2(uint2 elem, constant const int64_t strides[2]) {
 template <typename IdxT = int64_t>
 METAL_FUNC IdxT elem_to_loc_3(uint3 elem, constant const int64_t strides[3]) {
   return elem.x * IdxT(strides[2]) + elem.y * IdxT(strides[1]) +
-      elem.z * IdxT(strides[0]);
+         elem.z * IdxT(strides[0]);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -149,14 +153,18 @@ METAL_FUNC vec<IdxT, 2> elem_to_loc_2_nd(
     constant const int* shape,
     constant const int64_t* a_strides,
     constant const int64_t* b_strides,
-    int ndim) {
+    int ndim
+) {
   vec<IdxT, 2> loc = {
       IdxT(
           elem.x * IdxT(a_strides[ndim - 1]) +
-          IdxT(elem.y) * IdxT(a_strides[ndim - 2])),
+          IdxT(elem.y) * IdxT(a_strides[ndim - 2])
+      ),
       IdxT(
           elem.x * IdxT(b_strides[ndim - 1]) +
-          elem.y * IdxT(b_strides[ndim - 2]))};
+          elem.y * IdxT(b_strides[ndim - 2])
+      )
+  };
   for (int d = ndim - 3; d >= 0; --d) {
     uint l = elem.z % shape[d];
     loc.x += l * IdxT(a_strides[d]);
@@ -173,14 +181,16 @@ METAL_FUNC vec<IdxT, 3> elem_to_loc_3_nd(
     constant const int64_t* a_strides,
     constant const int64_t* b_strides,
     constant const int64_t* c_strides,
-    int ndim) {
+    int ndim
+) {
   vec<IdxT, 3> loc = {
       IdxT(elem.x * IdxT(a_strides[ndim - 1])) +
           IdxT(elem.y * IdxT(a_strides[ndim - 2])),
       IdxT(elem.x * IdxT(b_strides[ndim - 1])) +
           IdxT(elem.y * IdxT(b_strides[ndim - 2])),
       IdxT(elem.x * IdxT(c_strides[ndim - 1])) +
-          IdxT(elem.y * IdxT(c_strides[ndim - 2]))};
+          IdxT(elem.y * IdxT(c_strides[ndim - 2]))
+  };
   for (int d = ndim - 3; d >= 0; --d) {
     uint l = elem.z % shape[d];
     loc.x += l * IdxT(a_strides[d]);
@@ -240,9 +250,7 @@ struct LoopedElemToLoc {
     }
   }
 
-  OffsetT location() {
-    return offset;
-  }
+  OffsetT location() { return offset; }
 };
 
 template <typename OffsetT>
@@ -271,9 +279,7 @@ struct LoopedElemToLoc<1, OffsetT, true> {
     }
   }
 
-  OffsetT location() {
-    return offset;
-  }
+  OffsetT location() { return offset; }
 };
 
 template <typename OffsetT>
@@ -290,9 +296,7 @@ struct LoopedElemToLoc<1, OffsetT, false> {
     offset += n * OffsetT(strides[0]);
   }
 
-  OffsetT location() {
-    return offset;
-  }
+  OffsetT location() { return offset; }
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -353,12 +357,14 @@ inline complex64_t log1p(complex64_t in) {
 
 inline uint64_t simd_shuffle_down(uint64_t data, uint16_t delta) {
   return as_type<uint64_t>(
-      metal::simd_shuffle_down(as_type<uint2>(data), delta));
+      metal::simd_shuffle_down(as_type<uint2>(data), delta)
+  );
 }
 
 inline int64_t simd_shuffle_down(int64_t data, uint16_t delta) {
   return as_type<int64_t>(
-      metal::simd_shuffle_down(as_type<uint2>(data), delta));
+      metal::simd_shuffle_down(as_type<uint2>(data), delta)
+  );
 }
 
 inline bool simd_shuffle_down(bool data, uint16_t delta) {
@@ -367,7 +373,9 @@ inline bool simd_shuffle_down(bool data, uint16_t delta) {
 
 inline complex64_t simd_shuffle_down(complex64_t data, uint16_t delta) {
   return complex64_t(
-      simd_shuffle_down(data.real, delta), simd_shuffle_down(data.imag, delta));
+      simd_shuffle_down(data.real, delta),
+      simd_shuffle_down(data.imag, delta)
+  );
 }
 
 inline uint64_t simd_shuffle_up(uint64_t data, uint16_t delta) {
@@ -384,33 +392,52 @@ inline bool simd_shuffle_up(bool data, uint16_t delta) {
 
 inline complex64_t simd_shuffle_up(complex64_t data, uint16_t delta) {
   return complex64_t(
-      simd_shuffle_up(data.real, delta), simd_shuffle_up(data.imag, delta));
+      simd_shuffle_up(data.real, delta),
+      simd_shuffle_up(data.imag, delta)
+  );
 }
 
-inline uint64_t
-simd_shuffle_and_fill_up(uint64_t data, uint64_t filling, uint16_t delta) {
+inline uint64_t simd_shuffle_and_fill_up(
+    uint64_t data,
+    uint64_t filling,
+    uint16_t delta
+) {
   return as_type<uint64_t>(metal::simd_shuffle_and_fill_up(
-      as_type<uint2>(data), as_type<uint2>(filling), delta));
+      as_type<uint2>(data),
+      as_type<uint2>(filling),
+      delta
+  ));
 }
 
-inline int64_t
-simd_shuffle_and_fill_up(int64_t data, int64_t filling, uint16_t delta) {
+inline int64_t simd_shuffle_and_fill_up(
+    int64_t data,
+    int64_t filling,
+    uint16_t delta
+) {
   return as_type<int64_t>(metal::simd_shuffle_and_fill_up(
-      as_type<uint2>(data), as_type<uint2>(filling), delta));
+      as_type<uint2>(data),
+      as_type<uint2>(filling),
+      delta
+  ));
 }
 
 inline bool simd_shuffle_and_fill_up(bool data, bool filling, uint16_t delta) {
   return simd_shuffle_and_fill_up(
-      static_cast<uint32_t>(data), static_cast<uint32_t>(filling), delta);
+      static_cast<uint32_t>(data),
+      static_cast<uint32_t>(filling),
+      delta
+  );
 }
 
 inline complex64_t simd_shuffle_and_fill_up(
     complex64_t data,
     complex64_t filling,
-    uint16_t delta) {
+    uint16_t delta
+) {
   return complex64_t(
       simd_shuffle_and_fill_up(data.real, filling.real, delta),
-      simd_shuffle_and_fill_up(data.imag, filling.imag, delta));
+      simd_shuffle_and_fill_up(data.imag, filling.imag, delta)
+  );
 }
 
 inline uint64_t simd_shuffle(uint64_t data, uint16_t lane) {
@@ -427,7 +454,9 @@ inline bool simd_shuffle(bool data, uint16_t lane) {
 
 inline complex64_t simd_shuffle(complex64_t data, uint16_t lane) {
   return complex64_t(
-      simd_shuffle(data.real, lane), simd_shuffle(data.imag, lane));
+      simd_shuffle(data.real, lane),
+      simd_shuffle(data.imag, lane)
+  );
 }
 
 // std::conditional is not included with Metal

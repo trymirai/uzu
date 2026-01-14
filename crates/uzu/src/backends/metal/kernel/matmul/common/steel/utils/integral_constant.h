@@ -19,9 +19,7 @@ struct integral_constant {
   using value_type = T;
   using type = integral_constant;
 
-  METAL_FUNC constexpr operator value_type() const noexcept {
-    return value;
-  }
+  METAL_FUNC constexpr operator value_type() const noexcept { return value; }
 
   // METAL_FUNC constexpr value_type operator()() const noexcept {
   //   return value;
@@ -50,12 +48,14 @@ using Int = integral_constant<int, val>;
 // Binary Operators on Integral constants
 ///////////////////////////////////////////////////////////////////////////////
 
-#define integral_const_binop(__op__, __operator__)          \
-  template <typename T, T tv, typename U, U uv>             \
-  METAL_FUNC constexpr auto __operator__(                   \
-      integral_constant<T, tv>, integral_constant<U, uv>) { \
-    constexpr auto res = tv __op__ uv;                      \
-    return integral_constant<decltype(res), res>{};         \
+#define integral_const_binop(__op__, __operator__)                             \
+  template <typename T, T tv, typename U, U uv>                                \
+  METAL_FUNC constexpr auto __operator__(                                      \
+      integral_constant<T, tv>,                                                \
+      integral_constant<U, uv>                                                 \
+  ) {                                                                          \
+    constexpr auto res = tv __op__ uv;                                         \
+    return integral_constant<decltype(res), res>{};                            \
   }
 
 integral_const_binop(+, operator+);

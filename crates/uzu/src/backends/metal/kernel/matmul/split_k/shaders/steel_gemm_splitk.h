@@ -18,7 +18,7 @@ template <
     bool transpose_b,
     bool MN_aligned,
     bool K_aligned>
-[[kernel, max_total_threads_per_threadgroup(WM* WN * 32)]] void gemm_splitk(
+[[kernel, max_total_threads_per_threadgroup(WM * WN * 32)]] void gemm_splitk(
     const device T* A [[buffer(0)]],
     const device T* B [[buffer(1)]],
     device U* C [[buffer(2)]],
@@ -26,7 +26,8 @@ template <
     uint simd_lane_id [[thread_index_in_simdgroup]],
     uint simd_group_id [[simdgroup_index_in_threadgroup]],
     uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]]) {
+    uint3 lid [[thread_position_in_threadgroup]]
+) {
   (void)lid;
 
   using gemm_kernel = GEMMKernel<
@@ -70,7 +71,7 @@ template <
   B += transpose_b ? (k_start_long + c_col_long * params->ldb)
                    : (c_col_long + k_start_long * params->ldb);
   C += (size_t(params->split_k_partition_stride) * tid_z) +
-      (c_row_long * params->ldc + c_col_long);
+       (c_row_long * params->ldc + c_col_long);
 
   // Prepare threadgroup loading operations
   thread loader_a_t loader_a(A, params->lda, As, simd_group_id, simd_lane_id);
@@ -96,7 +97,8 @@ template <
         tgp_bm,
         tgp_bn,
         leftover_bk,
-        LoopAlignment<true, true, true>{});
+        LoopAlignment<true, true, true>{}
+    );
   } else if (tgp_bn == BN) {
     gemm_kernel::gemm_loop(
         As,
@@ -108,7 +110,8 @@ template <
         tgp_bm,
         tgp_bn,
         leftover_bk,
-        LoopAlignment<false, true, true>{});
+        LoopAlignment<false, true, true>{}
+    );
   } else if (tgp_bm == BM) {
     gemm_kernel::gemm_loop(
         As,
@@ -120,7 +123,8 @@ template <
         tgp_bm,
         tgp_bn,
         leftover_bk,
-        LoopAlignment<true, false, true>{});
+        LoopAlignment<true, false, true>{}
+    );
   } else {
     gemm_kernel::gemm_loop(
         As,
@@ -132,7 +136,8 @@ template <
         tgp_bm,
         tgp_bn,
         leftover_bk,
-        LoopAlignment<false, false, true>{});
+        LoopAlignment<false, false, true>{}
+    );
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -151,7 +156,8 @@ template <
           tgp_bm,
           tgp_bn,
           leftover_bk,
-          LoopAlignment<false, false, K_aligned>{});
+          LoopAlignment<false, false, K_aligned>{}
+      );
   }
 
   if (MN_aligned || (tgp_bm == BM && tgp_bn == BN)) {
@@ -175,7 +181,8 @@ template <
     const constant int& k_partitions [[buffer(2)]],
     const constant int& partition_stride [[buffer(3)]],
     const constant int& ldd [[buffer(4)]],
-    uint2 gid [[thread_position_in_grid]]) {
+    uint2 gid [[thread_position_in_grid]]
+) {
   // Ajust D and C
   D += gid.x + gid.y * size_t(ldd);
   C_split += gid.x + gid.y * size_t(ldd);
@@ -207,7 +214,8 @@ template <
     const constant int& fdc [[buffer(7)]],
     const constant float& alpha [[buffer(8)]],
     const constant float& beta [[buffer(9)]],
-    uint2 gid [[thread_position_in_grid]]) {
+    uint2 gid [[thread_position_in_grid]]
+) {
   // Ajust D and C
   C += gid.x * size_t(fdc) + gid.y * size_t(ldc);
   D += gid.x + gid.y * size_t(ldd);

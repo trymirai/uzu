@@ -15,8 +15,8 @@ namespace steel {
 ///////////////////////////////////////////////////////////////////////////////
 // MLP Fused GEMM Kernel
 // Computes paired up/gate projections with fused activation for prefill path.
-// Weight layout: B = [up_weights (hidden_dim cols), gate_weights (hidden_dim cols)]
-// Output = up * activation(gate), written to first hidden_dim columns
+// Weight layout: B = [up_weights (hidden_dim cols), gate_weights (hidden_dim
+// cols)] Output = up * activation(gate), written to first hidden_dim columns
 ///////////////////////////////////////////////////////////////////////////////
 
 template <
@@ -84,11 +84,12 @@ struct GEMMMlpFusedKernel {
       uint simd_lane_id [[thread_index_in_simdgroup]],
       uint simd_group_id [[simdgroup_index_in_threadgroup]],
       uint3 tid [[threadgroup_position_in_grid]],
-      uint3 lid [[thread_position_in_threadgroup]]) {
+      uint3 lid [[thread_position_in_threadgroup]]
+  ) {
     (void)lid;
 
     const int tid_y = ((tid.y) << params->swizzle_log) +
-        ((tid.x) & ((1 << params->swizzle_log) - 1));
+                      ((tid.x) & ((1 << params->swizzle_log) - 1));
     const int tid_x = (tid.x) >> params->swizzle_log;
 
     // Only process tiles within hidden_dim columns (output size)
@@ -105,12 +106,15 @@ struct GEMMMlpFusedKernel {
     const size_t c_col_long = size_t(c_col);
 
     // Pointer to A (input activations)
-    const device T* A_ptr = A + (transpose_a ? c_row_long : c_row_long * params->lda);
+    const device T* A_ptr =
+        A + (transpose_a ? c_row_long : c_row_long * params->lda);
 
     // Pointers to up and gate weights in B
     // B layout: [up_weights | gate_weights] where each is hidden_dim columns
-    const device T* B_up = B + (transpose_b ? c_col_long * params->ldb : c_col_long);
-    const device T* B_gate = B_up + (transpose_b ? hidden_dim * params->ldb : hidden_dim);
+    const device T* B_up =
+        B + (transpose_b ? c_col_long * params->ldb : c_col_long);
+    const device T* B_gate =
+        B_up + (transpose_b ? hidden_dim * params->ldb : hidden_dim);
 
     device U* D_ptr = D + c_row_long * params->ldd + c_col_long;
 
@@ -118,9 +122,17 @@ struct GEMMMlpFusedKernel {
     threadgroup T* Bs_gate = Bs_up + (tgp_mem_size_b / 2);
 
     // Loaders for A (shared) and B (up and gate)
-    thread loader_a_t loader_a(A_ptr, params->lda, As, simd_group_id, simd_lane_id);
-    thread loader_b_t loader_b_up(B_up, params->ldb, Bs_up, simd_group_id, simd_lane_id);
-    thread loader_b_t loader_b_gate(B_gate, params->ldb, Bs_gate, simd_group_id, simd_lane_id);
+    thread loader_a_t
+        loader_a(A_ptr, params->lda, As, simd_group_id, simd_lane_id);
+    thread loader_b_t
+        loader_b_up(B_up, params->ldb, Bs_up, simd_group_id, simd_lane_id);
+    thread loader_b_t loader_b_gate(
+        B_gate,
+        params->ldb,
+        Bs_gate,
+        simd_group_id,
+        simd_lane_id
+    );
 
     // MMA operations for up and gate
     thread mma_t mma_up(simd_group_id, simd_lane_id);
@@ -137,7 +149,8 @@ struct GEMMMlpFusedKernel {
         loader_a.load_unsafe();
       } else {
         short tgp_bm = min(short(BM), short(params->M - c_row));
-        short2 tile_dims_A = transpose_a ? short2(tgp_bm, BK) : short2(BK, tgp_bm);
+        short2 tile_dims_A =
+            transpose_a ? short2(tgp_bm, BK) : short2(BK, tgp_bm);
         loader_a.load_safe(tile_dims_A);
       }
 
@@ -147,7 +160,8 @@ struct GEMMMlpFusedKernel {
         loader_b_gate.load_unsafe();
       } else {
         short tgp_bn = min(short(BN), short(hidden_dim - c_col));
-        short2 tile_dims_B = transpose_b ? short2(BK, tgp_bn) : short2(tgp_bn, BK);
+        short2 tile_dims_B =
+            transpose_b ? short2(BK, tgp_bn) : short2(tgp_bn, BK);
         loader_b_up.load_safe(tile_dims_B);
         loader_b_gate.load_safe(tile_dims_B);
       }
@@ -185,7 +199,7 @@ struct GEMMMlpFusedKernel {
     // Access the Ctile elements and apply fusion
     constexpr int kElemsPerTile = decltype(mma_up.Ctile)::kElemsPerTile;
 
-    #pragma unroll
+#pragma unroll
     for (short i = 0; i < kElemsPerTile; i++) {
       float up_val = static_cast<float>(mma_up.Ctile.elems()[i]);
       float gate_val = static_cast<float>(mma_gate.Ctile.elems()[i]);

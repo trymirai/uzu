@@ -78,7 +78,9 @@ impl DispatchDescriptor {
         let (do_axpby, alpha, beta, bias_stride) = match axpby_source {
             AxpbySource::None => (false, 1.0f32, 0.0f32, 0),
             AxpbySource::Bias => (true, 1.0f32, 1.0f32, 1),
-            AxpbySource::C => (true, arguments.alpha, arguments.beta, arguments.ldd),
+            AxpbySource::C => {
+                (true, arguments.alpha, arguments.beta, arguments.ldd)
+            },
         };
 
         let output_dimension = if matrix_is_rhs {

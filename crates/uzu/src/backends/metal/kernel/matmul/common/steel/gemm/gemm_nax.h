@@ -31,7 +31,8 @@ auto gemm_loop(
     const device T* B,
     const constant GEMMParams* params [[buffer(4)]],
     const short sgp_sm,
-    const short sgp_sn) {
+    const short sgp_sn
+) {
   constexpr short TM = SM / UM;
   constexpr short TN = SN / UN;
   constexpr short TK = SK / UK;
@@ -89,7 +90,8 @@ auto gemm_loop(
           Atile,
           metal::bool_constant<transpose_a>{},
           Btile,
-          metal::bool_constant<transpose_b>{});
+          metal::bool_constant<transpose_b>{}
+      );
 
       (void)compiler_barrier;
     }
@@ -143,7 +145,8 @@ auto gemm_loop(
                 Atile.subtile_at(0, 0),
                 metal::bool_constant<transpose_a>{},
                 Btile.subtile_at(0, 0),
-                metal::bool_constant<transpose_b>{});
+                metal::bool_constant<transpose_b>{}
+            );
           }
         }
       }

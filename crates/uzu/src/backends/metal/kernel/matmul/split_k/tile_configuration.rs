@@ -7,9 +7,20 @@ pub struct TileConfiguration {
     pub warps_per_col: i32,
 }
 
-pub fn select_tile_configuration(m: i32, n: i32) -> TileConfiguration {
-    let tile_rows = if m < 40 { 16 } else { 32 };
-    let tile_cols = if n < 40 { 16 } else { 32 };
+pub fn select_tile_configuration(
+    m: i32,
+    n: i32,
+) -> TileConfiguration {
+    let tile_rows = if m < 40 {
+        16
+    } else {
+        32
+    };
+    let tile_cols = if n < 40 {
+        16
+    } else {
+        32
+    };
     TileConfiguration {
         tile_rows,
         tile_cols,

@@ -22,10 +22,12 @@ template <typename T, int kFragRows_, int kFragCols_>
 struct BaseMMAFrag {
   static_assert(
       kFragRows_ == 8,
-      "Only 8 x 8 fragment matrices are currently supported");
+      "Only 8 x 8 fragment matrices are currently supported"
+  );
   static_assert(
       kFragCols_ == 8,
-      "Only 8 x 8 fragment matrices are currently supported");
+      "Only 8 x 8 fragment matrices are currently supported"
+  );
 };
 
 template <typename T>
@@ -40,13 +42,15 @@ struct BaseMMAFrag<T, 8, 8> {
 
   static_assert(
       kElemRows * kElemCols == kElemsPerFrag,
-      "MMAFrag shape is not consistent with MMAFrag size");
+      "MMAFrag shape is not consistent with MMAFrag size"
+  );
 
   typedef metal::simdgroup_matrix<T, kFragRows, kFragCols> mat_type;
   typedef metal::vec<T, kElemsPerFrag> frag_type;
 
-  METAL_FUNC static constexpr short2 get_coord(ushort simd_lane_id
-                                               [[thread_index_in_simdgroup]]) {
+  METAL_FUNC static constexpr short2 get_coord(
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
     const short qid = simd_lane_id / 4;
     const short fm = (qid & 4) + ((simd_lane_id / 2) % 4);
     const short fn = (qid & 2) * 2 + (simd_lane_id % 2) * 2;
@@ -54,8 +58,12 @@ struct BaseMMAFrag<T, 8, 8> {
   }
 
   template <typename SrcPtrType, typename StrX, typename StrY>
-  METAL_FUNC static constexpr void
-  load(thread frag_type& dst, SrcPtrType src, StrX str_x, StrY str_y) {
+  METAL_FUNC static constexpr void load(
+      thread frag_type& dst,
+      SrcPtrType src,
+      StrX str_x,
+      StrY str_y
+  ) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
       STEEL_PRAGMA_UNROLL
@@ -81,7 +89,8 @@ struct BaseMMAFrag<T, 8, 8> {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = Int<0>{},
-      OffY off_y = Int<0>{}) {
+      OffY off_y = Int<0>{}
+  ) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
       STEEL_PRAGMA_UNROLL
@@ -97,8 +106,12 @@ struct BaseMMAFrag<T, 8, 8> {
   }
 
   template <typename DstPtrType, typename StrX, typename StrY>
-  METAL_FUNC static constexpr void
-  store(const thread frag_type& src, DstPtrType dst, StrX str_x, StrY str_y) {
+  METAL_FUNC static constexpr void store(
+      const thread frag_type& src,
+      DstPtrType dst,
+      StrX str_x,
+      StrY str_y
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     STEEL_PRAGMA_UNROLL
@@ -126,7 +139,8 @@ struct BaseMMAFrag<T, 8, 8> {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = Int<0>{},
-      OffY off_y = Int<0>{}) {
+      OffY off_y = Int<0>{}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     STEEL_PRAGMA_UNROLL
@@ -161,7 +175,8 @@ struct BaseMMAFrag<T, 8, 8> {
       StartY start_y,
       StopY stop_y,
       OffX off_x = Int<0>{},
-      OffY off_y = Int<0>{}) {
+      OffY off_y = Int<0>{}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     STEEL_PRAGMA_UNROLL
@@ -181,7 +196,8 @@ struct BaseMMAFrag<T, 8, 8> {
       thread frag_type& D,
       thread frag_type& A,
       thread frag_type& B,
-      thread frag_type& C) {
+      thread frag_type& C
+  ) {
     mat_type D_mat;
     mat_type A_mat;
     mat_type B_mat;
@@ -200,7 +216,8 @@ struct BaseMMAFrag<T, 8, 8> {
       thread mat_type& D,
       thread mat_type& A,
       thread mat_type& B,
-      thread mat_type& C) {
+      thread mat_type& C
+  ) {
     simdgroup_multiply_accumulate(D, A, B, C);
   }
 };
@@ -246,7 +263,8 @@ struct MMATile {
 
   METAL_FUNC constexpr const thread frag_type& frag_at(
       const short i,
-      const short j) const {
+      const short j
+  ) const {
     return val_frags[i * kTileCols + j];
   }
 
@@ -277,9 +295,11 @@ struct MMATile {
             frag_at(i, j),
             &(
                 src[(i * kFragRows) * w_x * str_x +
-                    (j * kFragCols) * w_y * str_y]),
+                    (j * kFragCols) * w_y * str_y]
+            ),
             Int<str_x>{},
-            Int<str_y>{});
+            Int<str_y>{}
+        );
       }
     }
   }
@@ -294,9 +314,11 @@ struct MMATile {
             frag_at(i, j),
             &(
                 dst[(i * kFragRows) * w_x * str_x +
-                    (j * kFragCols) * w_y * str_y]),
+                    (j * kFragCols) * w_y * str_y]
+            ),
             Int<str_x>{},
-            Int<str_y>{});
+            Int<str_y>{}
+        );
       }
     }
   }
@@ -311,7 +333,8 @@ struct MMATile {
             frag_at(i, j),
             &(src[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
             ld,
-            Int<1>{});
+            Int<1>{}
+        );
       }
     }
   }
@@ -326,14 +349,18 @@ struct MMATile {
             frag_at(i, j),
             &(dst[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
             ld,
-            Int<1>{});
+            Int<1>{}
+        );
       }
     }
   }
 
   template <typename U, int w_x, int w_y>
-  METAL_FUNC void
-  load_safe(const device U* src, const int ld, const short2 src_tile_dims) {
+  METAL_FUNC void load_safe(
+      const device U* src,
+      const int ld,
+      const short2 src_tile_dims
+  ) {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -346,14 +373,18 @@ struct MMATile {
             src_tile_dims.y,
             src_tile_dims.x,
             (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
+            (j * kFragCols) * w_y
+        );
       }
     }
   }
 
   template <typename U, int w_x, int w_y>
-  METAL_FUNC void
-  store_safe(device U* dst, const int ld, const short2 dst_tile_dims) const {
+  METAL_FUNC void store_safe(
+      device U* dst,
+      const int ld,
+      const short2 dst_tile_dims
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -366,7 +397,8 @@ struct MMATile {
             dst_tile_dims.y,
             dst_tile_dims.x,
             (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
+            (j * kFragCols) * w_y
+        );
       }
     }
   }
@@ -376,7 +408,8 @@ struct MMATile {
       device U* dst,
       const int ld,
       const short2 start,
-      const short2 stop) const {
+      const short2 stop
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -391,7 +424,8 @@ struct MMATile {
             start.x,
             stop.x,
             (i * kFragRows) * w_x,
-            (j * kFragCols) * w_y);
+            (j * kFragCols) * w_y
+        );
       }
     }
   }
@@ -402,7 +436,8 @@ METAL_FUNC void tile_matmad(
     thread MMATile<T, M, N>& D,
     thread MMATile<U, M, K>& A,
     thread MMATile<U, K, N>& B,
-    thread MMATile<T, M, N>& C) {
+    thread MMATile<T, M, N>& C
+) {
   STEEL_PRAGMA_UNROLL
   for (short m = 0; m < M; ++m) {
     STEEL_PRAGMA_UNROLL
@@ -414,7 +449,8 @@ METAL_FUNC void tile_matmad(
             D.frag_at(m, n_serp),
             A.frag_at(m, k),
             B.frag_at(k, n_serp),
-            C.frag_at(m, n_serp));
+            C.frag_at(m, n_serp)
+        );
       }
     }
   }
@@ -422,12 +458,8 @@ METAL_FUNC void tile_matmad(
 
 template <typename InT>
 struct TransformNone<complex64_t, InT> {
-  static METAL_FUNC complex64_t apply(complex64_t x) {
-    return x;
-  }
-  static METAL_FUNC complex64_t apply(complex64_t x, complex64_t) {
-    return x;
-  }
+  static METAL_FUNC complex64_t apply(complex64_t x) { return x; }
+  static METAL_FUNC complex64_t apply(complex64_t x, complex64_t) { return x; }
 };
 
 template <
@@ -486,7 +518,8 @@ struct BlockMMA {
   /* Constructor */
   METAL_FUNC BlockMMA(
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]) {
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
     // Determine thread position in simdgroup matrix
     short tm = kFragSize * (simd_group_id / WN);
     short tn = kFragSize * (simd_group_id % WN);
@@ -544,8 +577,12 @@ struct BlockMMA {
     Ctile.template store<U, WM, WN>(D, ldd);
   }
 
-  METAL_FUNC void
-  store_result_slice(device U* D, const int ldd, short2 start, short2 stop) {
+  METAL_FUNC void store_result_slice(
+      device U* D,
+      const int ldd,
+      short2 start,
+      short2 stop
+  ) {
     // Apply epilogue
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
@@ -564,8 +601,11 @@ struct BlockMMA {
     Ctile.template store_slice<U, WM, WN>(D, ldd, start, stop);
   }
 
-  METAL_FUNC void
-  store_result_safe(device U* D, const int ldd, short2 dst_tile_dims) {
+  METAL_FUNC void store_result_safe(
+      device U* D,
+      const int ldd,
+      short2 dst_tile_dims
+  ) {
     // Apply epilogue
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
@@ -598,7 +638,8 @@ struct BlockMMA {
       const device U* C,
       const int ldc,
       const int fdc,
-      thread const BinaryEpilogue& epilogue_op) {
+      thread const BinaryEpilogue& epilogue_op
+  ) {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
 
@@ -627,7 +668,8 @@ struct BlockMMA {
       const int ldc,
       const int fdc,
       short2 dst_tile_dims,
-      thread const BinaryEpilogue& epilogue_op) {
+      thread const BinaryEpilogue& epilogue_op
+  ) {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     dst_tile_dims -= short2(sn, sm);
@@ -672,7 +714,8 @@ struct BlockMMA {
       const device U* C,
       const int ldc,
       const int fdc,
-      thread const Epilogue& epilogue_op) const {
+      thread const Epilogue& epilogue_op
+  ) const {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     D += (sm)*ldd + sn;
@@ -705,7 +748,8 @@ struct BlockMMA {
       const int ldc,
       const int fdc,
       short2 dst_tile_dims,
-      thread const Epilogue& epilogue_op) const {
+      thread const Epilogue& epilogue_op
+  ) const {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     D += (sm)*ldd + sn;
@@ -769,10 +813,13 @@ struct BlockMMA<
     Epilogue> {
   static_assert(
       metal::is_same_v<AccumType, float>,
-      "BlockMMA<complex64_t,...> expects float accumulators");
+      "BlockMMA<complex64_t,...> expects float accumulators"
+  );
   static_assert(
       metal::is_same_v<U, complex64_t>,
-      "For complex BlockMMA, U must be complex64_t; use a different epilogue for projections");
+      "For complex BlockMMA, U must be complex64_t; use a different epilogue "
+      "for projections"
+  );
   // MMAFrag size
   STEEL_CONST short kFragSize = 8;
   using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
@@ -818,7 +865,8 @@ struct BlockMMA<
   /* Constructor */
   METAL_FUNC BlockMMA(
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]) {
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
     // Determine thread position in simdgroup matrix
     short tm = kFragSize * (simd_group_id / WN);
     short tn = kFragSize * (simd_group_id % WN);
@@ -838,7 +886,8 @@ struct BlockMMA<
   /* Karatsuba MMA: 3 real MMAs per K-chunk */
   METAL_FUNC void mma(
       const threadgroup complex64_t* As,
-      const threadgroup complex64_t* Bs) {
+      const threadgroup complex64_t* Bs
+  ) {
     // Adjust for simdgroup and thread location
     As += As_offset;
     Bs += Bs_offset;
@@ -915,8 +964,12 @@ struct BlockMMA<
     }
   }
 
-  METAL_FUNC void
-  store_result_slice(device U* D, const int ldd, short2 start, short2 stop) {
+  METAL_FUNC void store_result_slice(
+      device U* D,
+      const int ldd,
+      short2 start,
+      short2 stop
+  ) {
     D += sm * ldd + sn;
     start -= short2(sn, sm);
     stop -= short2(sn, sm);
@@ -946,8 +999,11 @@ struct BlockMMA<
     }
   }
 
-  METAL_FUNC void
-  store_result_safe(device U* D, const int ldd, short2 dst_tile_dims) {
+  METAL_FUNC void store_result_safe(
+      device U* D,
+      const int ldd,
+      short2 dst_tile_dims
+  ) {
     D += sm * ldd + sn;
     dst_tile_dims -= short2(sn, sm);
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0)
@@ -977,7 +1033,8 @@ struct BlockMMA<
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile_r)::kElemsPerTile; i++) {
       complex64_t out = epilogue_op.apply(
-          complex64_t(Ctile_r.elems()[i], Ctile_i.elems()[i]));
+          complex64_t(Ctile_r.elems()[i], Ctile_i.elems()[i])
+      );
       Ctile_r.elems()[i] = out.real;
       Ctile_i.elems()[i] = out.imag;
     }
@@ -989,7 +1046,8 @@ struct BlockMMA<
       const device U* C,
       const int ldc,
       const int fdc,
-      thread const BinaryEpilogue& epilogue_op) {
+      thread const BinaryEpilogue& epilogue_op
+  ) {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
 
@@ -1006,7 +1064,9 @@ struct BlockMMA<
         STEEL_PRAGMA_UNROLL
         for (short k = 0; k < decltype(Ctile_r)::kElemsPerFrag; k++) {
           complex64_t out = epilogue_op.apply(
-              complex64_t(r[k], im[k]), C[offset_c + k * fdc]);
+              complex64_t(r[k], im[k]),
+              C[offset_c + k * fdc]
+          );
           r[k] = out.real;
           im[k] = out.imag;
         }
@@ -1021,7 +1081,8 @@ struct BlockMMA<
       const int ldc,
       const int fdc,
       short2 dst_tile_dims,
-      thread const BinaryEpilogue& epilogue_op) {
+      thread const BinaryEpilogue& epilogue_op
+  ) {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     dst_tile_dims -= short2(sn, sm);
@@ -1070,7 +1131,8 @@ struct BlockMMA<
       const device U* C,
       const int ldc,
       const int fdc,
-      thread const Epilogue& epilogue_op) const {
+      thread const Epilogue& epilogue_op
+  ) const {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     D += (sm)*ldd + sn;
@@ -1105,7 +1167,8 @@ struct BlockMMA<
       const int ldc,
       const int fdc,
       short2 dst_tile_dims,
-      thread const Epilogue& epilogue_op) const {
+      thread const Epilogue& epilogue_op
+  ) const {
     // Adjust for simdgroup and thread location
     C += (sm)*ldc + (sn)*fdc;
     D += (sm)*ldd + sn;
@@ -1132,7 +1195,9 @@ struct BlockMMA<
           for (short k = 0; k < kelems; k++) {
             if ((j * TN_stride + k) < dst_tile_dims.x) {
               D[off_d + k] = epilogue_op.apply(
-                  complex64_t(r[k], im[k]), C[off_c + k * fdc]);
+                  complex64_t(r[k], im[k]),
+                  C[off_c + k * fdc]
+              );
             }
           }
         }

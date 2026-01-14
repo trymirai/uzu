@@ -48,13 +48,11 @@ struct BlockLoader {
       const int src_ld_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]])
-      : src_ld(src_ld_),
-        tile_stride(reduction_dim ? BCOLS : BROWS * src_ld),
-        thread_idx(simd_group_id * 32 + simd_lane_id),
-        bi(thread_idx / TCOLS),
-        bj(vec_size * (thread_idx % TCOLS)),
-        dst(dst_ + bi * dst_ld + bj),
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  )
+      : src_ld(src_ld_), tile_stride(reduction_dim ? BCOLS : BROWS * src_ld),
+        thread_idx(simd_group_id * 32 + simd_lane_id), bi(thread_idx / TCOLS),
+        bj(vec_size * (thread_idx % TCOLS)), dst(dst_ + bi * dst_ld + bj),
         src(src_ + bi * src_ld + bj) {}
 
   /* Apply operation to threadgroup without bound checking */
@@ -127,9 +125,7 @@ struct BlockLoader {
   }
 
   /* Iteration helper */
-  METAL_FUNC void next() {
-    src += tile_stride;
-  }
+  METAL_FUNC void next() { src += tile_stride; }
 };
 
 } // namespace steel

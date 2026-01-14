@@ -1,7 +1,7 @@
 #include <metal_simdgroup>
 #include <metal_stdlib>
 
-#include "../../common/utils.h"
+#include "../../../common/utils.h"
 
 #include "../../common/steel/utils.h"
 
@@ -24,12 +24,12 @@ struct DefaultAccT<complex64_t> {
 
 template <
     typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN, /* Thread cols (in elements) */
+    const int BM,        /* Threadgroup rows (in simdgroups) */
+    const int BN,        /* Threadgroup cols (in simdgroups) */
+    const int SM,        /* Simdgroup rows (in threads) */
+    const int SN,        /* Simdgroup cols (in threads) */
+    const int TM,        /* Thread rows (in elements) */
+    const int TN,        /* Thread cols (in elements) */
     const bool kDoAxpby, /* Do out = alpha * out + beta * bias */
     typename AccT = typename DefaultAccT<T>::type>
 struct GEMVKernel {
@@ -45,7 +45,8 @@ struct GEMVKernel {
 
   static_assert(
       SN == 4 || SN == 8 || SN == 16 || SN == 32,
-      "gemv block must have a width of 4, 8, 16, or 32");
+      "gemv block must have a width of 4, 8, 16, or 32"
+  );
 
   // - The matrix of size (M = out_vec_size, K = in_vec_size) is divided up
   //   into blocks of (blockM, blockN) divided among threadgroups
@@ -71,8 +72,11 @@ struct GEMVKernel {
   MTL_CONST bool needs_tgp_reduction = BN > 1;
 
   template <typename U = T>
-  static METAL_FUNC void
-  load_unsafe(const device T* src, thread U dst[TN], const int src_offset = 0) {
+  static METAL_FUNC void load_unsafe(
+      const device T* src,
+      thread U dst[TN],
+      const int src_offset = 0
+  ) {
     MTL_PRAGMA_UNROLL
     for (int tn = 0; tn < TN; tn++) {
       dst[tn] = static_cast<U>(src[src_offset + tn]);
@@ -84,7 +88,8 @@ struct GEMVKernel {
       const device T* src,
       thread U dst[TN],
       const int src_offset = 0,
-      const int src_size = TN) {
+      const int src_size = TN
+  ) {
     if (src_offset + TN <= src_size) {
       MTL_PRAGMA_UNROLL
       for (int tn = 0; tn < TN; tn++) {
@@ -94,8 +99,8 @@ struct GEMVKernel {
       MTL_PRAGMA_UNROLL
       for (int tn = 0; tn < TN; tn++) {
         dst[tn] = src_offset + tn < src_size
-            ? static_cast<U>(src[src_offset + tn])
-            : U(0);
+                      ? static_cast<U>(src[src_offset + tn])
+                      : U(0);
       }
     }
   }
@@ -115,7 +120,8 @@ struct GEMVKernel {
       uint3 tid [[threadgroup_position_in_grid]],
       uint3 lid [[thread_position_in_threadgroup]],
       uint simd_gid [[simdgroup_index_in_threadgroup]],
-      uint simd_lid [[thread_index_in_simdgroup]]) {
+      uint simd_lid [[thread_index_in_simdgroup]]
+  ) {
     // Appease compiler
     (void)lid;
 
@@ -248,12 +254,12 @@ struct GEMVKernel {
 
 template <
     typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN, /* Thread cols (in elements) */
+    const int BM,        /* Threadgroup rows (in simdgroups) */
+    const int BN,        /* Threadgroup cols (in simdgroups) */
+    const int SM,        /* Simdgroup rows (in threads) */
+    const int SN,        /* Simdgroup cols (in threads) */
+    const int TM,        /* Thread rows (in elements) */
+    const int TN,        /* Thread cols (in elements) */
     const bool kDoAxpby, /* Do out = alpha * out + beta * bias */
     typename AccT = typename DefaultAccT<T>::type>
 struct GEMVTKernel {
@@ -304,7 +310,8 @@ struct GEMVTKernel {
       uint3 tid [[threadgroup_position_in_grid]],
       uint3 lid [[thread_position_in_threadgroup]],
       uint simd_gid [[simdgroup_index_in_threadgroup]],
-      uint simd_lid [[thread_index_in_simdgroup]]) {
+      uint simd_lid [[thread_index_in_simdgroup]]
+  ) {
     // Appease compiler
     (void)lid;
 
@@ -435,15 +442,15 @@ struct GEMVTKernel {
 
 template <
     typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN, /* Thread cols (in elements) */
+    const int BM,          /* Threadgroup rows (in simdgroups) */
+    const int BN,          /* Threadgroup cols (in simdgroups) */
+    const int SM,          /* Simdgroup rows (in threads) */
+    const int SN,          /* Simdgroup cols (in threads) */
+    const int TM,          /* Thread rows (in elements) */
+    const int TN,          /* Thread cols (in elements) */
     const bool kDoNCBatch, /* Batch ndim > 1 */
-    const bool kDoAxpby> /* Do out = alpha * out + beta * bias */
-[[kernel, max_total_threads_per_threadgroup(BM* BN * 32)]] void gemv(
+    const bool kDoAxpby>   /* Do out = alpha * out + beta * bias */
+[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv(
     const device T* mat [[buffer(0)]],
     const device T* in_vec [[buffer(1)]],
     const device T* bias [[buffer(2)]],
@@ -462,7 +469,8 @@ template <
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
   using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
@@ -502,24 +510,36 @@ template <
       tid,
       lid,
       simd_gid,
-      simd_lid);
+      simd_lid
+  );
 }
 
-#define instantiate_gemv_helper(                                      \
-    name, itype, bm, bn, sm, sn, tm, tn, nc, axpby)                   \
-  instantiate_kernel(                                                 \
-      "gemv_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn "_tm" #tm \
-      "_tn" #tn "_nc" #nc "_axpby" #axpby,                            \
-      gemv,                                                           \
-      itype,                                                          \
-      bm,                                                             \
-      bn,                                                             \
-      sm,                                                             \
-      sn,                                                             \
-      tm,                                                             \
-      tn,                                                             \
-      nc,                                                             \
-      axpby)
+#define instantiate_gemv_helper(                                               \
+    name,                                                                      \
+    itype,                                                                     \
+    bm,                                                                        \
+    bn,                                                                        \
+    sm,                                                                        \
+    sn,                                                                        \
+    tm,                                                                        \
+    tn,                                                                        \
+    nc,                                                                        \
+    axpby                                                                      \
+)                                                                              \
+  instantiate_kernel(                                                          \
+      "gemv_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn "_tm" #tm          \
+      "_tn" #tn "_nc" #nc "_axpby" #axpby,                                     \
+      gemv,                                                                    \
+      itype,                                                                   \
+      bm,                                                                      \
+      bn,                                                                      \
+      sm,                                                                      \
+      sn,                                                                      \
+      tm,                                                                      \
+      tn,                                                                      \
+      nc,                                                                      \
+      axpby                                                                    \
+  )
 
 // clang-format off
 #define instantiate_gemv(name, itype, bm, bn, sm, sn, tm, tn)        \
@@ -551,7 +571,7 @@ template <
     const int SN, /* Simdgroup cols (in threads) */
     const int TM, /* Thread rows (in elements) */
     const int TN> /* Thread cols (in elements) */
-[[kernel, max_total_threads_per_threadgroup(BM* BN * 32)]] void gemv_gather(
+[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_gather(
     const device T* mat [[buffer(0)]],
     const device T* in_vec [[buffer(1)]],
     const device T* bias [[buffer(2)]],
@@ -575,7 +595,8 @@ template <
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
   using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, TN, false>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
@@ -589,7 +610,12 @@ template <
     const constant auto* mati_bstrides = index_batch_strides + batch_ndim;
 
     ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z, batch_shape, veci_bstrides, mati_bstrides, batch_ndim);
+        tid.z,
+        batch_shape,
+        veci_bstrides,
+        mati_bstrides,
+        batch_ndim
+    );
 
     indx_vec = vec_indices[batch_offsets.x];
     indx_mat = mat_indices[batch_offsets.y];
@@ -601,14 +627,22 @@ template <
 
   if (vector_batch_ndim > 1) {
     in_vec += elem_to_loc(
-        indx_vec, vector_batch_shape, vector_batch_stride, vector_batch_ndim);
+        indx_vec,
+        vector_batch_shape,
+        vector_batch_stride,
+        vector_batch_ndim
+    );
   } else {
     in_vec += indx_vec * vector_batch_stride[0];
   }
 
   if (matrix_batch_ndim > 1) {
     mat += elem_to_loc(
-        indx_mat, matrix_batch_shape, matrix_batch_stride, matrix_batch_ndim);
+        indx_mat,
+        matrix_batch_shape,
+        matrix_batch_stride,
+        matrix_batch_ndim
+    );
   } else {
     mat += indx_mat * matrix_batch_stride[0];
   }
@@ -630,7 +664,8 @@ template <
       tid,
       lid,
       simd_gid,
-      simd_lid);
+      simd_lid
+  );
 }
 
 // clang-format off
@@ -656,15 +691,15 @@ instantiate_gemv_bs_blocks(complex64, complex64_t);
 
 template <
     typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN, /* Thread cols (in elements) */
+    const int BM,          /* Threadgroup rows (in simdgroups) */
+    const int BN,          /* Threadgroup cols (in simdgroups) */
+    const int SM,          /* Simdgroup rows (in threads) */
+    const int SN,          /* Simdgroup cols (in threads) */
+    const int TM,          /* Thread rows (in elements) */
+    const int TN,          /* Thread cols (in elements) */
     const bool kDoNCBatch, /* Batch ndim > 1 */
-    const bool kDoAxpby> /* Do out = alpha * out + beta * bias */
-[[kernel, max_total_threads_per_threadgroup(BM* BN * 32)]] void gemv_t(
+    const bool kDoAxpby>   /* Do out = alpha * out + beta * bias */
+[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_t(
     const device T* mat [[buffer(0)]],
     const device T* in_vec [[buffer(1)]],
     const device T* bias [[buffer(2)]],
@@ -683,7 +718,8 @@ template <
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
   using gemv_kernel = GEMVTKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
@@ -723,7 +759,8 @@ template <
       tid,
       lid,
       simd_gid,
-      simd_lid);
+      simd_lid
+  );
 }
 
 // clang-format off
@@ -762,7 +799,7 @@ template <
     const int SN, /* Simdgroup cols (in threads) */
     const int TM, /* Thread rows (in elements) */
     const int TN> /* Thread cols (in elements) */
-[[kernel, max_total_threads_per_threadgroup(BM* BN * 32)]] void gemv_t_gather(
+[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_t_gather(
     const device T* mat [[buffer(0)]],
     const device T* in_vec [[buffer(1)]],
     const device T* bias [[buffer(2)]],
@@ -786,7 +823,8 @@ template <
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
   using gemv_kernel = GEMVTKernel<T, BM, BN, SM, SN, TM, TN, false>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
@@ -800,7 +838,12 @@ template <
     const constant auto* mati_bstrides = index_batch_strides + batch_ndim;
 
     ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z, batch_shape, veci_bstrides, mati_bstrides, batch_ndim);
+        tid.z,
+        batch_shape,
+        veci_bstrides,
+        mati_bstrides,
+        batch_ndim
+    );
 
     indx_vec = vec_indices[batch_offsets.x];
     indx_mat = mat_indices[batch_offsets.y];
@@ -812,14 +855,22 @@ template <
 
   if (vector_batch_ndim > 1) {
     in_vec += elem_to_loc(
-        indx_vec, vector_batch_shape, vector_batch_stride, vector_batch_ndim);
+        indx_vec,
+        vector_batch_shape,
+        vector_batch_stride,
+        vector_batch_ndim
+    );
   } else {
     in_vec += indx_vec * vector_batch_stride[0];
   }
 
   if (matrix_batch_ndim > 1) {
     mat += elem_to_loc(
-        indx_mat, matrix_batch_shape, matrix_batch_stride, matrix_batch_ndim);
+        indx_mat,
+        matrix_batch_shape,
+        matrix_batch_stride,
+        matrix_batch_ndim
+    );
   } else {
     mat += indx_mat * matrix_batch_stride[0];
   }
@@ -841,7 +892,8 @@ template <
       tid,
       lid,
       simd_gid,
-      simd_lid);
+      simd_lid
+  );
 }
 
 // clang-format off

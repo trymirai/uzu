@@ -75,9 +75,7 @@ struct complex64_t {
   }
 };
 
-constexpr complex64_t operator-(complex64_t x) {
-  return {-x.real, -x.imag};
-}
+constexpr complex64_t operator-(complex64_t x) { return {-x.real, -x.imag}; }
 
 constexpr bool operator>=(complex64_t a, complex64_t b) {
   return (a.real > b.real) || (a.real == b.real && a.imag >= b.imag);
@@ -111,7 +109,8 @@ constexpr thread complex64_t& operator+=(thread complex64_t& a, complex64_t b) {
 
 constexpr threadgroup complex64_t& operator+=(
     threadgroup complex64_t& a,
-    complex64_t b) {
+    complex64_t b
+) {
   a.real += b.real;
   a.imag += b.imag;
   return a;
