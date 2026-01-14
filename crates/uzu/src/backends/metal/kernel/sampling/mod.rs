@@ -7,7 +7,6 @@ use metal::{
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::metal::{
         KernelDataType, MTLContext, MTLError,
         kernel::dsl::{
@@ -54,17 +53,11 @@ enum ArgmaxImplementation {
 
 pub struct SamplingKernel {
     bitmask: BitmaskKernel,
-    bitmask_applied_logits: MTLBuffer,
     temperature: TemperatureKernel,
-    temperature_applied_logits: MTLBuffer,
     topk: TopKKernel,
-    topk_applied_logits: MTLBuffer,
     topp: TopPKernel,
-    topp_applied_logits: MTLBuffer,
     minp: MinPKernel,
-    minp_applied_logits: MTLBuffer,
     gumbel: GumbelKernel,
-    gumbel_applied_logits: MTLBuffer,
     argmax_implementation: ArgmaxImplementation,
     max_batch_size: usize,
     max_vocab_size: usize,
@@ -107,55 +100,17 @@ impl SamplingKernel {
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError> {
-        let max_elements = max_batch_size * max_vocab_size;
-
         let bitmask = BitmaskKernel::new(context, data_type)?;
-
-        let bitmask_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
 
         let temperature = TemperatureKernel::new(context, data_type)?;
 
-        let temperature_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
         let topk = TopKKernel::new(context, data_type)?;
-
-        let topk_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
 
         let topp = TopPKernel::new(context, data_type)?;
 
-        let topp_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
         let minp = MinPKernel::new(context, data_type)?;
 
-        let minp_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
         let gumbel = GumbelKernel::new(context, data_type)?;
-
-        let gumbel_applied_logits = context.device.new_buffer(
-            (max_elements * Into::<DataType>::into(data_type).size_in_bytes())
-                as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
@@ -194,17 +149,11 @@ impl SamplingKernel {
 
         Ok(Self {
             bitmask,
-            bitmask_applied_logits,
             temperature,
-            temperature_applied_logits,
             topk,
-            topk_applied_logits,
             topp,
-            topp_applied_logits,
             minp,
-            minp_applied_logits,
             gumbel,
-            gumbel_applied_logits,
             argmax_implementation,
             max_batch_size,
             max_vocab_size,
@@ -267,19 +216,16 @@ impl SamplingKernel {
             ));
         }
 
-        let mut last_logits_buffer = logits_buffer;
-
         if let Some(bitmask_buffer) = bitmask_buffer {
             self.bitmask.encode(
-                last_logits_buffer,
+                logits_buffer,
                 bitmask_buffer,
                 bitmask_offset as u32,
-                &self.bitmask_applied_logits,
+                logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
                 compute_encoder,
             );
-            last_logits_buffer = &self.bitmask_applied_logits;
         }
 
         if let SamplingMethod::Stochastic {
@@ -291,62 +237,57 @@ impl SamplingKernel {
         {
             if let Some(temperature) = temperature {
                 self.temperature.encode(
-                    last_logits_buffer,
-                    &self.temperature_applied_logits,
+                    logits_buffer,
+                    logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
                     compute_encoder,
                 );
-                last_logits_buffer = &self.temperature_applied_logits;
             }
 
             if let Some(top_k) = top_k {
                 self.topk.encode(
-                    last_logits_buffer,
-                    &self.topk_applied_logits,
+                    logits_buffer,
+                    logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
                     compute_encoder,
                 );
-                last_logits_buffer = &self.topk_applied_logits;
             }
 
             if let Some(top_p) = top_p {
                 self.topp.encode(
-                    last_logits_buffer,
-                    &self.topp_applied_logits,
+                    logits_buffer,
+                    logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
                     compute_encoder,
                 );
-                last_logits_buffer = &self.topp_applied_logits;
             }
 
             if let Some(min_p) = min_p {
                 self.minp.encode(
-                    last_logits_buffer,
-                    &self.minp_applied_logits,
+                    logits_buffer,
+                    logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
                     compute_encoder,
                 );
-                last_logits_buffer = &self.minp_applied_logits;
             }
 
             self.gumbel.encode(
-                last_logits_buffer,
+                logits_buffer,
                 seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
-                &self.gumbel_applied_logits,
+                logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
                 (seeds_offset / size_of::<u64>()) as u32,
                 compute_encoder,
             );
-            last_logits_buffer = &self.gumbel_applied_logits;
         }
 
         match &self.argmax_implementation {
@@ -354,7 +295,7 @@ impl SamplingKernel {
                 kernel,
             } => {
                 kernel.encode(
-                    last_logits_buffer,
+                    logits_buffer,
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -367,7 +308,7 @@ impl SamplingKernel {
                 partial_results_buffer,
             } => {
                 main_kernel.encode(
-                    last_logits_buffer,
+                    logits_buffer,
                     partial_results_buffer,
                     batch_size as u32,
                     vocab_size as u32,
