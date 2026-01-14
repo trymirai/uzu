@@ -23,6 +23,9 @@ pub struct Kernel {
     data_type: DataType,
     partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
     accum_pipelines: HashMap<MlpActivationType, MTLComputePipelineState>,
+    up_accumulator_buffer: Option<MTLBuffer>,
+    gate_accumulator_buffer: Option<MTLBuffer>,
+    accumulator_buffer_bytes: usize,
 }
 
 impl Kernel {
@@ -36,6 +39,9 @@ impl Kernel {
             data_type,
             partial_pipelines: HashMap::new(),
             accum_pipelines: HashMap::new(),
+            up_accumulator_buffer: None,
+            gate_accumulator_buffer: None,
+            accumulator_buffer_bytes: 0,
         })
     }
 
@@ -122,19 +128,25 @@ impl Kernel {
     }
 
     fn ensure_accumulator_buffers(
-        &self,
+        &mut self,
         context: &MTLContext,
         required_bytes: usize,
-    ) -> (MTLBuffer, MTLBuffer) {
-        let up_buffer = context.device.new_buffer(
+    ) {
+        if required_bytes <= self.accumulator_buffer_bytes
+            && self.up_accumulator_buffer.is_some()
+            && self.gate_accumulator_buffer.is_some()
+        {
+            return;
+        }
+        self.up_accumulator_buffer = Some(context.device.new_buffer(
             required_bytes as u64,
             metal::MTLResourceOptions::StorageModePrivate,
-        );
-        let gate_buffer = context.device.new_buffer(
+        ));
+        self.gate_accumulator_buffer = Some(context.device.new_buffer(
             required_bytes as u64,
             metal::MTLResourceOptions::StorageModePrivate,
-        );
-        (up_buffer, gate_buffer)
+        ));
+        self.accumulator_buffer_bytes = required_bytes;
     }
 
     pub(crate) fn encode_descriptor(
@@ -144,19 +156,35 @@ impl Kernel {
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {
-        let (up_accumulator_buffer, gate_accumulator_buffer) = self
-            .ensure_accumulator_buffers(context, descriptor.accumulator_bytes);
-
-        let partial_pipeline_state = self.get_partial_pipeline(
+        self.ensure_accumulator_buffers(context, descriptor.accumulator_bytes);
+        self.get_partial_pipeline(context, &descriptor.pipeline_configuration)?;
+        self.get_accum_pipeline(
             context,
-            &descriptor.pipeline_configuration,
+            descriptor.pipeline_configuration.activation,
         )?;
+
+        let partial_pipeline_state = self
+            .partial_pipelines
+            .get(&descriptor.pipeline_configuration)
+            .expect("Partial pipeline must be initialized");
+        let accum_pipeline_state = self
+            .accum_pipelines
+            .get(&descriptor.pipeline_configuration.activation)
+            .expect("Accum pipeline must be initialized");
+        let up_accumulator_buffer = self
+            .up_accumulator_buffer
+            .as_ref()
+            .expect("Up accumulator buffer must be initialized");
+        let gate_accumulator_buffer = self
+            .gate_accumulator_buffer
+            .as_ref()
+            .expect("Gate accumulator buffer must be initialized");
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
         encoder.set_buffer(0, Some(arguments.input), arguments.input_offset);
         encoder.set_buffer(1, Some(arguments.weights), 0);
-        encoder.set_buffer(2, Some(&up_accumulator_buffer), 0);
-        encoder.set_buffer(3, Some(&gate_accumulator_buffer), 0);
+        encoder.set_buffer(2, Some(up_accumulator_buffer), 0);
+        encoder.set_buffer(3, Some(gate_accumulator_buffer), 0);
         encoder.set_bytes(
             4,
             std::mem::size_of::<GEMMSpiltKMlpFusedParams>() as u64,
@@ -167,13 +195,9 @@ impl Kernel {
             descriptor.partial_threads_per_threadgroup,
         );
 
-        let accum_pipeline_state = self.get_accum_pipeline(
-            context,
-            descriptor.pipeline_configuration.activation,
-        )?;
         encoder.set_compute_pipeline_state(accum_pipeline_state);
-        encoder.set_buffer(0, Some(&up_accumulator_buffer), 0);
-        encoder.set_buffer(1, Some(&gate_accumulator_buffer), 0);
+        encoder.set_buffer(0, Some(up_accumulator_buffer), 0);
+        encoder.set_buffer(1, Some(gate_accumulator_buffer), 0);
         encoder.set_buffer(2, Some(arguments.output), 0);
         encoder.set_bytes(
             3,
