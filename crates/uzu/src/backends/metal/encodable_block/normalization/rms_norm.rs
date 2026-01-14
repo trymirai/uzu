@@ -146,7 +146,8 @@ impl EncodableBlock for RMSNorm {
         } else {
             (0, state.active_suffix_length())
         };
-        let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
+        let batch_len =
+            batch_len.min(suffix_length.saturating_sub(batch_start));
         if batch_len == 0 {
             return;
         }

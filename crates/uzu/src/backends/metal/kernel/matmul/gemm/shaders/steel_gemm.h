@@ -62,7 +62,7 @@ template <
 
   // Find block
   const int tid_y = ((tid.y) << params->swizzle_log) +
-      ((tid.x) & ((1 << params->swizzle_log) - 1));
+                    ((tid.x) & ((1 << params->swizzle_log) - 1));
   const int tid_x = (tid.x) >> params->swizzle_log;
 
   // Exit early if out of bounds
@@ -76,7 +76,12 @@ template <
     const constant auto* B_bstrides = batch_strides + params->batch_ndim;
 
     ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z, batch_shape, A_bstrides, B_bstrides, params->batch_ndim);
+        tid.z,
+        batch_shape,
+        A_bstrides,
+        B_bstrides,
+        params->batch_ndim
+    );
 
     A += batch_offsets.x;
     B += batch_offsets.y;
@@ -163,9 +168,13 @@ template <
   }
 
   const TransformAdd<AccumType, AccumType> epilogue_op_add(
-      addmm_params->alpha, addmm_params->beta);
+      addmm_params->alpha,
+      addmm_params->beta
+  );
   const TransformAxpby<AccumType, AccumType> epilogue_op_axpby(
-      addmm_params->alpha, addmm_params->beta);
+      addmm_params->alpha,
+      addmm_params->beta
+  );
 
   ///////////////////////////////////////////////////////////////////////////////
   // MNK aligned loop
@@ -193,10 +202,18 @@ template <
     if (use_out_source) {
       if (do_axpby) {
         mma_op.apply_epilogue(
-            C, addmm_params->ldc, addmm_params->fdc, epilogue_op_axpby);
+            C,
+            addmm_params->ldc,
+            addmm_params->fdc,
+            epilogue_op_axpby
+        );
       } else {
         mma_op.apply_epilogue(
-            C, addmm_params->ldc, addmm_params->fdc, epilogue_op_add);
+            C,
+            addmm_params->ldc,
+            addmm_params->fdc,
+            epilogue_op_add
+        );
       }
     }
 
@@ -221,16 +238,25 @@ template <
           tgp_bm,
           tgp_bn,
           leftover_bk,
-          LoopAlignment<true, true, true>{});
+          LoopAlignment<true, true, true>{}
+      );
 
       // Do epilogue
       if (use_out_source) {
         if (do_axpby) {
           mma_op.apply_epilogue(
-              C, addmm_params->ldc, addmm_params->fdc, epilogue_op_axpby);
+              C,
+              addmm_params->ldc,
+              addmm_params->fdc,
+              epilogue_op_axpby
+          );
         } else {
           mma_op.apply_epilogue(
-              C, addmm_params->ldc, addmm_params->fdc, epilogue_op_add);
+              C,
+              addmm_params->ldc,
+              addmm_params->fdc,
+              epilogue_op_add
+          );
         }
       }
 
@@ -248,7 +274,8 @@ template <
           tgp_bm,
           tgp_bn,
           leftover_bk,
-          LoopAlignment<false, true, true>{});
+          LoopAlignment<false, true, true>{}
+      );
 
       // Do epilogue
       if (use_out_source) {
@@ -258,14 +285,16 @@ template <
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_axpby);
+              epilogue_op_axpby
+          );
         } else {
           mma_op.apply_epilogue_safe(
               C,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_add);
+              epilogue_op_add
+          );
         }
       }
 
@@ -283,7 +312,8 @@ template <
           tgp_bm,
           tgp_bn,
           leftover_bk,
-          LoopAlignment<true, false, true>{});
+          LoopAlignment<true, false, true>{}
+      );
 
       // Do epilogue
       if (use_out_source) {
@@ -293,14 +323,16 @@ template <
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_axpby);
+              epilogue_op_axpby
+          );
         } else {
           mma_op.apply_epilogue_safe(
               C,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_add);
+              epilogue_op_add
+          );
         }
       }
 
@@ -318,7 +350,8 @@ template <
           tgp_bm,
           tgp_bn,
           leftover_bk,
-          LoopAlignment<false, false, true>{});
+          LoopAlignment<false, false, true>{}
+      );
 
       // Do epilogue
       if (use_out_source) {
@@ -328,14 +361,16 @@ template <
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_axpby);
+              epilogue_op_axpby
+          );
         } else {
           mma_op.apply_epilogue_safe(
               C,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
-              epilogue_op_add);
+              epilogue_op_add
+          );
         }
       }
 

@@ -56,8 +56,7 @@ impl DispatchDescriptor {
 
         let tile = select_tile_configuration(m, n);
         let partition_count = compute_partition_count(k);
-        let mn_aligned =
-            (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
+        let mn_aligned = (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
         let k_aligned = (k % tile.tile_depth) == 0;
 
         let pipeline_configuration = PipelineConfiguration {
@@ -138,7 +137,12 @@ fn compute_partition_count(k: i32) -> i32 {
     }
 }
 
-fn should_use_splitk(m: i32, n: i32, k: i32, batch_count: i32) -> bool {
+fn should_use_splitk(
+    m: i32,
+    n: i32,
+    k: i32,
+    batch_count: i32,
+) -> bool {
     if batch_count != 1 {
         return false;
     }

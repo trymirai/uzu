@@ -85,7 +85,8 @@ struct GEMMKernel {
       thread const short& tgp_bm,
       thread const short& tgp_bn,
       thread const short& lbk,
-      LoopAlignment<M_aligned, N_aligned, K_aligned_> l = {}) {
+      LoopAlignment<M_aligned, N_aligned, K_aligned_> l = {}
+  ) {
     // Appease the compiler
     (void)l;
 
@@ -146,12 +147,13 @@ struct GEMMKernel {
       uint simd_lane_id [[thread_index_in_simdgroup]],
       uint simd_group_id [[simdgroup_index_in_threadgroup]],
       uint3 tid [[threadgroup_position_in_grid]],
-      uint3 lid [[thread_position_in_threadgroup]]) {
+      uint3 lid [[thread_position_in_threadgroup]]
+  ) {
     // Pacifying compiler
     (void)lid;
 
     const int tid_y = ((tid.y) << params->swizzle_log) +
-        ((tid.x) & ((1 << params->swizzle_log) - 1));
+                      ((tid.x) & ((1 << params->swizzle_log) - 1));
     const int tid_x = (tid.x) >> params->swizzle_log;
 
     if (params->tiles_n <= tid_x || params->tiles_m <= tid_y) {
@@ -236,7 +238,8 @@ struct GEMMKernel {
             mma_op,
             tgp_bm,
             tgp_bn,
-            leftover_bk);
+            leftover_bk
+        );
 
         mma_op.store_result(D, params->ldd);
         return;
@@ -251,7 +254,8 @@ struct GEMMKernel {
             mma_op,
             tgp_bm,
             tgp_bn,
-            leftover_bk);
+            leftover_bk
+        );
 
         mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
         return;
@@ -266,7 +270,8 @@ struct GEMMKernel {
             mma_op,
             tgp_bm,
             tgp_bn,
-            leftover_bk);
+            leftover_bk
+        );
 
         mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
         return;
@@ -281,7 +286,8 @@ struct GEMMKernel {
             mma_op,
             tgp_bm,
             tgp_bn,
-            leftover_bk);
+            leftover_bk
+        );
 
         mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
         return;

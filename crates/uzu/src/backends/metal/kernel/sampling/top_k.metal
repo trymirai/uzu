@@ -39,7 +39,7 @@ void batched_topk(
       local_min,
       shared_reduce_buffer,
       thread_idx
- );
+  );
   // Do the binary search on the threshold
   float low = min_logit;
   float high = max_logit;
@@ -102,7 +102,7 @@ void batched_topk(
   [[max_total_threads_per_threadgroup(                                         \
       1024                                                                     \
   )]] kernel void functionName##_##scalarType outerArgs {                      \
-    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS];                        \
+    threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS];               \
     functionName innerArgs;                                                    \
   }
 

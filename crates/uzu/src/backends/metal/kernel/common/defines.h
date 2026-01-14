@@ -17,6 +17,7 @@ static MTL_CONST constexpr int RMS_LOOPED_LIMIT = 4096;
 // Extra args are used as template parameters:
 // e.g. instantiate_kernel(binary_int, binary, a, b) ->
 // [[host_name(binary_int)]] [kernel] binary<a, b>
-#define instantiate_kernel(name, func, ...) \
-  template [[host_name(                     \
-      name)]] [[kernel]] decltype(func<__VA_ARGS__>) func<__VA_ARGS__>;
+#define instantiate_kernel(name, func, ...)                                    \
+  template [[host_name(                                                        \
+      name                                                                     \
+  )]] [[kernel]] decltype(func<__VA_ARGS__>) func<__VA_ARGS__>;

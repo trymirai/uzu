@@ -50,7 +50,14 @@ void gemm_epilogue(
         CTile.load(C, addmm_params->ldc, addmm_params->fdc, m, n);
       } else {
         CTile.load_safe(
-            C, addmm_params->ldc, addmm_params->fdc, sgp_sm, sgp_sn, m, n);
+            C,
+            addmm_params->ldc,
+            addmm_params->fdc,
+            sgp_sm,
+            sgp_sn,
+            m,
+            n
+        );
       }
 
       auto delems = Dtile.subtile_at(mm, nn).elems();
@@ -60,7 +67,7 @@ void gemm_epilogue(
       for (short i = 0; i < kElemsPerSubTile; i++) {
         if (do_axpby) {
           delems[i] = addmm_params->alpha * delems[i] +
-              addmm_params->beta * static_cast<V>(celems[i]);
+                      addmm_params->beta * static_cast<V>(celems[i]);
         } else {
           delems[i] += static_cast<V>(celems[i]);
         }
@@ -93,7 +100,7 @@ template <
     uint3 tid [[threadgroup_position_in_grid]]) { // clang-format on
   // Find block
   const int tid_y = ((tid.y) << params->swizzle_log) +
-      ((tid.x) & ((1 << params->swizzle_log) - 1));
+                    ((tid.x) & ((1 << params->swizzle_log) - 1));
   const int tid_x = (tid.x) >> params->swizzle_log;
 
   // Exit early if out of bounds
@@ -107,7 +114,12 @@ template <
     const constant auto* B_bstrides = batch_strides + params->batch_ndim;
 
     ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z, batch_shape, A_bstrides, B_bstrides, params->batch_ndim);
+        tid.z,
+        batch_shape,
+        A_bstrides,
+        B_bstrides,
+        params->batch_ndim
+    );
 
     A += batch_offsets.x;
     B += batch_offsets.y;
@@ -194,7 +206,13 @@ template <
             AccumType>(A, B, params, sgp_sm, sgp_sn);
         if (use_out_source) {
           gemm_epilogue<kAlignedM.value, kAlignedN.value>(
-              Dtile, C, params, addmm_params, sgp_sm, sgp_sn);
+              Dtile,
+              C,
+              params,
+              addmm_params,
+              sgp_sm,
+              sgp_sn
+          );
         }
         if constexpr (kAlignedM && kAlignedN) {
           Dtile.store(D, int(params->ldd));

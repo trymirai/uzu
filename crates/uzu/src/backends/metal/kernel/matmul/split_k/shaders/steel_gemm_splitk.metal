@@ -1,7 +1,7 @@
 
 
 // clang-format off
-#include "../../common/utils.h"
+#include "../../../common/utils.h"
 #include "../../common/steel/gemm/gemm.h"
 #include "steel_gemm_splitk.h"
 

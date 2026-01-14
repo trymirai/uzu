@@ -75,5 +75,3 @@ struct AttnMaskParams {
 } // namespace attention
 } // namespace uzu
 #endif
-
-

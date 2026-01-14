@@ -37,7 +37,8 @@ struct BaseNAXFrag {
 
   static_assert(
       kElemRows * kElemCols == kElemsPerFrag,
-      "MMAFrag shape is not consistent with MMAFrag size");
+      "MMAFrag shape is not consistent with MMAFrag size"
+  );
 
   template <typename U>
   using dtype_frag_t = typename metal::vec<U, kElemsPerFrag>;
@@ -71,7 +72,8 @@ struct BaseNAXFrag {
       StrX str_x,
       StrY str_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     const short2 sc = get_coord();
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
@@ -108,7 +110,8 @@ struct BaseNAXFrag {
       StrY str_y,
       LimX lim_x,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     const short2 sc = get_coord();
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
@@ -152,7 +155,8 @@ struct BaseNAXFrag {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     const short2 sc = get_coord();
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
@@ -183,7 +187,8 @@ struct BaseNAXFrag {
       StrX str_x,
       StrY str_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     const short2 sc = get_coord();
@@ -222,7 +227,8 @@ struct BaseNAXFrag {
       StrY str_y,
       LimX lim_x,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     const short2 sc = get_coord();
@@ -265,7 +271,8 @@ struct BaseNAXFrag {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     const short2 sc = get_coord();
@@ -305,7 +312,8 @@ struct BaseNAXFrag {
       StartY start_y,
       StopY stop_y,
       OffX off_x = Int<0>{},
-      OffY off_y = Int<0>{}) {
+      OffY off_y = Int<0>{}
+  ) {
     using U = pointer_element_t<DstPtrType>;
 
     const short2 sc = get_coord();
@@ -332,12 +340,14 @@ struct BaseNAXFrag {
   template <typename Op, typename T>
   METAL_FUNC static constexpr void row_reduce(
       thread const dtype_frag_t<T>& inp_vals,
-      thread T* reduced_vals) {
+      thread T* reduced_vals
+  ) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
       T thr_reduce = Op::apply(
           Op::apply(inp_vals[i * kElemCols + 0], inp_vals[i * kElemCols + 1]),
-          Op::apply(inp_vals[i * kElemCols + 2], inp_vals[i * kElemCols + 3]));
+          Op::apply(inp_vals[i * kElemCols + 2], inp_vals[i * kElemCols + 3])
+      );
 
       T qgr_reduce = simd_shuffle_xor(thr_reduce, ushort(1));
       qgr_reduce = Op::apply(thr_reduce, qgr_reduce);
@@ -352,7 +362,8 @@ struct BaseNAXFrag {
   template <typename Op, typename T>
   METAL_FUNC static constexpr void row_bin_op(
       thread dtype_frag_t<T>& inp_vals,
-      thread T* row_vals) {
+      thread T* row_vals
+  ) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
       STEEL_PRAGMA_UNROLL
@@ -407,7 +418,8 @@ struct NAXSubTile {
 
   METAL_FUNC constexpr const thread frag_type& frag_at(
       const short i,
-      const short j) const {
+      const short j
+  ) const {
     return val_frags[i * kSubTileCols + j];
   }
 
@@ -436,7 +448,9 @@ struct NAXSubTile {
       STEEL_PRAGMA_UNROLL
       for (short j = 0; j < kSubTileCols; ++j) {
         NAXFrag_t::template row_reduce<Op>(
-            frag_at(i, j), &vals[i * kFragThrRows]);
+            frag_at(i, j),
+            &vals[i * kFragThrRows]
+        );
       }
     }
   }
@@ -448,7 +462,9 @@ struct NAXSubTile {
       STEEL_PRAGMA_UNROLL
       for (short j = 0; j < kSubTileCols; ++j) {
         NAXFrag_t::template row_bin_op<Op>(
-            frag_at(i, j), &vals[i * kFragThrRows]);
+            frag_at(i, j),
+            &vals[i * kFragThrRows]
+        );
       }
     }
   }
@@ -464,7 +480,8 @@ struct NAXSubTile {
       StrX str_x,
       StrY str_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -475,7 +492,8 @@ struct NAXSubTile {
             str_x,
             str_y,
             off_x + i * kFragRows,
-            off_y + j * kFragCols);
+            off_y + j * kFragCols
+        );
       }
     }
   }
@@ -491,7 +509,8 @@ struct NAXSubTile {
       StrX str_x,
       StrY str_y,
       OffX off_x = {},
-      OffY off_y = {}) const {
+      OffY off_y = {}
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -502,7 +521,8 @@ struct NAXSubTile {
             str_x,
             str_y,
             off_x + i * kFragRows,
-            off_y + j * kFragCols);
+            off_y + j * kFragCols
+        );
       }
     }
   }
@@ -520,7 +540,8 @@ struct NAXSubTile {
       StrY str_y,
       LimX lim_x,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -532,7 +553,8 @@ struct NAXSubTile {
             str_y,
             lim_x,
             off_x + (i * kFragRows),
-            off_y + (j * kFragCols));
+            off_y + (j * kFragCols)
+        );
       }
     }
   }
@@ -552,7 +574,8 @@ struct NAXSubTile {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = {},
-      OffY off_y = {}) {
+      OffY off_y = {}
+  ) {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -565,7 +588,8 @@ struct NAXSubTile {
             lim_x,
             lim_y,
             off_x + (i * kFragRows),
-            off_y + (j * kFragCols));
+            off_y + (j * kFragCols)
+        );
       }
     }
   }
@@ -585,7 +609,8 @@ struct NAXSubTile {
       LimX lim_x,
       LimY lim_y,
       OffX off_x = {},
-      OffY off_y = {}) const {
+      OffY off_y = {}
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -598,7 +623,8 @@ struct NAXSubTile {
             lim_x,
             lim_y,
             off_x + (i * kFragRows),
-            off_y + (j * kFragCols));
+            off_y + (j * kFragCols)
+        );
       }
     }
   }
@@ -616,7 +642,8 @@ struct NAXSubTile {
       StrY str_y,
       LimX lim_x,
       OffX off_x = {},
-      OffY off_y = {}) const {
+      OffY off_y = {}
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -628,7 +655,8 @@ struct NAXSubTile {
             str_y,
             lim_x,
             off_x + (i * kFragRows),
-            off_y + (j * kFragCols));
+            off_y + (j * kFragCols)
+        );
       }
     }
   }
@@ -652,7 +680,8 @@ struct NAXSubTile {
       StartY start_y,
       StopY stop_y,
       OffX off_x = Int<0>{},
-      OffY off_y = Int<0>{}) const {
+      OffY off_y = Int<0>{}
+  ) const {
     const_for_loop<0, kSubTileRows, 1>([&](auto idx_row) {
       const_for_loop<0, kSubTileCols, 1>([&](auto idx_col) {
         NAXFrag_t::store_slice(
@@ -665,7 +694,8 @@ struct NAXSubTile {
             start_y,
             stop_y,
             off_x + idx_row * Int<kFragRows>{},
-            off_y + idx_col * Int<kFragCols>{});
+            off_y + idx_col * Int<kFragCols>{}
+        );
       });
     });
   }
@@ -689,7 +719,8 @@ METAL_FUNC void subtile_matmad_nax(
     thread NAXSubTile<AType, RA, CA, NAXFrag_t>& A,
     metal::bool_constant<transpose_a>,
     thread NAXSubTile<BType, RB, CB, NAXFrag_t>& B,
-    metal::bool_constant<transpose_b>) {
+    metal::bool_constant<transpose_b>
+) {
   // Static checks
   constexpr short FMa = transpose_a ? CA : RA;
   constexpr short FMc = RC;
@@ -719,7 +750,8 @@ METAL_FUNC void subtile_matmad_nax(
       transpose_a,
       transpose_b,
       true,
-      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate);
+      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
+  );
 
   // Create matmul op
   mpp::tensor_ops::matmul2d<desc, metal::execution_simdgroup> gemm_op;
@@ -819,13 +851,15 @@ struct NAXTile {
 
   METAL_FUNC constexpr thread NAXSubTile_t& subtile_at(
       const short i,
-      const short j) {
+      const short j
+  ) {
     return val_subtiles[i * kTileCols + j];
   }
 
   METAL_FUNC constexpr const thread NAXSubTile_t& subtile_at(
       const short i,
-      const short j) const {
+      const short j
+  ) const {
     return val_subtiles[i * kTileCols + j];
   }
 
@@ -877,7 +911,8 @@ struct NAXTile {
             Int<str_x>{},
             Int<str_y>{},
             i * kSubTileRows,
-            j * kSubTileCols);
+            j * kSubTileCols
+        );
       }
     }
   }
@@ -893,7 +928,8 @@ struct NAXTile {
             Int<str_x>{},
             Int<str_y>{},
             i * kSubTileRows,
-            j * kSubTileCols);
+            j * kSubTileCols
+        );
       }
     }
   }
@@ -905,7 +941,10 @@ struct NAXTile {
       STEEL_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).load(
-            &src[(i * kSubTileRows * ld + j * kSubTileCols)], ld, Int<1>{});
+            &src[(i * kSubTileRows * ld + j * kSubTileCols)],
+            ld,
+            Int<1>{}
+        );
       }
     }
   }
@@ -917,14 +956,20 @@ struct NAXTile {
       STEEL_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).store(
-            &dst[(i * kSubTileRows * ld + j * kSubTileCols)], ld, Int<1>{});
+            &dst[(i * kSubTileRows * ld + j * kSubTileCols)],
+            ld,
+            Int<1>{}
+        );
       }
     }
   }
 
   template <typename U>
-  METAL_FUNC void
-  load_rows(const device U* src, const int ld, const short n_rows) {
+  METAL_FUNC void load_rows(
+      const device U* src,
+      const int ld,
+      const short n_rows
+  ) {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -933,14 +978,18 @@ struct NAXTile {
             &src[(i * kSubTileRows) * ld + (j * kSubTileCols)],
             ld,
             Int<1>{},
-            n_rows - i * kSubTileRows);
+            n_rows - i * kSubTileRows
+        );
       }
     }
   }
 
   template <typename U>
-  METAL_FUNC void
-  load_safe(const device U* src, const int ld, const short2 src_tile_dims) {
+  METAL_FUNC void load_safe(
+      const device U* src,
+      const int ld,
+      const short2 src_tile_dims
+  ) {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -952,14 +1001,18 @@ struct NAXTile {
             src_tile_dims.y,
             src_tile_dims.x,
             i * kSubTileRows,
-            j * kSubTileCols);
+            j * kSubTileCols
+        );
       }
     }
   }
 
   template <typename U>
-  METAL_FUNC void store_rows(device U* dst, const int ld, const short n_rows)
-      const {
+  METAL_FUNC void store_rows(
+      device U* dst,
+      const int ld,
+      const short n_rows
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -968,14 +1021,18 @@ struct NAXTile {
             &dst[(i * kSubTileRows) * ld + (j * kSubTileCols)],
             ld,
             Int<1>{},
-            n_rows - i * kSubTileRows);
+            n_rows - i * kSubTileRows
+        );
       }
     }
   }
 
   template <typename U>
-  METAL_FUNC void
-  store_safe(device U* dst, const int ld, const short2 dst_tile_dims) const {
+  METAL_FUNC void store_safe(
+      device U* dst,
+      const int ld,
+      const short2 dst_tile_dims
+  ) const {
     STEEL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
       STEEL_PRAGMA_UNROLL
@@ -987,7 +1044,8 @@ struct NAXTile {
             dst_tile_dims.y,
             dst_tile_dims.x,
             i * kSubTileRows,
-            j * kSubTileCols);
+            j * kSubTileCols
+        );
       }
     }
   }
@@ -997,7 +1055,8 @@ struct NAXTile {
       device U* dst,
       const int ld,
       const short2 start,
-      const short2 stop) const {
+      const short2 stop
+  ) const {
     const_for_loop<0, kTileRows, 1>([&](auto idx_row) {
       const_for_loop<0, kTileCols, 1>([&](auto idx_col) {
         subtile_at<idx_row.value, idx_col.value>().store_slice(
@@ -1009,7 +1068,8 @@ struct NAXTile {
             start.x,
             stop.x,
             idx_row * Int<kSubTileRows>{},
-            idx_col * Int<kSubTileCols>{});
+            idx_col * Int<kSubTileCols>{}
+        );
       });
     });
   }
@@ -1026,7 +1086,8 @@ METAL_FUNC void tile_matmad_nax(
     thread ATile& A,
     metal::bool_constant<transpose_a>,
     thread BTile& B,
-    metal::bool_constant<transpose_b>) {
+    metal::bool_constant<transpose_b>
+) {
   // Static checks
   constexpr short TMa = transpose_a ? ATile::kTileCols : ATile::kTileRows;
   constexpr short TMc = CTile::kTileRows;
@@ -1073,7 +1134,8 @@ METAL_FUNC void tile_matmad_nax(
             A.subtile_at(ra, ca),
             metal::bool_constant<transpose_a>{},
             B.subtile_at(rb, cb),
-            metal::bool_constant<transpose_b>{});
+            metal::bool_constant<transpose_b>{}
+        );
       }
     }
   }

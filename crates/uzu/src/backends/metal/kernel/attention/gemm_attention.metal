@@ -171,7 +171,8 @@ template <
   constexpr int kNWarps = WM * WN;
   static_assert(
       BQ >= (kNWarps * kFragSize) && BQ % (kNWarps * kFragSize) == 0,
-      "Each simdgroup must host at least 1 simdgroup matrix along Q sequence.");
+      "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
+  );
 
   // Q seq frags per warp (we keep TQ == 1 for the 32-row block layout)
   constexpr int TQ = BQ / (kNWarps * kFragSize);
@@ -205,7 +206,8 @@ template <
   // Ks is row-major [BK, BD] but we load K^T by swapping strides:
   // B_str_k = 1, B_str_n = LDK_tgp => offset = sn * LDK_tgp + sm
   const short Ks_offset = sn * LDK_tgp + sm;
-  constexpr short Ks_tile_stride = kFragSize; // advance along head-dim (contiguous)
+  constexpr short Ks_tile_stride =
+      kFragSize; // advance along head-dim (contiguous)
 
   // Vs is row-major [BK, BD]
   const short Vs_offset = sm * LDV_tgp + sn;
@@ -262,8 +264,12 @@ template <
     for (short dd = 0; dd < TD; dd++) {
       simdgroup_barrier(mem_flags::mem_none);
 
-      Qtile.template load<T, 1, 1, LDQ_tgp, 1>(&Qs[Qs_offset + dd * Qs_tile_stride]);
-      Ktile.template load<T, 1, 1, 1, LDK_tgp>(&Ks[Ks_offset + dd * Ks_tile_stride]);
+      Qtile.template load<T, 1, 1, LDQ_tgp, 1>(
+          &Qs[Qs_offset + dd * Qs_tile_stride]
+      );
+      Ktile.template load<T, 1, 1, 1, LDK_tgp>(
+          &Ks[Ks_offset + dd * Ks_tile_stride]
+      );
 
       simdgroup_barrier(mem_flags::mem_none);
       tile_matmad(Stile, Qtile, Ktile, Stile);
@@ -318,14 +324,12 @@ template <
         const int k1 = col_base + 1;
 
         if (k0 < params->k_len) {
-          AccumType mv =
-              static_cast<AccumType>(mask[row_base + int64_t(k0)]);
+          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k0)]);
           mv = metal::max(mv, static_cast<AccumType>(-1e9f));
           frag[0] += M_LOG2E_F * mv;
         }
         if (k1 < params->k_len) {
-          AccumType mv =
-              static_cast<AccumType>(mask[row_base + int64_t(k1)]);
+          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k1)]);
           mv = metal::max(mv, static_cast<AccumType>(-1e9f));
           frag[1] += M_LOG2E_F * mv;
         }
@@ -393,7 +397,9 @@ template <
         const short kk = ik * kFragSize;
         const short dd = id * kFragSize;
 
-        Vtile.template load<T, 1, 1, LDV_tgp, 1>(&Vs[Vs_offset + kk * LDV_tgp + dd]);
+        Vtile.template load<T, 1, 1, LDV_tgp, 1>(
+            &Vs[Vs_offset + kk * LDV_tgp + dd]
+        );
 
         if constexpr (BD == 128) {
           simdgroup_barrier(mem_flags::mem_none);
@@ -403,7 +409,8 @@ template <
             Otile.frag_at(0, id),
             Stile.frag_at(0, ik),
             Vtile.frag_at(0, 0),
-            Otile.frag_at(0, id));
+            Otile.frag_at(0, id)
+        );
       }
     }
 
@@ -435,7 +442,10 @@ template <
     }
 
     Otile.template store_safe<T, 1, 1>(
-        O, int(params->o_strides[2]), dst_tile_dims);
+        O,
+        int(params->o_strides[2]),
+        dst_tile_dims
+    );
   } else {
     Otile.template store<T, 1, 1>(O, int(params->o_strides[2]));
   }
@@ -445,16 +455,16 @@ template <
 // Kernel instantiations (BQ=32, BK in {32,16}, WM=2, WN=2)
 ///////////////////////////////////////////////////////////////////////////////
 
-#define instantiate_attention_gemm(type_name, element_type, head_dim_value, bk_value) \
-  template [[host_name("attention_gemm_" #type_name "_" #head_dim_value "_bk" #bk_value)]] \
-  [[kernel]] void attention_gemm<                                             \
-      element_type,                                                            \
-      32,                                                                      \
-      bk_value,                                                                \
-      head_dim_value,                                                          \
-      4,                                                                       \
-      1,                                                                       \
-      float>(                                                                  \
+#define instantiate_attention_gemm(                                            \
+    type_name,                                                                 \
+    element_type,                                                              \
+    head_dim_value,                                                            \
+    bk_value                                                                   \
+)                                                                              \
+  template [[host_name(                                                        \
+      "attention_gemm_" #type_name "_" #head_dim_value "_bk" #bk_value         \
+  )]] [[kernel]] void                                                          \
+  attention_gemm<element_type, 32, bk_value, head_dim_value, 4, 1, float>(     \
       const device element_type* Q [[buffer(0)]],                              \
       const device element_type* K [[buffer(1)]],                              \
       const device element_type* V [[buffer(2)]],                              \
@@ -462,25 +472,34 @@ template <
       const constant AttnParams* params [[buffer(4)]],                         \
       const constant AttnMaskParams* mask_params                               \
       [[buffer(5), function_constant(has_mask)]],                              \
-      const device element_type* mask [[buffer(6), function_constant(has_mask)]], \
+      const device element_type* mask                                          \
+      [[buffer(6), function_constant(has_mask)]],                              \
       const device float* sinks [[buffer(7), function_constant(has_sinks)]],   \
       uint simd_lane_id [[thread_index_in_simdgroup]],                         \
       uint simd_group_id [[simdgroup_index_in_threadgroup]],                   \
       uint3 tid [[threadgroup_position_in_grid]],                              \
-      uint3 lid [[thread_position_in_threadgroup]]);
+      uint3 lid [[thread_position_in_threadgroup]]                             \
+  );
 
-instantiate_attention_gemm(f16, half, 64, 32)
-instantiate_attention_gemm(f16, half, 128, 16)
-instantiate_attention_gemm(f16, half, 256, 16)
+instantiate_attention_gemm(f16, half, 64, 32) instantiate_attention_gemm(
+    f16,
+    half,
+    128,
+    16
+) instantiate_attention_gemm(f16, half, 256, 16)
 
-instantiate_attention_gemm(bf16, bfloat, 64, 32)
-instantiate_attention_gemm(bf16, bfloat, 128, 16)
-instantiate_attention_gemm(bf16, bfloat, 256, 16)
+    instantiate_attention_gemm(bf16, bfloat, 64, 32) instantiate_attention_gemm(
+        bf16,
+        bfloat,
+        128,
+        16
+    ) instantiate_attention_gemm(bf16, bfloat, 256, 16)
 
-instantiate_attention_gemm(f32, float, 64, 32)
-instantiate_attention_gemm(f32, float, 128, 16)
-instantiate_attention_gemm(f32, float, 256, 16)
+        instantiate_attention_gemm(f32, float, 64, 32) instantiate_attention_gemm(
+            f32,
+            float,
+            128,
+            16
+        ) instantiate_attention_gemm(f32, float, 256, 16)
 
 #undef instantiate_attention_gemm
-
-

@@ -93,8 +93,7 @@ fn run_fused_gemv(
         MTLResourceOptions::StorageModeShared,
     );
 
-    let mut kernel =
-        MlpFusedKernel::new(DataType::F16, true).expect("kernel");
+    let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
@@ -150,8 +149,7 @@ fn run_fused_gemm(
         MTLResourceOptions::StorageModeShared,
     );
 
-    let mut kernel =
-        MlpFusedKernel::new(DataType::F16, true).expect("kernel");
+    let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();

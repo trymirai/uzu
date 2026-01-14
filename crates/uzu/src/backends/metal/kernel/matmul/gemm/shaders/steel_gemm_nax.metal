@@ -2,7 +2,7 @@
 
 #include <metal_stdlib>
 
-#include "../../common/utils.h"
+#include "../../../common/utils.h"
 
 #include "../../common/steel/gemm/gemm_nax.h"
 #include "steel_gemm_nax.h"
