@@ -11,9 +11,15 @@ use uzu::{
     backends::metal::{
         MTLContext,
         kernel::{
-            matmul::{MatmulArguments, MatmulKernel},
+            matmul::{
+                MatmulArguments, MatmulKernel,
+                determine_kernel_variant as determine_matmul_variant,
+            },
             mlp::MlpActivationType,
-            mlp_fused::{MlpFusedArguments, MlpFusedKernel},
+            mlp_fused::{
+                MlpFusedArguments, MlpFusedKernel,
+                determine_kernel_variant as determine_mlp_fused_variant,
+            },
         },
     },
 };
@@ -28,12 +34,16 @@ struct BenchmarkResult {
     fused_time_microseconds: f64,
     unfused_time_microseconds: f64,
     speedup: f64,
+    fused_kernel_name: &'static str,
+    unfused_kernel_name: &'static str,
 }
 
 impl BenchmarkResult {
     fn new(
         fused_duration: Duration,
         unfused_duration: Duration,
+        fused_kernel_name: &'static str,
+        unfused_kernel_name: &'static str,
     ) -> Self {
         let fused_microseconds = fused_duration.as_secs_f64() * 1_000_000.0;
         let unfused_microseconds = unfused_duration.as_secs_f64() * 1_000_000.0;
@@ -41,6 +51,8 @@ impl BenchmarkResult {
             fused_time_microseconds: fused_microseconds,
             unfused_time_microseconds: unfused_microseconds,
             speedup: unfused_microseconds / fused_microseconds,
+            fused_kernel_name,
+            unfused_kernel_name,
         }
     }
 }
@@ -94,9 +106,7 @@ fn benchmark_gemv_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        fused_kernel
-            .encode(context, &encoder, &fused_args)
-            .unwrap();
+        fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -108,9 +118,7 @@ fn benchmark_gemv_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        fused_kernel
-            .encode(context, &encoder, &fused_args)
-            .unwrap();
+        fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -137,14 +145,22 @@ fn benchmark_gemv_fused(
         transpose_b: true,
     };
 
+    let fused_kernel_name =
+        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args)
+            .map(|v| v.as_str())
+            .unwrap_or("?");
+
+    let unfused_kernel_name =
+        determine_matmul_variant(context, DataType::F16, &matmul_args)
+            .map(|v| v.as_str())
+            .unwrap_or("?");
+
     // Warmup unfused
     for _ in 0..warmup_count {
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        matmul_kernel
-            .encode(context, &encoder, matmul_args.clone())
-            .unwrap();
+        matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -156,16 +172,19 @@ fn benchmark_gemv_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        matmul_kernel
-            .encode(context, &encoder, matmul_args.clone())
-            .unwrap();
+        matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
     }
     let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchmarkResult::new(fused_duration, unfused_duration)
+    BenchmarkResult::new(
+        fused_duration,
+        unfused_duration,
+        fused_kernel_name,
+        unfused_kernel_name,
+    )
 }
 
 fn benchmark_gemm_fused(
@@ -218,9 +237,7 @@ fn benchmark_gemm_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        fused_kernel
-            .encode(context, &encoder, &fused_args)
-            .unwrap();
+        fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -231,9 +248,7 @@ fn benchmark_gemm_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        fused_kernel
-            .encode(context, &encoder, &fused_args)
-            .unwrap();
+        fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -260,14 +275,22 @@ fn benchmark_gemm_fused(
         transpose_b: true,
     };
 
+    let fused_kernel_name =
+        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args)
+            .map(|v| v.as_str())
+            .unwrap_or("?");
+
+    let unfused_kernel_name =
+        determine_matmul_variant(context, DataType::F16, &matmul_args)
+            .map(|v| v.as_str())
+            .unwrap_or("?");
+
     // Warmup unfused
     for _ in 0..warmup_count {
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        matmul_kernel
-            .encode(context, &encoder, matmul_args.clone())
-            .unwrap();
+        matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -278,16 +301,19 @@ fn benchmark_gemm_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        matmul_kernel
-            .encode(context, &encoder, matmul_args.clone())
-            .unwrap();
+        matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
     }
     let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchmarkResult::new(fused_duration, unfused_duration)
+    BenchmarkResult::new(
+        fused_duration,
+        unfused_duration,
+        fused_kernel_name,
+        unfused_kernel_name,
+    )
 }
 
 /// MLP shapes from real model configs
@@ -336,15 +362,17 @@ fn mlp_fused_performance_benchmark() {
         let warmup_count = 10;
 
         println!(
-            "{:>12} {:>12} {:>12} {:>12} {:>12} {:>10}",
-            "batch_size",
-            "input_dim",
-            "hidden_dim",
+            "{:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>12} {:>10}",
+            "batch",
+            "input",
+            "hidden",
+            "Fused",
             "Fused (µs)",
+            "Unfused",
             "Unfused (µs)",
             "Speedup"
         );
-        println!("{}", "-".repeat(74));
+        println!("{}", "-".repeat(98));
 
         for &batch_size in BATCH_SIZES {
             for &(input_dimension, hidden_dimension) in MLP_SHAPES {
@@ -368,11 +396,13 @@ fn mlp_fused_performance_benchmark() {
                 };
                 let speedup_string = format!("{:.2}x", result.speedup);
                 println!(
-                    "{:>12} {:>12} {:>12} {:>12.1} {:>12.1} {:>10}",
+                    "{:>10} {:>10} {:>10} {:>10} {:>12.1} {:>10} {:>12.1} {:>10}",
                     batch_size,
                     input_dimension,
                     hidden_dimension,
+                    result.fused_kernel_name,
                     result.fused_time_microseconds,
+                    result.unfused_kernel_name,
                     result.unfused_time_microseconds,
                     speedup_string
                 );
