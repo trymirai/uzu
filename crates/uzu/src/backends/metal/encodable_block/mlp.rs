@@ -12,10 +12,7 @@ use crate::{
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
             mlp::{MlpActivationType, MlpGateActMulEncodable},
-            mlp_fused::{
-                GemmArguments as MlpFusedGemmArguments, GemmKernel as MlpFusedGemmKernel,
-                GemvArguments as MlpFusedGemvArguments, GemvKernel as MlpFusedGemvKernel,
-            },
+            mlp_fused::{MlpFusedArguments, MlpFusedKernel},
             quant_matmul::{
                 MlpFusedQmmArguments, MlpFusedQmmKernel, MlpFusedQmvArguments,
                 MlpFusedQmvKernel,
@@ -122,8 +119,7 @@ impl EncodableBlock for MlpBlock {
 /// Selects between full precision and quantized fused kernels
 pub enum MlpFusedUpKernel {
     FullPrecision {
-        gemv: RefCell<MlpFusedGemvKernel>,
-        gemm: RefCell<MlpFusedGemmKernel>,
+        kernel: RefCell<MlpFusedKernel>,
     },
     Quantized {
         qmv: MlpFusedQmvKernel,
@@ -160,14 +156,12 @@ impl MlpFusedBlock {
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
-        let gemv = MlpFusedGemvKernel::new(data_type)?;
-        let gemm = MlpFusedGemmKernel::new(data_type, true)?; // Weights transposed
+        let kernel = MlpFusedKernel::new(data_type, true)?; // Weights transposed
 
         Ok(Self {
             context,
             fused_up: MlpFusedUpKernel::FullPrecision {
-                gemv: RefCell::new(gemv),
-                gemm: RefCell::new(gemm),
+                kernel: RefCell::new(kernel),
             },
             down,
             weights_buffer,
@@ -246,46 +240,28 @@ impl MlpFusedBlock {
         output: &MTLBuffer,
         batch: i32,
     ) {
-        let is_decode = batch == 1;
-
         match &self.fused_up {
             MlpFusedUpKernel::FullPrecision {
-                gemv,
-                gemm,
+                kernel,
             } => {
-                if is_decode {
-                    let args = MlpFusedGemvArguments {
-                        weights: &self.weights_buffer,
-                        input,
-                        input_offset,
-                        output,
-                        input_dim: self.input_dim as i32,
-                        hidden_dim: self.hidden_dim as i32,
-                        weights_ld: self.input_dim as i32,
-                        batch_count: batch,
-                        activation: self.activation,
-                    };
-                    gemv.borrow_mut()
-                        .encode(&self.context, encoder, &args)
-                        .expect("Failed to encode MLP fused GEMV");
-                } else {
-                    let args = MlpFusedGemmArguments {
-                        input,
-                        input_offset,
-                        weights: &self.weights_buffer,
-                        output,
-                        batch,
-                        input_dim: self.input_dim as i32,
-                        hidden_dim: self.hidden_dim as i32,
-                        lda: self.input_dim as i32,
-                        ldb: self.input_dim as i32,
-                        ldd: self.hidden_dim as i32,
-                        activation: self.activation,
-                    };
-                    gemm.borrow_mut()
-                        .encode(&self.context, encoder, &args)
-                        .expect("Failed to encode MLP fused GEMM");
-                }
+                let args = MlpFusedArguments {
+                    input,
+                    input_offset,
+                    weights: &self.weights_buffer,
+                    output,
+                    batch,
+                    input_dim: self.input_dim as i32,
+                    hidden_dim: self.hidden_dim as i32,
+                    lda: self.input_dim as i32,
+                    ldb: self.input_dim as i32,
+                    ldd: self.hidden_dim as i32,
+                    batch_count: batch,
+                    activation: self.activation,
+                };
+                kernel
+                    .borrow_mut()
+                    .encode(&self.context, encoder, &args)
+                    .expect("Failed to encode MLP fused kernel");
             },
             MlpFusedUpKernel::Quantized {
                 qmv,
@@ -295,6 +271,7 @@ impl MlpFusedBlock {
                 let zp_or_biases =
                     self.zero_points_or_biases_buffer.as_ref().unwrap();
 
+                let is_decode = batch == 1;
                 if is_decode {
                     let args = MlpFusedQmvArguments {
                         weights: &self.weights_buffer,

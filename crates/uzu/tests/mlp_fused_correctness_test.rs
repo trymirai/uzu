@@ -10,12 +10,7 @@ use uzu::{
         MTLContext,
         kernel::{
             mlp::MlpActivationType,
-            mlp_fused::{
-                GemmArguments as MlpFusedGemmArguments,
-                GemmKernel as MlpFusedGemmKernel,
-                GemvArguments as MlpFusedGemvArguments,
-                GemvKernel as MlpFusedGemvKernel,
-            },
+            mlp_fused::{MlpFusedArguments, MlpFusedKernel},
         },
     },
 };
@@ -74,7 +69,7 @@ fn mlp_fused_reference(
     result
 }
 
-/// Run MLP fused GEMV kernel (decode path, M=1)
+/// Run MLP fused kernel (decode path, M=1)
 fn run_fused_gemv(
     ctx: &MTLContext,
     input: &[f16],
@@ -98,19 +93,23 @@ fn run_fused_gemv(
         MTLResourceOptions::StorageModeShared,
     );
 
-    let mut kernel = MlpFusedGemvKernel::new(DataType::F16).expect("kernel");
+    let mut kernel =
+        MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
 
-    let args = MlpFusedGemvArguments {
-        weights: &weights_buf,
+    let args = MlpFusedArguments {
         input: &input_buf,
         input_offset: 0,
+        weights: &weights_buf,
         output: &output_buf,
+        batch: 1,
         input_dim: k as i32,
         hidden_dim: hidden_dim as i32,
-        weights_ld: k as i32,
+        lda: k as i32,
+        ldb: k as i32,
+        ldd: hidden_dim as i32,
         batch_count: 1,
         activation,
     };
@@ -126,7 +125,7 @@ fn run_fused_gemv(
     }
 }
 
-/// Run MLP fused GEMM kernel (prefill path, M>1)
+/// Run MLP fused kernel (prefill path, M>1)
 fn run_fused_gemm(
     ctx: &MTLContext,
     input: &[f16],
@@ -152,12 +151,12 @@ fn run_fused_gemm(
     );
 
     let mut kernel =
-        MlpFusedGemmKernel::new(DataType::F16, true).expect("kernel");
+        MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
 
-    let args = MlpFusedGemmArguments {
+    let args = MlpFusedArguments {
         input: &input_buf,
         input_offset: 0,
         weights: &weights_buf,
@@ -168,6 +167,7 @@ fn run_fused_gemm(
         lda: k as i32,
         ldb: k as i32,
         ldd: hidden_dim as i32,
+        batch_count: 1,
         activation,
     };
 

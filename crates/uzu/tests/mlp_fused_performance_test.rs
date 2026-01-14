@@ -13,12 +13,7 @@ use uzu::{
         kernel::{
             matmul::{MatmulArguments, MatmulKernel},
             mlp::MlpActivationType,
-            mlp_fused::{
-                GemmArguments as MlpFusedGemmArguments,
-                GemmKernel as MlpFusedGemmKernel,
-                GemvArguments as MlpFusedGemvArguments,
-                GemvKernel as MlpFusedGemvKernel,
-            },
+            mlp_fused::{MlpFusedArguments, MlpFusedKernel},
         },
     },
 };
@@ -76,27 +71,32 @@ fn benchmark_gemv_fused(
     );
 
     let mut fused_kernel =
-        MlpFusedGemvKernel::new(DataType::F16).expect("fused kernel");
-    let mut matmul_kernel =
-        MatmulKernel::new(context, DataType::F16, false, true).expect("matmul");
+        MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
+    let mut matmul_kernel = MatmulKernel::new(DataType::F16).expect("matmul");
+
+    let fused_args = MlpFusedArguments {
+        input: &input_buffer,
+        input_offset: 0,
+        weights: &weights_buffer,
+        output: &output_buffer,
+        batch: 1,
+        input_dim: input_dimension as i32,
+        hidden_dim: hidden_dimension as i32,
+        lda: input_dimension as i32,
+        ldb: input_dimension as i32,
+        ldd: hidden_dimension as i32,
+        batch_count: 1,
+        activation: MlpActivationType::SiLU,
+    };
 
     // Warmup fused
     for _ in 0..warmup_count {
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        let arguments = MlpFusedGemvArguments {
-            weights: &weights_buffer,
-            input: &input_buffer,
-            input_offset: 0,
-            output: &output_buffer,
-            input_dim: input_dimension as i32,
-            hidden_dim: hidden_dimension as i32,
-            weights_ld: input_dimension as i32,
-            batch_count: 1,
-            activation: MlpActivationType::SiLU,
-        };
-        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        fused_kernel
+            .encode(context, &encoder, &fused_args)
+            .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -108,23 +108,34 @@ fn benchmark_gemv_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        let arguments = MlpFusedGemvArguments {
-            weights: &weights_buffer,
-            input: &input_buffer,
-            input_offset: 0,
-            output: &output_buffer,
-            input_dim: input_dimension as i32,
-            hidden_dim: hidden_dimension as i32,
-            weights_ld: input_dimension as i32,
-            batch_count: 1,
-            activation: MlpActivationType::SiLU,
-        };
-        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        fused_kernel
+            .encode(context, &encoder, &fused_args)
+            .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
     }
     let fused_duration = fused_start.elapsed() / iteration_count as u32;
+
+    let matmul_args = MatmulArguments {
+        a: &input_buffer,
+        a_offset: 0,
+        b: &weights_buffer,
+        c: None,
+        d: &fused_up_buffer,
+        bias: None,
+        batch: 1,
+        input_dim: input_dimension as i32,
+        output_dim: (2 * hidden_dimension) as i32,
+        lda: input_dimension as i32,
+        ldb: input_dimension as i32,
+        ldd: (2 * hidden_dimension) as i32,
+        batch_count: 1,
+        alpha: 1.0,
+        beta: 0.0,
+        transpose_a: false,
+        transpose_b: true,
+    };
 
     // Warmup unfused
     for _ in 0..warmup_count {
@@ -132,27 +143,7 @@ fn benchmark_gemv_fused(
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
-            .encode(
-                context,
-                &encoder,
-                MatmulArguments {
-                    a: &input_buffer,
-                    a_offset: 0,
-                    b: &weights_buffer,
-                    c: None,
-                    d: &fused_up_buffer,
-                    batch: 1,
-                    input_dim: input_dimension as i32,
-                    output_dim: (2 * hidden_dimension) as i32,
-                    lda: input_dimension as i32,
-                    ldb: input_dimension as i32,
-                    ldd: (2 * hidden_dimension) as i32,
-                    batch_count: 1,
-                    alpha: 1.0,
-                    beta: 0.0,
-                },
-                None,
-            )
+            .encode(context, &encoder, matmul_args.clone())
             .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -166,27 +157,7 @@ fn benchmark_gemv_fused(
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
-            .encode(
-                context,
-                &encoder,
-                MatmulArguments {
-                    a: &input_buffer,
-                    a_offset: 0,
-                    b: &weights_buffer,
-                    c: None,
-                    d: &fused_up_buffer,
-                    batch: 1,
-                    input_dim: input_dimension as i32,
-                    output_dim: (2 * hidden_dimension) as i32,
-                    lda: input_dimension as i32,
-                    ldb: input_dimension as i32,
-                    ldd: (2 * hidden_dimension) as i32,
-                    batch_count: 1,
-                    alpha: 1.0,
-                    beta: 0.0,
-                },
-                None,
-            )
+            .encode(context, &encoder, matmul_args.clone())
             .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -224,29 +195,32 @@ fn benchmark_gemm_fused(
     );
 
     let mut fused_kernel =
-        MlpFusedGemmKernel::new(DataType::F16, true).expect("fused kernel");
-    let mut matmul_kernel =
-        MatmulKernel::new(context, DataType::F16, false, true).expect("matmul");
+        MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
+    let mut matmul_kernel = MatmulKernel::new(DataType::F16).expect("matmul");
+
+    let fused_args = MlpFusedArguments {
+        input: &input_buffer,
+        input_offset: 0,
+        weights: &weights_buffer,
+        output: &output_buffer,
+        batch: batch_size as i32,
+        input_dim: input_dimension as i32,
+        hidden_dim: hidden_dimension as i32,
+        lda: input_dimension as i32,
+        ldb: input_dimension as i32,
+        ldd: hidden_dimension as i32,
+        batch_count: 1,
+        activation: MlpActivationType::SiLU,
+    };
 
     // Warmup fused
     for _ in 0..warmup_count {
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        let arguments = MlpFusedGemmArguments {
-            input: &input_buffer,
-            input_offset: 0,
-            weights: &weights_buffer,
-            output: &output_buffer,
-            batch: batch_size as i32,
-            input_dim: input_dimension as i32,
-            hidden_dim: hidden_dimension as i32,
-            lda: input_dimension as i32,
-            ldb: input_dimension as i32,
-            ldd: hidden_dimension as i32,
-            activation: MlpActivationType::SiLU,
-        };
-        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        fused_kernel
+            .encode(context, &encoder, &fused_args)
+            .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
@@ -257,25 +231,34 @@ fn benchmark_gemm_fused(
         let command_buffer =
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
-        let arguments = MlpFusedGemmArguments {
-            input: &input_buffer,
-            input_offset: 0,
-            weights: &weights_buffer,
-            output: &output_buffer,
-            batch: batch_size as i32,
-            input_dim: input_dimension as i32,
-            hidden_dim: hidden_dimension as i32,
-            lda: input_dimension as i32,
-            ldb: input_dimension as i32,
-            ldd: hidden_dimension as i32,
-            activation: MlpActivationType::SiLU,
-        };
-        fused_kernel.encode(context, &encoder, &arguments).unwrap();
+        fused_kernel
+            .encode(context, &encoder, &fused_args)
+            .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
     }
     let fused_duration = fused_start.elapsed() / iteration_count as u32;
+
+    let matmul_args = MatmulArguments {
+        a: &input_buffer,
+        a_offset: 0,
+        b: &weights_buffer,
+        c: None,
+        d: &fused_up_buffer,
+        bias: None,
+        batch: batch_size as i32,
+        input_dim: input_dimension as i32,
+        output_dim: (2 * hidden_dimension) as i32,
+        lda: input_dimension as i32,
+        ldb: input_dimension as i32,
+        ldd: (2 * hidden_dimension) as i32,
+        batch_count: 1,
+        alpha: 1.0,
+        beta: 0.0,
+        transpose_a: false,
+        transpose_b: true,
+    };
 
     // Warmup unfused
     for _ in 0..warmup_count {
@@ -283,27 +266,7 @@ fn benchmark_gemm_fused(
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
-            .encode(
-                context,
-                &encoder,
-                MatmulArguments {
-                    a: &input_buffer,
-                    a_offset: 0,
-                    b: &weights_buffer,
-                    c: None,
-                    d: &fused_up_buffer,
-                    batch: batch_size as i32,
-                    input_dim: input_dimension as i32,
-                    output_dim: (2 * hidden_dimension) as i32,
-                    lda: input_dimension as i32,
-                    ldb: input_dimension as i32,
-                    ldd: (2 * hidden_dimension) as i32,
-                    batch_count: 1,
-                    alpha: 1.0,
-                    beta: 0.0,
-                },
-                None,
-            )
+            .encode(context, &encoder, matmul_args.clone())
             .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -316,27 +279,7 @@ fn benchmark_gemm_fused(
             context.command_queue.new_command_buffer().to_owned();
         let encoder = command_buffer.new_compute_command_encoder();
         matmul_kernel
-            .encode(
-                context,
-                &encoder,
-                MatmulArguments {
-                    a: &input_buffer,
-                    a_offset: 0,
-                    b: &weights_buffer,
-                    c: None,
-                    d: &fused_up_buffer,
-                    batch: batch_size as i32,
-                    input_dim: input_dimension as i32,
-                    output_dim: (2 * hidden_dimension) as i32,
-                    lda: input_dimension as i32,
-                    ldb: input_dimension as i32,
-                    ldd: (2 * hidden_dimension) as i32,
-                    batch_count: 1,
-                    alpha: 1.0,
-                    beta: 0.0,
-                },
-                None,
-            )
+            .encode(context, &encoder, matmul_args.clone())
             .unwrap();
         encoder.end_encoding();
         command_buffer.commit();
