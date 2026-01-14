@@ -260,7 +260,10 @@ fn macos_sdk_version(sdk: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-fn should_enable_nax(target_os: &str, sdk: &str) -> bool {
+fn should_enable_nax(
+    target_os: &str,
+    sdk: &str,
+) -> bool {
     if target_os != "macos" && target_os != "ios" {
         return false;
     }
@@ -269,8 +272,8 @@ fn should_enable_nax(target_os: &str, sdk: &str) -> bool {
         return false;
     }
     // Check host OS version
-    let os_ok =
-        host_macos_major_version().is_some_and(|major| major >= NAX_MIN_OS_MAJOR);
+    let os_ok = host_macos_major_version()
+        .is_some_and(|major| major >= NAX_MIN_OS_MAJOR);
     if !os_ok {
         return false;
     }
@@ -418,7 +421,7 @@ fn compile_metal_files(
     // Optimization level: Metal supports up to -O2
     let opt = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".into());
     let metal_opt_flag = match opt.as_str() {
-        "0" => "-O0",
+        "0" => "-O1", // NOTE TODO FIXME WORKAROUND: matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
         "1" => "-O1",
         _ => "-O2", // treat levels 2,3,s,z as O2 for metal
     };

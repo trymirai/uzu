@@ -16,7 +16,4 @@ authors = ["Mirai Tech <https://trymirai.com>"]
 repository = "https://github.com/trymirai/uzu"
 
 [profile.release]
-lto = true
-
-[profile.test]
-inherits = "release"
+lto = "thin"
