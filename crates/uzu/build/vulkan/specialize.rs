@@ -39,10 +39,9 @@ fn get_specialize_types_regex<'a>() -> &'a Regex {
     })
 }
 
-/// Parses source code for strings that matches regex [SPECIALIZE_REGEX]:
-/// "// SPECIALIZE(TYPE_NAME, type_1, type_2, ... type_N)".
-///
-/// For example "SPECIALIZE(BUFFER_TYPE, float, float16_t)"
+/// Parses source code for strings that matches regex [SPECIALIZE_REGEX]
+/// "// SPECIALIZE(TYPE_NAME, type_1, type_2, ..., type_N)"
+/// e.g. "SPECIALIZE(BUFFER_TYPE, float, float16_t)"
 fn get_shader_specializations(
     source: &str
 ) -> ShaderSpecializations {
