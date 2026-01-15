@@ -16,7 +16,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
-mpsgraph.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 metal.workspace = true
@@ -28,7 +27,6 @@ libc.workspace = true
 bitflags.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
-clap.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
@@ -38,7 +36,6 @@ schemars.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
-mpsgraph.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
