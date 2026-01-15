@@ -57,4 +57,4 @@ def record_trace(
 
 
 def default_output_path() -> Path:
-    return Path(f"/tmp/gpu_trace_{int(time.time())}.trace")
+    return Path(f"gpu_trace_{int(time.time())}.trace")

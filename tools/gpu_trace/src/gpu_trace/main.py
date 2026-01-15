@@ -95,10 +95,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     export = export_trace(output, 1)
     print_summary(export, verbose=args.verbose)
 
-    if args.json:
-        json_path = args.json
-        json_path.write_text(to_json(export, indent=2))
-        print(f"JSON exported: {json_path}", file=sys.stderr)
+    json_path = args.json if args.json else output.with_suffix(".json")
+    json_path.write_text(to_json(export, indent=2))
+    print(f"JSON exported: {json_path}", file=sys.stderr)
 
     return 0
 
