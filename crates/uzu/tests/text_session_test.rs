@@ -42,7 +42,7 @@ fn test_text_session_scenario() {
 fn test_text_session_stability() {
     let mut session =
         Session::new(build_model_path(), build_decoding_config()).unwrap();
-    println!("Index | TTFT, s | Prompt tokens/s | Generate tokens/s");
+    println!("Index | TTFT, s | Prompt t/s | Generate t/s");
     for index in 0..10 {
         let input = Input::Text(build_default_text());
         let output = session
