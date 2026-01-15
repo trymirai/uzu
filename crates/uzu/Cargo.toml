@@ -2,7 +2,7 @@
 name = "uzu"
 version.workspace = true
 edition = "2024"
-build = "build.rs"
+build = "build/main.rs"
 
 [dependencies]
 # "linked" link the Vulkan loader at compile time
@@ -41,16 +41,29 @@ schemars = { version = "1.0.5", features = ["derive"] }
 mpsgraph = "0.2.0"
 
 [build-dependencies]
+anyhow = "1.0.100"
 bindgen = "0.72.1"
-futures = "0.3"
-shaderc = "0.10.1"
-tokio = { version = "1.49.0", features = ["full"] }
 walkdir = "2.5.0"
+depfile = "0.1.1"
+tempfile = "3.24.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+clang-ast = "0.1.35"
+futures = "0.3"
+tokio = { version = "1.48.0", features = ["full"] }
+blake3 = "1.8.2"
+quote = "1.0.42"
+proc-macro2 = "1.0.104"
+syn = "2.0.113"
+prettyplease = "0.2.37"
+itertools = "0.14.0"
+shaderc = "0.10.1"
 
 [features]
-default = ["metal-shaders"]
-metal-shaders = []
+build-debug = []
+build-clean = []
 tracing = []
+metal-nax = []
 
 [[test]]
 name = "moe"

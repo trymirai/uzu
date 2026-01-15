@@ -1,29 +1,23 @@
 use std::sync::Arc;
 use ash::vk;
 use bytemuck::AnyBitPattern;
-use crate::{array_size_in_bytes, Array, DataType};
 use crate::backends::vulkan::context::VkContext;
 
 pub struct VkBuffer {
     device: Arc<ash::Device>,
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
-
-    shape: Box<[usize]>,
-    data_type: DataType,
-    size_bytes: u64
+    size: usize,
 }
 
 impl VkBuffer {
     pub fn ssbo(
         context: &VkContext,
-        shape: &[usize],
-        data_type: DataType,
+        size: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new(
             context,
-            shape,
-            data_type,
+            size,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE |
                 vk::MemoryPropertyFlags::HOST_CACHED |
@@ -34,15 +28,13 @@ impl VkBuffer {
 
     pub fn new(
         context: &VkContext,
-        shape: &[usize],
-        data_type: DataType,
+        size: usize,
         usage: vk::BufferUsageFlags,
         memory_flags: vk::MemoryPropertyFlags,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let size_bytes = array_size_in_bytes(shape, data_type) as u64;
         let buffer = {
             let info = vk::BufferCreateInfo::default()
-                .size(size_bytes)
+                .size(size as vk::DeviceSize)
                 .usage(usage);
             unsafe { context.device().create_buffer(&info, None)? }
         };
@@ -70,18 +62,15 @@ impl VkBuffer {
             device: context.device(),
             buffer,
             memory,
-
-            shape: shape.into(),
-            data_type,
-            size_bytes
+            size
         })
     }
 
     pub fn fill(&mut self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        self.fill_offset(data, 0u64)
+        self.fill_with_offset(data, 0u64)
     }
 
-    pub fn fill_offset(&mut self, data: &[u8], offset: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn fill_with_offset(&mut self, data: &[u8], offset: u64) -> Result<(), Box<dyn std::error::Error>> {
         let len = data.len() as u64;
         unsafe {
             let memory_ptr = self.device.map_memory(self.memory, offset, len, vk::MemoryMapFlags::empty())?;
@@ -96,32 +85,20 @@ impl VkBuffer {
         self.buffer
     }
 
-    pub fn buffer_bytes(&self) -> Result<&[u8], Box<dyn std::error::Error>> {
-        unsafe {
-            let ptr = self.device.map_memory(self.memory, 0, self.size_bytes, vk::MemoryMapFlags::empty())? as *const u8;
-            let bytes_slice = std::slice::from_raw_parts(ptr, self.size_bytes as usize);
-            self.device.unmap_memory(self.memory);
-            Ok(bytes_slice)
-        }
-    }
-
-    pub fn buffer_bytes_mut(&self) -> Result<&mut [u8], Box<dyn std::error::Error>> {
-        unsafe {
-            let ptr = self.device.map_memory(self.memory, 0, self.size_bytes, vk::MemoryMapFlags::empty())? as *mut u8;
-            let bytes_slice = std::slice::from_raw_parts_mut(ptr, self.size_bytes as usize);
-            self.device.unmap_memory(self.memory);
-            Ok(bytes_slice)
-        }
+    pub fn device(&self) -> &ash::Device {
+        &self.device
     }
 
     pub fn memory(&self) -> vk::DeviceMemory {
         self.memory
     }
 
-    pub fn size(&self) -> u64 {
-        self.size_bytes
+    pub fn size(&self) -> usize {
+        self.size
     }
+}
 
+impl VkBuffer {
     pub fn get_write_memory_barrier(&self) -> vk::BufferMemoryBarrier<'_> {
         self.get_memory_barrier(vk::AccessFlags::HOST_WRITE, vk::AccessFlags::SHADER_READ)
     }
@@ -142,7 +119,7 @@ impl VkBuffer {
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .buffer(self.buffer)
             .offset(0)
-            .size(self.size_bytes)
+            .size(self.size as vk::DeviceSize)
     }
 }
 
@@ -152,24 +129,6 @@ impl Drop for VkBuffer {
             self.device.destroy_buffer(self.buffer, None);
             self.device.free_memory(self.memory, None);
         }
-    }
-}
-
-impl Array for VkBuffer {
-    fn shape(&self) -> &[usize] {
-        &self.shape
-    }
-
-    fn data_type(&self) -> DataType {
-        self.data_type
-    }
-
-    fn buffer(&self) -> &[u8] {
-        self.buffer_bytes().unwrap()
-    }
-
-    fn buffer_mut(&mut self) -> &mut [u8] {
-        self.buffer_bytes_mut().unwrap()
     }
 }
 

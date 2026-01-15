@@ -25,7 +25,7 @@ pub struct FullPrecisionEmbeddingReadout {
 
 impl FullPrecisionEmbeddingReadout {
     pub fn new(
-        mtl_context: &MTLContext,
+        _mtl_context: &MTLContext,
         data_type: DataType,
         vocab_size: usize,
         model_dim: usize,
@@ -69,10 +69,8 @@ impl FullPrecisionEmbeddingReadout {
 
         let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
 
-        // Weights are [vocab_size, model_dim], we compute input @ weights^T
-        // MatmulKernel with transpose_b=true handles this
-        let kernel = MatmulKernel::new(mtl_context, data_type, false, true)
-            .map_err(EmbeddingError::MetalError)?;
+        let kernel =
+            MatmulKernel::new(data_type).map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -111,17 +109,26 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
-        let batch_size = state.active_suffix_length();
+        let batch_size = state.sampling_length();
+        if batch_size == 0 {
+            return;
+        }
+        let sampling_start = state.sampling_start();
         let mut input_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
 
+        let elem_size = input_array_mut.data_type().size_in_bytes();
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let a_offset = (sampling_start * self.model_dim * elem_size) as u64;
 
         let args = MatmulArguments {
             a: input_buffer,
+            a_offset,
             b: &self.weights_buffer,
+            c: None,
             d: output_buffer,
+            bias: None,
             batch: batch_size as i32,
             input_dim: self.model_dim as i32,
             output_dim: self.vocab_size as i32,
@@ -129,6 +136,10 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
             ldb: self.model_dim as i32,
             ldd: self.vocab_size as i32,
             batch_count: 1,
+            alpha: 1.0,
+            beta: 0.0,
+            transpose_a: false,
+            transpose_b: true,
         };
 
         self.kernel

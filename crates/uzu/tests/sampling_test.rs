@@ -129,6 +129,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
             None,
             0,
             None,
+            0,
             &output_buffer,
             SamplingMethod::Greedy,
             batch_size,
@@ -271,6 +272,7 @@ fn test_topp_sampling_from_prob_exact_match(
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -401,6 +403,7 @@ fn test_topp_sampling_statistical_large() {
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -512,6 +515,7 @@ fn perf_topp_128k_vocab() {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -620,6 +624,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Greedy,
             BATCH,
@@ -743,6 +748,7 @@ fn test_categorical_sampling() {
                 Some(&seeds_buffer),
                 0,
                 None,
+                0,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -889,6 +895,7 @@ fn test_categorical_sampling_statistical() {
                 Some(&seeds_buffer),
                 0,
                 None,
+                0,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -998,6 +1005,7 @@ fn perf_categorical_128k_vocab() {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -1438,6 +1446,7 @@ fn test_minp_sampling_exact_match(
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,

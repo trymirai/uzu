@@ -2,14 +2,16 @@ use std::rc::Rc;
 
 use super::{
     EncodableBlock, FullPrecisionEmbeddingLookup,
-    FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock, MoeBlock,
-    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
+    FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock,
+    MlpFusedBlock, MoeBlock, QuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, forward_pass::ArrayId,
-        kernel::mlp::MlpGateActMulEncodable,
+        MTLContext, MTLError,
+        forward_pass::ArrayId,
+        kernel::{mlp::MlpGateActMulEncodable, quant_matmul::QuantizationType},
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
     parameters::ParameterTree,
@@ -18,22 +20,22 @@ use crate::{
 pub fn linear_block<const N: usize>(
     config: &LinearConfig,
     _has_biases: bool,
-    input_dim: usize,
-    output_dims: [usize; N],
+    input_dimension: usize,
+    output_dimensions: [usize; N],
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 ) -> Result<Box<dyn EncodableBlock>, MTLError> {
-    let out_sum: usize = output_dims.iter().sum();
+    let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
-        LinearConfig::Quantized(quant_config)
-        | LinearConfig::MLXQuantized(quant_config) => {
+        LinearConfig::Quantized(quantization_config)
+        | LinearConfig::MLXQuantized(quantization_config) => {
             let block = QuantizedLinear::new(
                 context,
-                quant_config,
-                input_dim,
-                out_sum,
+                quantization_config,
+                input_dimension,
+                output_dimension_sum,
                 parameter_tree,
                 input_array_id,
                 output_array_id,
@@ -46,8 +48,8 @@ pub fn linear_block<const N: usize>(
             let block = FullPrecisionLinear::new(
                 context,
                 (*precision).into(),
-                input_dim,
-                out_sum,
+                input_dimension,
+                output_dimension_sum,
                 parameter_tree,
                 input_array_id,
                 output_array_id,
@@ -62,92 +64,220 @@ pub fn linear_block<const N: usize>(
     }
 }
 
+/// Creates an MLP block using the unfused implementation (separate up, activation, down)
 pub fn mlp_block(
     config: &MLPConfig,
-    model_dim: usize,
-    hidden_dim: usize,
+    model_dimension: usize,
+    hidden_dimension: usize,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
 ) -> Result<Box<dyn EncodableBlock>, MTLError> {
-    if let crate::config::MLPConfig::Dense(dense) = config {
-        match &dense.linear_config {
-            LinearConfig::Quantized(quant_config)
-            | LinearConfig::MLXQuantized(quant_config) => {
-                let dtype: DataType =
-                    dense.linear_config.activation_precision().into();
+    if let crate::config::MLPConfig::Dense(dense_config) = config {
+        let data_type: DataType =
+            dense_config.linear_config.activation_precision().into();
 
-                let up = QuantizedLinear::new(
-                    context,
-                    quant_config,
-                    model_dim,
-                    2 * hidden_dim,
-                    &parameter_tree
-                        .subtree("up_projection")
-                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
-                    ArrayId::Main,
-                    ArrayId::MlpFusedUp,
-                )?;
+        // Up projection (outputs 2*hidden_dimension for gate and up)
+        let up_projection = linear_block(
+            &dense_config.linear_config,
+            false,
+            model_dimension,
+            [2 * hidden_dimension],
+            context,
+            &parameter_tree
+                .subtree("up_projection")
+                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            ArrayId::Main,
+            ArrayId::MlpFusedUp,
+        )?;
 
-                let gate_op = MlpGateActMulEncodable::new(
-                    context,
-                    dtype,
-                    dense.activation,
-                    hidden_dim,
-                )?;
+        // Gate activation + multiply
+        let gate_activation = MlpGateActMulEncodable::new(
+            context,
+            data_type,
+            dense_config.activation.clone(),
+            hidden_dimension,
+        )?;
 
-                let down = QuantizedLinear::new(
-                    context,
-                    quant_config,
-                    hidden_dim,
-                    model_dim,
-                    &parameter_tree
-                        .subtree("down_projection")
-                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
+        // Down projection
+        let down_projection = linear_block(
+            &dense_config.linear_config,
+            false,
+            hidden_dimension,
+            [model_dimension],
+            context,
+            &parameter_tree
+                .subtree("down_projection")
+                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            ArrayId::MlpHidden,
+            ArrayId::Main,
+        )?;
+
+        return Ok(Box::new(MlpBlock::new(
+            up_projection,
+            gate_activation,
+            down_projection,
+        )));
+    }
+
+    if let crate::config::MLPConfig::MixtureOfExperts(
+        mixture_of_experts_config,
+    ) = config
+    {
+        let mixture_of_experts_block = MoeBlock::new(
+            context,
+            mixture_of_experts_config,
+            model_dimension,
+            hidden_dimension,
+            parameter_tree,
+        )?;
+        return Ok(Box::new(mixture_of_experts_block));
+    }
+
+    unreachable!("Unknown MLP config")
+}
+
+/// Creates an MLP block using the fused implementation
+/// (up projection + activation fused into single kernel)
+pub fn mlp_fused_block(
+    config: &MLPConfig,
+    model_dimension: usize,
+    hidden_dimension: usize,
+    context: Rc<MTLContext>,
+    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+) -> Result<Box<dyn EncodableBlock>, MTLError> {
+    if let crate::config::MLPConfig::Dense(dense_config) = config {
+        match &dense_config.linear_config {
+            LinearConfig::Quantized(quantization_config)
+            | LinearConfig::MLXQuantized(quantization_config) => {
+                let data_type: DataType =
+                    dense_config.linear_config.activation_precision().into();
+
+                // Load up_projection weights directly for fused kernel
+                let up_projection_tree =
+                    parameter_tree.subtree("up_projection").map_err(
+                        |error| MTLError::Generic(format!("{:?}", error)),
+                    )?;
+
+                let mut up_projection_weights =
+                    up_projection_tree.leaf("weights").map_err(|error| {
+                        MTLError::Generic(format!(
+                            "Failed to load up weights: {:?}",
+                            error
+                        ))
+                    })?;
+                let up_projection_weights_buffer =
+                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
+
+                let mut up_projection_scales =
+                    up_projection_tree.leaf("scales").map_err(|error| {
+                        MTLError::Generic(format!(
+                            "Failed to load up scales: {:?}",
+                            error
+                        ))
+                    })?;
+                let up_projection_scales_buffer =
+                    unsafe { up_projection_scales.mtl_buffer() }.to_owned();
+
+                // Load zero_points or biases depending on quantization type
+                let (
+                    up_projection_zero_points_or_biases_buffer,
+                    quantization_type,
+                ) = if let Ok(mut biases) = up_projection_tree.leaf("biases") {
+                    (
+                        unsafe { biases.mtl_buffer() }.to_owned(),
+                        QuantizationType::Mlx,
+                    )
+                } else if let Ok(mut zero_points) =
+                    up_projection_tree.leaf("zero_points")
+                {
+                    (
+                        unsafe { zero_points.mtl_buffer() }.to_owned(),
+                        QuantizationType::ZeroPoint,
+                    )
+                } else {
+                    return Err(MTLError::Generic(
+                            "Missing zero_points or biases for quantized up_projection"
+                                .to_string(),
+                        ));
+                };
+
+                // Create down projection as separate linear
+                let down_projection = QuantizedLinear::new(
+                    &context,
+                    quantization_config,
+                    hidden_dimension,
+                    model_dimension,
+                    &parameter_tree.subtree("down_projection").map_err(
+                        |error| MTLError::Generic(format!("{:?}", error)),
+                    )?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
                 )?;
 
-                let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
-                return Ok(Box::new(enc));
+                let fused_block = MlpFusedBlock::new_quantized(
+                    context,
+                    data_type,
+                    up_projection_weights_buffer,
+                    up_projection_scales_buffer,
+                    up_projection_zero_points_or_biases_buffer,
+                    model_dimension,
+                    hidden_dimension,
+                    quantization_config.group_size,
+                    quantization_config.weight_quantization_mode,
+                    quantization_type,
+                    &dense_config.activation,
+                    Box::new(down_projection),
+                    ArrayId::Main,
+                    ArrayId::MlpHidden,
+                )?;
+                return Ok(Box::new(fused_block));
             },
             LinearConfig::FullPrecision {
                 precision,
             } => {
-                let dtype: DataType = (*precision).into();
+                let data_type: DataType = (*precision).into();
 
-                let up = FullPrecisionLinear::new(
-                    context,
-                    dtype,
-                    model_dim,
-                    2 * hidden_dim,
-                    &parameter_tree
-                        .subtree("up_projection")
-                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
-                    ArrayId::Main,
-                    ArrayId::MlpFusedUp,
-                )?;
+                // Load up_projection weights directly for fused kernel
+                let up_projection_tree =
+                    parameter_tree.subtree("up_projection").map_err(
+                        |error| MTLError::Generic(format!("{:?}", error)),
+                    )?;
 
-                let gate_op = MlpGateActMulEncodable::new(
-                    context,
-                    dtype,
-                    dense.activation,
-                    hidden_dim,
-                )?;
+                let mut up_projection_weights =
+                    up_projection_tree.leaf("weights").map_err(|error| {
+                        MTLError::Generic(format!(
+                            "Failed to load up weights: {:?}",
+                            error
+                        ))
+                    })?;
+                let up_projection_weights_buffer =
+                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
 
-                let down = FullPrecisionLinear::new(
-                    context,
-                    dtype,
-                    hidden_dim,
-                    model_dim,
-                    &parameter_tree
-                        .subtree("down_projection")
-                        .map_err(|e| MTLError::Generic(format!("{:?}", e)))?,
+                // Create down projection as separate linear
+                let down_projection = FullPrecisionLinear::new(
+                    &context,
+                    data_type,
+                    hidden_dimension,
+                    model_dimension,
+                    &parameter_tree.subtree("down_projection").map_err(
+                        |error| MTLError::Generic(format!("{:?}", error)),
+                    )?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
                 )?;
 
-                let enc = MlpBlock::new(Box::new(up), gate_op, Box::new(down));
-                return Ok(Box::new(enc));
+                let fused_block = MlpFusedBlock::new_full_precision(
+                    context,
+                    data_type,
+                    up_projection_weights_buffer,
+                    model_dimension,
+                    hidden_dimension,
+                    &dense_config.activation,
+                    Box::new(down_projection),
+                    ArrayId::Main,
+                    ArrayId::MlpHidden,
+                )?;
+                return Ok(Box::new(fused_block));
             },
             LinearConfig::QLoRA {
                 ..
@@ -159,10 +289,18 @@ pub fn mlp_block(
         }
     }
 
-    if let crate::config::MLPConfig::MixtureOfExperts(moe) = config {
-        let moe_block =
-            MoeBlock::new(context, moe, model_dim, hidden_dim, parameter_tree)?;
-        return Ok(Box::new(moe_block));
+    if let crate::config::MLPConfig::MixtureOfExperts(
+        mixture_of_experts_config,
+    ) = config
+    {
+        let mixture_of_experts_block = MoeBlock::new(
+            &context,
+            mixture_of_experts_config,
+            model_dimension,
+            hidden_dimension,
+            parameter_tree,
+        )?;
+        return Ok(Box::new(mixture_of_experts_block));
     }
 
     unreachable!("Unknown MLP config")

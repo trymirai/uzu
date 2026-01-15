@@ -27,6 +27,7 @@ pub trait DeviceContext {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> Self::DeviceArray;
 
     /// Allocate a new array with the given shape and data type.
@@ -35,9 +36,10 @@ pub trait DeviceContext {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> Self::DeviceArray {
         unsafe {
-            let mut result = self.array_uninitialized(shape, data_type);
+            let mut result = self.array_uninitialized(shape, data_type, label);
             fill_zeroes(result.buffer_mut());
             result
         }
@@ -47,10 +49,11 @@ pub trait DeviceContext {
     fn array_from_view<T: ArrayElement, D: Dimension>(
         &self,
         view: ArrayView<T, D>,
+        label: String,
     ) -> Self::DeviceArray {
         unsafe {
             let mut result =
-                self.array_uninitialized(view.shape(), T::data_type());
+                self.array_uninitialized(view.shape(), T::data_type(), label);
             let result_buffer = result.as_slice_mut().unwrap();
 
             // If the view data is contiguous, copy it directly, otherwise .
@@ -73,10 +76,12 @@ pub trait DeviceContext {
     >(
         &self,
         shape: &[usize; D],
+        label: String,
         mut f: F,
     ) -> Self::DeviceArray {
         unsafe {
-            let mut result = self.array_uninitialized(shape, T::data_type());
+            let mut result =
+                self.array_uninitialized(shape, T::data_type(), label);
             for (slice_index, value) in
                 result.as_slice_mut().unwrap().iter_mut().enumerate()
             {
@@ -91,9 +96,11 @@ pub trait DeviceContext {
         &self,
         shape: &[usize],
         elem: T,
+        label: String,
     ) -> Self::DeviceArray {
         unsafe {
-            let mut result = self.array_uninitialized(shape, T::data_type());
+            let mut result =
+                self.array_uninitialized(shape, T::data_type(), label);
             result.as_slice_mut().unwrap().fill(elem);
             result
         }
@@ -103,8 +110,9 @@ pub trait DeviceContext {
     fn scalar<T: ArrayElement>(
         &self,
         value: T,
+        label: String,
     ) -> Self::DeviceArray {
-        self.array_from_elem(&[], value)
+        self.array_from_elem(&[], value, label)
     }
 
     /// Allocate a new array for an attention bias (also sometimes referred to as "attention mask").
@@ -120,35 +128,44 @@ pub trait DeviceContext {
         F: FnMut(usize, usize) -> bool,
     {
         let shape = [suffix_length, suffix_length + prefix_length];
+        let label = String::from("attention_bias");
         match data_type {
-            DataType::F16 => self.array_from_shape_fn(&shape, |[row, col]| {
-                if should_be_neg_inf(*row, *col) {
-                    f16::NEG_INFINITY
-                } else {
-                    f16::zero()
-                }
-            }),
-            DataType::BF16 => self.array_from_shape_fn(&shape, |[row, col]| {
-                if should_be_neg_inf(*row, *col) {
-                    bf16::NEG_INFINITY
-                } else {
-                    bf16::zero()
-                }
-            }),
-            DataType::F32 => self.array_from_shape_fn(&shape, |[row, col]| {
-                if should_be_neg_inf(*row, *col) {
-                    f32::NEG_INFINITY
-                } else {
-                    f32::zero()
-                }
-            }),
-            DataType::F64 => self.array_from_shape_fn(&shape, |[row, col]| {
-                if should_be_neg_inf(*row, *col) {
-                    f64::NEG_INFINITY
-                } else {
-                    f64::zero()
-                }
-            }),
+            DataType::F16 => {
+                self.array_from_shape_fn(&shape, label, |[row, col]| {
+                    if should_be_neg_inf(*row, *col) {
+                        f16::NEG_INFINITY
+                    } else {
+                        f16::zero()
+                    }
+                })
+            },
+            DataType::BF16 => {
+                self.array_from_shape_fn(&shape, label, |[row, col]| {
+                    if should_be_neg_inf(*row, *col) {
+                        bf16::NEG_INFINITY
+                    } else {
+                        bf16::zero()
+                    }
+                })
+            },
+            DataType::F32 => {
+                self.array_from_shape_fn(&shape, label, |[row, col]| {
+                    if should_be_neg_inf(*row, *col) {
+                        f32::NEG_INFINITY
+                    } else {
+                        f32::zero()
+                    }
+                })
+            },
+            DataType::F64 => {
+                self.array_from_shape_fn(&shape, label, |[row, col]| {
+                    if should_be_neg_inf(*row, *col) {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::zero()
+                    }
+                })
+            },
             _ => {
                 panic!(
                     "Attention bias can only be of a floating-point type, but requested {:?}",

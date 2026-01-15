@@ -69,9 +69,9 @@ fn create_test_weights(
         for row in 0..output_dim {
             for _col in 0..input_dim {
                 let v = if bits == 4 {
-                    (row as u8 + 1) & 0x0F
+                    ((row + 1) & 0x0F) as u8
                 } else {
-                    row as u8 + 1
+                    ((row + 1) & 0xFF) as u8
                 };
                 weights_quant.push(v);
             }
@@ -81,9 +81,9 @@ fn create_test_weights(
         for _row in 0..input_dim {
             for col in 0..output_dim {
                 let v = if bits == 4 {
-                    (col as u8 + 1) & 0x0F
+                    ((col + 1) & 0x0F) as u8
                 } else {
-                    col as u8 // Allow 0..255 range
+                    (col & 0xFF) as u8 // Allow 0..255 range
                 };
                 weights_quant.push(v);
             }
@@ -538,6 +538,7 @@ fn execute_quantized_matmul(
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
                 a_buffer: &x_buf,
+                a_offset: 0,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
                 zero_points_or_biases_buffer: &b_buf,
@@ -560,6 +561,7 @@ fn execute_quantized_matmul(
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
             a_buffer: &x_buf,
+            a_offset: 0,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
             zero_points_or_biases_buffer: &b_buf,

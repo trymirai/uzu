@@ -1,11 +1,9 @@
 {
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
-    "source.organizeImports": "explicit"
+    "source.organizeImports": "explicit",
   },
-  "rust-analyzer.rustfmt.extraArgs": [
-    "+nightly"
-  ],
+  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
   "rust-analyzer.check.workspace": false,
   "rust-analyzer.cargo.allTargets": false,
   "rust-analyzer.check.noDefaultFeatures": true,
@@ -14,16 +12,16 @@
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
   },
   "[swift]": {
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
   },
   "[toml]": {
-    "editor.defaultFormatter": "tamasfe.even-better-toml"
-  }
+    "editor.defaultFormatter": "tamasfe.even-better-toml",
+  },
   // Treat Metal headers/sources as C++ for clang-format
   "files.associations": {
     "*.metal": "cpp",
     "*.h": "cpp",
-    "*.hpp": "cpp"
+    "*.hpp": "cpp",
   },
   // Use repository .clang-format
   "clang-format.style": "file",
@@ -32,10 +30,10 @@
   // Default to MS C/C++ extension formatter for C/C++ (clang-format backend)
   "[cpp]": {
     "editor.defaultFormatter": "ms-vscode.cpptools",
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
   },
   "[c]": {
     "editor.defaultFormatter": "ms-vscode.cpptools",
-    "editor.formatOnSave": true
-  }
+    "editor.formatOnSave": true,
+  },
 }

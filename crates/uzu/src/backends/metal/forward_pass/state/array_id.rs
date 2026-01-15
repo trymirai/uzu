@@ -49,9 +49,6 @@ pub enum ArrayId {
     AttentionSums,
     AttentionMaxs,
 
-    EmbeddingsInputWeights,
-    EmbeddingsOutputWeights,
-    EmbeddingsScales,
     RopeCosines(RopeType),
     RopeSines(RopeType),
 

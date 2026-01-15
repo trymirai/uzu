@@ -8,4 +8,5 @@ pub struct Task {
     pub number_of_runs: u64,
     pub tokens_limit: u64,
     pub messages: Vec<Message>,
+    pub greedy: bool,
 }

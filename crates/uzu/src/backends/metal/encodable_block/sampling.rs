@@ -92,7 +92,11 @@ impl EncodableBlock for Sampling {
             use crate::Array;
             logits.shape()
         };
-        let batch_size = state.active_suffix_length();
+        let batch_size = state.sampling_length();
+        if batch_size == 0 {
+            return;
+        }
+        let sampling_start = state.sampling_start();
         let vocab_size = logits_shape[1];
 
         let seeds_binding = state.arrays(&[ArrayId::TokenSeeds]);
@@ -102,16 +106,28 @@ impl EncodableBlock for Sampling {
             state.sampling_output().unwrap().borrow_mut();
 
         let sampling_method = state.sampling_method().unwrap();
-        let seeds_offset = seeds.buffer_offset();
+        let seeds_offset =
+            seeds.buffer_offset() + sampling_start * std::mem::size_of::<u64>();
 
-        let bitmask_buffer = state
-            .token_bitmask()
-            .map(|cell| unsafe { cell.borrow_mut().mtl_buffer().clone() });
+        let (bitmask_buffer, bitmask_offset) =
+            state.token_bitmask().map_or((None, 0usize), |cell| {
+                let mut bitmask = cell.borrow_mut();
+                let bitmask_row_len = {
+                    use crate::Array;
+                    bitmask.shape()[1]
+                };
+                let bitmask_offset = bitmask.buffer_offset()
+                    + sampling_start
+                        * bitmask_row_len
+                        * std::mem::size_of::<u32>();
+                (Some(unsafe { bitmask.mtl_buffer().clone() }), bitmask_offset)
+            });
         if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             seeds_offset,
             bitmask_buffer.as_ref(),
+            bitmask_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,
             batch_size,

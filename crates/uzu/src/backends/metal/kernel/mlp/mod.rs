@@ -1,6 +1,6 @@
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLSize,
+    FunctionConstantValues, MTLDataType, MTLSize,
 };
 
 use crate::{
@@ -8,6 +8,88 @@ use crate::{
     backends::metal::{MTLContext, MTLError},
     config::Activation,
 };
+
+// MLP Fused Epilogue Function Constant Indices
+// These must match the values in kernel/common/mlp_epilogue.h
+pub const MLP_FUSED_FC_INDEX: u64 = 50;
+pub const MLP_HIDDEN_DIM_FC_INDEX: u64 = 51;
+pub const MLP_ACTIVATION_FC_INDEX: u64 = 52;
+
+/// MLP activation type for fused kernels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum MlpActivationType {
+    SiLU = 0,
+    Gelu = 1,
+}
+
+impl From<&Activation> for MlpActivationType {
+    fn from(act: &Activation) -> Self {
+        match act {
+            Activation::SiLU {
+                ..
+            } => MlpActivationType::SiLU,
+            Activation::Gelu => MlpActivationType::Gelu,
+            Activation::Identity => {
+                panic!("Identity activation not supported for MLP fusion")
+            },
+        }
+    }
+}
+
+/// Configuration for MLP fused matmul epilogue
+#[derive(Debug, Clone, Copy)]
+pub struct MlpFusedConfig {
+    pub hidden_dim: u32,
+    pub activation: MlpActivationType,
+}
+
+impl MlpFusedConfig {
+    pub fn new(
+        hidden_dim: usize,
+        activation: &Activation,
+    ) -> Self {
+        Self {
+            hidden_dim: hidden_dim as u32,
+            activation: MlpActivationType::from(activation),
+        }
+    }
+
+    /// Create function constants for MLP fused matmul
+    pub fn make_function_constants(&self) -> FunctionConstantValues {
+        let fcv = FunctionConstantValues::new();
+        let fused = true;
+        fcv.set_constant_value_at_index(
+            &fused as *const bool as *const std::ffi::c_void,
+            MTLDataType::Bool,
+            MLP_FUSED_FC_INDEX,
+        );
+        fcv.set_constant_value_at_index(
+            &self.hidden_dim as *const u32 as *const std::ffi::c_void,
+            MTLDataType::UInt,
+            MLP_HIDDEN_DIM_FC_INDEX,
+        );
+        let act_val = self.activation as u32;
+        fcv.set_constant_value_at_index(
+            &act_val as *const u32 as *const std::ffi::c_void,
+            MTLDataType::UInt,
+            MLP_ACTIVATION_FC_INDEX,
+        );
+        fcv
+    }
+}
+
+/// Create function constants for non-fused (standard) matmul
+pub fn make_non_fused_function_constants() -> FunctionConstantValues {
+    let fcv = FunctionConstantValues::new();
+    let fused = false;
+    fcv.set_constant_value_at_index(
+        &fused as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        MLP_FUSED_FC_INDEX,
+    );
+    fcv
+}
 
 pub struct MlpGateActMulKernel {
     pipeline: ComputePipelineState,

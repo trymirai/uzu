@@ -1,8 +1,7 @@
 use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef, MTLSize};
 
-use crate::backends::metal::{KernelDataType, MTLContext};
-
 use super::{SSMKernelError, fn_suffix};
+use crate::backends::metal::{KernelDataType, MTLContext};
 
 pub struct SplitInProjKernel {
     pipeline: metal::ComputePipelineState,

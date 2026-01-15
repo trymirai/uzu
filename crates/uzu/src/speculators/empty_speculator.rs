@@ -1,5 +1,6 @@
-use super::speculator::Speculator;
 use std::collections::HashMap;
+
+use super::speculator::Speculator;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct EmptySpeculator;

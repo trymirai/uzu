@@ -286,6 +286,8 @@ impl TraceValidator {
             None,
             &token_seeds,
             token_ids.len(),
+            /*sampling_start=*/ 0,
+            /*sampling_length=*/ token_ids.len(),
             false,
             None,
             false,

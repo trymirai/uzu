@@ -1,0 +1,179 @@
+use std::collections::HashMap;
+
+use metal::{
+    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
+};
+
+use super::{
+    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
+};
+use crate::{
+    DataType,
+    backends::metal::{
+        MTLContext, MTLError,
+        kernel::matmul::common::{
+            GEMMAddMMParams, GEMMParams, MatmulArguments,
+            transpose_configuration,
+        },
+    },
+};
+
+pub struct Kernel {
+    data_type: DataType,
+    pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
+}
+
+impl Kernel {
+    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
+        {
+            return Err(MTLError::Generic(format!(
+                "Unsupported dtype for GEMM: {data_type:?}"
+            )));
+        }
+        Ok(Self {
+            data_type,
+            pipelines: HashMap::new(),
+        })
+    }
+
+    fn type_name(&self) -> &'static str {
+        match self.data_type {
+            DataType::F16 => "float16",
+            DataType::BF16 => "bfloat16",
+            DataType::F32 => "float32",
+            _ => unreachable!(),
+        }
+    }
+
+    fn kernel_name(
+        &self,
+        configuration: &PipelineConfiguration,
+    ) -> String {
+        let type_name = self.type_name();
+        let transpose_suffix = transpose_configuration(
+            configuration.transpose_a,
+            configuration.transpose_b,
+        );
+        let prefix = if configuration.tile.is_nax() {
+            "steel_gemm_nax"
+        } else {
+            "steel_gemm"
+        };
+        format!(
+            "{}_{}_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}",
+            prefix,
+            transpose_suffix.as_str(),
+            type_name,
+            type_name,
+            configuration.tile.block_rows,
+            configuration.tile.block_cols,
+            configuration.tile.block_depth,
+            configuration.tile.warps_per_row,
+            configuration.tile.warps_per_col
+        )
+    }
+
+    fn get_or_compile_pipeline(
+        &mut self,
+        context: &MTLContext,
+        configuration: &PipelineConfiguration,
+    ) -> Result<&MTLComputePipelineState, MTLError> {
+        if !self.pipelines.contains_key(configuration) {
+            let kernel_name = self.kernel_name(configuration);
+            let function_constants = metal::FunctionConstantValues::new();
+            function_constants.set_constant_value_at_index(
+                &configuration.has_batch as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                10,
+            );
+            function_constants.set_constant_value_at_index(
+                &configuration.use_out_source as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                100,
+            );
+            function_constants.set_constant_value_at_index(
+                &configuration.do_axpby as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                110,
+            );
+            function_constants.set_constant_value_at_index(
+                &configuration.align_m as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                200,
+            );
+            function_constants.set_constant_value_at_index(
+                &configuration.align_n as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                201,
+            );
+            function_constants.set_constant_value_at_index(
+                &configuration.align_k as *const bool as *const _,
+                metal::MTLDataType::Bool,
+                202,
+            );
+
+            let cache_key = format!(
+                "{}_am{}_an{}_ak{}_hb{}_uo{}_ax{}",
+                kernel_name,
+                configuration.align_m as u8,
+                configuration.align_n as u8,
+                configuration.align_k as u8,
+                configuration.has_batch as u8,
+                configuration.use_out_source as u8,
+                configuration.do_axpby as u8
+            );
+            let (pipeline_state, _) = context
+                .compute_pipeline_state_with_reflection_cached(
+                    &cache_key,
+                    &kernel_name,
+                    Some(&function_constants),
+                )?;
+            self.pipelines.insert(configuration.clone(), pipeline_state);
+        }
+        Ok(self.pipelines.get(configuration).unwrap())
+    }
+
+    pub(crate) fn encode_descriptor(
+        &mut self,
+        context: &MTLContext,
+        encoder: &ComputeCommandEncoderRef,
+        arguments: &MatmulArguments,
+        descriptor: &DispatchDescriptor,
+    ) -> Result<bool, MTLError> {
+        let pipeline_state = self.get_or_compile_pipeline(
+            context,
+            &descriptor.pipeline_configuration,
+        )?;
+        encoder.set_compute_pipeline_state(pipeline_state);
+
+        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
+        encoder.set_buffer(1, Some(arguments.b), 0);
+        if descriptor.pipeline_configuration.use_out_source {
+            if let Some(c_buffer) = arguments.c {
+                encoder.set_buffer(2, Some(c_buffer), 0);
+            }
+        }
+        encoder.set_buffer(3, Some(arguments.d), 0);
+
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<GEMMParams>() as u64,
+            &descriptor.params as *const _ as *const _,
+        );
+
+        if let Some(addmm_params) = &descriptor.addmm_params {
+            encoder.set_bytes(
+                5,
+                std::mem::size_of::<GEMMAddMMParams>() as u64,
+                addmm_params as *const _ as *const _,
+            );
+        }
+
+        encoder.dispatch_thread_groups(
+            descriptor.threadgroups,
+            descriptor.threads_per_threadgroup,
+        );
+        Ok(false)
+    }
+}
