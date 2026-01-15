@@ -35,3 +35,4 @@ external/
 crates/uzu/examples/quick_chat.rs
 .cursor
 tools
+.claude

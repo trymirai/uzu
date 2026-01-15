@@ -1,23 +1,23 @@
 [package]
 name = "cli"
 version.workspace = true
-edition = "2024"
+edition.workspace = true
 
 [[bin]]
-name = "uzu_cli"
+name = "cli"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5.39", features = ["derive"] }
-uzu = { path = "../uzu" }
-benchmarks = { path = "../benchmarks" }
-ctrlc = "3.4.1"
-indicatif = "0.18.0"
-inquire = "0.7.5"
-console = "0.16.0"
-rocket = { version = "0.5.1", features = ["json"] }
-tokio = { version = "1.45.1", features = ["full"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.148"
-uuid = { version = "1.17.0", features = ["v4"] }
-comfy-table = "7.2.1"
+clap.workspace = true
+uzu.workspace = true
+benchmarks.workspace = true
+ctrlc.workspace = true
+indicatif.workspace = true
+inquire.workspace = true
+console.workspace = true
+rocket.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+comfy-table.workspace = true
