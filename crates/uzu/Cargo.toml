@@ -38,6 +38,7 @@ mpsgraph.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 bindgen.workspace = true
 walkdir.workspace = true
 depfile.workspace = true
@@ -55,10 +56,12 @@ prettyplease.workspace = true
 itertools.workspace = true
 
 [features]
-build-debug = []
-build-clean = []
-tracing = []
+default = ["metal"]
+
+metal = []
 metal-nax = []
+
+tracing = []
 
 [[test]]
 name = "moe"
