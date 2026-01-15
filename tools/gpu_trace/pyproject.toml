@@ -5,6 +5,9 @@ description = "Record, analyze, and export Metal GPU traces"
 requires-python = ">=3.12"
 dependencies = ["cattrs>=24.1.0"]
 
+[project.scripts]
+gpu_trace = "gpu_trace.main:cli"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

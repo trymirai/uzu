@@ -131,6 +131,21 @@ class KernelStats:
 
 
 @dataclass(frozen=True)
+class CounterSample:
+    timestamp_ns: int
+    counter_id: int
+    value: float
+
+
+@dataclass(frozen=True)
+class KernelCounterStats:
+    name: str
+    total_ns: int
+    count: int
+    counters: tuple[tuple[str, float], ...]  # (counter_name, avg_value)
+
+
+@dataclass(frozen=True)
 class TraceExport:
     metadata: TraceMetadata
     utilization: GpuUtilization
@@ -139,3 +154,5 @@ class TraceExport:
     dispatches: tuple[KernelDispatch, ...]
     shaders: tuple[ShaderInfo, ...]
     kernel_summary: tuple[KernelStats, ...]
+    counter_samples: tuple[CounterSample, ...]
+    kernel_counter_stats: tuple[KernelCounterStats, ...]

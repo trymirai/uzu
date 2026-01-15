@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import bisect
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .models import (
+    CounterSample,
     CounterType,
     GpuCounterDefinition,
     GpuPerformanceStateInterval,
     GpuState,
     GpuUtilization,
+    KernelCounterStats,
     KernelDispatch,
     KernelStats,
     PerformanceState,
@@ -287,18 +290,24 @@ def extract_counter_definitions(
     counters: list[GpuCounterDefinition] = []
 
     for row in root.findall(".//row"):
-        counter_id_s = _resolve_text(row.find("./counter-id"), id_to_text)
-        name = _resolve_text(row.find("./name"), id_to_text)
-        description = _resolve_text(row.find("./description"), id_to_text)
-        max_value_s = _resolve_text(row.find("./max-value"), id_to_text)
-        counter_type_s = _resolve_text(row.find("./type"), id_to_text)
-        sample_interval_s = _resolve_text(row.find("./sample-interval"), id_to_text)
+        children = list(row)
+        if len(children) < 11:
+            continue
+
+        counter_id_s = _resolve_text(children[1], id_to_text)
+        name = _resolve_text(children[2], id_to_text)
+        max_value_s = _resolve_text(children[3], id_to_text)
+        description = _resolve_text(children[5], id_to_text)
+        counter_type_s = _resolve_text(children[7], id_to_text)
+        sample_interval_s = _resolve_text(children[10], id_to_text)
 
         if counter_id_s is None or name is None:
             continue
 
         try:
-            counter_type = CounterType(counter_type_s) if counter_type_s else CounterType.VALUE
+            counter_type = (
+                CounterType(counter_type_s) if counter_type_s else CounterType.VALUE
+            )
         except ValueError:
             counter_type = CounterType.VALUE
 
@@ -399,7 +408,9 @@ def extract_shaders(trace: Path, run_number: int) -> tuple[ShaderInfo, ...]:
             continue
 
         try:
-            shader_type = ShaderType(shader_type_s) if shader_type_s else ShaderType.UNKNOWN
+            shader_type = (
+                ShaderType(shader_type_s) if shader_type_s else ShaderType.UNKNOWN
+            )
         except ValueError:
             shader_type = ShaderType.UNKNOWN
 
@@ -417,7 +428,7 @@ def extract_shaders(trace: Path, run_number: int) -> tuple[ShaderInfo, ...]:
 
 
 def compute_kernel_summary(
-    dispatches: tuple[KernelDispatch, ...]
+    dispatches: tuple[KernelDispatch, ...],
 ) -> tuple[KernelStats, ...]:
     stats: dict[str, list[int]] = {}
     for d in dispatches:
@@ -434,6 +445,98 @@ def compute_kernel_summary(
                 count=len(durations),
                 min_ns=min(durations),
                 max_ns=max(durations),
+            )
+        )
+
+    result.sort(key=lambda s: s.total_ns, reverse=True)
+    return tuple(result)
+
+
+def extract_counter_samples(trace: Path, run_number: int) -> tuple[CounterSample, ...]:
+    try:
+        root = _export_table(trace, run_number, "gpu-counter-value")
+    except subprocess.CalledProcessError:
+        return ()
+
+    _, id_to_text = _build_id_maps(root)
+    samples: list[CounterSample] = []
+
+    for row in root.findall(".//row"):
+        children = list(row)
+        if len(children) < 3:
+            continue
+
+        timestamp_s = _resolve_text(children[0], id_to_text)
+        counter_id_s = _resolve_text(children[1], id_to_text)
+        value_s = _resolve_text(children[2], id_to_text)
+
+        if timestamp_s is None or counter_id_s is None or value_s is None:
+            continue
+
+        samples.append(
+            CounterSample(
+                timestamp_ns=int(timestamp_s),
+                counter_id=int(counter_id_s),
+                value=float(value_s),
+            )
+        )
+
+    samples.sort(key=lambda s: s.timestamp_ns)
+    return tuple(samples)
+
+
+def compute_kernel_counter_stats(
+    dispatches: tuple[KernelDispatch, ...],
+    counter_samples: tuple[CounterSample, ...],
+    counter_definitions: tuple[GpuCounterDefinition, ...],
+) -> tuple[KernelCounterStats, ...]:
+    if not dispatches or not counter_samples or not counter_definitions:
+        return ()
+
+    counter_id_to_name = {c.counter_id: c.name for c in counter_definitions}
+    samples_list = sorted(counter_samples, key=lambda s: s.timestamp_ns)
+    sample_times = [s.timestamp_ns for s in samples_list]
+
+    kernel_data: dict[str, dict[str, list[float]]] = {}
+    kernel_timing: dict[str, tuple[int, int]] = {}
+
+    for d in dispatches:
+        if d.name not in kernel_data:
+            kernel_data[d.name] = {}
+            kernel_timing[d.name] = (0, 0)
+
+        start_ns, end_ns = d.start_ns, d.start_ns + d.duration_ns
+        prev_total, prev_count = kernel_timing[d.name]
+        kernel_timing[d.name] = (prev_total + d.duration_ns, prev_count + 1)
+
+        start_idx = bisect.bisect_left(sample_times, start_ns)
+        end_idx = bisect.bisect_right(sample_times, end_ns)
+
+        for i in range(start_idx, end_idx):
+            sample = samples_list[i]
+            counter_name = counter_id_to_name.get(sample.counter_id)
+            if counter_name is None:
+                continue
+
+            if counter_name not in kernel_data[d.name]:
+                kernel_data[d.name][counter_name] = []
+            kernel_data[d.name][counter_name].append(sample.value)
+
+    result: list[KernelCounterStats] = []
+    for name, counter_values in kernel_data.items():
+        total_ns, count = kernel_timing[name]
+        avg_counters: list[tuple[str, float]] = []
+
+        for counter_name, values in sorted(counter_values.items()):
+            if values:
+                avg_counters.append((counter_name, sum(values) / len(values)))
+
+        result.append(
+            KernelCounterStats(
+                name=name,
+                total_ns=total_ns,
+                count=count,
+                counters=tuple(avg_counters),
             )
         )
 

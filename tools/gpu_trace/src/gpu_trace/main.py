@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 
 from .extractors import (
+    compute_kernel_counter_stats,
     compute_kernel_summary,
     extract_counter_definitions,
+    extract_counter_samples,
     extract_gpu_utilization,
     extract_kernel_dispatches,
     extract_metadata,
@@ -15,18 +17,40 @@ from .extractors import (
 )
 from .formatting import print_comparison, print_summary
 from .models import TraceExport
+from .progress import status
 from .recorder import default_output_path, record_trace
 from .serialization import to_json
 
 
 def export_trace(trace: Path, run_number: int) -> TraceExport:
-    metadata = extract_metadata(trace, run_number)
-    utilization = extract_gpu_utilization(trace, run_number)
-    performance_states = extract_performance_states(trace, run_number)
-    counter_definitions = extract_counter_definitions(trace, run_number)
-    dispatches = extract_kernel_dispatches(trace, run_number)
-    shaders = extract_shaders(trace, run_number)
-    kernel_summary = compute_kernel_summary(dispatches)
+    with status("Extracting trace metadata..."):
+        metadata = extract_metadata(trace, run_number)
+
+    with status("Analyzing GPU utilization..."):
+        utilization = extract_gpu_utilization(trace, run_number)
+
+    with status("Reading performance states..."):
+        performance_states = extract_performance_states(trace, run_number)
+
+    with status("Loading counter definitions..."):
+        counter_definitions = extract_counter_definitions(trace, run_number)
+
+    with status("Extracting kernel dispatches..."):
+        dispatches = extract_kernel_dispatches(trace, run_number)
+
+    with status("Loading shader info..."):
+        shaders = extract_shaders(trace, run_number)
+
+    with status("Computing kernel statistics..."):
+        kernel_summary = compute_kernel_summary(dispatches)
+
+    with status("Extracting counter samples..."):
+        counter_samples = extract_counter_samples(trace, run_number)
+
+    with status("Correlating counters with kernels..."):
+        kernel_counter_stats = compute_kernel_counter_stats(
+            dispatches, counter_samples, counter_definitions
+        )
 
     return TraceExport(
         metadata=metadata,
@@ -36,6 +60,8 @@ def export_trace(trace: Path, run_number: int) -> TraceExport:
         dispatches=dispatches,
         shaders=shaders,
         kernel_summary=kernel_summary,
+        counter_samples=counter_samples,
+        kernel_counter_stats=kernel_counter_stats,
     )
 
 
@@ -67,7 +93,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Trace saved: {output}", file=sys.stderr)
 
     export = export_trace(output, 1)
-    print_summary(export)
+    print_summary(export, verbose=args.verbose)
 
     if args.json:
         json_path = args.json
@@ -83,7 +109,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         return 1
 
     export = export_trace(args.trace, args.run)
-    print_summary(export)
+    print_summary(export, verbose=args.verbose)
 
     if args.json:
         indent = None if args.compact else 2
@@ -113,54 +139,149 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+MAIN_DESCRIPTION = """
+Metal GPU Trace Tool - Profile GPU performance on macOS.
+
+Record, analyze, and compare Metal GPU traces with per-kernel timing,
+hardware counter data (ALU, memory bandwidth, cache utilization),
+and performance bottleneck analysis.
+
+Requires Xcode and xctrace to be installed.
+""".strip()
+
+MAIN_EPILOG = """
+Quick Start:
+  1. Record a trace:     gpu_trace run -- ./my_metal_app
+  2. Analyze results:    gpu_trace analyze /tmp/gpu_trace_*.trace
+  3. Compare traces:     gpu_trace compare before.trace after.trace
+
+For detailed per-kernel hardware counters, use --gpu-counters:
+  gpu_trace run --gpu-counters -- ./my_metal_app
+
+Export to JSON for further analysis:
+  gpu_trace analyze /tmp/my.trace --json output.json
+
+Use -v/--verbose to show all hardware counters per kernel.
+"""
+
+RUN_DESCRIPTION = """
+Record a Metal GPU trace using Xcode Instruments.
+
+Launches the specified command and records GPU activity until the process
+exits or Ctrl-C is pressed. Automatically displays a summary of kernel
+timing and GPU utilization.
+""".strip()
+
+RUN_EPILOG = """
+Examples:
+  # Basic recording
+  gpu_trace run -- ./my_app arg1 arg2
+
+  # With hardware performance counters (ALU, memory, cache)
+  gpu_trace run --gpu-counters -- ./my_app
+
+  # Attach to running process with time limit
+  gpu_trace run --attach 12345 --time-limit 5s
+
+  # Save JSON export alongside trace
+  gpu_trace run --json results.json -- ./my_app
+
+  # Custom output path
+  gpu_trace run -o /path/to/my.trace -- ./my_app
+
+  # Verbose output with all counters
+  gpu_trace run -v --gpu-counters -- ./my_app
+"""
+
+ANALYZE_DESCRIPTION = """
+Analyze an existing .trace bundle created by gpu_trace or Xcode Instruments.
+
+Displays GPU utilization, per-kernel timing, and hardware counter data
+if available. Use --json to export full data for further analysis.
+""".strip()
+
+ANALYZE_EPILOG = """
+Examples:
+  # Basic analysis
+  gpu_trace analyze /tmp/my.trace
+
+  # Export to JSON file
+  gpu_trace analyze /tmp/my.trace --json output.json
+
+  # JSON to stdout (for piping)
+  gpu_trace analyze /tmp/my.trace --json -
+
+  # Compact JSON (no indentation)
+  gpu_trace analyze /tmp/my.trace --json output.json --compact
+
+  # Verbose output with all counters
+  gpu_trace analyze /tmp/my.trace -v
+"""
+
+COMPARE_DESCRIPTION = """
+Compare two GPU traces side-by-side.
+
+Shows differences in GPU utilization, kernel timing, and performance
+metrics. Useful for measuring the impact of optimizations.
+""".strip()
+
+COMPARE_EPILOG = """
+Examples:
+  # Basic comparison
+  gpu_trace compare baseline.trace optimized.trace
+
+  # With custom labels
+  gpu_trace compare a.trace b.trace --label1 before --label2 after
+"""
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="gpu_trace",
-        description="Record, analyze, and export Metal GPU traces",
+        description=MAIN_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=MAIN_EPILOG,
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
     # --- run subcommand ---
     run_p = sub.add_parser(
         "run",
         help="Record a GPU trace while running a command",
+        description=RUN_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  gpu_trace run -- ./my_app arg1 arg2
-  gpu_trace run --gpu-counters -- ./my_app
-  gpu_trace run --attach 12345 --time-limit 5s
-  gpu_trace run --json trace.json -- ./my_app
-        """,
+        epilog=RUN_EPILOG,
     )
     run_p.add_argument(
-        "--output",
-        "-o",
+        "-o", "--output",
         type=Path,
         default=None,
+        metavar="PATH",
         help="Output .trace path (default: /tmp/gpu_trace_<timestamp>.trace)",
     )
     run_p.add_argument(
         "--template",
         default="Metal System Trace",
-        help="xctrace template (default: Metal System Trace)",
+        metavar="NAME",
+        help="Xcode Instruments template (default: Metal System Trace)",
     )
     run_p.add_argument(
         "--gpu-counters",
         action="store_true",
-        help="Enable Metal GPU Counters for per-kernel timing",
+        help="Enable Metal GPU Counters for detailed hardware metrics",
     )
     run_p.add_argument(
         "--time-limit",
         default=None,
-        help="Recording time limit (e.g., 5s, 500ms)",
+        metavar="DURATION",
+        help="Recording time limit, e.g. 5s, 500ms (default: until exit)",
     )
     run_p.add_argument(
         "--env",
         action="append",
         default=[],
-        help="Environment variable (VAR=value)",
+        metavar="VAR=VALUE",
+        help="Set environment variable for the launched process",
     )
     run_p.add_argument(
         "--attach",
@@ -173,7 +294,13 @@ Examples:
         "--json",
         type=Path,
         default=None,
-        help="Also export JSON to file",
+        metavar="PATH",
+        help="Export trace data to JSON file",
+    )
+    run_p.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show all hardware counters per kernel",
     )
     run_p.add_argument(
         "command",
@@ -185,13 +312,9 @@ Examples:
     analyze_p = sub.add_parser(
         "analyze",
         help="Analyze an existing .trace bundle",
+        description=ANALYZE_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  gpu_trace analyze /tmp/my.trace
-  gpu_trace analyze /tmp/my.trace --json output.json
-  gpu_trace analyze /tmp/my.trace --json -  # JSON to stdout
-        """,
+        epilog=ANALYZE_EPILOG,
     )
     analyze_p.add_argument(
         "trace",
@@ -202,30 +325,34 @@ Examples:
         "--run",
         type=int,
         default=1,
+        metavar="N",
         help="Run number to analyze (default: 1)",
     )
     analyze_p.add_argument(
         "--json",
         type=Path,
         default=None,
-        help="Export JSON to file (use - for stdout)",
+        metavar="PATH",
+        help="Export trace data to JSON file (use - for stdout)",
     )
     analyze_p.add_argument(
         "--compact",
         action="store_true",
-        help="Compact JSON output",
+        help="Compact JSON output (no indentation)",
+    )
+    analyze_p.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show all hardware counters per kernel",
     )
 
     # --- compare subcommand ---
     compare_p = sub.add_parser(
         "compare",
         help="Compare two traces side-by-side",
+        description=COMPARE_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  gpu_trace compare baseline.trace optimized.trace
-  gpu_trace compare a.trace b.trace --label1 before --label2 after
-        """,
+        epilog=COMPARE_EPILOG,
     )
     compare_p.add_argument(
         "trace1",
@@ -241,17 +368,20 @@ Examples:
         "--run",
         type=int,
         default=1,
+        metavar="N",
         help="Run number to compare (default: 1)",
     )
     compare_p.add_argument(
         "--label1",
         default="baseline",
-        help="Label for first trace",
+        metavar="LABEL",
+        help="Label for first trace (default: baseline)",
     )
     compare_p.add_argument(
         "--label2",
         default="comparison",
-        help="Label for second trace",
+        metavar="LABEL",
+        help="Label for second trace (default: comparison)",
     )
 
     args = parser.parse_args(argv)
@@ -266,5 +396,9 @@ Examples:
     return 1
 
 
-if __name__ == "__main__":
+def cli() -> None:
     raise SystemExit(main(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    cli()
