@@ -1,6 +1,5 @@
 mod array_id;
 mod common_aux_buffers;
-mod embeddings_buffers;
 mod hash_map_id;
 mod language_model_generator_aux_buffers;
 mod mode;
@@ -12,7 +11,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
-pub use embeddings_buffers::EmbeddingsBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
 pub use mode::{
@@ -608,11 +606,7 @@ impl ForwardPassState {
             ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
 
             // Shared buffer arrays
-            ArrayId::EmbeddingsInputWeights
-            | ArrayId::EmbeddingsOutputWeights
-            | ArrayId::EmbeddingsScales
-            | ArrayId::RopeCosines(_)
-            | ArrayId::RopeSines(_) => self
+            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => self
                 .shared_buffer_array(id)
                 .expect("Shared buffer array should be available"),
 
@@ -823,67 +817,6 @@ impl ForwardPassState {
     ) -> Option<ArrayCell> {
         let shared = self.shared_buffers.borrow();
         match id {
-            ArrayId::EmbeddingsInputWeights => Some(match &shared.embeddings {
-                EmbeddingsBuffers::Tied {
-                    weights,
-                } => weights.clone(),
-                EmbeddingsBuffers::Untied {
-                    input_weights,
-                    ..
-                } => input_weights.clone(),
-                EmbeddingsBuffers::QuantizedTied {
-                    weights,
-                    ..
-                } => weights.clone(),
-                EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                    input_weights,
-                    ..
-                } => input_weights.clone(),
-                EmbeddingsBuffers::MLXQuantizedUntied {
-                    packed_input_weights,
-                    ..
-                } => packed_input_weights.clone(),
-            }),
-            ArrayId::EmbeddingsOutputWeights => {
-                Some(match &shared.embeddings {
-                    EmbeddingsBuffers::Tied {
-                        weights,
-                    } => weights.clone(),
-                    EmbeddingsBuffers::Untied {
-                        output_weights,
-                        ..
-                    } => output_weights.clone(),
-                    EmbeddingsBuffers::QuantizedTied {
-                        weights,
-                        ..
-                    } => weights.clone(),
-                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                        packed_output_weights,
-                        ..
-                    } => packed_output_weights.clone(),
-                    EmbeddingsBuffers::MLXQuantizedUntied {
-                        packed_output_weights,
-                        ..
-                    } => packed_output_weights.clone(),
-                })
-            },
-            ArrayId::EmbeddingsScales => Some(match &shared.embeddings {
-                EmbeddingsBuffers::QuantizedTied {
-                    scales,
-                    ..
-                } => scales.clone(),
-                EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                    output_scales,
-                    ..
-                } => output_scales.clone(),
-                EmbeddingsBuffers::MLXQuantizedUntied {
-                    output_scales,
-                    ..
-                } => output_scales.clone(),
-                _ => panic!(
-                    "Expected QuantizedTied or MLXSemiQuantizedUntied embeddings"
-                ),
-            }),
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
                 RopeType::Global => shared
                     .global_rope

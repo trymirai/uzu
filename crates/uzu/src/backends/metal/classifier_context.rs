@@ -108,7 +108,6 @@ impl ClassifierContext {
 
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
-            shared_bufs.embeddings.update_data(&root_loader_view);
             if let Some(global_rope) = &mut shared_bufs.global_rope {
                 global_rope.update_data(
                     &transformer_tree,
