@@ -5,6 +5,8 @@ use regex::Regex;
 use shaderc::CompileOptions;
 use crate::vulkan::core;
 
+static SPECIALIZE_REGEX: OnceLock<Regex> = OnceLock::new();
+
 #[derive(Debug)]
 pub struct ShaderSpecializations {
     pub types: HashMap<String, Vec<String>>
@@ -31,14 +33,16 @@ impl ShaderSpecializations {
     }
 }
 
-static SPECIALIZE_REGEX: OnceLock<Regex> = OnceLock::new();
-
 fn get_specialize_types_regex<'a>() -> &'a Regex {
     SPECIALIZE_REGEX.get_or_init(|| {
         Regex::new(r"^\s*//\s*SPECIALIZE\s*\(([A-Za-z_]\w*)(?:,\s*([A-Za-z_]\w*(?:,\s*[A-Za-z_]\w*)*))?\)$").unwrap()
     })
 }
 
+/// Parses source code for strings that matches regex [SPECIALIZE_REGEX]:
+/// "// SPECIALIZE(TYPE_NAME, type_1, type_2, ... type_N)".
+///
+/// For example "SPECIALIZE(BUFFER_TYPE, float, float16_t)"
 fn get_shader_specializations(
     source: &str
 ) -> ShaderSpecializations {
@@ -87,10 +91,9 @@ pub fn fill_comp_requests_with_specializations(
         // fill options and extensions
         for (type_name, type_value) in definitions {
             let mut actual_type = type_value;
-            if actual_type == "float16" {
+            if actual_type == "float16_t" {
                 extensions.insert(core::GL_EXT_SHADER_16BIT_STORAGE);
                 extensions.insert(core::GL_EXT_SHADER_EXPLICIT_ARITHMETIC_TYPES_FLOAT_16);
-                actual_type = "float16_t";
             }
             options.add_macro_definition(type_name, Some(actual_type));
             out_file_name.push('_');
