@@ -1,5 +1,3 @@
-extern crate core;
-
 pub mod backends;
 pub mod classifier;
 pub mod config;
