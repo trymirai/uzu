@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
 
     try_join!(metal::main(), shared_types::main())?;
     if cfg!(feature = "vulkan") {
-        vulkan::main().await;
+        vulkan::main().await.expect("Build for Vulkan failed");
     }
 
     debug_log!("build script ended");

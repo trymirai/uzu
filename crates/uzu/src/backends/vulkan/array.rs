@@ -63,7 +63,7 @@ impl Array for VkArray {
     }
 
     fn label(&self) -> String {
-        "".to_string()
+        String::from(&self.label)
     }
 
     fn buffer(&self) -> &[u8] {

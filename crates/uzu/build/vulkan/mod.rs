@@ -6,8 +6,8 @@ use walkdir::WalkDir;
 mod core;
 mod specialize;
 
-pub async fn main() {
-    let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let comp_shader_paths = WalkDir::new(&src_dir).into_iter()
         .filter_map(|res| res.ok())
         .filter(|entry| {
@@ -22,9 +22,7 @@ pub async fn main() {
 
     let tasks = comp_shader_paths.into_iter()
         .map(|file_path| async move {
-            core::compile_vulkan_shader(&file_path)
-                .await
-                .map_err(|e| format!("failed to compile {}: {}", file_path.display(), e))
+            core::compile_vulkan_shader(&file_path).await
         });
 
     let max_concurrency = std::thread::available_parallelism()
@@ -35,14 +33,11 @@ pub async fn main() {
         .collect::<Vec<_>>()
         .await;
 
-    let mut had_error = false;
     for res in results {
-        if let Err(e) = res {
-            eprintln!("{e}");
-            had_error = true;
+        if let Err(err) = res {
+            return Err(err);
         }
     }
-    if had_error {
-        panic!("Shader compilation failed");
-    }
+
+    Ok(())
 }
