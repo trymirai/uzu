@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 use shaderc::{CompileOptions, Compiler};
 use crate::vulkan::specialize;
-use crate::vulkan::specialize::ShaderSpecializations;
 
-struct CompilationRequest {
+const ENTRY_POINT_NAME: &str = "main";
+pub const GL_EXT_SHADER_16BIT_STORAGE: &str = "#extension GL_EXT_shader_16bit_storage : enable";
+pub const GL_EXT_SHADER_EXPLICIT_ARITHMETIC_TYPES_FLOAT_16: &str = "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable";
+
+pub struct CompilationRequest {
     pub source: String,
     pub options: CompileOptions<'static>,
     pub out_file_path_str: String
@@ -37,36 +40,6 @@ fn get_common_compile_options(
     Ok(options)
 }
 
-fn fill_comp_requests_with_specializations(
-    requests: &mut Vec<CompilationRequest>,
-    specializations: &ShaderSpecializations,
-    common_options: &CompileOptions<'static>,
-    source: &str,
-    file_path: &PathBuf
-) -> Result<(), Box<dyn std::error::Error>> {
-    if specializations.types.is_empty() {
-        return Ok(())
-    }
-
-    let file_dir = file_path.parent().unwrap();
-
-    let all_definitions = specializations.get_all_types_definitions();
-    for _definitions in all_definitions {
-        let file_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
-        let options = CompileOptions::from(common_options.clone());
-
-        let out_file_path = file_dir.join(file_name).with_extension(".spv");
-        let request = CompilationRequest {
-            source: source.to_string(),
-            options,
-            out_file_path_str: out_file_path.to_str().unwrap().to_string()
-        };
-        requests.push(request);
-    }
-
-    Ok(())
-}
-
 pub async fn compile_vulkan_shader(
     file_path: &PathBuf
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -77,10 +50,8 @@ pub async fn compile_vulkan_shader(
     let common_options = get_common_compile_options(dir)?;
 
     let mut comp_requests: Vec<CompilationRequest> = Vec::new();
-    let specializations = specialize::get_shader_specializations(source.as_str());
-    fill_comp_requests_with_specializations(
+    specialize::fill_comp_requests_with_specializations(
         &mut comp_requests,
-        &specializations,
         &common_options,
         source.as_str(),
         file_path
@@ -97,14 +68,26 @@ pub async fn compile_vulkan_shader(
     }
 
     for request in comp_requests {
+        // keep it for debug purposes
+        // println!("cargo:warning=Source: {:?}", request.source);
+        // let preprocessed = compiler.preprocess(
+        //     &request.source,
+        //     &file_path.to_string_lossy(),
+        //     ENTRY_POINT_NAME,
+        //     Some(&request.options)
+        // ).unwrap_or_else(|err| panic!("Can not preprocess source: {err}"));
+        // println!("cargo:warning=Preprocessed: {:?}", preprocessed.as_text());
+
         let artifact = compiler.compile_into_spirv(
             &request.source,
             shaderc::ShaderKind::Compute,
             &file_path.to_string_lossy(),
-            "main",
+            ENTRY_POINT_NAME,
             Some(&request.options)
         )?;
         std::fs::write(&request.out_file_path_str, artifact.as_binary_u8())?;
+
+        println!("cargo:rerun-if-changed={}", &request.out_file_path_str);
     }
 
     Ok(())
