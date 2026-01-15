@@ -19,7 +19,7 @@ from .formatting import print_comparison, print_summary
 from .models import TraceExport
 from .progress import status
 from .recorder import default_output_path, record_trace
-from .serialization import to_json
+from .serialization import from_json, to_json
 
 
 def export_trace(trace: Path, run_number: int) -> TraceExport:
@@ -138,6 +138,22 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_view(args: argparse.Namespace) -> int:
+    json_path = args.json_file
+    if not json_path.exists():
+        print(f"Error: JSON file not found: {json_path}", file=sys.stderr)
+        return 1
+
+    try:
+        export = from_json(json_path.read_text())
+    except Exception as e:
+        print(f"Error: Failed to parse JSON: {e}", file=sys.stderr)
+        return 1
+
+    print_summary(export, verbose=args.verbose)
+    return 0
+
+
 MAIN_DESCRIPTION = """
 Metal GPU Trace Tool - Profile GPU performance on macOS.
 
@@ -231,6 +247,22 @@ Examples:
 
   # With custom labels
   gpu_trace compare a.trace b.trace --label1 before --label2 after
+"""
+
+VIEW_DESCRIPTION = """
+Visualize a previously exported JSON trace file.
+
+Displays the same summary tables as 'analyze' but from a JSON export,
+allowing offline viewing without the original .trace bundle.
+""".strip()
+
+VIEW_EPILOG = """
+Examples:
+  # View exported JSON
+  gpu_trace view output.json
+
+  # Verbose output with all counters
+  gpu_trace view output.json -v
 """
 
 
@@ -383,6 +415,25 @@ def main(argv: list[str]) -> int:
         help="Label for second trace (default: comparison)",
     )
 
+    # --- view subcommand ---
+    view_p = sub.add_parser(
+        "view",
+        help="View a previously exported JSON trace",
+        description=VIEW_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=VIEW_EPILOG,
+    )
+    view_p.add_argument(
+        "json_file",
+        type=Path,
+        help="Path to JSON file exported by 'analyze --json'",
+    )
+    view_p.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show all hardware counters per kernel",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run":
@@ -391,6 +442,8 @@ def main(argv: list[str]) -> int:
         return cmd_analyze(args)
     elif args.cmd == "compare":
         return cmd_compare(args)
+    elif args.cmd == "view":
+        return cmd_view(args)
 
     return 1
 

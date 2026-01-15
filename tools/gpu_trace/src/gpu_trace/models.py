@@ -149,10 +149,10 @@ class KernelCounterStats:
 class TraceExport:
     metadata: TraceMetadata
     utilization: GpuUtilization
-    performance_states: tuple[GpuPerformanceStateInterval, ...]
-    counter_definitions: tuple[GpuCounterDefinition, ...]
-    dispatches: tuple[KernelDispatch, ...]
-    shaders: tuple[ShaderInfo, ...]
-    kernel_summary: tuple[KernelStats, ...]
-    counter_samples: tuple[CounterSample, ...]
-    kernel_counter_stats: tuple[KernelCounterStats, ...]
+    performance_states: tuple[GpuPerformanceStateInterval, ...] = ()
+    counter_definitions: tuple[GpuCounterDefinition, ...] = ()
+    dispatches: tuple[KernelDispatch, ...] = ()
+    shaders: tuple[ShaderInfo, ...] = ()
+    kernel_summary: tuple[KernelStats, ...] = ()
+    counter_samples: tuple[CounterSample, ...] = ()
+    kernel_counter_stats: tuple[KernelCounterStats, ...] = ()

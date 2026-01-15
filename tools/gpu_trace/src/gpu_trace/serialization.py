@@ -47,7 +47,9 @@ _converter = _make_converter()
 
 
 def to_dict(export: TraceExport) -> dict[str, Any]:
-    return _converter.unstructure(export)
+    data = _converter.unstructure(export)
+    data.pop("counter_samples", None)
+    return data
 
 
 def to_json(export: TraceExport, indent: int | None = 2) -> str:

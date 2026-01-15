@@ -26,3 +26,4 @@
 /crates/uzu/examples/quick_chat.rs
 /external
 
+tools/gpu_trace/*.json
