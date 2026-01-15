@@ -19,10 +19,10 @@ pub use scratch_buffers::ScratchBuffers;
 pub use short_conv_layer::ShortConvLayer;
 pub use ssm_layer::SSMLayer;
 pub use state::{
-    ArrayCell, ArrayId, ClassifierModeState, CommonAuxBuffers,
-    EmbeddingsBuffers, ForwardPassMode, ForwardPassState, HashMapId,
-    LanguageModelGeneratorAuxBuffers, LanguageModelGeneratorModeState,
-    MoeExpertWeights, RopeBuffers, RopeType, SharedBuffers,
+    ArrayCell, ArrayId, ClassifierModeState, CommonAuxBuffers, ForwardPassMode,
+    ForwardPassState, HashMapId, LanguageModelGeneratorAuxBuffers,
+    LanguageModelGeneratorModeState, MoeExpertWeights, RopeBuffers, RopeType,
+    SharedBuffers,
 };
 
 pub use super::encodable_block::{EncodableBlock, EncodingParameters};

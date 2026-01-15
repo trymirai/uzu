@@ -100,8 +100,13 @@ where
             .get(key)
             .ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
-        let mut array =
-            self.context.array(&metadata_entry.shape, metadata_entry.data_type);
+        let array_key = key.replace(".", "_");
+        let array_label = format!("parameter_loader_{array_key}");
+        let mut array = self.context.array(
+            &metadata_entry.shape,
+            metadata_entry.data_type,
+            array_label,
+        );
         let expected_size = array.size_in_bytes();
         if expected_size != size {
             return Err(ParameterLoaderError::SizeMismatch {

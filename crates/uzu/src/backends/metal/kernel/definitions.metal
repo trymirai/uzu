@@ -224,7 +224,9 @@ static T threadgroup_raking_prefix_exclusive_sum(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[lid];
+  const T result = shared[lid];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -261,7 +263,9 @@ static T threadgroup_raking_reduce_sum(
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -298,7 +302,9 @@ static T threadgroup_raking_reduce_max(
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -334,7 +340,9 @@ static T threadgroup_raking_reduce_min(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -373,7 +381,9 @@ static T threadgroup_cooperative_reduce_sum(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -408,7 +418,9 @@ static T threadgroup_cooperative_reduce_max(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -443,8 +455,25 @@ static T threadgroup_cooperative_reduce_min(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const T result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
+
+// MARK: - DSL Annotation Helpers
+
+#define DSL_META(...) [[clang::annotate("", __VA_ARGS__)]]
+#define DSL_STR(X) #X
+#define DSL_XSTR(X) DSL_STR(X)
+
+#define SPECIALIZE(TYPENAME, ...)                                              \
+  template <typename TYPENAME>                                                 \
+  DSL_META("dsl.specialize", #TYPENAME, #__VA_ARGS__)
+#define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
+
+#define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))
+#define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))
+#define THREADS(EXPR) DSL_META("dsl.threads", DSL_XSTR(EXPR))
 
 // MARK: - Generate Template Kernels
 

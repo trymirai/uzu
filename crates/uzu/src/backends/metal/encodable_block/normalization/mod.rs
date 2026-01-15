@@ -7,8 +7,7 @@ mod rms_norm;
 use std::rc::Rc;
 
 pub use layer_norm::LayerNorm;
-use metal::CommandBufferRef;
-use metal::ComputeCommandEncoderRef;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 

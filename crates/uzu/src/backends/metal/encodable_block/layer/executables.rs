@@ -40,7 +40,7 @@ pub struct LayerExecutables {
 impl LayerExecutables {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mtl_context: &MTLContext,
+        mtl_context: Rc<MTLContext>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
         compilation_config: Rc<CompilationConfig>,
@@ -55,6 +55,7 @@ impl LayerExecutables {
         rope: Option<Rc<Box<dyn EncodableBlock>>>,
     ) -> Self {
         autoreleasepool(|_| {
+            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
             let intermediate_data_type: DataType =
                 match &layer_config.mixer_config {
                     MixerConfig::Attention(attention) => attention
@@ -74,7 +75,7 @@ impl LayerExecutables {
 
             let copy_main_to_shortcut: Box<dyn EncodableBlock> = Box::new(
                 TensorCopy::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
                 )
@@ -83,7 +84,7 @@ impl LayerExecutables {
 
             let pre_attention_norm: Box<dyn EncodableBlock> = Box::new(
                 RMSNorm::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     layer_config.pre_attention_norm_config.clone(),
                     ArrayId::Main,
@@ -108,7 +109,7 @@ impl LayerExecutables {
                             num_groups * head_dim,
                             num_groups * head_dim,
                         ],
-                        mtl_context,
+                        ctx,
                         &decoder_layer_loader
                             .subtree("mixer.qkv_projection")
                             .unwrap(),
@@ -122,7 +123,7 @@ impl LayerExecutables {
                             || attention_config.key_norm_config.is_some()
                         {
                             match QKNorm::new(
-                                mtl_context,
+                                ctx,
                                 intermediate_data_type,
                                 attention_config.query_norm_config.clone(),
                                 attention_config.key_norm_config.clone(),
@@ -148,7 +149,7 @@ impl LayerExecutables {
                         attention_config.has_out_biases,
                         num_heads * head_dim,
                         [model_dim],
-                        mtl_context,
+                        ctx,
                         &decoder_layer_loader
                             .subtree("mixer.out_projection")
                             .unwrap(),
@@ -159,7 +160,7 @@ impl LayerExecutables {
 
                     let attention = Box::new(
                         Attention::new(
-                            mtl_context,
+                            ctx,
                             kernel_data_type,
                             layer_index,
                             attention_scale,
@@ -181,7 +182,7 @@ impl LayerExecutables {
                 MixerConfig::Mamba(mamba_config) => {
                     let mixer: Box<dyn EncodableBlock> =
                         Box::new(MambaMixer::new(
-                            mtl_context,
+                            ctx,
                             layer_type.clone(),
                             mamba_config.clone(),
                             compilation_config.clone(),
@@ -199,7 +200,7 @@ impl LayerExecutables {
                 MixerConfig::ShortConv(short_conv_config) => {
                     let mixer: Box<dyn EncodableBlock> =
                         Box::new(ShortConvMixer::new(
-                            mtl_context,
+                            ctx,
                             layer_type.clone(),
                             short_conv_config.clone(),
                             compilation_config.clone(),
@@ -219,7 +220,7 @@ impl LayerExecutables {
                 {
                     Some(Box::new(
                         RMSNorm::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,
@@ -236,7 +237,7 @@ impl LayerExecutables {
 
             let main_shortcut_add_swap: Box<dyn EncodableBlock> = Box::new(
                 TensorAddSwap::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )
@@ -245,7 +246,7 @@ impl LayerExecutables {
 
             let pre_mlp_norm: Box<dyn EncodableBlock> = Box::new(
                 RMSNorm::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
                     ArrayId::Main,
@@ -259,7 +260,7 @@ impl LayerExecutables {
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                mtl_context,
+                &mtl_context,
                 &decoder_layer_loader.subtree("mlp").unwrap(),
             )
             .expect("Failed to create mlp block");
@@ -268,7 +269,7 @@ impl LayerExecutables {
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
                     Some(Box::new(
                         RMSNorm::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,

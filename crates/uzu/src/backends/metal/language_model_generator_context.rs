@@ -133,7 +133,7 @@ pub struct LanguageModelGeneratorContext {
 
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers,
+    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
 
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,

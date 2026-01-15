@@ -1,8 +1,5 @@
-use std::{env};
-use std::path::{Path, PathBuf};
-use futures::stream::{self, StreamExt};
+use std::path::PathBuf;
 use shaderc::{CompileOptions, Compiler};
-use walkdir::WalkDir;
 use crate::vulkan::specialize;
 use crate::vulkan::specialize::ShaderSpecializations;
 
@@ -70,7 +67,7 @@ fn fill_comp_requests_with_specializations(
     Ok(())
 }
 
-async fn compile_vulkan_shader(
+pub async fn compile_vulkan_shader(
     file_path: &PathBuf
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string(file_path)?;
@@ -111,45 +108,4 @@ async fn compile_vulkan_shader(
     }
 
     Ok(())
-}
-
-pub async fn compile_vulkan_shaders() {
-    let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let comp_shader_paths = WalkDir::new(&src_dir).into_iter()
-        .filter_map(|res| res.ok())
-        .filter(|entry| {
-            entry.path().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("comp")
-        })
-        .map(|entry| entry.into_path())
-        .collect::<Vec<_>>();
-    comp_shader_paths.iter().for_each(|file_path| {
-        let file_name = file_path.to_str().unwrap();
-        println!("cargo:rerun-if-changed={}", file_name);
-    });
-
-    let tasks = comp_shader_paths.into_iter()
-        .map(|file_path| async move {
-            compile_vulkan_shader(&file_path)
-                .await
-                .map_err(|e| format!("failed to compile {}: {}", file_path.display(), e))
-        });
-
-    let max_concurrency = std::thread::available_parallelism()
-        .map(|x| x.get())
-        .unwrap_or(4);
-    let results = stream::iter(tasks)
-        .buffer_unordered(max_concurrency)
-        .collect::<Vec<_>>()
-        .await;
-
-    let mut had_error = false;
-    for res in results {
-        if let Err(e) = res {
-            eprintln!("{e}");
-            had_error = true;
-        }
-    }
-    if had_error {
-        panic!("Shader compilation failed");
-    }
 }

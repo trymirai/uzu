@@ -28,7 +28,7 @@ pub struct ClassifierContext {
     pub command_buffer: CommandBuffer,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers,
+    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
@@ -108,7 +108,6 @@ impl ClassifierContext {
 
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
-            shared_bufs.embeddings.update_data(&root_loader_view);
             if let Some(global_rope) = &mut shared_bufs.global_rope {
                 global_rope.update_data(
                     &transformer_tree,
@@ -198,7 +197,7 @@ impl ClassifierContext {
                     })?;
 
                 Ok(ClassifierLayer::new(
-                    &mtl_context,
+                    mtl_context.clone(),
                     layer_config,
                     compilation_config.clone(),
                     layer_index,

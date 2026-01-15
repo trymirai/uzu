@@ -1,0 +1,6 @@
+# Pins for MLX repo used by build.rs
+# Similar to xgrammar-rs pattern
+
+[repo]
+url = "https://github.com/ml-explore/mlx.git"
+ref = "v0.30.1"

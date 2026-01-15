@@ -1,13 +1,12 @@
-mod arguments;
+pub mod common;
+mod dispatch_descriptor;
+mod gemm;
 mod gemv;
 mod kernel;
-mod pipeline;
-#[allow(dead_code, clippy::unnecessary_operation, clippy::identity_op)]
-mod shared_types;
-mod splitk;
-mod transpose;
+mod split_k;
 
-pub use arguments::MatmulArguments;
+pub use common::MatmulArguments;
+pub use dispatch_descriptor::{MatmulKernelVariant, determine_kernel_variant};
 pub use gemv::GemvKernel;
 pub use kernel::MatmulKernel;
-pub use splitk::SplitKGemm;
+pub use split_k::SplitKGemm;
