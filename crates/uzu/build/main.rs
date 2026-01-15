@@ -15,7 +15,7 @@ async fn main() {
     generate_metal_bindings();
 
     if cfg!(feature = "vulkan") {
-        vulkan::compile_vulkan_shaders().await;
+        vulkan::core::compile_vulkan_shaders().await;
         write_empty_metallib();
     } else if cfg!(feature = "metal-shaders") {
         println!("cargo:rerun-if-env-changed=MY_API_LEVEL");
