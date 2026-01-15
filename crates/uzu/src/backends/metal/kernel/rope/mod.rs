@@ -111,9 +111,9 @@ impl RopeKernel {
         );
 
         let threads_per_threadgroup = MTLSize {
-            width: 32,
+            width: 1,
             height: 1,
-            depth: 1,
+            depth: 32,
         };
         let total_threads = MTLSize {
             width: num_heads as u64,

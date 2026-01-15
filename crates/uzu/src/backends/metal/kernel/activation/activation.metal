@@ -43,8 +43,7 @@ template <typename T>
 }
 
 // Explicit instantiations
-template [[host_name("activation_f16")]] [[kernel]] void
-activation<half>(
+template [[host_name("activation_f16")]] [[kernel]] void activation<half>(
     const device half* input [[buffer(0)]],
     device half* output [[buffer(1)]],
     const constant int& N [[buffer(2)]],
@@ -52,8 +51,7 @@ activation<half>(
     uint tid [[thread_position_in_grid]]
 );
 
-template [[host_name("activation_f32")]] [[kernel]] void
-activation<float>(
+template [[host_name("activation_f32")]] [[kernel]] void activation<float>(
     const device float* input [[buffer(0)]],
     device float* output [[buffer(1)]],
     const constant int& N [[buffer(2)]],
@@ -61,8 +59,7 @@ activation<float>(
     uint tid [[thread_position_in_grid]]
 );
 
-template [[host_name("activation_bf16")]] [[kernel]] void
-activation<bfloat>(
+template [[host_name("activation_bf16")]] [[kernel]] void activation<bfloat>(
     const device bfloat* input [[buffer(0)]],
     device bfloat* output [[buffer(1)]],
     const constant int& N [[buffer(2)]],

@@ -254,7 +254,85 @@ void rms_norm_core(
 FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
 #undef DEFINE_RMS_KERNEL
 
-// Generate QK norm kernels
+// QK norm: normalize per-head vectors (small head_dim) efficiently.
+//
+// Strategy:
+// - One SIMD-group (32 threads) processes one head.
+// - A threadgroup processes multiple heads for a given token (batch).
+// - No threadgroup-wide reductions/barriers: we only use simd_sum within a SIMD-group.
+template <typename InputT, typename ScaleT, typename OutputT, typename AccumT, bool FULL_LAYER>
+static inline void qk_norm_head_core(
+    const device InputT* input_data,
+    const device ScaleT* scales_data,
+    device OutputT* output_data,
+    uint element_count,
+    constant float& epsilon,
+    constant float& scale_offset,
+    uint lane_id
+) {
+  if (element_count == 0u)
+    return;
+
+  AccumT partial_sum = static_cast<AccumT>(0.0f);
+
+  // Sum of squares: each lane processes GRAIN_SIZE elements per iteration.
+  for (uint base_i = lane_id * GRAIN_SIZE; base_i < element_count;
+       base_i += SIMD_SIZE * GRAIN_SIZE) {
+    AccumT vals[GRAIN_SIZE];
+    for (uint j = 0; j < GRAIN_SIZE; ++j) {
+      uint i = base_i + j;
+      vals[j] =
+          (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+    }
+    for (uint j = 0; j < GRAIN_SIZE; ++j) {
+      partial_sum += vals[j] * vals[j];
+    }
+  }
+
+  // SIMD-group reduction.
+  AccumT total_sum = simd_sum(partial_sum);
+
+  // RMS factor.
+  AccumT mean_square =
+      static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
+  AccumT rms_norm = rsqrt(mean_square + static_cast<AccumT>(epsilon));
+
+  // Normalize + scale.
+  for (uint base_i = lane_id * GRAIN_SIZE; base_i < element_count;
+       base_i += SIMD_SIZE * GRAIN_SIZE) {
+    AccumT vals[GRAIN_SIZE];
+    for (uint j = 0; j < GRAIN_SIZE; ++j) {
+      uint i = base_i + j;
+      vals[j] =
+          (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+    }
+
+    for (uint j = 0; j < GRAIN_SIZE; ++j) {
+      uint i = base_i + j;
+      if (i >= element_count)
+        continue;
+
+      AccumT normalized_high = vals[j] * rms_norm;
+
+      if (FULL_LAYER) {
+        AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) +
+                                  static_cast<AccumT>(scale_offset);
+        output_data[i] =
+            static_cast<OutputT>(normalized_high * scale_value_high);
+      } else {
+        OutputT normalized_low = static_cast<OutputT>(normalized_high);
+        OutputT scale_value_low = static_cast<OutputT>(
+            static_cast<AccumT>(scales_data[i]) +
+            static_cast<AccumT>(scale_offset)
+        );
+        OutputT product_low = normalized_low * scale_value_low;
+        output_data[i] = static_cast<OutputT>(product_low);
+      }
+    }
+  }
+}
+
+// Generate QK norm kernels (batched, head-tiled).
 #define DEFINE_QK_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF)                    \
   [[max_total_threads_per_threadgroup(1024)]] kernel void qk_norm_##SUF(       \
       const device IN* qkv_input [[buffer(0)]],                                \
@@ -266,51 +344,48 @@ FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
       constant uint& head_dim [[buffer(6)]],                                   \
       constant float& epsilon [[buffer(7)]],                                   \
       constant float& scale_offset [[buffer(8)]],                              \
-      constant uint& active_type_mask [[buffer(9)]],                           \
-      uint3 threadgroup_position_in_grid [[threadgroup_position_in_grid]],     \
-      uint3 thread_position_in_threadgroup [[thread_position_in_threadgroup]]  \
+      constant uint& head_offset [[buffer(9)]],                                \
+      constant uint& head_count [[buffer(10)]],                                \
+      uint3 tgid [[threadgroup_position_in_grid]],                             \
+      uint lid [[thread_index_in_threadgroup]],                                \
+      uint3 threads_per_threadgroup [[threads_per_threadgroup]]                \
   ) {                                                                          \
-    uint batch_idx = threadgroup_position_in_grid.x;                           \
-    uint sequential_head_idx = threadgroup_position_in_grid.y;                 \
-    uint thread_in_threadgroup = thread_position_in_threadgroup.x;             \
+    const uint batch_idx = tgid.x;                                             \
+    const uint tile_idx = tgid.y;                                              \
                                                                                \
     if (batch_idx >= batch_size)                                               \
       return;                                                                  \
-                                                                               \
-    uint qk_type, actual_head_idx, logical_head_idx;                           \
-    if (sequential_head_idx < num_q_heads) {                                   \
-      qk_type = 0;                                                             \
-      actual_head_idx = sequential_head_idx;                                   \
-      logical_head_idx = actual_head_idx;                                      \
-    } else {                                                                   \
-      qk_type = 1;                                                             \
-      actual_head_idx = sequential_head_idx - num_q_heads;                     \
-      logical_head_idx = num_q_heads + actual_head_idx;                        \
-    }                                                                          \
-                                                                               \
-    if ((active_type_mask & (1 << qk_type)) == 0)                              \
-      return;                                                                  \
-    if (qk_type == 0 && actual_head_idx >= num_q_heads)                        \
-      return;                                                                  \
-    if (qk_type == 1 && actual_head_idx >= num_kv_heads)                       \
+    if (head_count == 0u || head_dim == 0u)                                    \
       return;                                                                  \
                                                                                \
-    const uint total_heads_in_buffer = num_q_heads + 2 * num_kv_heads;         \
-    const uint slice_offset = batch_idx * total_heads_in_buffer * head_dim +   \
-                              logical_head_idx * head_dim;                     \
+    const uint heads_per_tg = threads_per_threadgroup.x / SIMD_SIZE;           \
+    if (heads_per_tg == 0u)                                                    \
+      return;                                                                  \
                                                                                \
-    threadgroup ACC shared_sum[SIMD_SIZE];                                     \
+    const uint simd_group_id = lid / SIMD_SIZE;                                \
+    const uint lane_id = lid % SIMD_SIZE;                                      \
+    const uint head_idx = tile_idx * heads_per_tg + simd_group_id;             \
                                                                                \
-    rms_norm_core<IN, SC, OUT, ACC>(                                           \
+    if (head_idx >= head_count)                                                \
+      return;                                                                  \
+                                                                               \
+    const uint total_heads_in_buffer = num_q_heads + 2u * num_kv_heads;        \
+    const uint logical_head_idx = head_offset + head_idx;                      \
+    if (logical_head_idx >= total_heads_in_buffer)                             \
+      return;                                                                  \
+                                                                               \
+    const ulong slice_offset =                                                  \
+        (ulong)batch_idx * (ulong)total_heads_in_buffer * (ulong)head_dim +    \
+        (ulong)logical_head_idx * (ulong)head_dim;                             \
+                                                                               \
+    qk_norm_head_core<IN, SC, OUT, ACC, FULL_LAYER>(                           \
         qkv_input + slice_offset,                                              \
         scales,                                                                \
         qkv_output + slice_offset,                                             \
         head_dim,                                                              \
         epsilon,                                                               \
         scale_offset,                                                          \
-        shared_sum,                                                            \
-        thread_in_threadgroup,                                                 \
-        FULL_LAYER                                                             \
+        lane_id                                                                \
     );                                                                         \
   }
 

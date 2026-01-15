@@ -9,8 +9,8 @@ use ndarray::{Array2, Array3, Array4, s};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::attention::{
-        AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-        AttentionTwoPassArguments,
+        AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
+        AttentionSinglePassArguments, AttentionTwoPassArguments,
     },
     metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
 };
@@ -297,6 +297,26 @@ fn create_mask_buffer(
     )
 }
 
+fn create_mask_2d_buffer(
+    mask: &Array3<f32>,
+    context: &MTLContext,
+) -> metal::Buffer {
+    let (_batch_size, seq_len, _) = mask.dim();
+
+    let mut mask_data = vec![0.0f32; seq_len * seq_len];
+    for i in 0..seq_len {
+        for j in 0..seq_len {
+            mask_data[i * seq_len + j] = mask[[0, i, j]];
+        }
+    }
+
+    context.device.new_buffer_with_data(
+        mask_data.as_ptr() as *const _,
+        (mask_data.len() * size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    )
+}
+
 fn create_sinks_buffer(
     sinks: &[f32],
     context: &MTLContext,
@@ -383,6 +403,151 @@ fn run_single_pass_attention(
     };
 
     kernel.encode_single_pass(&compute_encoder, args)?;
+
+    compute_encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    let output_ptr = output_buffer.contents() as *const f32;
+    let output_slice = unsafe {
+        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
+    };
+
+    let kernel_output = convert_kernel_output(
+        output_slice,
+        batch_size,
+        num_heads,
+        seq_len,
+        head_dim,
+    );
+
+    Ok(kernel_output)
+}
+
+fn run_single_pass_attention_with_is_causal(
+    kernel: &AttentionKernel,
+    context: &MTLContext,
+    queries: &Array4<f32>,
+    keys: &Array4<f32>,
+    values: &Array4<f32>,
+    mask: Option<&Array3<f32>>,
+    sinks: Option<&[f32]>,
+    scale: f32,
+    is_causal: bool,
+) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
+    let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
+    let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
+
+    let query_buffer = create_query_buffer(queries, context);
+    let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
+    let value_cache_buffer =
+        create_value_cache_buffer(values, seq_len, context);
+
+    let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
+    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
+
+    let output_buffer = context.device.new_buffer(
+        (num_heads * seq_len * head_dim * size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer = context.command_queue.new_command_buffer();
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+
+    let args = AttentionSinglePassArguments {
+        queries_buffer: &query_buffer,
+        keys_buffer: &key_cache_buffer,
+        values_buffer: &value_cache_buffer,
+        output_buffer: &output_buffer,
+        gqa_factor: (num_heads / num_kv_heads) as i32,
+        sequence_length: seq_len as i32,
+        k_head_stride: (seq_len * head_dim) as i32,
+        k_seq_stride: head_dim as i32,
+        v_head_stride: (seq_len * head_dim) as i32,
+        v_seq_stride: head_dim as i32,
+        scale,
+        mask_buffer: mask_buffer.as_ref(),
+        mask_kv_seq_stride: 1,
+        mask_q_seq_stride: seq_len as i32,
+        mask_head_stride: 0,
+        sinks_buffer: sinks_buffer.as_ref(),
+        num_heads,
+        suffix_length: seq_len,
+        head_dim,
+        is_causal,
+    };
+
+    kernel.encode_single_pass(&compute_encoder, args)?;
+
+    compute_encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    let output_ptr = output_buffer.contents() as *const f32;
+    let output_slice = unsafe {
+        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
+    };
+
+    let kernel_output = convert_kernel_output(
+        output_slice,
+        batch_size,
+        num_heads,
+        seq_len,
+        head_dim,
+    );
+
+    Ok(kernel_output)
+}
+
+fn run_gemm_attention(
+    kernel: &AttentionKernel,
+    context: &MTLContext,
+    queries: &Array4<f32>,
+    keys: &Array4<f32>,
+    values: &Array4<f32>,
+    mask: Option<&Array3<f32>>,
+    sinks: Option<&[f32]>,
+    scale: f32,
+    is_causal: bool,
+) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
+    let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
+    let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
+
+    let query_buffer = create_query_buffer(queries, context);
+    let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
+    let value_cache_buffer =
+        create_value_cache_buffer(values, seq_len, context);
+
+    let mask_buffer = mask.map(|m| create_mask_2d_buffer(m, context));
+    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
+
+    let output_buffer = context.device.new_buffer(
+        (num_heads * seq_len * head_dim * size_of::<f32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+
+    let command_buffer = context.command_queue.new_command_buffer();
+    let compute_encoder = command_buffer.new_compute_command_encoder();
+
+    let args = AttentionGemmArguments {
+        queries_buffer: &query_buffer,
+        keys_buffer: &key_cache_buffer,
+        values_buffer: &value_cache_buffer,
+        output_buffer: &output_buffer,
+        mask_buffer: mask_buffer.as_ref(),
+        sinks_buffer: sinks_buffer.as_ref(),
+        num_heads,
+        num_groups: num_kv_heads,
+        suffix_length: seq_len,
+        sequence_length: seq_len,
+        segment_prefix_length: 0,
+        max_sequence_length: seq_len,
+        head_dim,
+        is_causal,
+        scale,
+    };
+
+    kernel.encode_gemm(context, &compute_encoder, args)?;
 
     compute_encoder.end_encoding();
     command_buffer.commit();
@@ -544,7 +709,7 @@ fn test_single_pass_attention_basic() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -553,6 +718,204 @@ fn test_single_pass_attention_basic() {
     ) {
         panic!("{}", e);
     }
+}
+
+#[test]
+fn test_gemm_attention_basic() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 4;
+    let num_kv_heads = 4;
+    let seq_len = 32;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (queries, keys, values, _mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        123,
+    );
+
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create AttentionKernel");
+
+    let reference_output =
+        reference_attention(&queries, &keys, &values, None, None, scale);
+
+    let kernel_output = run_gemm_attention(
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
+        /*is_causal=*/ false,
+    )
+    .expect("run gemm attention");
+
+    let tolerance = 1e-2;
+    if let Err(e) = compare_results(
+        &kernel_output,
+        &reference_output,
+        tolerance,
+        "Gemm attention",
+    ) {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_gemm_attention_f32_head_dim_128() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 4;
+    let num_kv_heads = 4;
+    let seq_len = 32;
+    let head_dim = 128;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (queries, keys, values, _mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        456,
+    );
+
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create AttentionKernel");
+
+    let reference_output =
+        reference_attention(&queries, &keys, &values, None, None, scale);
+
+    let kernel_output = run_gemm_attention(
+        &kernel, &context, &queries, &keys, &values, None, None, scale,
+        /*is_causal=*/ false,
+    )
+    .expect("run gemm attention f32 head_dim=128");
+
+    let tolerance = 1e-2;
+    if let Err(e) = compare_results(
+        &kernel_output,
+        &reference_output,
+        tolerance,
+        "Gemm attention f32 head_dim=128",
+    ) {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_matrix_attention_matches_vector_and_cpu_seq256() {
+    let device = Device::system_default().expect("No Metal device found");
+    let command_queue = device.new_command_queue();
+    let context = match MTLContext::new(device, command_queue) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            panic!("Failed to create MTLContext: {:?}", e);
+        },
+    };
+
+    let batch_size = 1;
+    let num_heads = 8;
+    let num_kv_heads = 2;
+    let seq_len = 256;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let is_causal = true;
+
+    let (queries, keys, values, mask) = create_test_data(
+        batch_size,
+        num_heads,
+        num_kv_heads,
+        seq_len,
+        head_dim,
+        2026,
+    );
+
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create AttentionKernel");
+
+    // CPU reference (uses the same additive mask)
+    let reference_output =
+        reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
+
+    // vector attention path (single-pass)
+    let vector_output = run_single_pass_attention_with_is_causal(
+        &kernel,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        Some(&mask),
+        None,
+        scale,
+        is_causal,
+    )
+    .expect("run vector attention");
+
+    // matrix attention path (gemm)
+    let matrix_output = run_gemm_attention(
+        &kernel,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        Some(&mask),
+        None,
+        scale,
+        is_causal,
+    )
+    .expect("run matrix attention");
+
+    // Compare both to CPU
+    let tol_cpu = 5e-2;
+    compare_results(
+        &vector_output,
+        &reference_output,
+        tol_cpu,
+        "vector single-pass attention vs CPU",
+    )
+    .unwrap();
+    compare_results(
+        &matrix_output,
+        &reference_output,
+        tol_cpu,
+        "matrix attention vs CPU",
+    )
+    .unwrap();
+
+    let max_diff_vector_matrix = vector_output
+        .iter()
+        .zip(matrix_output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    let tol_vector_matrix = 5e-2;
+    println!(
+        "Max absolute difference (vector single-pass attention vs matrix attention): {}",
+        max_diff_vector_matrix
+    );
+    assert!(
+        max_diff_vector_matrix <= tol_vector_matrix,
+        "vector single-pass attention and matrix attention differ too much: max_diff = {} (tol={})",
+        max_diff_vector_matrix,
+        tol_vector_matrix
+    );
 }
 
 #[test]
@@ -845,7 +1208,7 @@ fn test_single_pass_attention_gqa() {
     let reference_output =
         reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -1009,7 +1372,7 @@ fn test_two_pass_attention() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,
@@ -1079,7 +1442,7 @@ fn test_two_pass_attention_gqa() {
         },
     };
 
-    let tolerance = 1e-1;
+    let tolerance = 1e-2;
     if let Err(e) = compare_results(
         &kernel_output,
         &reference_output,

@@ -4,7 +4,8 @@ use ash::{khr, vk};
 use crate::backends::vulkan::ffi;
 use crate::backends::vulkan::logger::{VkLogger, VkPrintlnLogger};
 use crate::backends::vulkan::physical_device::{VkPhysicalDevice, VkPhysicalDeviceFeatures};
-use crate::{DataType, DeviceContext};
+use crate::{array_size_in_bytes, DataType, DeviceContext};
+use crate::backends::vulkan::array::VkArray;
 use crate::backends::vulkan::buffer::VkBuffer;
 
 const VK_LAYER_KHRONOS_VALIDATION: &str = "VK_LAYER_KHRONOS_validation";
@@ -59,10 +60,17 @@ impl Drop for VkContext {
 }
 
 impl DeviceContext for VkContext {
-    type DeviceArray = VkBuffer;
+    type DeviceArray = VkArray;
 
-    unsafe fn array_uninitialized(&self, shape: &[usize], data_type: DataType) -> Self::DeviceArray {
-        VkBuffer::ssbo(self, shape, data_type).unwrap()
+    unsafe fn array_uninitialized(
+        &self, 
+        shape: &[usize], 
+        data_type: DataType, 
+        label: String
+    ) -> Self::DeviceArray {
+        let size = array_size_in_bytes(&shape, data_type);
+        let buffer = VkBuffer::ssbo(self, size).unwrap();
+        VkArray::new_with_offset_and_label(buffer, shape, data_type, 0usize, label)
     }
 }
 

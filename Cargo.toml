@@ -1,17 +1,19 @@
 [workspace]
-members = ["crates/cli", "crates/uzu", "crates/benchmarks"]
+members = [
+    "crates/cli",
+    "crates/uzu",
+    "crates/benchmarks",
+    "crates/matmul-benchmark",
+]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.7"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 license = "MIT"
 authors = ["Mirai Tech <https://trymirai.com>"]
 repository = "https://github.com/trymirai/uzu"
 
 [profile.release]
-lto = true
-
-[profile.test]
-inherits = "release"
+lto = "thin"

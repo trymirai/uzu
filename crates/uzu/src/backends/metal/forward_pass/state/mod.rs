@@ -1,6 +1,5 @@
 mod array_id;
 mod common_aux_buffers;
-mod embeddings_buffers;
 mod hash_map_id;
 mod language_model_generator_aux_buffers;
 mod mode;
@@ -12,7 +11,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
-pub use embeddings_buffers::EmbeddingsBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
 pub use mode::{
@@ -52,13 +50,13 @@ impl ForwardPassState {
 
     fn init_token_ids(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         token_ids: &[u64],
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
         let mut token_ids_array = unsafe {
             MetalArray::new(
-                scratch.token_ids.clone(),
+                scratch.token_ids.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::U64,
             )
@@ -69,13 +67,13 @@ impl ForwardPassState {
 
     fn init_token_positions(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         token_positions: &[usize],
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
         let mut token_positions_array = unsafe {
             MetalArray::new(
-                scratch.token_positions.clone(),
+                scratch.token_positions.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::I32,
             )
@@ -98,7 +96,7 @@ impl ForwardPassState {
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
@@ -106,6 +104,8 @@ impl ForwardPassState {
         token_bitmask: Option<&[u32]>,
         token_seeds: &[u64],
         active_suffix_length: usize,
+        sampling_start: usize,
+        sampling_length: usize,
         is_prefilling: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
@@ -128,7 +128,7 @@ impl ForwardPassState {
         let token_ids_cell = if skip_token_ids_copy {
             RefCell::new(unsafe {
                 MetalArray::new(
-                    scratch.token_ids.clone(),
+                    scratch.token_ids.borrow().backend_buffer().clone(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -158,7 +158,7 @@ impl ForwardPassState {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
             let mut bitmask_array = unsafe {
                 MetalArray::new(
-                    scratch.token_bitmask.clone(),
+                    scratch.token_bitmask.borrow().backend_buffer().clone(),
                     &bitmask_shape,
                     DataType::U32,
                 )
@@ -184,7 +184,7 @@ impl ForwardPassState {
         } else {
             let mut token_seeds_array = unsafe {
                 MetalArray::new(
-                    scratch.token_seeds.clone(),
+                    scratch.token_seeds.borrow().backend_buffer().clone(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -196,7 +196,7 @@ impl ForwardPassState {
         // Logits
         let logits_cell = RefCell::new(unsafe {
             MetalArray::new(
-                scratch.logits.clone(),
+                scratch.logits.borrow().backend_buffer().clone(),
                 &model_shape.logits_shape(suffix_length),
                 model_shape.activation_data_type(),
             )
@@ -205,7 +205,7 @@ impl ForwardPassState {
         // Sampling output
         let sampling_output = Some(RefCell::new(unsafe {
             MetalArray::new(
-                scratch.sampling_output.clone(),
+                scratch.sampling_output.borrow().backend_buffer().clone(),
                 &[suffix_length],
                 DataType::U32,
             )
@@ -254,6 +254,8 @@ impl ForwardPassState {
                 #[cfg(feature = "tracing")]
                 traces,
                 active_suffix_length,
+                sampling_start,
+                sampling_length,
                 is_prefilling,
             },
         );
@@ -273,7 +275,7 @@ impl ForwardPassState {
 
     fn init_llm_attention_bias(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
         act_dtype: DataType,
@@ -293,7 +295,7 @@ impl ForwardPassState {
                         [suffix_length, suffix_length + prefix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.clone(),
+                            buffer.borrow().backend_buffer().clone(),
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -330,7 +332,7 @@ impl ForwardPassState {
     pub fn new_classifier(
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
@@ -385,7 +387,7 @@ impl ForwardPassState {
 
     fn init_classifier_attention_bias(
         context: &MTLContext,
-        scratch: &ScratchBuffers,
+        scratch: &ScratchBuffers<Rc<MTLContext>>,
         suffix_length: usize,
         act_dtype: DataType,
         bidirectional_attention: bool,
@@ -398,7 +400,7 @@ impl ForwardPassState {
                     let attention_bias_shape = [suffix_length, suffix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.clone(),
+                            buffer.borrow().backend_buffer().clone(),
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -604,11 +606,7 @@ impl ForwardPassState {
             ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
 
             // Shared buffer arrays
-            ArrayId::EmbeddingsInputWeights
-            | ArrayId::EmbeddingsOutputWeights
-            | ArrayId::EmbeddingsScales
-            | ArrayId::RopeCosines(_)
-            | ArrayId::RopeSines(_) => self
+            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => self
                 .shared_buffer_array(id)
                 .expect("Shared buffer array should be available"),
 
@@ -819,67 +817,6 @@ impl ForwardPassState {
     ) -> Option<ArrayCell> {
         let shared = self.shared_buffers.borrow();
         match id {
-            ArrayId::EmbeddingsInputWeights => Some(match &shared.embeddings {
-                EmbeddingsBuffers::Tied {
-                    weights,
-                } => weights.clone(),
-                EmbeddingsBuffers::Untied {
-                    input_weights,
-                    ..
-                } => input_weights.clone(),
-                EmbeddingsBuffers::QuantizedTied {
-                    weights,
-                    ..
-                } => weights.clone(),
-                EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                    input_weights,
-                    ..
-                } => input_weights.clone(),
-                EmbeddingsBuffers::MLXQuantizedUntied {
-                    packed_input_weights,
-                    ..
-                } => packed_input_weights.clone(),
-            }),
-            ArrayId::EmbeddingsOutputWeights => {
-                Some(match &shared.embeddings {
-                    EmbeddingsBuffers::Tied {
-                        weights,
-                    } => weights.clone(),
-                    EmbeddingsBuffers::Untied {
-                        output_weights,
-                        ..
-                    } => output_weights.clone(),
-                    EmbeddingsBuffers::QuantizedTied {
-                        weights,
-                        ..
-                    } => weights.clone(),
-                    EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                        packed_output_weights,
-                        ..
-                    } => packed_output_weights.clone(),
-                    EmbeddingsBuffers::MLXQuantizedUntied {
-                        packed_output_weights,
-                        ..
-                    } => packed_output_weights.clone(),
-                })
-            },
-            ArrayId::EmbeddingsScales => Some(match &shared.embeddings {
-                EmbeddingsBuffers::QuantizedTied {
-                    scales,
-                    ..
-                } => scales.clone(),
-                EmbeddingsBuffers::MLXSemiQuantizedUntied {
-                    output_scales,
-                    ..
-                } => output_scales.clone(),
-                EmbeddingsBuffers::MLXQuantizedUntied {
-                    output_scales,
-                    ..
-                } => output_scales.clone(),
-                _ => panic!(
-                    "Expected QuantizedTied or MLXSemiQuantizedUntied embeddings"
-                ),
-            }),
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
                 RopeType::Global => shared
                     .global_rope
@@ -946,6 +883,26 @@ impl ForwardPassState {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
                 state.active_suffix_length
+            },
+            ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
+        }
+    }
+
+    /// Start index (within the suffix batch) for which we need logits/sampling.
+    pub fn sampling_start(&self) -> usize {
+        match &self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_start
+            },
+            ForwardPassMode::Classifier(_) => 0,
+        }
+    }
+
+    /// Number of batch items for which we need logits/sampling.
+    pub fn sampling_length(&self) -> usize {
+        match &self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => {
+                state.sampling_length
             },
             ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
         }

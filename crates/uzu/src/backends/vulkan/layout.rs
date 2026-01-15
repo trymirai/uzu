@@ -55,7 +55,7 @@ impl VkComputeShaderLayoutSet {
                 vk::DescriptorBufferInfo::default()
                     .buffer(layout_buffer.buffer.buffer())
                     .offset(0)
-                    .range(layout_buffer.buffer.size())
+                    .range(layout_buffer.buffer.size() as vk::DeviceSize)
             })
             .collect::<Vec<_>>();
         let writes = layout_buffers.iter()

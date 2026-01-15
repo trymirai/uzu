@@ -35,6 +35,8 @@ pub fn array_size_in_bytes(
 
 // Backend-agnostic n-dimensional array type.
 pub trait Array {
+    type BackendBuffer;
+
     fn shape(&self) -> &[usize];
 
     fn num_elements(&self) -> usize {
@@ -43,11 +45,15 @@ pub trait Array {
 
     fn data_type(&self) -> DataType;
 
+    fn label(&self) -> String;
+
     /// Returns a reference to the device buffer containing the array's data.
     fn buffer(&self) -> &[u8];
 
     /// Returns a mutable reference to the device buffer containing the array's data.
     fn buffer_mut(&mut self) -> &mut [u8];
+
+    fn backend_buffer(&self) -> &Self::BackendBuffer;
 
     /// Returns the size of the array in memory.
     fn size_in_bytes(&self) -> usize {

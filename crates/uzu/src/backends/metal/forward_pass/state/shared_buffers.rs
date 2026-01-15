@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use half::{bf16, f16};
 
-use super::{super::ModelShape, EmbeddingsBuffers, RopeBuffers};
+use super::{super::ModelShape, RopeBuffers};
 use crate::{
     Array, DataType, DeviceContext,
     backends::metal::{MTLContext, MetalArray},
@@ -18,7 +18,6 @@ pub struct MoeExpertWeights {
 }
 
 pub struct SharedBuffers {
-    pub embeddings: EmbeddingsBuffers,
     pub global_rope: Option<RopeBuffers>,
     pub local_rope: Option<RopeBuffers>,
     pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
@@ -31,12 +30,6 @@ impl SharedBuffers {
         decoder_config: &crate::config::DecoderConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let embeddings = EmbeddingsBuffers::new(
-            context,
-            &decoder_config.embedding_config,
-            model_shape,
-        );
-
         let global_rope = if decoder_config.global_rope_config.is_some() {
             Some(RopeBuffers::new(context, model_shape))
         } else {
@@ -69,6 +62,7 @@ impl SharedBuffers {
                             RefCell::new(context.array_uninitialized(
                                 &[num_heads],
                                 DataType::F32,
+                                String::from("shared_buffers_attention_sinks"),
                             ))
                         })
                         .collect(),
@@ -81,7 +75,6 @@ impl SharedBuffers {
         };
 
         Self {
-            embeddings,
             global_rope,
             local_rope,
             moe_expert_weights,
@@ -93,8 +86,6 @@ impl SharedBuffers {
         &mut self,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) {
-        self.embeddings.update_data(parameter_tree);
-
         let transformer_tree = parameter_tree
             .subtree("transformer")
             .expect("transformer subtree not found");

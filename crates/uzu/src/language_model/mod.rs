@@ -8,5 +8,6 @@ pub mod sampler;
 pub mod tasks;
 
 // Re-export main types
-pub use crate::backends::metal::LanguageModelGeneratorContext;
 pub use language_model_generator::LanguageModelGenerator;
+
+pub use crate::backends::metal::LanguageModelGeneratorContext;
