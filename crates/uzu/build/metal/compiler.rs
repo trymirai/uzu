@@ -1,26 +1,43 @@
 use std::collections::HashMap;
 use std::iter::{once, zip};
+use std::path::Path;
 use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, bail};
 use futures::future::try_join_all;
+use futures::{StreamExt, TryStreamExt, stream};
+use proc_macro2::TokenStream;
+use quote::quote;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
+use walkdir::WalkDir;
 
+use async_trait::async_trait;
+
+use crate::common::compiler::Compiler;
+use crate::common::{caching, envs};
 use crate::debug_log;
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
 use super::toolchain::MetalToolchain;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ObjectInfo {
-    pub object_path: PathBuf,
-    pub kernels: Box<[MetalKernelInfo]>,
-    pub dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
+struct ObjectInfo {
+    object_path: PathBuf,
+    kernels: Box<[MetalKernelInfo]>,
+    buildsystem_hash: [u8; blake3::OUT_LEN],
+    dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
 }
 
-pub fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
+fn is_nax_source(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.contains("_nax"))
+        .unwrap_or(false)
+}
+
+fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
     for specialization_variant in kernel
@@ -190,15 +207,47 @@ async fn hash_dependencies(
     try_join_all(futures).await.map(|v| v.into_iter().collect())
 }
 
+fn objects_hash<'a>(
+    objects: impl IntoIterator<Item = &'a ObjectInfo>
+) -> anyhow::Result<blake3::Hash> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(
+        caching::build_system_hash()
+            .context("cannot get build system hash")?
+            .as_bytes(),
+    );
+    let mut paths: Vec<_> =
+        objects.into_iter().map(|o| &o.object_path).collect();
+    paths.sort();
+    for path in paths {
+        let path_bytes = path.to_string_lossy();
+        let path_bytes = path_bytes.as_bytes();
+        hasher.update(&(path_bytes.len() as u32).to_le_bytes());
+        hasher.update(path_bytes);
+        let contents = fs::read(path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        hasher.update(&(contents.len() as u32).to_le_bytes());
+        hasher.update(&contents);
+    }
+    Ok(hasher.finalize())
+}
+
 #[derive(Debug)]
 pub struct MetalCompiler {
-    out_dir: PathBuf,
+    src_dir: PathBuf,
     build_dir: PathBuf,
+    out_dir: PathBuf,
     toolchain: MetalToolchain,
 }
 
 impl MetalCompiler {
     pub fn new() -> anyhow::Result<Self> {
+        let src_dir = PathBuf::from(
+            env::var("CARGO_MANIFEST_DIR")
+                .context("missing CARGO_MANIFEST_DIR")?,
+        )
+        .join("src");
+
         let out_dir =
             PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
         let build_dir = out_dir.join("metal");
@@ -210,16 +259,22 @@ impl MetalCompiler {
             MetalToolchain::from_env().context("cannot create toolchain")?;
 
         Ok(Self {
-            out_dir,
+            src_dir,
             build_dir,
+            out_dir,
             toolchain,
         })
     }
 
-    pub async fn compile(
+    async fn compile(
         &self,
         source_path: PathBuf,
-    ) -> anyhow::Result<(ObjectInfo, bool)> {
+    ) -> anyhow::Result<ObjectInfo> {
+        let buildsystem_hash = caching::build_system_hash()
+            .context("cannot get build system cache")?
+            .as_bytes()
+            .clone();
+
         let source_path_pretty =
             source_path.file_name().unwrap().to_str().unwrap();
         debug_log!("compile start: {source_path_pretty}");
@@ -242,12 +297,13 @@ impl MetalCompiler {
             if let Ok(contents) = tokio::fs::read(&objectinfo_path).await
                 && let Ok(cached) =
                     serde_json::from_slice::<ObjectInfo>(&contents)
-                && let Ok(current_hashes) =
+                && buildsystem_hash == cached.buildsystem_hash
+                && let Ok(dependency_hashes) =
                     hash_dependencies(cached.dependency_hashes.keys().cloned())
                         .await
-                && current_hashes == cached.dependency_hashes
+                && dependency_hashes == cached.dependency_hashes
             {
-                if cfg!(feature = "build-debug") {
+                if envs::build_debug() {
                     let kernel_list = cached
                         .kernels
                         .iter()
@@ -262,7 +318,7 @@ impl MetalCompiler {
                         );
                     }
                 }
-                return Ok((cached, true));
+                return Ok(cached);
             }
             fs::remove_dir_all(&build_dir).ok();
         }
@@ -317,6 +373,7 @@ impl MetalCompiler {
         let object_info = ObjectInfo {
             object_path,
             kernels: kernel_infos.into_boxed_slice(),
+            buildsystem_hash,
             dependency_hashes,
         };
 
@@ -330,7 +387,7 @@ impl MetalCompiler {
             format!("cannot write object info {}", objectinfo_path.display())
         })?;
 
-        if cfg!(feature = "build-debug") {
+        if envs::build_debug() {
             let kernel_list = object_info
                 .kernels
                 .iter()
@@ -346,16 +403,26 @@ impl MetalCompiler {
             }
         }
 
-        Ok((object_info, false))
+        Ok(object_info)
     }
 
-    pub async fn link(
+    async fn link<'a>(
         &self,
-        objects: impl IntoIterator<Item = &ObjectInfo>,
+        objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
     ) -> anyhow::Result<PathBuf> {
-        debug_log!("linking start");
-
         let library_path = self.out_dir.join("default.metallib");
+        let hash_path = self.out_dir.join("default.metallib.hash");
+
+        let hash = objects_hash(objects.clone())?;
+
+        if let Ok(cached_hash) = fs::read_to_string(&hash_path)
+            && cached_hash == hash.to_string()
+        {
+            debug_log!("linking cached");
+            return Ok(library_path);
+        }
+
+        debug_log!("linking start");
 
         let link_output = self
             .toolchain
@@ -369,8 +436,93 @@ impl MetalCompiler {
             }
         }
 
+        fs::write(&hash_path, hash.to_string()).with_context(|| {
+            format!("cannot write hash file {}", hash_path.display())
+        })?;
+
         debug_log!("linking end");
 
         Ok(library_path)
+    }
+
+    fn bindgen<'a>(
+        &self,
+        objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
+    ) -> anyhow::Result<()> {
+        let out_path = self.out_dir.join("dsl.rs");
+        let hash_path = self.out_dir.join("dsl.rs.hash");
+
+        let hash = objects_hash(objects.clone())?;
+
+        if let Ok(cached_hash) = fs::read_to_string(&hash_path)
+            && cached_hash == hash.to_string()
+        {
+            debug_log!("bindgen cached");
+            return Ok(());
+        }
+
+        debug_log!("bindgen start");
+
+        let bindings = objects
+            .into_iter()
+            .flat_map(|o| &o.kernels)
+            .map(|k| {
+                super::bindgen::bindgen(k).with_context(|| {
+                    format!("cannot generate bindings for {}", k.name)
+                })
+            })
+            .collect::<anyhow::Result<Vec<TokenStream>>>()?;
+
+        let tokens = quote! { #(#bindings)* };
+
+        let parsed =
+            syn::parse2(tokens).context("cannot parse generated bindings")?;
+        fs::write(&out_path, prettyplease::unparse(&parsed)).with_context(
+            || format!("cannot write bindings file {}", out_path.display()),
+        )?;
+
+        fs::write(&hash_path, hash.to_string()).with_context(|| {
+            format!("cannot write hash file {}", hash_path.display())
+        })?;
+
+        debug_log!("bindgen end");
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Compiler for MetalCompiler {
+    async fn build(&self) -> anyhow::Result<()> {
+        let nax_enabled = cfg!(feature = "metal-nax");
+        debug_log!("metal nax {}", if nax_enabled { "enabled" } else { "disabled" });
+
+        let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().is_file()
+                    && e.path().extension().and_then(|s| s.to_str())
+                        == Some("metal")
+            })
+            .map(|e| e.into_path())
+            .filter(|p| nax_enabled || !is_nax_source(p))
+            .collect();
+
+        let num_concurrent_compiles =
+            std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4)
+                * 2;
+
+        let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
+            .map(|p| self.compile(p))
+            .buffer_unordered(num_concurrent_compiles)
+            .try_collect()
+            .await
+            .context("cannot compile metal sources")?;
+
+        self.link(&objects).await.context("cannot link objects")?;
+        self.bindgen(&objects).context("cannot generate bindings")?;
+
+        Ok(())
     }
 }

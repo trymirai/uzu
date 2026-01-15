@@ -307,8 +307,12 @@ impl RMSNormKernel {
         // We only ever normalize within [Q] and/or [K].
         let (head_offset, head_count): (u32, u32) = match args.target {
             QKNormTarget::QueryHeads => (0, args.num_q_heads as u32),
-            QKNormTarget::KeyHeads => (args.num_q_heads as u32, args.num_kv_heads as u32),
-            QKNormTarget::Both => (0, (args.num_q_heads + args.num_kv_heads) as u32),
+            QKNormTarget::KeyHeads => {
+                (args.num_q_heads as u32, args.num_kv_heads as u32)
+            },
+            QKNormTarget::Both => {
+                (0, (args.num_q_heads + args.num_kv_heads) as u32)
+            },
         };
 
         if args.batch_size <= 0 || args.head_dim <= 0 || head_count == 0 {
@@ -329,12 +333,14 @@ impl RMSNormKernel {
 
         // One SIMD-group per head, multiple heads per threadgroup.
         let simd_width = self.pipeline.thread_execution_width() as u64;
-        let max_threads = self.pipeline.max_total_threads_per_threadgroup() as u64;
+        let max_threads =
+            self.pipeline.max_total_threads_per_threadgroup() as u64;
         let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
         let heads_per_threadgroup =
             (head_count as u64).min(max_heads_per_threadgroup).max(1);
 
-        let num_head_tiles = (head_count as u64).div_ceil(heads_per_threadgroup);
+        let num_head_tiles =
+            (head_count as u64).div_ceil(heads_per_threadgroup);
 
         let threadgroups_per_grid = MTLSize {
             width: args.batch_size as u64,

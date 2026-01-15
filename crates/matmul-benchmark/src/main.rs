@@ -507,8 +507,7 @@ fn benchmark_uzu(
         },
     }
 
-    let mut kernel = MatmulKernel::new(ctx, dtype.to_uzu(), false, true)
-        .expect("kernel new");
+    let mut kernel = MatmulKernel::new(dtype.to_uzu()).expect("kernel new");
 
     for _ in 0..warmup_iters {
         let cb = ctx.command_queue.new_command_buffer().to_owned();
@@ -523,6 +522,7 @@ fn benchmark_uzu(
                     b: &b_buf,
                     c: None,
                     d: &d_buf,
+                    bias: None,
                     batch: m as i32,
                     input_dim: k as i32,
                     output_dim: n as i32,
@@ -532,8 +532,9 @@ fn benchmark_uzu(
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
+                    transpose_a: false,
+                    transpose_b: true,
                 },
-                None,
             )
             .expect("encode");
         enc.end_encoding();
@@ -555,6 +556,7 @@ fn benchmark_uzu(
                     b: &b_buf,
                     c: None,
                     d: &d_buf,
+                    bias: None,
                     batch: m as i32,
                     input_dim: k as i32,
                     output_dim: n as i32,
@@ -564,8 +566,9 @@ fn benchmark_uzu(
                     batch_count: 1,
                     alpha: 1.0,
                     beta: 0.0,
+                    transpose_a: false,
+                    transpose_b: true,
                 },
-                None,
             )
             .expect("encode");
         enc.end_encoding();
@@ -782,8 +785,7 @@ fn run_accuracy_test_f16(
         .device
         .new_buffer((m * n * 2) as u64, MTLResourceOptions::StorageModeShared);
 
-    let mut kernel =
-        MatmulKernel::new(ctx, DataType::F16, false, true).unwrap();
+    let mut kernel = MatmulKernel::new(DataType::F16).unwrap();
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
     kernel
@@ -796,6 +798,7 @@ fn run_accuracy_test_f16(
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
+                bias: None,
                 batch: m as i32,
                 input_dim: k as i32,
                 output_dim: n as i32,
@@ -805,8 +808,9 @@ fn run_accuracy_test_f16(
                 batch_count: 1,
                 alpha: 1.0,
                 beta: 0.0,
+                transpose_a: false,
+                transpose_b: true,
             },
-            None,
         )
         .unwrap();
     enc.end_encoding();
@@ -848,8 +852,7 @@ fn run_accuracy_test_f32(
         .device
         .new_buffer((m * n * 4) as u64, MTLResourceOptions::StorageModeShared);
 
-    let mut kernel =
-        MatmulKernel::new(ctx, DataType::F32, false, true).unwrap();
+    let mut kernel = MatmulKernel::new(DataType::F32).unwrap();
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
     kernel
@@ -862,6 +865,7 @@ fn run_accuracy_test_f32(
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
+                bias: None,
                 batch: m as i32,
                 input_dim: k as i32,
                 output_dim: n as i32,
@@ -871,8 +875,9 @@ fn run_accuracy_test_f32(
                 batch_count: 1,
                 alpha: 1.0,
                 beta: 0.0,
+                transpose_a: false,
+                transpose_b: true,
             },
-            None,
         )
         .unwrap();
     enc.end_encoding();
@@ -925,8 +930,7 @@ fn run_accuracy_test_bf16(
         .device
         .new_buffer((m * n * 2) as u64, MTLResourceOptions::StorageModeShared);
 
-    let mut kernel =
-        MatmulKernel::new(ctx, DataType::BF16, false, true).unwrap();
+    let mut kernel = MatmulKernel::new(DataType::BF16).unwrap();
     let cb = ctx.command_queue.new_command_buffer().to_owned();
     let enc = cb.new_compute_command_encoder();
     kernel
@@ -939,6 +943,7 @@ fn run_accuracy_test_bf16(
                 b: &b_buf,
                 c: None,
                 d: &d_buf,
+                bias: None,
                 batch: m as i32,
                 input_dim: k as i32,
                 output_dim: n as i32,
@@ -948,8 +953,9 @@ fn run_accuracy_test_bf16(
                 batch_count: 1,
                 alpha: 1.0,
                 beta: 0.0,
+                transpose_a: false,
+                transpose_b: true,
             },
-            None,
         )
         .unwrap();
     enc.end_encoding();

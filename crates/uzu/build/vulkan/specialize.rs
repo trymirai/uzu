@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use regex::Regex;
 use shaderc::CompileOptions;
-use crate::vulkan::core;
+use crate::vulkan::shader;
 
 static SPECIALIZE_REGEX: OnceLock<Regex> = OnceLock::new();
 
@@ -68,11 +68,11 @@ fn get_shader_specializations(
 }
 
 pub fn fill_comp_requests_with_specializations(
-    requests: &mut Vec<core::CompilationRequest>,
+    requests: &mut Vec<shader::CompilationRequest>,
     common_options: &CompileOptions<'static>,
     source: &str,
     file_path: &PathBuf
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let specializations = get_shader_specializations(source);
     if specializations.types.is_empty() {
         return Ok(())
@@ -89,12 +89,13 @@ pub fn fill_comp_requests_with_specializations(
 
         // fill options and extensions
         for (type_name, type_value) in definitions {
-            let mut actual_type = type_value;
-            if actual_type == "float16_t" {
-                extensions.insert(core::GL_EXT_SHADER_16BIT_STORAGE);
-                extensions.insert(core::GL_EXT_SHADER_EXPLICIT_ARITHMETIC_TYPES_FLOAT_16);
+            if type_value == "float16_t" {
+                extensions.insert(shader::GL_EXT_SHADER_16BIT_STORAGE);
+                extensions.insert(shader::GL_EXT_SHADER_EXPLICIT_ARITHMETIC_TYPES_FLOAT_16);
             }
-            options.add_macro_definition(type_name, Some(actual_type));
+
+            options.add_macro_definition(type_name, Some(type_value));
+
             out_file_name.push('_');
             out_file_name.push_str(&type_value);
         }
@@ -117,7 +118,7 @@ pub fn fill_comp_requests_with_specializations(
 
         // build new request
         let out_file_path = file_dir.join(out_file_name).with_extension("spv");
-        let request = core::CompilationRequest {
+        let request = shader::CompilationRequest {
             source,
             options,
             out_file_path_str: out_file_path.to_str().unwrap().to_string()

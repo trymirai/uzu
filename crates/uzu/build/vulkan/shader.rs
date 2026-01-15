@@ -14,7 +14,7 @@ pub struct CompilationRequest {
 
 fn get_common_compile_options(
     file_dir: PathBuf
-) -> Result<CompileOptions<'static>, Box<dyn std::error::Error>> {
+) -> anyhow::Result<CompileOptions<'static>> {
     let mut options = CompileOptions::new()?;
     options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_2 as u32);
     options.set_optimization_level(shaderc::OptimizationLevel::Performance);
@@ -42,7 +42,7 @@ fn get_common_compile_options(
 
 pub async fn compile_vulkan_shader(
     file_path: &PathBuf
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
 
     let compiler = Compiler::new()?;

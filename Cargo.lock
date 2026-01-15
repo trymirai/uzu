@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "matmul-benchmark"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "autocxx",
  "autocxx-build",
@@ -4213,12 +4213,14 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "ash",
+ "async-trait",
  "bindgen",
  "bitflags 2.10.0",
  "blake3",
  "block",
  "bytemuck",
  "clang-ast",
+ "clap",
  "depfile",
  "futures",
  "half",
