@@ -12,14 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
-<<<<<<< HEAD
-objc2.workspace = true
-objc2-foundation.workspace = true
-metal.workspace = true
-block.workspace = true
-=======
-mpsgraph.workspace = true
->>>>>>> vulkan
 bytemuck.workspace = true
 num-traits.workspace = true
 regex.workspace = true
@@ -66,7 +58,7 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
-regex.workspace = true
+regex = { workspace = true, optional = true }
 shaderc = { workspace = true, optional = true }
 
 # metal feature requires clang-ast
@@ -79,7 +71,7 @@ metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep
 metal-nax = []
 
 tracing = []
-vulkan = ["dep:ash", "dep:shaderc"]
+vulkan = ["dep:ash", "dep:regex", "dep:shaderc"]
 
 [[test]]
 name = "moe"

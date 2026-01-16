@@ -70,11 +70,11 @@ autocxx = "0.30.0"
 cxx = "1.0.187"
 cmake = "0.1.57"
 autocxx-build = "0.30.0"
-shaderc = "0.10.1"
 # "linked" link the Vulkan loader at compile time
 # without "linked" device.device_fn_1_0.allocate_command_buffers have error
 # "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
 ash = { version = "0.38.0", features = ["linked"] }
+shaderc = "0.10.1"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
