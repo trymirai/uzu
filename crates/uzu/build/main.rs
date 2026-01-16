@@ -2,8 +2,9 @@ use std::{env, fs, path::PathBuf};
 use anyhow::Context;
 
 mod common;
-mod metal;
 mod shared_types;
+#[cfg(feature = "metal")]
+mod metal;
 #[cfg(feature = "vulkan")]
 mod vulkan;
 
@@ -39,10 +40,11 @@ async fn main() -> anyhow::Result<()> {
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    if cfg!(feature = "metal") {
-        compilers.push(Box::new(metal::MetalCompiler::new()?));
-        compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
-    }
+    compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
+
+    #[cfg(feature = "metal")]
+    compilers.push(Box::new(metal::MetalCompiler::new()?));
+
     #[cfg(feature = "vulkan")]
     compilers.push(Box::new(vulkan::VulkanCompiler::new()?));
 

@@ -12,10 +12,14 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
+<<<<<<< HEAD
 objc2.workspace = true
 objc2-foundation.workspace = true
 metal.workspace = true
 block.workspace = true
+=======
+mpsgraph.workspace = true
+>>>>>>> vulkan
 bytemuck.workspace = true
 num-traits.workspace = true
 regex.workspace = true
@@ -28,6 +32,17 @@ sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
 ash = { workspace = true, optional = true }
+
+# metal feature requires objc2, block (for callbacks) and metal
+objc2 = { workspace = true, optional = true}
+objc2-foundation = { workspace = true, optional = true}
+block = { workspace = true, optional = true }
+metal = { workspace = true, optional = true }
+
+# macos requires objc2 even on non-metal (but shouldn't)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
 
 [dev-dependencies]
 is_close.workspace = true
@@ -43,7 +58,6 @@ depfile.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-clang-ast.workspace = true
 futures.workspace = true
 tokio.workspace = true
 blake3.workspace = true
@@ -55,10 +69,15 @@ itertools.workspace = true
 regex.workspace = true
 shaderc = { workspace = true, optional = true }
 
+# metal feature requires clang-ast
+clang-ast = { workspace = true, optional = true }
+
 [features]
 default = ["metal"]
-metal = []
+
+metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
 metal-nax = []
+
 tracing = []
 vulkan = ["dep:ash", "dep:shaderc"]
 
