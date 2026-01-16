@@ -3,8 +3,10 @@ use std::{env, fs, path::PathBuf};
 use anyhow::Context;
 
 mod common;
-mod metal;
 mod shared_types;
+
+#[cfg(feature = "metal")]
+mod metal;
 
 use common::compiler::Compiler;
 use common::envs;
@@ -38,10 +40,10 @@ async fn main() -> anyhow::Result<()> {
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    if cfg!(feature = "metal") {
-        compilers.push(Box::new(metal::MetalCompiler::new()?));
-        compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
-    }
+    compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
+
+    #[cfg(feature = "metal")]
+    compilers.push(Box::new(metal::MetalCompiler::new()?));
 
     try_join_all(compilers.iter().map(|c| c.build())).await?;
 
