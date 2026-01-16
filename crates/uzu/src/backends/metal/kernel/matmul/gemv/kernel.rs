@@ -68,6 +68,37 @@ impl Kernel {
         })
     }
 
+    pub fn precompile(
+        &mut self,
+        context: &MTLContext,
+    ) -> Result<(), MTLError> {
+        let configs: &[(u32, bool)] = match self.data_type {
+            DataType::BF16 => &[(4, false), (4, true), (8, false), (8, true)],
+            DataType::F16 => &[(8, false)],
+            DataType::F32 => &[(8, false)],
+            _ => return Ok(()),
+        };
+
+        for &(threadgroup_rows, do_axpby) in configs {
+            let config = PipelineConfiguration {
+                transpose_a: false,
+                transpose_b: true,
+                transpose_matrix: false,
+                threadgroup_rows,
+                threadgroup_cols: 1,
+                threads_per_simdgroup_row: 1,
+                threads_per_simdgroup_col: 32,
+                elements_per_thread_row: 4,
+                elements_per_thread_col: 4,
+                non_contiguous_batch: false,
+                do_axpby,
+            };
+            let _ = self.get_pipeline(context, &config);
+        }
+
+        Ok(())
+    }
+
     fn get_pipeline(
         &mut self,
         context: &MTLContext,

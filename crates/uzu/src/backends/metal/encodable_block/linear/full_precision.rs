@@ -88,7 +88,8 @@ impl FullPrecisionLinear {
             Err(_) => None,
         };
 
-        let kernel = MatmulKernel::new(precision)?;
+        let mut kernel = MatmulKernel::new(precision)?;
+        kernel.precompile(_mtl_context)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
