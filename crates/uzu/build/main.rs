@@ -4,6 +4,7 @@ use anyhow::Context;
 mod common;
 mod metal;
 mod shared_types;
+#[cfg(feature = "vulkan")]
 mod vulkan;
 
 use common::compiler::Compiler;
@@ -42,9 +43,8 @@ async fn main() -> anyhow::Result<()> {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
         compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
     }
-    if cfg!(feature = "vulkan") {
-        compilers.push(Box::new(vulkan::VulkanCompiler::new()?));
-    }
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(vulkan::VulkanCompiler::new()?));
 
     try_join_all(compilers.iter().map(|c| c.build())).await?;
 

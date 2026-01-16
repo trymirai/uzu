@@ -5,10 +5,6 @@ edition.workspace = true
 build = "build/main.rs"
 
 [dependencies]
-# "linked" link the Vulkan loader at compile time
-# without "linked" device.device_fn_1_0.allocate_command_buffers have error
-# "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
-ash = { version = "0.38.0", features = ["linked"], optional = true }
 xgrammar.workspace = true
 half.workspace = true
 ndarray.workspace = true
@@ -31,6 +27,7 @@ rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
+ash = { workspace = true, optional = true }
 
 [dev-dependencies]
 is_close.workspace = true
@@ -55,15 +52,15 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
-shaderc.workspace = true
 regex.workspace = true
+shaderc = { workspace = true, optional = true }
 
 [features]
 default = ["metal"]
 metal = []
 metal-nax = []
 tracing = []
-vulkan = ["dep:ash"]
+vulkan = ["dep:ash", "dep:shaderc"]
 
 [[test]]
 name = "moe"
