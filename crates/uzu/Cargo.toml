@@ -25,7 +25,6 @@ rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
-ash.workspace = true
 
 # metal feature requires objc2, block (for callbacks) and metal
 objc2 = { workspace = true, optional = true}
@@ -33,10 +32,17 @@ objc2-foundation = { workspace = true, optional = true}
 block = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
-# macos requires objc2 even on non-metal (but shouldn't)
+# vulkan feature requires ash
+ash = { workspace = true, optional = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+# macos requires objc2 even on non-metal (but shouldn't)
 objc2.workspace = true
 objc2-foundation.workspace = true
+# "linked" link the Vulkan loader at compile time
+# without "linked" device.device_fn_1_0.allocate_command_buffers have error
+# "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
+ash = { workspace = true, optional = true, features = ["linked"] }
 
 [dev-dependencies]
 is_close.workspace = true
@@ -61,16 +67,20 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
-shaderc.workspace = true
 
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }
+
+# vulkan feature requires shaderc
+shaderc = { workspace = true, optional = true }
 
 [features]
 default = ["metal"]
 
 metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
 metal-nax = []
+
+vulkan = ["dep:shaderc", "dep:ash"]
 
 tracing = []
 
