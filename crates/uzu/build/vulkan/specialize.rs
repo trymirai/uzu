@@ -89,12 +89,14 @@ pub fn fill_comp_requests_with_specializations(
 
         // fill options and extensions
         for (type_name, type_value) in definitions {
-            if type_value == "float16_t" {
+            let mut actual_type = type_value;
+            if type_value == "float16" {
                 extensions.insert(shader::GL_EXT_SHADER_16BIT_STORAGE);
                 extensions.insert(shader::GL_EXT_SHADER_EXPLICIT_ARITHMETIC_TYPES_FLOAT_16);
+                actual_type = "float16_t"
             }
 
-            options.add_macro_definition(type_name, Some(type_value));
+            options.add_macro_definition(type_name, Some(actual_type));
 
             out_file_name.push('_');
             out_file_name.push_str(&type_value);
