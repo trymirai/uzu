@@ -70,6 +70,8 @@ autocxx = "0.30.0"
 cxx = "1.0.187"
 cmake = "0.1.57"
 autocxx-build = "0.30.0"
+ash = "0.38.0"
+shaderc = "0.10.1"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
