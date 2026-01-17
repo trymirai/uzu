@@ -6,6 +6,7 @@ use metal::{
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
+    tile_configuration::TileConfiguration,
 };
 use crate::{
     DataType,
@@ -35,6 +36,64 @@ impl Kernel {
             data_type,
             pipelines: HashMap::new(),
         })
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn precompile(
+        &mut self,
+        context: &MTLContext,
+    ) -> Result<(), MTLError> {
+        let tiles_and_alignments: &[(
+            TileConfiguration,
+            &[(bool, bool, bool)],
+        )] = match self.data_type {
+            DataType::BF16 => &[
+                (
+                    TileConfiguration::new(64, 32, 32, 2, 2, 0),
+                    &[(false, true, true), (true, true, true)],
+                ),
+                (
+                    TileConfiguration::new(64, 64, 16, 2, 2, 0),
+                    &[
+                        (false, true, true),
+                        (true, false, true),
+                        (true, true, true),
+                    ],
+                ),
+                (
+                    TileConfiguration::new(64, 64, 16, 1, 2, 0),
+                    &[(true, true, true)],
+                ),
+            ],
+            DataType::F16 => &[(
+                TileConfiguration::new(64, 64, 16, 2, 2, 0),
+                &[(true, true, true), (false, true, true)],
+            )],
+            DataType::F32 => &[(
+                TileConfiguration::new(32, 64, 16, 1, 2, 0),
+                &[(false, true, true), (true, true, true)],
+            )],
+            _ => return Ok(()),
+        };
+
+        for (tile, alignments) in tiles_and_alignments {
+            for &(align_m, align_n, align_k) in *alignments {
+                let config = PipelineConfiguration {
+                    tile: *tile,
+                    transpose_a: false,
+                    transpose_b: true,
+                    align_m,
+                    align_n,
+                    align_k,
+                    has_batch: false,
+                    use_out_source: false,
+                    do_axpby: false,
+                };
+                let _ = self.get_or_compile_pipeline(context, &config);
+            }
+        }
+
+        Ok(())
     }
 
     fn type_name(&self) -> &'static str {

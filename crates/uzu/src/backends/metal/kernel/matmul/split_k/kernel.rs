@@ -45,6 +45,65 @@ impl Kernel {
         })
     }
 
+    pub fn precompile(
+        &mut self,
+        context: &MTLContext,
+    ) -> Result<(), MTLError> {
+        use super::tile_configuration::TileConfiguration;
+
+        if !matches!(self.data_type, DataType::BF16) {
+            return Ok(());
+        }
+
+        let tile_configs = [
+            TileConfiguration {
+                tile_rows: 16,
+                tile_cols: 16,
+                tile_depth: 16,
+                warps_per_row: 2,
+                warps_per_col: 2,
+            },
+            TileConfiguration {
+                tile_rows: 16,
+                tile_cols: 32,
+                tile_depth: 16,
+                warps_per_row: 2,
+                warps_per_col: 2,
+            },
+            TileConfiguration {
+                tile_rows: 32,
+                tile_cols: 16,
+                tile_depth: 16,
+                warps_per_row: 2,
+                warps_per_col: 2,
+            },
+            TileConfiguration {
+                tile_rows: 32,
+                tile_cols: 32,
+                tile_depth: 16,
+                warps_per_row: 2,
+                warps_per_col: 2,
+            },
+        ];
+
+        for tile in &tile_configs {
+            for &mn_aligned in &[false, true] {
+                let config = PipelineConfiguration {
+                    tile: *tile,
+                    transpose_a: false,
+                    transpose_b: true,
+                    mn_aligned,
+                    k_aligned: true,
+                };
+                let _ = self.get_partial_pipeline(context, &config);
+            }
+        }
+
+        let _ = self.get_accum_pipeline(context);
+
+        Ok(())
+    }
+
     fn steel_type_name(&self) -> Result<&'static str, MTLError> {
         match self.data_type {
             DataType::F16 => Ok("float16"),

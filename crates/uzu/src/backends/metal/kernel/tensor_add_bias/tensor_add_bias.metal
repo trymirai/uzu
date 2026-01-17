@@ -26,7 +26,7 @@ void tensorAddBias(
 
 #define innerArguments (input, bias, output, numCols, length, position)
 
-generateKernels(tensorAddBias)
+generateKernels(32, tensorAddBias)
 
 #undef outerArguments
 #undef innerArguments

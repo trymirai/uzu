@@ -17,6 +17,7 @@ struct PatchParameters {
   uint temporalSlices;
 };
 
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void scalePadNormalizeImage(
     texture2d<float, access::sample> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
@@ -81,6 +82,7 @@ kernel void scalePadNormalizeImage(
   outputTexture.write(float4(normalizedRgb, 1.0f), gid);
 }
 
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void extractImagePatches(
     texture2d<float, access::read> paddedNormalizedTexture [[texture(0)]],
     device float* outputBuffer [[buffer(0)]],

@@ -57,6 +57,7 @@ inline void moe_finalize_impl(
 }
 
 #define DEFINE_MOE_FINALIZE_KERNEL(SUFFIX, T)                                  \
+  [[max_total_threads_per_threadgroup(128)]]                                   \
   kernel void moe_finalize_##SUFFIX(                                           \
       device const int* tok2row [[buffer(0)]],                                 \
       device const T* probs [[buffer(1)]],                                     \

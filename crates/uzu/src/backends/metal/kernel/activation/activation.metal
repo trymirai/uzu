@@ -30,7 +30,8 @@ inline T activate(T x, ushort act) {
 }
 
 template <typename T>
-[[kernel]] void activation(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void activation(
     const device T* input [[buffer(0)]],
     device T* output [[buffer(1)]],
     const constant int& N [[buffer(2)]],

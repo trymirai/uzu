@@ -462,7 +462,12 @@ static T threadgroup_cooperative_reduce_min(
 
 // MARK: - DSL Annotation Helpers
 
+#ifdef DSL_ANALYZE
 #define DSL_META(...) [[clang::annotate("", __VA_ARGS__)]]
+#else
+#define DSL_META(...)
+#endif
+
 #define DSL_STR(X) #X
 #define DSL_XSTR(X) DSL_STR(X)
 
@@ -477,17 +482,19 @@ static T threadgroup_cooperative_reduce_min(
 
 // MARK: - Generate Template Kernels
 
-#define generateKernel(functionName, scalarType, outerArgs, innerArgs)         \
+#define generateKernel(max_threads, functionName, scalarType, outerArgs, innerArgs) \
+  [[max_total_threads_per_threadgroup(max_threads)]]                           \
   kernel void functionName##_##scalarType outerArgs { functionName innerArgs; }
 
-#define generateKernels(functionName)                                          \
-  generateKernel(functionName, float, outerArguments(float), innerArguments);  \
+#define generateKernels(max_threads, functionName)                             \
+  generateKernel(max_threads, functionName, float, outerArguments(float), innerArguments);  \
   generateKernel(                                                              \
+      max_threads,                                                             \
       functionName,                                                            \
       bfloat,                                                                  \
       outerArguments(bfloat),                                                  \
       innerArguments                                                           \
   );                                                                           \
-  generateKernel(functionName, half, outerArguments(half), innerArguments);
+  generateKernel(max_threads, functionName, half, outerArguments(half), innerArguments);
 
 #endif /* definitions_metal */

@@ -128,6 +128,7 @@ void layer_norm_core(
 
 // Generate LayerNorm kernels
 #define DEFINE_LAYER_NORM_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF)            \
+  [[max_total_threads_per_threadgroup(1024)]]                                  \
   kernel void layer_norm_##SUF(                                                \
       const device IN* input [[buffer(0)]],                                    \
       const device SC* scales [[buffer(1)]],                                   \

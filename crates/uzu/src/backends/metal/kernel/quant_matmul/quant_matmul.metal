@@ -89,10 +89,11 @@ inline void qouter(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s[2] = {scale, scale / 16.0f};
+    U s0 = scale;
+    U s1 = scale / 16.0f;
     for (int i = 0; i < (values_per_thread / 2); i++) {
-      result[2 * i] += x * (s[0] * (w[i] & 0x0f) + bias);
-      result[2 * i + 1] += x * (s[1] * (w[i] & 0xf0) + bias);
+      result[2 * i] += x * (s0 * (w[i] & 0x0f) + bias);
+      result[2 * i + 1] += x * (s1 * (w[i] & 0xf0) + bias);
     }
   } else if (bits == 8) {
     for (int i = 0; i < values_per_thread; i++) {
@@ -227,10 +228,11 @@ inline void dequantize(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s[2] = {scale, scale / static_cast<U>(16.0f)};
+    U s0 = scale;
+    U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
-      w_local[2 * i] = s[0] * (w[i] & 0x0f) + bias;
-      w_local[2 * i + 1] = s[1] * (w[i] & 0xf0) + bias;
+      w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
+      w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -1723,7 +1725,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1775,7 +1777,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm_transposed(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_transposed(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1819,7 +1821,7 @@ template <
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1850,7 +1852,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qvm(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qvm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1881,7 +1883,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv_fast(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_fast(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -4433,7 +4435,7 @@ void qmv_mlp_fused_impl(
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv_mlp_fused(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_mlp_fused(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -4794,7 +4796,7 @@ void qmm_mlp_fused_impl(
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmm_mlp_fused(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_mlp_fused(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points

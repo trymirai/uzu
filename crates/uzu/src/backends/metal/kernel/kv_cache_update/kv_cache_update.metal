@@ -52,7 +52,7 @@ void updateKVCache(
    headDim,                                                                    \
    position)
 
-generateKernels(updateKVCache)
+generateKernels(1024, updateKVCache)
 
 #undef outerArguments
 #undef innerArguments

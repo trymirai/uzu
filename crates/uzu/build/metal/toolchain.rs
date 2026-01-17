@@ -10,7 +10,9 @@ use anyhow::{Context, bail};
 use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
+use super::ast::{
+    MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel,
+};
 
 #[derive(Debug)]
 pub enum MetalSdk {
@@ -172,6 +174,7 @@ impl MetalToolchain {
             .args(["-x", "metal"])
             .arg(format!("-std={}", self.std.to_str()))
             .args(self.extra_options.as_ref())
+            .arg("-DDSL_ANALYZE")
             .arg(path)
             .arg("-fsyntax-only")
             .args(["-MMD", "-MF"])
@@ -203,6 +206,11 @@ impl MetalToolchain {
 
         let source_contents =
             fs::read_to_string(path).context("cannot read source file")?;
+
+        for node in &ast_root.inner {
+            validate_raw_kernel(node)
+                .context("validation of legacy (non-dsl) kernel failed")?;
+        }
 
         let kernel_infos = ast_root
             .inner

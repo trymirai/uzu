@@ -41,6 +41,22 @@ impl MatmulKernel {
         })
     }
 
+    pub fn precompile(
+        &mut self,
+        context: &MTLContext,
+    ) -> Result<(), MTLError> {
+        let gemm = self.get_or_create_gemm()?;
+        gemm.precompile(context)?;
+
+        let gemv = self.get_or_create_gemv()?;
+        gemv.precompile(context)?;
+
+        let splitk = self.get_or_create_splitk()?;
+        splitk.precompile(context)?;
+
+        Ok(())
+    }
+
     fn get_or_create_gemm(
         &mut self
     ) -> Result<&mut gemm::GemmKernel, MTLError> {
