@@ -131,7 +131,7 @@ void applyRope(
    maxSequenceLength,                                                          \
    position)
 
-generateKernels(applyRope)
+generateKernels(32, applyRope)
 
 #undef outerArguments
 #undef innerArguments

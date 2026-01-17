@@ -26,7 +26,8 @@ inline T softplus(T x) {
 }
 
 template <typename T>
-kernel void ssd_prefill_kernel_64(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void ssd_prefill_kernel_64(
     device const T* x [[buffer(0)]],      // (suffix, h, dh)
     device const T* dt_raw [[buffer(1)]], // (suffix, h) - raw dt values
     device const T* B [[buffer(2)]],      // (suffix, g, n)
@@ -164,7 +165,8 @@ instantiate_ssd_prefill_kernel_64(half, half);
 #undef instantiate_ssd_prefill_kernel_64
 
 template <typename T>
-kernel void ssd_prefill_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void ssd_prefill_kernel(
     device const T* x [[buffer(0)]],      // (suffix, h, dh)
     device const T* dt_raw [[buffer(1)]], // (suffix, h) - raw dt values
     device const T* B [[buffer(2)]],      // (suffix, g, n)
@@ -303,7 +305,8 @@ instantiate_ssd_prefill_kernel(half, half);
 #undef instantiate_ssd_prefill_kernel
 
 template <typename T>
-kernel void ssd_prefill_kernel_sequential(
+[[kernel, max_total_threads_per_threadgroup(1024)]]
+void ssd_prefill_kernel_sequential(
     device const T* x [[buffer(0)]],      // (suffix, h, dh)
     device const T* dt_raw [[buffer(1)]], // (suffix, h) - raw dt values
     device const T* B [[buffer(2)]],      // (suffix, g, n)

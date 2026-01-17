@@ -5,6 +5,7 @@ using namespace metal;
 #define BM 16
 
 // Compute per-expert tile counts: tiles_e = ceil((seg_len)/BM)
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_tile_counts(
     device const uint* offsets [[buffer(0)]], // [E+1]
     device uint* tile_counts [[buffer(1)]],   // [E]
@@ -22,6 +23,7 @@ kernel void moe_tile_counts(
 
 // Single-threadgroup exclusive scan over tile_counts -> tile_row_offsets, also
 // writes total_tiles
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_tile_scan(
     device const uint* tile_counts [[buffer(0)]], // [E]
     device uint* tile_row_offsets [[buffer(1)]],  // [E+1]
@@ -75,6 +77,7 @@ kernel void moe_tile_scan(
 
 // Build flattened tile_map of length total_tiles; each entry is 3 uints:
 // [3*i+0]=expert_idx, [3*i+1]=seg_start, [3*i+2]=tile_m0
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_build_tile_map(
     device const uint* offsets [[buffer(0)]],          // [E+1]
     device const uint* tile_row_offsets [[buffer(1)]], // [E+1]
@@ -98,6 +101,7 @@ kernel void moe_build_tile_map(
 
 // Write MTLDispatchThreadgroupsIndirectArguments {x, y, z} where:
 //  x = num_tiles_n (computed on CPU and passed in), y = total_tiles, z = 1
+[[max_total_threads_per_threadgroup(1)]]
 kernel void moe_write_dispatch_args(
     device const uint* total_tiles_buf
     [[buffer(0)]], // [>=1], total_tiles_buf[0] = total_rows

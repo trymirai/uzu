@@ -32,7 +32,7 @@ inline T activate(T x, ushort act) {
 }
 
 template <typename T>
-[[kernel]] void mlp_activation_mul(
+[[kernel, max_total_threads_per_threadgroup(64)]] void mlp_activation_mul(
     const device T* fused_up [[buffer(0)]],
     device T* hidden [[buffer(1)]],
     const constant int& H [[buffer(2)]],

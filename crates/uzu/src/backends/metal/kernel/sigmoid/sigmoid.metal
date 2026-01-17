@@ -4,7 +4,8 @@ using namespace metal;
 
 // Apply sigmoid element-wise to logits
 template <typename T>
-kernel void apply_sigmoid(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void apply_sigmoid(
     const device T* input [[buffer(0)]],
     device T* output [[buffer(1)]],
     constant int& total_elements [[buffer(2)]],

@@ -40,7 +40,8 @@ inline T apply_activation_fn(T x, int activation_type) {
 }
 
 template <typename T>
-kernel void conv1d_pack_prefix_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void conv1d_pack_prefix_kernel(
     device const T* state_in [[buffer(0)]],
     device const T* x [[buffer(1)]],
     device T* padded [[buffer(2)]],
@@ -70,7 +71,8 @@ kernel void conv1d_pack_prefix_kernel(
 }
 
 template <typename T>
-kernel void conv1d_scan_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void conv1d_scan_kernel(
     device const T* padded [[buffer(0)]], // (prefix+suffix, channels)
     device const T* w [[buffer(1)]],      // (channels, kernel)
     device const T* b [[buffer(2)]],      // optional (channels)
@@ -142,7 +144,8 @@ kernel void conv1d_scan_kernel(
 }
 
 template <typename T>
-kernel void conv1d_decode_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void conv1d_decode_kernel(
     device const T* x [[buffer(0)]],
     device const T* w [[buffer(1)]],
     device const T* b [[buffer(2)]],

@@ -9,6 +9,7 @@ using namespace metal;
 
 // 4A: Compute per-block base offsets from partials
 // partials layout: index = (block_id * num_tiles + tile_id) * TILE_E + te
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_block_bases_from_partials(
     device const uint* partials [[buffer(0)]],
     device uint* block_bases [[buffer(1)]],
@@ -188,6 +189,7 @@ inline void moe_scatter_buckets_impl(
 }
 
 #define DEFINE_MOE_SCATTER_BUCKETS_KERNEL(SUFFIX, ProbT)                       \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_scatter_buckets_##SUFFIX(                                    \
       device const int* topk_ids [[buffer(0)]],                                \
       device const ProbT* topk_probs [[buffer(1)]],                            \
@@ -235,6 +237,7 @@ DEFINE_MOE_SCATTER_BUCKETS_KERNEL(bf16, bfloat)
 
 // Map variants
 #define DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(SUFFIX, ProbT)                   \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_scatter_buckets_map_##SUFFIX(                                \
       device const int* topk_ids [[buffer(0)]],                                \
       device const ProbT* topk_probs [[buffer(1)]],                            \

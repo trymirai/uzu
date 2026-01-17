@@ -23,7 +23,8 @@ inline T softplus(T x) {
 }
 
 template <typename T>
-kernel void ssd_update_kernel(
+[[kernel, max_total_threads_per_threadgroup(1024)]]
+void ssd_update_kernel(
     // Input
     device const T* x [[buffer(0)]],      // (b, h, dh)
     device const T* dt_raw [[buffer(1)]], // (b, h)
