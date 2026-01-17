@@ -866,7 +866,7 @@ void update_kv_cache(
    max_sequence_length,                                                        \
    position)
 
-generateKernels(update_kv_cache)
+generateKernels(64, update_kv_cache)
 
 #undef outerArguments
 #undef innerArguments

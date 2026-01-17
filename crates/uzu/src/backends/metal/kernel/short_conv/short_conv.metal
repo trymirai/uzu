@@ -4,7 +4,8 @@
 using namespace metal;
 
 template <typename T>
-kernel void short_conv_pack_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void short_conv_pack_kernel(
     device const T* state_in [[buffer(0)]],
     device const T* in_proj [[buffer(1)]],
     device T* padded [[buffer(2)]],
@@ -45,7 +46,8 @@ kernel void short_conv_pack_kernel(
 }
 
 template <typename T>
-kernel void short_conv_prefill_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void short_conv_prefill_kernel(
     device const T* padded [[buffer(0)]],
     device const T* in_proj [[buffer(1)]],
     device const T* w [[buffer(2)]],
@@ -111,7 +113,8 @@ kernel void short_conv_prefill_kernel(
 }
 
 template <typename T>
-kernel void short_conv_decode_kernel(
+[[kernel, max_total_threads_per_threadgroup(32)]]
+void short_conv_decode_kernel(
     device const T* in_proj [[buffer(0)]],
     device const T* w [[buffer(1)]],
     device const T* b [[buffer(2)]],

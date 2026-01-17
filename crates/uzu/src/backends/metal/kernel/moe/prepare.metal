@@ -108,6 +108,7 @@ void moe_gather_x_perm_1d_impl(
 
 // 2D Tiled kernels
 #define GATHER_2D_KERNEL(DTYPE, SUFFIX)                                        \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_gather_x_perm_##SUFFIX##_2d(                                 \
       device const DTYPE* X [[buffer(0)]],                                     \
       device const int* bucketed_ids [[buffer(1)]],                            \
@@ -123,6 +124,7 @@ void moe_gather_x_perm_1d_impl(
 
 // 1D kernels
 #define GATHER_1D_KERNEL(DTYPE, SUFFIX)                                        \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_gather_x_perm_##SUFFIX(                                      \
       device const DTYPE* X [[buffer(0)]],                                     \
       device const int* bucketed_ids [[buffer(1)]],                            \

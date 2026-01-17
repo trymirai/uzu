@@ -21,7 +21,7 @@ void tensorCopy(
 
 #define innerArguments (sourceBuffer, destinationBuffer, length, position)
 
-generateKernels(tensorCopy)
+generateKernels(32, tensorCopy)
 
 #undef outerArguments
 #undef innerArguments

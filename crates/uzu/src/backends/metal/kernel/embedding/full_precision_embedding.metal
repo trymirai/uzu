@@ -2,7 +2,8 @@
 using namespace metal;
 
 template <typename T>
-[[kernel]] void full_precision_embedding_lookup(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void full_precision_embedding_lookup(
     const device uint64_t* token_ids [[buffer(0)]], // [batch_size]
     const device T* weights [[buffer(1)]],          // [vocab_size, model_dim]
     device T* output [[buffer(2)]],                 // [batch_size, model_dim]

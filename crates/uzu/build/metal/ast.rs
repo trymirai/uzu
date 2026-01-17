@@ -33,6 +33,8 @@ pub enum MetalAstKind {
     StringLiteral {
         value: Box<str>,
     },
+    MetalKernelAttr,
+    MetalMaxTotalThreadsPerThreadGroupAttr,
     Other,
 }
 
@@ -384,4 +386,70 @@ impl MetalKernelInfo {
             specializations,
         }))
     }
+}
+
+pub fn validate_raw_kernel(node: &MetalAstNode) -> anyhow::Result<()> {
+    let (node, is_template) =
+        if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
+            let inner_fn = node.inner.iter().find(|c| {
+                matches!(
+                    c.kind,
+                    MetalAstKind::FunctionDecl {
+                        name: _
+                    }
+                )
+            });
+            match inner_fn {
+                Some(n) => (n, true),
+                None => return Ok(()),
+            }
+        } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
+            (node, false)
+        } else {
+            return Ok(());
+        };
+
+    let MetalAstKind::FunctionDecl {
+        name,
+    } = &node.kind
+    else {
+        return Ok(());
+    };
+
+    let mut has_metal_kernel_attr = false;
+    let mut has_max_threads_attr = false;
+    let mut has_dsl_kernel = false;
+
+    for child in &node.inner {
+        match &child.kind {
+            MetalAstKind::MetalKernelAttr => has_metal_kernel_attr = true,
+            MetalAstKind::MetalMaxTotalThreadsPerThreadGroupAttr => {
+                has_max_threads_attr = true
+            },
+            MetalAstKind::AnnotateAttr => {
+                if let Ok(annotation) = annotation_from_ast_node(child.clone())
+                {
+                    if annotation.first().map(|s| s.as_ref())
+                        == Some("dsl.kernel")
+                    {
+                        has_dsl_kernel = true;
+                    }
+                }
+            },
+            _ => (),
+        }
+    }
+
+    if has_metal_kernel_attr && !has_dsl_kernel && !has_max_threads_attr {
+        let kind = if is_template {
+            "template"
+        } else {
+            "function"
+        };
+        bail!(
+            "kernel {kind} '{name}' is missing `[[max_total_threads_per_threadgroup(N)]]` attribute! it **MUST** be present and correct!"
+        );
+    }
+
+    Ok(())
 }

@@ -1725,7 +1725,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1777,7 +1777,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm_transposed(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_transposed(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1821,7 +1821,7 @@ template <
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1852,7 +1852,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qvm(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qvm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1883,7 +1883,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv_fast(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_fast(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -4435,7 +4435,7 @@ void qmv_mlp_fused_impl(
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv_mlp_fused(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_mlp_fused(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -4796,7 +4796,7 @@ void qmm_mlp_fused_impl(
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmm_mlp_fused(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_mlp_fused(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points

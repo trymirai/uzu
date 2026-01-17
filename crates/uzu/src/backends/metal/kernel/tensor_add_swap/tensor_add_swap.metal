@@ -26,7 +26,7 @@ void tensorAddSwap(
 
 #define innerArguments (skipBuffer, mainBuffer, length, position)
 
-generateKernels(tensorAddSwap)
+generateKernels(32, tensorAddSwap)
 
 #undef outerArguments
 #undef innerArguments
