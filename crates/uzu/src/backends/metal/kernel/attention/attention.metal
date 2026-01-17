@@ -817,36 +817,27 @@ void update_kv_cache(
     return;
   }
 
-  TensorView3D<const T> rotatedKeysTensorView =
-      TensorView3D<const T>(rotated_keys, num_groups, suffix_length, head_dim);
-  TensorView3D<T> keyCacheTensorView =
-      TensorView3D<T>(key_cache, num_groups, max_sequence_length, head_dim);
-  TensorView3D<T> valueCacheTensorView =
-      TensorView3D<T>(value_cache, num_groups, max_sequence_length, head_dim);
+  const uint cacheTokenIndex = prefix_segment_length + tokenIndex;
 
   // Copy rotated key to cache
-  keyCacheTensorView(groupIndex, prefix_segment_length + tokenIndex, dimIndex) =
-      rotatedKeysTensorView(groupIndex, tokenIndex, dimIndex);
+  const uint rotatedKeyOffset =
+      (groupIndex * suffix_length + tokenIndex) * head_dim + dimIndex;
+  const uint keyCacheOffset =
+      (groupIndex * max_sequence_length + cacheTokenIndex) * head_dim +
+      dimIndex;
+  key_cache[keyCacheOffset] = rotated_keys[rotatedKeyOffset];
 
-  // Update value cache (only first thread in each token processes values to
-  // avoid redundant work)
-  if (dimIndex == 0) {
-    const uint totalQueryDim = num_heads * head_dim;
-    const uint totalKeyValueDim = num_groups * head_dim;
-
-    const int qkvStride = totalQueryDim + 2 * totalKeyValueDim;
-    TensorView2D<const T> qkvTensorView =
-        TensorView2D<const T>(qkv, suffix_length, qkvStride);
-
-    // Extract values from QKV tensor
-    // Values start at offset: total_query_dim + total_key_value_dim
-    for (uint d = 0; d < head_dim; d++) {
-      const uint valueOffset =
-          totalQueryDim + totalKeyValueDim + groupIndex * head_dim + d;
-      valueCacheTensorView(groupIndex, prefix_segment_length + tokenIndex, d) =
-          qkvTensorView(tokenIndex, valueOffset);
-    }
-  }
+  // Copy value to cache
+  // qkv layout: [suffix_length, (num_heads + 2*num_groups) * head_dim]
+  // Values start at offset: (num_heads * head_dim) + (num_groups * head_dim)
+  const uint qkvStride = (num_heads + 2 * num_groups) * head_dim;
+  const uint valueBaseOffset = (num_heads + num_groups) * head_dim;
+  const uint valueOffset = tokenIndex * qkvStride + valueBaseOffset +
+                           groupIndex * head_dim + dimIndex;
+  const uint valueCacheOffset =
+      (groupIndex * max_sequence_length + cacheTokenIndex) * head_dim +
+      dimIndex;
+  value_cache[valueCacheOffset] = qkv[valueOffset];
 }
 
 #define outerArguments(T)                                                      \

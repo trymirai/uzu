@@ -18,7 +18,7 @@ pub enum AttentionKernelVariant {
     TwoPass,
 }
 
-type PipelineKey = (usize, bool, bool); // (head_dim, has_sinks, is_causal)
+type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
     single_pass: HashMap<PipelineKey, MTLComputePipelineState>,
@@ -123,15 +123,15 @@ pub struct AttentionGemmArguments<'a> {
 }
 
 fn make_function_constants(
+    has_mask_value: bool,
     has_sinks_value: bool,
     is_causal_value: bool,
 ) -> FunctionConstantValues {
     let function_constants = FunctionConstantValues::new();
 
-    let has_mask_value = true;
     let query_transposed_value = false;
     let bool_mask_value = false;
-    let float_mask_value = true;
+    let float_mask_value = has_mask_value;
 
     function_constants.set_constant_value_at_index(
         &has_mask_value as *const bool as *const std::ffi::c_void,
@@ -182,51 +182,66 @@ impl AttentionKernel {
         // Pre-generate all supported variants for sinks and causal configurations
         for &has_sinks_value in &[false, true] {
             for &is_causal_value in &[false, true] {
-                let function_constants =
-                    make_function_constants(has_sinks_value, is_causal_value);
+                for &has_mask_value in &[false, true] {
+                    let function_constants = make_function_constants(
+                        has_mask_value,
+                        has_sinks_value,
+                        is_causal_value,
+                    );
 
-                for &head_dim in &supported_head_dims {
-                    if let Ok((pipeline, _)) = context
-                        .compute_pipeline_state_with_reflection(
-                            &format!(
-                                "attention_single_pass_{}_{}",
-                                data_suffix, head_dim
-                            ),
-                            Some(&function_constants),
-                        )
-                    {
-                        single_pass.insert(
-                            (head_dim, has_sinks_value, is_causal_value),
-                            pipeline,
-                        );
-                    }
-
-                    if let Ok((pipeline, _)) = context
-                        .compute_pipeline_state_with_reflection(
-                            &format!(
-                                "attention_2pass_1_{}_{}",
-                                data_suffix, head_dim
-                            ),
-                            Some(&function_constants),
-                        )
-                    {
-                        two_pass_1.insert(
-                            (head_dim, has_sinks_value, is_causal_value),
-                            pipeline,
-                        );
-                    }
-
-                    if !two_pass_2.contains_key(&head_dim) {
+                    for &head_dim in &supported_head_dims {
                         if let Ok((pipeline, _)) = context
                             .compute_pipeline_state_with_reflection(
                                 &format!(
-                                    "attention_2pass_2_{}_{}",
+                                    "attention_single_pass_{}_{}",
                                     data_suffix, head_dim
                                 ),
                                 Some(&function_constants),
                             )
                         {
-                            two_pass_2.insert(head_dim, pipeline);
+                            single_pass.insert(
+                                (
+                                    head_dim,
+                                    has_sinks_value,
+                                    is_causal_value,
+                                    has_mask_value,
+                                ),
+                                pipeline,
+                            );
+                        }
+
+                        if let Ok((pipeline, _)) = context
+                            .compute_pipeline_state_with_reflection(
+                                &format!(
+                                    "attention_2pass_1_{}_{}",
+                                    data_suffix, head_dim
+                                ),
+                                Some(&function_constants),
+                            )
+                        {
+                            two_pass_1.insert(
+                                (
+                                    head_dim,
+                                    has_sinks_value,
+                                    is_causal_value,
+                                    has_mask_value,
+                                ),
+                                pipeline,
+                            );
+                        }
+
+                        if !two_pass_2.contains_key(&head_dim) {
+                            if let Ok((pipeline, _)) = context
+                                .compute_pipeline_state_with_reflection(
+                                    &format!(
+                                        "attention_2pass_2_{}_{}",
+                                        data_suffix, head_dim
+                                    ),
+                                    Some(&function_constants),
+                                )
+                            {
+                                two_pass_2.insert(head_dim, pipeline);
+                            }
                         }
                     }
                 }
@@ -256,16 +271,22 @@ impl AttentionKernel {
         &self,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> bool {
-        self.pipelines.single_pass.contains_key(&(head_dim, false, is_causal))
+        self.pipelines
+            .single_pass
+            .contains_key(&(head_dim, false, is_causal, has_mask))
     }
 
     pub fn supports_two_pass(
         &self,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> bool {
-        self.pipelines.two_pass_1.contains_key(&(head_dim, false, is_causal))
+        self.pipelines
+            .two_pass_1
+            .contains_key(&(head_dim, false, is_causal, has_mask))
             && self.pipelines.two_pass_2.contains_key(&head_dim)
     }
 
@@ -274,8 +295,10 @@ impl AttentionKernel {
         sequence_length: usize,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> AttentionKernelVariant {
-        if self.supports_two_pass(head_dim, is_causal) && sequence_length > 1024
+        if self.supports_two_pass(head_dim, is_causal, has_mask)
+            && sequence_length > 1024
         {
             AttentionKernelVariant::TwoPass
         } else {
@@ -289,10 +312,11 @@ impl AttentionKernel {
         args: AttentionSinglePassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
+        let has_mask = args.mask_buffer.is_some();
         let pipeline = self
             .pipelines
             .single_pass
-            .get(&(args.head_dim, has_sinks, args.is_causal))
+            .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         compute_encoder.set_compute_pipeline_state(pipeline);
@@ -386,10 +410,11 @@ impl AttentionKernel {
         args: AttentionTwoPassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
+        let has_mask = args.mask_buffer.is_some();
         let pass1_pipeline = self
             .pipelines
             .two_pass_1
-            .get(&(args.head_dim, has_sinks, args.is_causal))
+            .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         let pass2_pipeline =
@@ -567,12 +592,14 @@ impl AttentionKernel {
             depth: args.head_dim as u64,
         };
 
+        let threadgroup_depth = std::cmp::min(args.head_dim.max(1), 64) as u64;
+
         compute_encoder.dispatch_threads(
             threads_per_grid,
             MTLSize {
                 width: 1,
                 height: 1,
-                depth: 1,
+                depth: threadgroup_depth,
             },
         );
         Ok(())

@@ -144,6 +144,8 @@ impl EncodableBlock for Attention {
                 (0, self.sliding_window_size)
             };
 
+        let use_mask = window_length.is_some();
+
         let sequence_length = segment_prefix_length + suffix_length;
 
         let gqa_factor = num_heads / num_groups;
@@ -169,6 +171,7 @@ impl EncodableBlock for Attention {
                 sequence_length,
                 head_dim,
                 self.is_causal,
+                use_mask,
             )
         };
 
@@ -180,7 +183,6 @@ impl EncodableBlock for Attention {
         let attention_output_binding =
             state.arrays(&[ArrayId::AttentionOutput]);
 
-        let attention_bias_map = attention_bias_binding[0].clone();
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
         let mask_head_stride = 0;
@@ -252,18 +254,25 @@ impl EncodableBlock for Attention {
         let attention_output_buffer =
             unsafe { attention_output_array.mtl_buffer() };
 
-        let attention_bias_buffer = attention_bias_map
-            .get(&window_length)
-            .map(|array| {
-                let mut array_ref = array.borrow_mut();
-                unsafe { array_ref.mtl_buffer().clone() }
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "Attention bias buffer not found for window length {:?}",
-                    window_length
-                );
-            });
+        let attention_bias_buffer = if use_mask {
+            let attention_bias_map = attention_bias_binding[0].clone();
+            Some(
+                attention_bias_map
+                    .get(&window_length)
+                    .map(|array| {
+                        let mut array_ref = array.borrow_mut();
+                        unsafe { array_ref.mtl_buffer().clone() }
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Attention bias buffer not found for window length {:?}",
+                            window_length
+                        );
+                    }),
+            )
+        } else {
+            None
+        };
 
         let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
@@ -321,7 +330,7 @@ impl EncodableBlock for Attention {
                             keys_buffer: &key_cache_buffer,
                             values_buffer: &value_cache_buffer,
                             output_buffer: &attention_output_buffer,
-                            mask_buffer: Some(&attention_bias_buffer),
+                            mask_buffer: attention_bias_buffer.as_ref(),
                             sinks_buffer: sinks_buffer.as_ref(),
                             num_heads,
                             num_groups,
@@ -350,7 +359,7 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: Some(&attention_bias_buffer),
+                        mask_buffer: attention_bias_buffer.as_ref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
@@ -385,7 +394,7 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: Some(&attention_bias_buffer),
+                        mask_buffer: attention_bias_buffer.as_ref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
