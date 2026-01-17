@@ -69,8 +69,9 @@ impl FullPrecisionEmbeddingReadout {
 
         let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
 
-        let kernel =
+        let mut kernel =
             MatmulKernel::new(data_type).map_err(EmbeddingError::MetalError)?;
+        kernel.precompile(_mtl_context).map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),

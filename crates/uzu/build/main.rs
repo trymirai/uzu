@@ -1,15 +1,19 @@
+use std::{env, fs, path::PathBuf};
+
+use anyhow::Context;
+use futures::future::try_join_all;
+
 mod common;
 mod shared_types;
+
 #[cfg(feature = "metal")]
 mod metal;
+
 #[cfg(feature = "vulkan")]
 mod vulkan;
 
-use std::{env, fs, path::PathBuf};
-use anyhow::Context;
 use common::compiler::Compiler;
 use common::envs;
-use futures::future::try_join_all;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {

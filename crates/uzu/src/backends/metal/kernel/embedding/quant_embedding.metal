@@ -2,7 +2,8 @@
 using namespace metal;
 
 template <typename T, uint PACKING_DIVISOR, bool SIGNED_STORAGE>
-[[kernel]] void quantized_embedding_lookup(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void quantized_embedding_lookup(
     const device uint64_t* token_ids [[buffer(0)]], // [batch_size]
     const device uint8_t* weights
     [[buffer(1)]], // [vocab_size, model_dim/packing_divisor] packed

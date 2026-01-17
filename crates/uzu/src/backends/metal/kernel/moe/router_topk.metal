@@ -143,6 +143,7 @@ inline void moe_router_topk_impl(
 }
 
 #define DEFINE_ROUTER_TOPK_KERNEL(SUFFIX, VEC4, SCALAR, PROB)                  \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_router_topk_##SUFFIX(                                        \
       const device VEC4* input [[buffer(0)]],                                  \
       const device VEC4* weight [[buffer(1)]],                                 \

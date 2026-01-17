@@ -2,6 +2,7 @@
 using namespace metal;
 
 template <typename T>
+[[max_total_threads_per_threadgroup(1)]]
 kernel void update_attention_mask(
     device T* mask [[buffer(0)]],
     constant int& unmask_col [[buffer(1)]],

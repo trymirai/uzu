@@ -175,7 +175,7 @@ template <
     typename AccT,
     typename OutT,
     typename Epilogue = TransformNone<OutT, AccT>>
-[[kernel]] void gemm_splitk_accum(
+[[kernel, max_total_threads_per_threadgroup(256)]] void gemm_splitk_accum(
     const device AccT* C_split [[buffer(0)]],
     device OutT* D [[buffer(1)]],
     const constant int& k_partitions [[buffer(2)]],
@@ -203,7 +203,7 @@ template <
     typename AccT,
     typename OutT,
     typename Epilogue = TransformAxpby<OutT, AccT>>
-[[kernel]] void gemm_splitk_accum_axpby(
+[[kernel, max_total_threads_per_threadgroup(256)]] void gemm_splitk_accum_axpby(
     const device AccT* C_split [[buffer(0)]],
     device OutT* D [[buffer(1)]],
     const constant int& k_partitions [[buffer(2)]],

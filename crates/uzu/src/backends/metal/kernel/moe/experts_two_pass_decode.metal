@@ -132,54 +132,10 @@ void moe_experts_decode_pass_a_impl(
   }
 }
 
-#define MOE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX)                               \
-  kernel void moe_experts_decode_pass_a_##SUFFIX(                              \
-      device const DTYPE* X_perm [[buffer(0)]],                                \
-      device const uint* expert_offsets [[buffer(1)]],                         \
-      device const DTYPE* W13_all [[buffer(2)]],                               \
-      device float* hidden_out [[buffer(3)]],                                  \
-      device const DTYPE* up_biases [[buffer(4)]],                             \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& E [[buffer(7)]],                                          \
-      constant float& gate_clip_min [[buffer(8)]],                             \
-      constant float& gate_clip_max [[buffer(9)]],                             \
-      constant float& up_clip_min [[buffer(10)]],                              \
-      constant float& up_clip_max [[buffer(11)]],                              \
-      constant float& silu_alpha [[buffer(12)]],                               \
-      uint3 tgpig [[threadgroup_position_in_grid]],                            \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    moe_experts_decode_pass_a_impl<DTYPE, DTYPE4>(                             \
-        X_perm,                                                                \
-        expert_offsets,                                                        \
-        W13_all,                                                               \
-        up_biases,                                                             \
-        hidden_out,                                                            \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        gate_clip_min,                                                         \
-        gate_clip_max,                                                         \
-        up_clip_min,                                                           \
-        up_clip_max,                                                           \
-        silu_alpha,                                                            \
-        tgpig.y,                                                               \
-        tgpig.z,                                                               \
-        tgpig.x,                                                               \
-        simd_gid,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-MOE_PASS_A_KERNEL(bfloat, bfloat4, bf16)
-MOE_PASS_A_KERNEL(half, half4, f16)
-MOE_PASS_A_KERNEL(float, float4, f32)
-
 // === Helper kernels for indirect dispatch of Pass A ===
 
 // Count tiles per expert: tiles = (num_rows > 0) ? num_rows * h_blocks : 0
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_pass_a_tile_counts(
     device const uint* expert_offsets [[buffer(0)]], // [E+1]
     device uint* tile_counts [[buffer(1)]],          // [E]
@@ -196,6 +152,7 @@ kernel void moe_pass_a_tile_counts(
 }
 
 // Exclusive scan of tile_counts to get tile_offsets and total_tiles
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void moe_pass_a_tile_scan(
     device const uint* tile_counts [[buffer(0)]], // [E]
     device uint* tile_offsets [[buffer(1)]],      // [E+1]
@@ -243,6 +200,7 @@ kernel void moe_pass_a_tile_scan(
 }
 
 // Build row→expert map: one thread per routed row
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_pass_a_build_row_map(
     device const uint* expert_offsets [[buffer(0)]], // [E+1]
     device uint* row_expert_map [[buffer(1)]],       // [total_rows]
@@ -270,6 +228,7 @@ kernel void moe_pass_a_build_row_map(
 }
 
 // Build tile map entries from row→expert map
+[[max_total_threads_per_threadgroup(256)]]
 kernel void moe_pass_a_build_tile_map(
     device const uint* expert_offsets [[buffer(0)]], // [E+1]
     device const uint* tile_offsets [[buffer(1)]],   // [E+1]
@@ -301,6 +260,7 @@ kernel void moe_pass_a_build_tile_map(
 }
 
 // Write dispatch args for indirect dispatch (reusable from tiled version)
+[[max_total_threads_per_threadgroup(1)]]
 kernel void moe_pass_a_write_dispatch_args(
     device const uint* total_tiles [[buffer(0)]], // [1]
     device uint* dispatch_args
@@ -365,6 +325,7 @@ void moe_experts_decode_pass_a_indirect_impl(
 }
 
 #define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, DTYPE4, SUFFIX)                      \
+  [[max_total_threads_per_threadgroup(128)]]                                   \
   kernel void moe_experts_decode_pass_a_indirect_##SUFFIX(                     \
       device const DTYPE* X_perm [[buffer(0)]],                                \
       device const uint* expert_offsets [[buffer(1)]],                         \
@@ -535,6 +496,7 @@ void moe_experts_decode_down_fused_2d_impl(
 }
 
 #define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX)                              \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_experts_decode_down_fused_2d_##SUFFIX(                       \
       device const float* hidden [[buffer(0)]],                                \
       device const uint* row_expert_map [[buffer(1)]],                         \

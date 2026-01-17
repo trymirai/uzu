@@ -5,7 +5,8 @@ using namespace metal;
 // CLS pooling: Extract first token [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]
 template <typename T>
-kernel void pool_cls(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void pool_cls(
     const device T* input [[buffer(0)]],
     device T* output [[buffer(1)]],
     constant int& seq_len [[buffer(2)]],
@@ -25,7 +26,8 @@ kernel void pool_cls(
 // Mean pooling: Average across sequence [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]
 template <typename T>
-kernel void pool_mean(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void pool_mean(
     const device T* input [[buffer(0)]],
     device T* output [[buffer(1)]],
     constant int& seq_len [[buffer(2)]],

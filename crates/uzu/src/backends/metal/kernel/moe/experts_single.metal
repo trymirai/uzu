@@ -131,6 +131,7 @@ inline void moe_experts_decode_single_pass_a_impl(
 }
 
 #define MOE_DECODE_SINGLE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX)                 \
+  [[max_total_threads_per_threadgroup(128)]]                                   \
   kernel void moe_experts_decode_single_pass_a_##SUFFIX(                       \
       device const DTYPE* x [[buffer(0)]],                                     \
       device const int* topk_ids [[buffer(1)]],                                \
@@ -249,6 +250,7 @@ inline void moe_experts_decode_single_pass_b_impl(
 }
 
 #define MOE_DECODE_SINGLE_PASS_B_KERNEL(DTYPE, DTYPE4, SUFFIX)                 \
+  [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_experts_decode_single_pass_b_##SUFFIX(                       \
       device const float* hidden [[buffer(0)]],                                \
       device const int* topk_ids [[buffer(1)]],                                \
