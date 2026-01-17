@@ -7,7 +7,10 @@ use uzu::{
         KernelDataType, MTLContext,
         kernel::{
             SamplingKernel,
-            dsl::{GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel, TopPKernel},
+            dsl::{
+                GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
+                TopPKernel,
+            },
             sampling::ArgmaxStrategy,
         },
         metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,

@@ -495,7 +495,14 @@ impl MetalCompiler {
 impl Compiler for MetalCompiler {
     async fn build(&self) -> anyhow::Result<()> {
         let nax_enabled = cfg!(feature = "metal-nax");
-        debug_log!("metal nax {}", if nax_enabled { "enabled" } else { "disabled" });
+        debug_log!(
+            "metal nax {}",
+            if nax_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
