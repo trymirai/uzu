@@ -85,7 +85,7 @@ pub struct VkContextCreateInfo {
 impl Default for VkContextCreateInfo {
     fn default() -> Self {
         Self {
-            api_version: vk::API_VERSION_1_3,
+            api_version: vk::API_VERSION_1_2,
             with_validation: true,
             logger: Box::new(VkPrintlnLogger::new()),
             required_extensions: vec![

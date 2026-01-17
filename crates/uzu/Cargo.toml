@@ -12,7 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
-mpsgraph.workspace = true
 bytemuck.workspace = true
 num-traits.workspace = true
 regex.workspace = true
@@ -20,7 +19,6 @@ libc.workspace = true
 bitflags.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
-clap.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
@@ -48,7 +46,6 @@ ash = { workspace = true, optional = true, features = ["linked"] }
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
-mpsgraph.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
@@ -73,6 +70,7 @@ clang-ast = { workspace = true, optional = true }
 
 # vulkan feature requires shaderc
 shaderc = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
 
 [features]
 default = ["metal"]
@@ -80,7 +78,7 @@ default = ["metal"]
 metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
 metal-nax = []
 
-vulkan = ["dep:shaderc", "dep:ash"]
+vulkan = ["dep:shaderc", "dep:regex", "dep:ash"]
 
 tracing = []
 

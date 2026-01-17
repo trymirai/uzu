@@ -9,6 +9,9 @@ mod shared_types;
 #[cfg(feature = "metal")]
 mod metal;
 
+#[cfg(feature = "vulkan")]
+mod vulkan;
+
 use common::compiler::Compiler;
 use common::envs;
 
@@ -44,6 +47,9 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new()?));
+
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(vulkan::VulkanCompiler::new()?));
 
     try_join_all(compilers.iter().map(|c| c.build())).await?;
 
