@@ -32,7 +32,7 @@ For a detailed explanation of the architecture, please refer to the [documentati
 ```bash
 git clone https://github.com/trymirai/lalamo.git
 cd lalamo
-git checkout v0.5.15
+git checkout v0.6.0
 ```
 
 After that, you can retrieve the list of supported models:
@@ -56,7 +56,7 @@ Alternatively, you can download a test model using the sample script:
 Or you can download any supported model that has already been converted using:
 
 ```bash
-cd ./scripts/tools/
+cd ./tools/helpers/
 uv sync # install dependencies
 uv run main.py list-models # show the list of supported models
 uv run main.py download-model {REPO_ID} # download a specific model using repo_id
@@ -78,12 +78,12 @@ cargo run --release -p cli -- help
 ```
 
 ```bash
-
-Usage: uzu_cli [COMMAND]
+Usage: cli [COMMAND]
 ​
 Commands:
   run    Run a model with the specified path
   serve  Start a server with the specified model path
+  bench  Run benchmarks for the specified model
   help   Print this message or the help of the given subcommand(s)
 ```
 
@@ -135,14 +135,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Benchmarks
 
-Here are the performance metrics for various models:
+To run benchmarks, you can use the following command:
 
-| `Apple M2`, `tokens/s` | Llama-3.2-1B-Instruct | Qwen2.5-1.5B-Instruct | Qwen3-0.6B | Qwen3-4B | R1-Distill-Qwen-1.5B | SmolLM2-1.7B-Instruct | Gemma-3-1B-Instruct |
-| ---------------------- | --------------------- | --------------------- | ---------- | -------- | -------------------- | --------------------- | ------------------- |
-| `uzu`                  | 35.17                 | 28.32                 | 68.9       | 11.28    | 20.47                | 25.01                 | 41.50               |
-| `llama.cpp`            | 32.48                 | 25.85                 | 5.37       | 1.08     | 2.81                 | 23.74                 | 37.68               |
+```bash
+cargo run --release -p cli -- bench ./models/{ENGINE_VERSION}/{MODEL_NAME} ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_task.json ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_result.json
+```
 
-> Note that all performance comparisons were done using bf16/f16 precision. Comparing quantized models isn't entirely fair, as different engines use different quantization approaches. For running llama.cpp, we used LM Studio (v0.3.17, Metal llama.cpp runtime v1.39.0). It's also worth mentioning that using the `release` build profile is crucial for obtaining the most accurate performance metrics.
+`benchmark_task.json` will be automatically generated after the model is downloaded via `./tools/helpers/`, as described earlier.
 
 ## License
 
