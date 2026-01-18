@@ -7,9 +7,9 @@ if [[ "$(uname)" != "Darwin" ]]; then
   exit 0
 fi
 
-SCRIPTS_PATH="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_PATH="$SCRIPTS_PATH/tools"
+ROOT_PATH="$(cd "$(dirname "$0")/.." && pwd)"
+HELPERS_PATH="$ROOT_PATH/tools/helpers"
 
-cd $TOOLS_PATH
+cd "$HELPERS_PATH"
 uv sync
-uv run main.py download-model meta-llama/Llama-3.2-1B-Instruct
+uv run python main.py download-model meta-llama/Llama-3.2-1B-Instruct

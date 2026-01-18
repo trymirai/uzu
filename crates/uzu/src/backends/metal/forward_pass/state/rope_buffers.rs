@@ -30,10 +30,12 @@ impl RopeBuffers {
                 cosines: RefCell::new(context.array_uninitialized(
                     &[rope_max_sequence_length, head_dim],
                     model_shape.activation_data_type(),
+                    String::from("rope_buffers_cosines"),
                 )),
                 sines: RefCell::new(context.array_uninitialized(
                     &[rope_max_sequence_length, head_dim],
                     model_shape.activation_data_type(),
+                    String::from("rope_buffers_sines"),
                 )),
             }
         }

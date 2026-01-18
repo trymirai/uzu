@@ -2,8 +2,6 @@ use std::ops::Range;
 
 use half::{bf16, f16};
 use metal::{Buffer as MTLBuffer, MTLResourceOptions};
-use mpsgraph::TensorData;
-use objc2::rc::Retained;
 
 use crate::{Array, ArrayElement, DataType, array::array_size_in_bytes};
 
@@ -16,12 +14,18 @@ pub struct MetalArray {
 }
 
 impl Array for MetalArray {
+    type BackendBuffer = MTLBuffer;
+
     fn shape(&self) -> &[usize] {
         &self.shape
     }
 
     fn data_type(&self) -> DataType {
         self.data_type
+    }
+
+    fn label(&self) -> String {
+        self.buffer.label().to_string()
     }
 
     fn buffer(&self) -> &[u8] {
@@ -40,6 +44,10 @@ impl Array for MetalArray {
                 self.size_in_bytes(),
             )
         }
+    }
+
+    fn backend_buffer(&self) -> &MTLBuffer {
+        &self.buffer
     }
 }
 
@@ -78,15 +86,6 @@ impl MetalArray {
 
     pub fn buffer_offset(&self) -> usize {
         self.offset
-    }
-
-    pub unsafe fn to_mps_tensor_data(&mut self) -> Retained<TensorData> {
-        TensorData::new_with_mtl_buffer(
-            &self.buffer,
-            &self.shape,
-            self.data_type.into(),
-            None,
-        )
     }
 
     pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {

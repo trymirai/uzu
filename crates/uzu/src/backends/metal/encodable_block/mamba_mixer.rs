@@ -2,7 +2,7 @@
 
 use std::{env, rc::Rc};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
@@ -44,7 +44,7 @@ impl MambaMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         num_heads: usize,
@@ -82,8 +82,8 @@ impl MambaMixer {
             ),
             ArrayId::Main,
             ArrayId::SsmInProj,
-            &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &mamba_config.out_projection_config,
@@ -97,8 +97,8 @@ impl MambaMixer {
             ),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-            &compilation_config.descriptor_mlp,
-        );
+        )
+        .expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {
@@ -142,10 +142,10 @@ impl MambaMixer {
         }
     }
 
-    fn encode_pipeline(
+    fn encode_pipeline_with_encoder(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -153,30 +153,25 @@ impl MambaMixer {
             return;
         }
 
-        self.in_projection.encode(state, command_buffer, parameters);
-        self.run_split_inproj(state, command_buffer, active_suffix_length);
-        self.run_conv_scan(state, command_buffer, active_suffix_length);
+        self.in_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+        self.run_split_inproj(state, encoder, active_suffix_length);
+        self.run_conv_scan(state, encoder, active_suffix_length);
 
         if active_suffix_length == 1 {
-            self.run_decode_ssm(state, command_buffer, active_suffix_length);
+            self.run_decode_ssm(state, encoder, active_suffix_length);
         } else {
-            self.run_prefill_ssm(state, command_buffer, active_suffix_length);
+            self.run_prefill_ssm(state, encoder, active_suffix_length);
         }
 
-        self.out_projection.encode(state, command_buffer, parameters);
-
-        if parameters.wait_until_completed {
-            let mtl_command_buffer =
-                command_buffer.root_command_buffer().to_owned();
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
+        self.out_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
     }
 
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -202,12 +197,9 @@ impl MambaMixer {
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute = mtl_command_buffer.new_compute_command_encoder();
         self.split_inproj
             .encode(
-                &compute,
+                encoder,
                 SplitInProjArguments {
                     input: &input_buf,
                     conv_out: &conv_buf,
@@ -222,13 +214,12 @@ impl MambaMixer {
                 },
             )
             .expect("Failed to encode split in-projection kernel");
-        compute.end_encoding();
     }
 
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -260,15 +251,13 @@ impl MambaMixer {
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
-        let cmd = command_buffer.root_command_buffer().to_owned();
         let state_stride = self.config.kernel_size.saturating_sub(1);
         drop(conv_state);
 
         if suffix_length == 1 {
-            let compute = cmd.new_compute_command_encoder();
             self.conv_scan
                 .encode_decode(
-                    &compute,
+                    encoder,
                     Conv1dDecodeArguments {
                         x: &input_buf,
                         w: &weight_buf,
@@ -288,7 +277,6 @@ impl MambaMixer {
                     },
                 )
                 .expect("Failed to encode conv decode kernel");
-            compute.end_encoding();
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state
@@ -298,24 +286,20 @@ impl MambaMixer {
                 let buf = unsafe { borrow.mtl_buffer().to_owned() };
                 drop(borrow);
 
-                {
-                    let pack_encoder = cmd.new_compute_command_encoder();
-                    self.conv_scan
-                        .encode_pack(
-                            &pack_encoder,
-                            Conv1dPackArguments {
-                                state_in: &state_buf,
-                                x: &input_buf,
-                                padded: &buf,
-                                state_stride,
-                                row_stride: conv_dim,
-                                suffix_len: suffix_length,
-                                channels: conv_dim,
-                            },
-                        )
-                        .expect("Failed to encode conv pack kernel");
-                    pack_encoder.end_encoding();
-                }
+                self.conv_scan
+                    .encode_pack(
+                        encoder,
+                        Conv1dPackArguments {
+                            state_in: &state_buf,
+                            x: &input_buf,
+                            padded: &buf,
+                            state_stride,
+                            row_stride: conv_dim,
+                            suffix_len: suffix_length,
+                            channels: conv_dim,
+                        },
+                    )
+                    .expect("Failed to encode conv pack kernel");
 
                 Some(buf)
             } else {
@@ -324,10 +308,9 @@ impl MambaMixer {
 
             let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
 
-            let compute = cmd.new_compute_command_encoder();
             self.conv_scan
                 .encode(
-                    &compute,
+                    encoder,
                     Conv1dScanArguments {
                         padded: conv_source,
                         w: &weight_buf,
@@ -346,14 +329,13 @@ impl MambaMixer {
                     },
                 )
                 .expect("Failed to encode conv scan kernel");
-            compute.end_encoding();
         }
     }
 
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -390,11 +372,9 @@ impl MambaMixer {
         let mut skip_weights = self.skip_connection_weight.clone();
         let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
 
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
         self.ssm_prefill
             .encode(
-                &compute,
+                encoder,
                 SSDPrefillArguments {
                     x: &x_buf,
                     dt: &dt_buf,
@@ -430,13 +410,12 @@ impl MambaMixer {
                 self.prefill_mode,
             )
             .expect("Failed to encode SSD prefill kernel");
-        compute.end_encoding();
     }
 
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        encoder: &ComputeCommandEncoderRef,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -483,11 +462,9 @@ impl MambaMixer {
         let group_size = (h / g) as i32;
         let state_size = n as i32;
 
-        let cmd = command_buffer.root_command_buffer().to_owned();
-        let compute = cmd.new_compute_command_encoder();
         self.ssd_update
             .encode(
-                &compute,
+                encoder,
                 SSDUpdateArguments {
                     x: &x_buf,
                     dt: &dt_buf,
@@ -510,7 +487,6 @@ impl MambaMixer {
                 },
             )
             .expect("Failed to encode SSD decode kernel");
-        compute.end_encoding();
     }
 }
 
@@ -531,10 +507,58 @@ impl EncodableBlock for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        self.encode_pipeline(state, command_buffer, parameters);
+        if self.supports_shared_encoder() {
+            let encoder = command_buffer.new_compute_command_encoder();
+            self.encode_pipeline_with_encoder(state, &encoder, parameters);
+            encoder.end_encoding();
+
+            if parameters.wait_until_completed {
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            }
+            return;
+        }
+
+        let active_suffix_length = state.active_suffix_length();
+        if active_suffix_length == 0 {
+            return;
+        }
+
+        self.in_projection.encode(state, command_buffer, parameters);
+
+        let encoder = command_buffer.new_compute_command_encoder();
+        self.run_split_inproj(state, &encoder, active_suffix_length);
+        self.run_conv_scan(state, &encoder, active_suffix_length);
+        if active_suffix_length == 1 {
+            self.run_decode_ssm(state, &encoder, active_suffix_length);
+        } else {
+            self.run_prefill_ssm(state, &encoder, active_suffix_length);
+        }
+        encoder.end_encoding();
+
+        self.out_projection.encode(state, command_buffer, parameters);
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.in_projection.supports_shared_encoder()
+            && self.out_projection.supports_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.encode_pipeline_with_encoder(state, encoder, parameters);
     }
 }
 

@@ -407,66 +407,6 @@ inline void pass_a_impl(
   }
 }
 
-// ----- Kernel entry points (Pass A) -----
-#define MOE_PASS_A_KERNEL(DTYPE, SUFFIX)                                       \
-  kernel void moe_two_pass_prefill_pass_a_##SUFFIX(                            \
-      device const DTYPE* X_perm [[buffer(0)]],                                \
-      device const uint* expert_offsets [[buffer(1)]],                         \
-      device const DTYPE* W13_all [[buffer(2)]],                               \
-      device const DTYPE* up_biases [[buffer(3)]],                             \
-      device float* hidden_out [[buffer(4)]],                                  \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& E [[buffer(7)]],                                          \
-      constant float& gate_clip_min [[buffer(8)]],                             \
-      constant float& gate_clip_max [[buffer(9)]],                             \
-      constant float& up_clip_min [[buffer(10)]],                              \
-      constant float& up_clip_max [[buffer(11)]],                              \
-      constant float& silu_alpha [[buffer(12)]],                               \
-      uint sg_id [[simdgroup_index_in_threadgroup]],                           \
-      uint3 threads_per_tg [[threads_per_threadgroup]],                        \
-      uint3 tg_pos [[threadgroup_position_in_grid]],                           \
-      uint3 local_tid [[thread_position_in_threadgroup]]                       \
-  ) {                                                                          \
-    using StageT = typename StageStorage<DTYPE>::type;                         \
-    threadgroup StageT Xs[PASSA_BM * (PASSA_BK + PASSA_TG_PAD)];               \
-    threadgroup StageT Wk_up[PASSA_BN * (PASSA_BK + PASSA_TG_PAD)];            \
-    threadgroup StageT Wk_gate[PASSA_BN * (PASSA_BK + PASSA_TG_PAD)];          \
-    threadgroup float bias_up[PASSA_BN];                                       \
-    threadgroup float bias_gate[PASSA_BN];                                     \
-    pass_a_impl<DTYPE>(                                                        \
-        X_perm,                                                                \
-        expert_offsets,                                                        \
-        W13_all,                                                               \
-        up_biases,                                                             \
-        hidden_out,                                                            \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        gate_clip_min,                                                         \
-        gate_clip_max,                                                         \
-        up_clip_min,                                                           \
-        up_clip_max,                                                           \
-        silu_alpha,                                                            \
-        expert_offsets[tg_pos.z],                                              \
-        tg_pos.z,                                                              \
-        tg_pos.y,                                                              \
-        tg_pos.x,                                                              \
-        sg_id,                                                                 \
-        threads_per_tg,                                                        \
-        local_tid,                                                             \
-        Xs,                                                                    \
-        Wk_up,                                                                 \
-        Wk_gate,                                                               \
-        bias_up,                                                               \
-        bias_gate                                                              \
-    );                                                                         \
-  }
-
-MOE_PASS_A_KERNEL(bfloat, bf16)
-MOE_PASS_A_KERNEL(half, f16)
-MOE_PASS_A_KERNEL(float, f32)
-
 // Indirect variant (consumes [expert, seg_start, tile_row_offset] triples)
 template <typename T>
 inline void pass_a_indirect_impl(
@@ -534,6 +474,7 @@ inline void pass_a_indirect_impl(
 }
 
 #define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, SUFFIX)                              \
+  [[max_total_threads_per_threadgroup(128)]]                                   \
   kernel void moe_two_pass_prefill_pass_a_indirect_##SUFFIX(                   \
       device const DTYPE* X_perm [[buffer(0)]],                                \
       device const uint* expert_offsets [[buffer(1)]],                         \
@@ -797,52 +738,6 @@ inline void pass_b_impl(
   }
 }
 
-// ----- Kernel entry points (Pass B) -----
-#define MOE_PASS_B_KERNEL(DTYPE, SUFFIX)                                       \
-  kernel void moe_two_pass_prefill_pass_b_##SUFFIX(                            \
-      device const float* hidden [[buffer(0)]],                                \
-      device const uint* expert_offsets [[buffer(1)]],                         \
-      device const DTYPE* W2_all [[buffer(2)]],                                \
-      device const DTYPE* down_biases [[buffer(3)]],                           \
-      device DTYPE* output [[buffer(4)]],                                      \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& E [[buffer(7)]],                                          \
-      uint sg_id [[simdgroup_index_in_threadgroup]],                           \
-      uint simd_lid [[thread_index_in_simdgroup]],                             \
-      uint3 tg_pos [[threadgroup_position_in_grid]],                           \
-      uint3 local_tid [[thread_position_in_threadgroup]]                       \
-  ) {                                                                          \
-    using StageT = typename StageStorage<DTYPE>::type;                         \
-    threadgroup float Hs[PASSB_BM * (PASSB_BK + PASSB_TG_PAD)];                \
-    threadgroup StageT Wk[PASSB_BN * (PASSB_BK + PASSB_TG_PAD)];               \
-    threadgroup float bias[PASSB_BN];                                          \
-    const uint lin = local_tid.x;                                              \
-    pass_b_impl<DTYPE>(                                                        \
-        hidden,                                                                \
-        expert_offsets,                                                        \
-        W2_all,                                                                \
-        down_biases,                                                           \
-        output,                                                                \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        tg_pos.z,                                                              \
-        tg_pos.y,                                                              \
-        tg_pos.x,                                                              \
-        sg_id,                                                                 \
-        simd_lid,                                                              \
-        lin,                                                                   \
-        Hs,                                                                    \
-        Wk,                                                                    \
-        bias                                                                   \
-    );                                                                         \
-  }
-
-MOE_PASS_B_KERNEL(bfloat, bf16)
-MOE_PASS_B_KERNEL(half, f16)
-MOE_PASS_B_KERNEL(float, f32)
-
 // Indirect variant
 template <typename T>
 inline void pass_b_indirect_impl(
@@ -894,6 +789,7 @@ inline void pass_b_indirect_impl(
 }
 
 #define MOE_PASS_B_INDIRECT_KERNEL(DTYPE, SUFFIX)                              \
+  [[max_total_threads_per_threadgroup(128)]]                                   \
   kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX(                   \
       device const float* hidden [[buffer(0)]],                                \
       device const uint* expert_offsets [[buffer(1)]],                         \

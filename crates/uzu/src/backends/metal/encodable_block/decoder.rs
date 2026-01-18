@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{
     EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -13,7 +13,7 @@ use crate::{
         KernelDataType, MTLContext, ModelShape,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
-        forward_pass::{ArrayId, EncoderResolver, ForwardPassState, RopeType},
+        forward_pass::{ArrayId, ForwardPassState, RopeType},
     },
     config::{DecoderLayerType, MixerConfig},
     parameters::ParameterTree,
@@ -40,19 +40,11 @@ impl Decoder {
             .subtree("transformer")
             .expect("transformer subtree not found");
 
-        let embed = embed_block(
-            &decoder_config,
-            &mtl_context,
-            &compilation_config.descriptor_general,
-            root_weight_loader,
-        );
+        let embed =
+            embed_block(&decoder_config, &mtl_context, root_weight_loader);
 
-        let readout = readout_block(
-            &decoder_config,
-            &mtl_context,
-            &compilation_config.descriptor_general,
-            root_weight_loader,
-        );
+        let readout =
+            readout_block(&decoder_config, &mtl_context, root_weight_loader);
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer = decoder_config
@@ -137,7 +129,7 @@ impl Decoder {
                     .unwrap();
 
                 LayerExecutables::new(
-                    &mtl_context,
+                    mtl_context.clone(),
                     layer_config,
                     layer_type,
                     compilation_config.clone(),
@@ -163,6 +155,7 @@ impl Decoder {
                 ArrayId::Main,
                 &decoder_weight_loader.subtree("output_norm").unwrap(),
             )
+            .map(RMSNorm::with_sampling_range)
             .expect("Failed to create output RMS norm kernel"),
         );
 
@@ -209,26 +202,22 @@ impl EncodableBlock for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        let mut resolver = EncoderResolver::new(command_buffer);
-
-        resolver.encode(self.embed.as_ref(), state, parameters);
+        self.embed.encode(state, command_buffer, parameters);
 
         for layer in self.layers.iter() {
-            resolver.encode(layer, state, parameters);
+            layer.encode(state, command_buffer, parameters);
         }
 
         if state.is_prefilling() {
-            resolver.finish();
             return;
         }
 
-        resolver.encode(self.norm.as_ref(), state, parameters);
+        self.norm.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         {
-            resolver.end_current_encoder();
             let traces = state.traces().clone();
             state.encode_copy_array(
                 command_buffer,
@@ -237,10 +226,9 @@ impl EncodableBlock for Decoder {
             );
         }
 
-        resolver.encode(self.readout.as_ref(), state, parameters);
+        self.readout.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         {
-            resolver.end_current_encoder();
             let traces = state.traces().clone();
             state.encode_copy_array(
                 command_buffer,
@@ -248,7 +236,5 @@ impl EncodableBlock for Decoder {
                 traces.borrow().logits.clone(),
             );
         }
-
-        resolver.finish();
     }
 }

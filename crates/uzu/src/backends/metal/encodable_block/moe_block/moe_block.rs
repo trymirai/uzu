@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::CommandBufferRef;
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -291,7 +291,7 @@ impl EncodableBlock for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.active_suffix_length();
@@ -350,8 +350,7 @@ impl EncodableBlock for MoeBlock {
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
+        let mtl_command_buffer = command_buffer.to_owned();
         let root = &*mtl_command_buffer;
         let k_tile = 128;
 
@@ -626,8 +625,21 @@ impl EncodableBlock for MoeBlock {
             .expect("MoE finalize failed");
 
         if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
         }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        false
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        _state: &mut ForwardPassState,
+        _encoder: &metal::ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
+    ) {
+        unreachable!("MoeBlock does not support shared compute encoder");
     }
 }

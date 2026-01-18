@@ -6,11 +6,11 @@
 //! Encodables implement `EncodableBlock` and orchestrate one or more
 //! kernels to perform operations on `ForwardPassState`.
 
-use metal::ComputeCommandEncoderRef;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::forward_pass::ForwardPassState;
 
+mod activation;
 mod attention;
 mod classifier_layer;
 mod decoder;
@@ -31,18 +31,20 @@ mod tensor_add_swap;
 mod tensor_copy;
 pub mod transformer_layer;
 
+pub use activation::Activation;
 pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::Decoder;
 pub use embedding::{
-    QuantizedEmbeddingError, QuantizedEmbeddingLookup,
+    EmbeddingError, FullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
     QuantizedEmbeddingReadout,
 };
 pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
-pub use linear::QuantizedLinear;
+pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
-pub use mlp::MlpBlock;
+pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{
     LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,
@@ -60,11 +62,14 @@ pub trait EncodableBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     );
 
     /// Returns true if this block supports using a shared compute encoder.
+    ///
+    /// If true, `encode_with_shared_encoder` must correctly encode into the
+    /// provided encoder without creating or ending encoders internally.
     fn supports_shared_encoder(&self) -> bool {
         false
     }

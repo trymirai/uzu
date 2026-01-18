@@ -1,7 +1,7 @@
-#![allow(dead_code)]
-include!(concat!(env!("OUT_DIR"), "/metal_lib.rs"));
+const MTLB: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
     CommandQueue as MTLCommandQueue,
@@ -14,10 +14,125 @@ use super::{
 };
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
 
+/// Apple GPU architecture generation.
+/// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceGeneration {
+    Gen13, // M1 family
+    Gen14, // M2 family
+    Gen15, // M3 family
+    Gen16, // M3 Pro/Max with enhanced features
+    Gen17, // M4 family
+    Gen18, // M5 family (NAX capable)
+    Unknown(u8),
+}
+
+impl DeviceGeneration {
+    pub fn generation_number(&self) -> u8 {
+        match self {
+            Self::Gen13 => 13,
+            Self::Gen14 => 14,
+            Self::Gen15 => 15,
+            Self::Gen16 => 16,
+            Self::Gen17 => 17,
+            Self::Gen18 => 18,
+            Self::Unknown(n) => *n,
+        }
+    }
+}
+
+/// Device performance class based on the last character of architecture name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceClass {
+    Phone,      // 'p' - iPhone/iPad integrated
+    Integrated, // 'g' - Mac integrated GPU
+    Desktop,    // 'd' - Mac Pro/Max discrete-class GPU
+    Unknown(char),
+}
+
+impl DeviceClass {
+    pub fn is_high_performance(&self) -> bool {
+        matches!(self, Self::Desktop)
+    }
+}
+
+/// Complete device architecture information.
+#[derive(Debug, Clone)]
+pub struct DeviceArchitecture {
+    pub generation: DeviceGeneration,
+    pub device_class: DeviceClass,
+    pub arch_string: String,
+}
+
+impl DeviceArchitecture {
+    pub fn from_device(device: &MTLDevice) -> Self {
+        let arch_string = device.name().to_string();
+
+        // Extract generation from architecture name
+        // Format is typically like "Apple M3 Pro" or the GPU name "applegpu_g15d"
+        let (generation, device_class) =
+            Self::parse_architecture_info(&arch_string);
+
+        Self {
+            generation,
+            device_class,
+            arch_string,
+        }
+    }
+
+    fn parse_architecture_info(arch: &str) -> (DeviceGeneration, DeviceClass) {
+        // Parse generation and class from device name (e.g. "Apple M3 Pro")
+        let generation = if arch.contains("M5") {
+            DeviceGeneration::Gen18
+        } else if arch.contains("M4") {
+            DeviceGeneration::Gen17
+        } else if arch.contains("M3") {
+            if arch.contains("Max") || arch.contains("Ultra") {
+                DeviceGeneration::Gen16
+            } else {
+                DeviceGeneration::Gen15
+            }
+        } else if arch.contains("M2") {
+            DeviceGeneration::Gen14
+        } else if arch.contains("M1") {
+            DeviceGeneration::Gen13
+        } else {
+            DeviceGeneration::Unknown(0)
+        };
+
+        let device_class = if arch.contains("Max")
+            || arch.contains("Ultra")
+            || arch.contains("Pro")
+        {
+            DeviceClass::Desktop
+        } else if arch.contains("iPhone") || arch.contains("iPad") {
+            DeviceClass::Phone
+        } else {
+            DeviceClass::Integrated
+        };
+
+        (generation, device_class)
+    }
+
+    /// Returns true if NAX (New Accelerator eXtensions) is available.
+    /// NAX requires M5 or later (generation >= 18) and macOS 26.2+.
+    /// Since we can't check macOS version at compile time in Rust,
+    /// we check generation only - the kernels will fail gracefully if unavailable.
+    pub fn is_nax_available(&self) -> bool {
+        self.generation.generation_number() >= 18
+    }
+
+    /// Returns true if this is a high-performance device (Pro/Max class).
+    pub fn is_high_performance(&self) -> bool {
+        self.device_class.is_high_performance()
+    }
+}
+
 pub struct MTLContext {
     pub device: MTLDevice,
     pub command_queue: MTLCommandQueue,
-    library: MTLLibrary,
+    pub architecture: DeviceArchitecture,
+    pub library: MTLLibrary,
     pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
 }
 
@@ -26,7 +141,7 @@ impl MTLContext {
         device: MTLDevice,
         command_queue: MTLCommandQueue,
     ) -> Result<Self, MTLError> {
-        let library = match device.new_library_with_data(METAL_LIBRARY_DATA) {
+        let library = match device.new_library_with_data(MTLB) {
             Ok(lib) => lib,
             Err(e) => {
                 return Err(MTLError::Generic(format!(
@@ -36,12 +151,42 @@ impl MTLContext {
             },
         };
 
+        let architecture = DeviceArchitecture::from_device(&device);
+
         Ok(Self {
             device,
             command_queue,
+            architecture,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// Returns true if NAX kernels are available on this device.
+    pub fn is_nax_available(&self) -> bool {
+        cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
+    }
+
+    /// Returns true if this is a high-performance device (Pro/Max class).
+    pub fn is_high_performance(&self) -> bool {
+        self.architecture.is_high_performance()
+    }
+
+    /// Returns the device generation for tile size selection.
+    pub fn device_generation(&self) -> DeviceGeneration {
+        self.architecture.generation
+    }
+
+    /// Returns the device class for performance tuning.
+    pub fn device_class(&self) -> DeviceClass {
+        self.architecture.device_class
+    }
+
+    /// TF32 toggle via UZU_TF32 environment variable.
+    pub fn tf32_enabled(&self) -> bool {
+        env::var("UZU_TF32")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
     }
 
     pub fn compute_pipeline_state(
@@ -126,6 +271,7 @@ impl DeviceContext for MTLContext {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> MetalArray {
         unsafe {
             let buffer_size_bytes = array_size_in_bytes(shape, data_type);
@@ -134,6 +280,7 @@ impl DeviceContext for MTLContext {
                 buffer_size_bytes as u64,
                 metal::MTLResourceOptions::StorageModeShared,
             );
+            buffer.set_label(label.as_str());
             MetalArray::new(buffer, shape, data_type)
         }
     }
@@ -146,7 +293,8 @@ impl DeviceContext for Rc<MTLContext> {
         &self,
         shape: &[usize],
         data_type: DataType,
+        label: String,
     ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type) }
+        unsafe { (**self).array_uninitialized(shape, data_type, label) }
     }
 }

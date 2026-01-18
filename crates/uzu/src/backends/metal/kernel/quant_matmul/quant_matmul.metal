@@ -4,6 +4,7 @@
 using namespace metal;
 
 #include "mma.h"
+#include "../common/mlp_epilogue.h"
 
 // Function constant: true = MLX-style (pre-computed biases), false = AWQ-style
 // (zero-points)
@@ -88,10 +89,11 @@ inline void qouter(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s[2] = {scale, scale / 16.0f};
+    U s0 = scale;
+    U s1 = scale / 16.0f;
     for (int i = 0; i < (values_per_thread / 2); i++) {
-      result[2 * i] += x * (s[0] * (w[i] & 0x0f) + bias);
-      result[2 * i + 1] += x * (s[1] * (w[i] & 0xf0) + bias);
+      result[2 * i] += x * (s0 * (w[i] & 0x0f) + bias);
+      result[2 * i + 1] += x * (s1 * (w[i] & 0xf0) + bias);
     }
   } else if (bits == 8) {
     for (int i = 0; i < values_per_thread; i++) {
@@ -226,10 +228,11 @@ inline void dequantize(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s[2] = {scale, scale / static_cast<U>(16.0f)};
+    U s0 = scale;
+    U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
-      w_local[2 * i] = s[0] * (w[i] & 0x0f) + bias;
-      w_local[2 * i + 1] = s[1] * (w[i] & 0xf0) + bias;
+      w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
+      w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -1722,7 +1725,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1774,7 +1777,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
-[[kernel]] void qmm_transposed(
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_transposed(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1818,7 +1821,7 @@ template <
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1849,7 +1852,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qvm(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qvm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -1880,7 +1883,7 @@ template <typename T, int group_size, int bits>
 }
 
 template <typename T, int group_size, int bits>
-[[kernel]] void qmv_fast(
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_fast(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
     const device uint8_t* zero_points
@@ -4131,6 +4134,829 @@ qmm_transposed<bfloat, 128, 4, true, 128, 32, 64>(
     device bfloat* y [[buffer(4)]],
     const constant int& K [[buffer(5)]],
     const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+///////////////////////////////////////////////////////////////////////////////
+/// MLP Fused QMV - Quantized Matrix-Vector with Fused Activation
+///////////////////////////////////////////////////////////////////////////////
+
+// MLP fused QMV kernel for decode path (M=1).
+// Computes paired up and gate projections, then applies: out = up *
+// activation(gate) Weight layout: [up_weights (hidden_dim rows), gate_weights
+// (hidden_dim rows)] Output size is hidden_dim.
+template <typename T, int group_size, int bits>
+void qmv_mlp_fused_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& in_vec_size,
+    const constant int& hidden_dim, // Output size (half of weight rows)
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  constexpr int packs_per_thread = bits == 2 ? 1 : 2;
+  constexpr int num_simdgroups = 2;
+  constexpr int results_per_simdgroup = 4; // Compute 4 paired rows at a time
+  constexpr int pack_factor = get_pack_factor<bits, 32>();
+  constexpr int bytes_per_pack = get_bytes_per_pack<bits, 32>();
+  constexpr int values_per_thread = pack_factor * packs_per_thread;
+  constexpr int block_size = values_per_thread * SIMD_SIZE;
+  constexpr int scale_step_per_thread = group_size / values_per_thread;
+  const device uint8_t* ws = (const device uint8_t*)w;
+  typedef float U;
+  thread U x_thread[values_per_thread];
+  thread U result_up[results_per_simdgroup] = {0};
+  thread U result_gate[results_per_simdgroup] = {0};
+
+  const int in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
+  const int in_vec_size_g = in_vec_size / group_size;
+
+  // Output row for 'up' projection
+  const int out_row_up = tid.y * (num_simdgroups * results_per_simdgroup) +
+                         simd_gid * results_per_simdgroup;
+
+  // Corresponding 'gate' row is offset by hidden_dim
+  const int out_row_gate = out_row_up + hidden_dim;
+
+  // Check bounds - only process if up row is within hidden_dim
+  if (out_row_up >= hidden_dim)
+    return;
+
+  // Pointer setup for up weights
+  const device uint8_t* ws_up = ws + out_row_up * in_vec_size_w +
+                                simd_lid * packs_per_thread * bytes_per_pack;
+  const device T* scales_up =
+      scales + out_row_up * in_vec_size_g + simd_lid / scale_step_per_thread;
+
+  // Pointer setup for gate weights
+  const device uint8_t* ws_gate = ws + out_row_gate * in_vec_size_w +
+                                  simd_lid * packs_per_thread * bytes_per_pack;
+  const device T* scales_gate =
+      scales + out_row_gate * in_vec_size_g + simd_lid / scale_step_per_thread;
+
+  const device T* biases_up = nullptr;
+  const device T* biases_gate = nullptr;
+  const device uint8_t* zps_up = nullptr;
+  const device uint8_t* zps_gate = nullptr;
+  int zp_stride = 0;
+  bool high_nibble = false;
+
+  if (kUseMlxQuant) {
+    biases_up =
+        biases + out_row_up * in_vec_size_g + simd_lid / scale_step_per_thread;
+    biases_gate = biases + out_row_gate * in_vec_size_g +
+                  simd_lid / scale_step_per_thread;
+  } else {
+    if (bits == 4) {
+      zp_stride = (in_vec_size_g + 1) / 2;
+      zps_up = zero_points + out_row_up * zp_stride;
+      zps_gate = zero_points + out_row_gate * zp_stride;
+      int g_offset = simd_lid / scale_step_per_thread;
+      zps_up += g_offset / 2;
+      zps_gate += g_offset / 2;
+      high_nibble = (g_offset & 1);
+    } else {
+      zp_stride = in_vec_size_g;
+      zps_up = zero_points + out_row_up * zp_stride +
+               simd_lid / scale_step_per_thread;
+      zps_gate = zero_points + out_row_gate * zp_stride +
+                 simd_lid / scale_step_per_thread;
+    }
+  }
+
+  x += tid.x * in_vec_size + simd_lid * values_per_thread;
+  y += tid.x * hidden_dim + out_row_up;
+
+  for (int k = 0; k < in_vec_size; k += block_size) {
+    U sum = load_vector<T, U, values_per_thread, bits>(x, x_thread);
+
+    // Compute both up and gate dot products for 4 rows each
+    {
+      auto wl_up0 = ws_up;
+      auto wl_up1 = ws_up + in_vec_size_w;
+      auto wl_up2 = ws_up + 2 * in_vec_size_w;
+      auto wl_up3 = ws_up + 3 * in_vec_size_w;
+
+      auto wl_gate0 = ws_gate;
+      auto wl_gate1 = ws_gate + in_vec_size_w;
+      auto wl_gate2 = ws_gate + 2 * in_vec_size_w;
+      auto wl_gate3 = ws_gate + 3 * in_vec_size_w;
+
+      U s_up0 = static_cast<U>(scales_up[0]);
+      U s_up1 = static_cast<U>(scales_up[in_vec_size_g]);
+      U s_up2 = static_cast<U>(scales_up[2 * in_vec_size_g]);
+      U s_up3 = static_cast<U>(scales_up[3 * in_vec_size_g]);
+
+      U s_gate0 = static_cast<U>(scales_gate[0]);
+      U s_gate1 = static_cast<U>(scales_gate[in_vec_size_g]);
+      U s_gate2 = static_cast<U>(scales_gate[2 * in_vec_size_g]);
+      U s_gate3 = static_cast<U>(scales_gate[3 * in_vec_size_g]);
+
+      if (kUseMlxQuant) {
+        U b_up0 = static_cast<U>(biases_up[0]);
+        U b_up1 = static_cast<U>(biases_up[in_vec_size_g]);
+        U b_up2 = static_cast<U>(biases_up[2 * in_vec_size_g]);
+        U b_up3 = static_cast<U>(biases_up[3 * in_vec_size_g]);
+
+        U b_gate0 = static_cast<U>(biases_gate[0]);
+        U b_gate1 = static_cast<U>(biases_gate[in_vec_size_g]);
+        U b_gate2 = static_cast<U>(biases_gate[2 * in_vec_size_g]);
+        U b_gate3 = static_cast<U>(biases_gate[3 * in_vec_size_g]);
+
+        result_up[0] += qdot<U, values_per_thread, bits>(
+            wl_up0,
+            x_thread,
+            s_up0,
+            b_up0,
+            sum
+        );
+        result_up[1] += qdot<U, values_per_thread, bits>(
+            wl_up1,
+            x_thread,
+            s_up1,
+            b_up1,
+            sum
+        );
+        result_up[2] += qdot<U, values_per_thread, bits>(
+            wl_up2,
+            x_thread,
+            s_up2,
+            b_up2,
+            sum
+        );
+        result_up[3] += qdot<U, values_per_thread, bits>(
+            wl_up3,
+            x_thread,
+            s_up3,
+            b_up3,
+            sum
+        );
+
+        result_gate[0] += qdot<U, values_per_thread, bits>(
+            wl_gate0,
+            x_thread,
+            s_gate0,
+            b_gate0,
+            sum
+        );
+        result_gate[1] += qdot<U, values_per_thread, bits>(
+            wl_gate1,
+            x_thread,
+            s_gate1,
+            b_gate1,
+            sum
+        );
+        result_gate[2] += qdot<U, values_per_thread, bits>(
+            wl_gate2,
+            x_thread,
+            s_gate2,
+            b_gate2,
+            sum
+        );
+        result_gate[3] += qdot<U, values_per_thread, bits>(
+            wl_gate3,
+            x_thread,
+            s_gate3,
+            b_gate3,
+            sum
+        );
+      } else {
+        auto extract_zp = [&](const device uint8_t* zps, int row_offset) -> U {
+          uint8_t zp_byte = zps[row_offset * zp_stride];
+          if (bits == 4) {
+            return static_cast<U>(
+                high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F)
+            );
+          } else {
+            return static_cast<U>(zp_byte);
+          }
+        };
+
+        U zp_up0 = extract_zp(zps_up, 0);
+        U zp_up1 = extract_zp(zps_up, 1);
+        U zp_up2 = extract_zp(zps_up, 2);
+        U zp_up3 = extract_zp(zps_up, 3);
+
+        U zp_gate0 = extract_zp(zps_gate, 0);
+        U zp_gate1 = extract_zp(zps_gate, 1);
+        U zp_gate2 = extract_zp(zps_gate, 2);
+        U zp_gate3 = extract_zp(zps_gate, 3);
+
+        result_up[0] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_up0,
+            x_thread,
+            s_up0,
+            zp_up0
+        );
+        result_up[1] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_up1,
+            x_thread,
+            s_up1,
+            zp_up1
+        );
+        result_up[2] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_up2,
+            x_thread,
+            s_up2,
+            zp_up2
+        );
+        result_up[3] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_up3,
+            x_thread,
+            s_up3,
+            zp_up3
+        );
+
+        result_gate[0] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_gate0,
+            x_thread,
+            s_gate0,
+            zp_gate0
+        );
+        result_gate[1] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_gate1,
+            x_thread,
+            s_gate1,
+            zp_gate1
+        );
+        result_gate[2] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_gate2,
+            x_thread,
+            s_gate2,
+            zp_gate2
+        );
+        result_gate[3] += qdot_zero_point<U, values_per_thread, bits>(
+            wl_gate3,
+            x_thread,
+            s_gate3,
+            zp_gate3
+        );
+      }
+    }
+
+    ws_up += block_size * bytes_per_pack / pack_factor;
+    ws_gate += block_size * bytes_per_pack / pack_factor;
+    scales_up += block_size / group_size;
+    scales_gate += block_size / group_size;
+    if (kUseMlxQuant) {
+      biases_up += block_size / group_size;
+      biases_gate += block_size / group_size;
+    } else {
+      if (bits == 4) {
+        zps_up += (block_size / group_size) / 2;
+        zps_gate += (block_size / group_size) / 2;
+      } else {
+        zps_up += block_size / group_size;
+        zps_gate += block_size / group_size;
+      }
+    }
+    x += block_size;
+  }
+
+  // SIMD reduction and fused activation
+  for (int row = 0; row < results_per_simdgroup; row++) {
+    result_up[row] = simd_sum(result_up[row]);
+    result_gate[row] = simd_sum(result_gate[row]);
+    if (simd_lid == 0) {
+      // Apply MLP fused epilogue: up * activation(gate)
+      float fused = mlp_fused_epilogue_f32(result_up[row], result_gate[row]);
+      y[row] = static_cast<T>(fused);
+    }
+  }
+}
+
+template <typename T, int group_size, int bits>
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_mlp_fused(
+    const device uint32_t* w [[buffer(0)]],
+    const device T* scales [[buffer(1)]],
+    const device uint8_t* zero_points
+    [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device T* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device T* x [[buffer(3)]],
+    device T* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  qmv_mlp_fused_impl<T, group_size, bits>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      K,
+      hidden_dim,
+      tid,
+      simd_gid,
+      simd_lid
+  );
+}
+
+// Instantiate MLP fused QMV kernels for common configurations
+template [[host_name("qmv_mlp_fused_f16_g32_b4")]] [[kernel]] void
+qmv_mlp_fused<half, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_mlp_fused_f16_g64_b4")]] [[kernel]] void
+qmv_mlp_fused<half, 64, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_mlp_fused_f16_g128_b4")]] [[kernel]] void
+qmv_mlp_fused<half, 128, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_mlp_fused_bf16_g32_b4")]] [[kernel]] void
+qmv_mlp_fused<bfloat, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_mlp_fused_bf16_g64_b4")]] [[kernel]] void
+qmv_mlp_fused<bfloat, 64, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_mlp_fused_bf16_g128_b4")]] [[kernel]] void
+qmv_mlp_fused<bfloat, 128, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+///////////////////////////////////////////////////////////////////////////////
+/// MLP Fused QMM - Quantized Matrix-Matrix with Fused Activation
+///////////////////////////////////////////////////////////////////////////////
+
+// MLP fused QMM kernel for prefill path (M>1).
+// Computes paired up and gate projections, then applies: out = up *
+// activation(gate) Weight layout: [up_weights (hidden_dim cols), gate_weights
+// (hidden_dim cols)] Output size is [M, hidden_dim].
+template <
+    typename T,
+    int group_size,
+    int bits,
+    bool aligned_K,
+    int BM = 32,
+    int BK = 32,
+    int BN = 32>
+void qmm_mlp_fused_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    threadgroup T* Xs,
+    threadgroup T* Ws_up,
+    const constant int& K,
+    const constant int&
+        hidden_dim, // Output columns (half of total weight columns)
+    const constant int& M,
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  static_assert(BK >= 32, "BK should be larger than SIMD_SIZE");
+  static_assert(BK % 32 == 0, "BK should be divisible by SIMD_SIZE");
+
+  (void)lid;
+
+  constexpr int WM = 2;
+  constexpr int WN = 2;
+  constexpr int pack_factor = get_pack_factor<bits, 8>();
+  constexpr int bytes_per_pack = get_bytes_per_pack<bits>();
+
+  constexpr int BK_padded = (BK + 16 / sizeof(T));
+  constexpr int BN_padded = (BN + 16 / sizeof(T));
+
+  using mma_t = matmul_utils::
+      BlockMMA<T, T, BM, BN, BK, WM, WN, false, false, BK_padded, BN_padded>;
+  using loader_x_t =
+      matmul_utils::BlockLoader<T, BM, BK, BK_padded, 1, WM * WN * 32, 1, 4>;
+
+  auto wl_up = (const device uint8_t*)w;
+
+  const int y_row = tid.y * BM;
+  const int y_col = tid.x * BN; // Column in output (within hidden_dim)
+
+  // Only process tiles within hidden_dim
+  if (y_col >= hidden_dim)
+    return;
+
+  x += y_row * static_cast<int64_t>(K);
+
+  // Up weights at column y_col
+  wl_up += y_col * bytes_per_pack / pack_factor;
+  // Gate weights at column y_col + hidden_dim
+  auto wl_gate = wl_up + hidden_dim * bytes_per_pack / pack_factor;
+
+  y += y_row * static_cast<int64_t>(hidden_dim) + y_col;
+
+  const device T* scales_base = scales;
+  const device T* biases_base = biases;
+
+  const short num_els = min(BM, M - y_row);
+  const short num_outs = min(BN, hidden_dim - y_col);
+
+  // Threadgroup memory for gate weights (after Ws_up)
+  threadgroup T* Ws_gate = Ws_up + BK * BN_padded;
+
+  loader_x_t loader_x(x, K, Xs, simd_gid, simd_lid);
+  mma_t mma_up(simd_gid, simd_lid);
+  mma_t mma_gate(simd_gid, simd_lid);
+
+  const int k_iterations = (K + BK - 1) / BK;
+  const int full_iterations = aligned_K ? k_iterations : k_iterations - 1;
+
+  // Total output width for scale/bias strides
+  const int N_total = hidden_dim * 2;
+
+  if (kUseMlxQuant) {
+    using loader_w_t = QuantizedBlockLoaderMlx<
+        T,
+        BK,
+        BN,
+        BN_padded,
+        0,
+        WM * WN * 32,
+        group_size,
+        bits>;
+
+    const device T* scales_up = scales_base + (y_col / group_size);
+    const device T* biases_up = biases_base + (y_col / group_size);
+    const device T* scales_gate =
+        scales_base + ((y_col + hidden_dim) / group_size);
+    const device T* biases_gate =
+        biases_base + ((y_col + hidden_dim) / group_size);
+
+    loader_w_t loader_w_up(
+        wl_up,
+        scales_up,
+        biases_up,
+        N_total,
+        Ws_up,
+        simd_gid,
+        simd_lid
+    );
+    loader_w_t loader_w_gate(
+        wl_gate,
+        scales_gate,
+        biases_gate,
+        N_total,
+        Ws_gate,
+        simd_gid,
+        simd_lid
+    );
+
+    for (int k = 0; k < full_iterations; k++) {
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      loader_x.load_unsafe();
+      loader_w_up.load_unsafe();
+      loader_w_gate.load_unsafe();
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      mma_up.mma(Xs, Ws_up);
+      mma_gate.mma(Xs, Ws_gate);
+
+      loader_x.next();
+      loader_w_up.next();
+      loader_w_gate.next();
+    }
+
+    if (!aligned_K) {
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      loader_x.load_safe(short2(BM, K - full_iterations * BK));
+      loader_w_up.load_safe(short2(K - full_iterations * BK, num_outs));
+      loader_w_gate.load_safe(short2(K - full_iterations * BK, num_outs));
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      mma_up.mma(Xs, Ws_up);
+      mma_gate.mma(Xs, Ws_gate);
+    }
+  } else {
+    const int out_groups_total = (N_total + group_size - 1) / group_size;
+    const int groups_per_row = out_groups_total;
+    const int out_group_up = y_col / group_size;
+    const int out_group_gate = (y_col + hidden_dim) / group_size;
+    const int zp_stride_out =
+        (bits == 4) ? ((out_groups_total + 1) / 2) : out_groups_total;
+
+    using loader_w_t = QuantizedBlockLoaderZp<
+        T,
+        BK,
+        BN,
+        BN_padded,
+        0,
+        WM * WN * 32,
+        group_size,
+        bits,
+        true>;
+
+    loader_w_t loader_w_up(
+        wl_up,
+        scales_base,
+        zero_points,
+        N_total,
+        groups_per_row,
+        Ws_up,
+        simd_gid,
+        simd_lid,
+        out_group_up,
+        out_groups_total,
+        zp_stride_out
+    );
+
+    loader_w_t loader_w_gate(
+        wl_gate,
+        scales_base,
+        zero_points,
+        N_total,
+        groups_per_row,
+        Ws_gate,
+        simd_gid,
+        simd_lid,
+        out_group_gate,
+        out_groups_total,
+        zp_stride_out
+    );
+
+    for (int k = 0; k < full_iterations; k++) {
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      loader_x.load_unsafe();
+      loader_w_up.load_unsafe();
+      loader_w_gate.load_unsafe();
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      mma_up.mma(Xs, Ws_up);
+      mma_gate.mma(Xs, Ws_gate);
+
+      loader_x.next();
+      loader_w_up.next();
+      loader_w_gate.next();
+    }
+
+    if (!aligned_K) {
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      loader_x.load_safe(short2(BM, K - full_iterations * BK));
+      loader_w_up.load_safe(short2(K - full_iterations * BK, num_outs));
+      loader_w_gate.load_safe(short2(K - full_iterations * BK, num_outs));
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      mma_up.mma(Xs, Ws_up);
+      mma_gate.mma(Xs, Ws_gate);
+    }
+  }
+
+  // Apply MLP fused epilogue: out = up * activation(gate)
+  // Access Ctile elements and apply fusion
+  constexpr int kElemsPerTile = decltype(mma_up.Ctile)::kElemsPerTile;
+#pragma unroll
+  for (short i = 0; i < kElemsPerTile; i++) {
+    float up_val = static_cast<float>(mma_up.Ctile.elems()[i]);
+    float gate_val = static_cast<float>(mma_gate.Ctile.elems()[i]);
+    float fused = mlp_fused_epilogue_f32(up_val, gate_val);
+    mma_up.Ctile.elems()[i] = static_cast<T>(fused);
+  }
+
+  // Store result
+  mma_up.store_result_safe(y, hidden_dim, short2(num_outs, num_els));
+}
+
+template <typename T, int group_size, int bits>
+[[kernel, max_total_threads_per_threadgroup(128)]] void qmm_mlp_fused(
+    const device uint32_t* w [[buffer(0)]],
+    const device T* scales [[buffer(1)]],
+    const device uint8_t* zero_points
+    [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device T* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device T* x [[buffer(3)]],
+    device T* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  constexpr int BM = 32;
+  constexpr int BK = 32;
+  constexpr int BN = 32;
+  constexpr int BK_padded = (BK + 16 / sizeof(T));
+  constexpr int BN_padded = (BN + 16 / sizeof(T));
+
+  threadgroup T Xs[BM * BK_padded];
+  threadgroup T Ws[2 * BK * BN_padded]; // Double for up and gate
+
+  bool aligned_K = (K % BK) == 0;
+  if (aligned_K) {
+    qmm_mlp_fused_impl<T, group_size, bits, true, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        hidden_dim,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmm_mlp_fused_impl<T, group_size, bits, false, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        hidden_dim,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
+
+// Instantiate MLP fused QMM kernels
+template [[host_name("qmm_mlp_fused_f16_g32_b4")]] [[kernel]] void
+qmm_mlp_fused<half, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_mlp_fused_f16_g64_b4")]] [[kernel]] void
+qmm_mlp_fused<half, 64, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_mlp_fused_f16_g128_b4")]] [[kernel]] void
+qmm_mlp_fused<half, 128, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_mlp_fused_bf16_g32_b4")]] [[kernel]] void
+qmm_mlp_fused<bfloat, 32, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_mlp_fused_bf16_g64_b4")]] [[kernel]] void
+qmm_mlp_fused<bfloat, 64, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_mlp_fused_bf16_g128_b4")]] [[kernel]] void
+qmm_mlp_fused<bfloat, 128, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& hidden_dim [[buffer(6)]],
     const constant int& M [[buffer(7)]],
     uint3 tid [[threadgroup_position_in_grid]],
     uint lid [[thread_index_in_threadgroup]],

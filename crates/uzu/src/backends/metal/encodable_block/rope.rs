@@ -1,6 +1,6 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -35,8 +35,28 @@ impl EncodableBlock for Rope {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
+    ) {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        compute_encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -81,14 +101,10 @@ impl EncodableBlock for Rope {
             state.arrays(&[ArrayId::RopeSines(self.rope_type)]);
         let mut rope_sines = sin_buffer_binding[0].borrow_mut();
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         let token_positions_offset = token_positions.buffer_offset();
 
         self.kernel.encode(
-            &compute_encoder,
+            compute_encoder,
             RopeKernelArguments {
                 qkv_buffer: unsafe { &qkv.mtl_buffer() },
                 cosines_buffer: unsafe { &rope_cosines.mtl_buffer() },
@@ -108,12 +124,5 @@ impl EncodableBlock for Rope {
                 max_sequence_length: rope_max_seq_len,
             },
         );
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
-        }
     }
 }

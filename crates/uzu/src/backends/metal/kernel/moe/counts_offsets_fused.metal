@@ -9,6 +9,7 @@ using namespace metal;
 
 // Single-kernel fused: count all experts + scan to offsets
 // This kernel is launched with SINGLE threadgroup
+[[max_total_threads_per_threadgroup(128)]]
 kernel void moe_counts_offsets_fused(
     device const int* topk_ids [[buffer(0)]],
     device uint* offsets [[buffer(1)]],   // output: exclusive scan [E+1]

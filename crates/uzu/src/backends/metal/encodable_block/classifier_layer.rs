@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -38,9 +38,9 @@ pub struct ClassifierLayer {
 
 impl ClassifierLayer {
     pub fn new(
-        mtl_context: &MTLContext,
+        mtl_context: Rc<MTLContext>,
         layer_config: &TransformerLayerConfig,
-        compilation_config: Rc<CompilationConfig>,
+        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -52,6 +52,7 @@ impl ClassifierLayer {
         rope: Rc<Box<dyn EncodableBlock>>,
     ) -> Self {
         autoreleasepool(|_| {
+            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
             let attention_config = layer_config
                 .mixer_config
                 .as_attention()
@@ -65,7 +66,7 @@ impl ClassifierLayer {
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock> = Box::new(
                 TensorCopy::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
                 )
@@ -79,7 +80,7 @@ impl ClassifierLayer {
                     if layer_loader.subtree("pre_mixer_norm").is_ok() {
                         Some(Box::new(
                             Normalization::new(
-                                mtl_context,
+                                ctx,
                                 intermediate_data_type,
                                 norm_config.clone(),
                                 ArrayId::Main,
@@ -108,12 +109,12 @@ impl ClassifierLayer {
                     num_groups * head_dim,
                     num_groups * head_dim,
                 ],
-                mtl_context,
+                ctx,
                 &layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 ArrayId::Main,
                 ArrayId::QKV,
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create qkv projection");
 
             let qk_norm: Option<Box<dyn EncodableBlock>> = if attention_config
                 .query_norm_config
@@ -121,7 +122,7 @@ impl ClassifierLayer {
                 || attention_config.key_norm_config.is_some()
             {
                 match QKNorm::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     attention_config.query_norm_config.clone(),
                     attention_config.key_norm_config.clone(),
@@ -146,12 +147,12 @@ impl ClassifierLayer {
                 attention_config.has_out_biases,
                 num_heads * head_dim,
                 [model_dim],
-                mtl_context,
+                ctx,
                 &layer_loader.subtree("mixer.out_projection").unwrap(),
                 ArrayId::AttentionOutput,
                 ArrayId::Main,
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create out projection");
 
             let post_attention_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) =
@@ -159,7 +160,7 @@ impl ClassifierLayer {
                 {
                     Some(Box::new(
                         Normalization::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,
@@ -174,7 +175,7 @@ impl ClassifierLayer {
 
             let mixer_residual_add: Box<dyn EncodableBlock> = Box::new(
                 TensorAddSwap::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )
@@ -183,7 +184,7 @@ impl ClassifierLayer {
 
             let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock> = Box::new(
                 TensorCopy::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
                 )
@@ -192,7 +193,7 @@ impl ClassifierLayer {
 
             let pre_mlp_norm: Box<dyn EncodableBlock> = Box::new(
                 Normalization::new(
-                    mtl_context,
+                    ctx,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
                     ArrayId::Main,
@@ -206,16 +207,16 @@ impl ClassifierLayer {
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                mtl_context,
+                &mtl_context,
                 &layer_loader.subtree("mlp").unwrap(),
-                &compilation_config.descriptor_mlp,
-            );
+            )
+            .expect("Failed to create mlp block");
 
             let post_mlp_norm: Option<Box<dyn EncodableBlock>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
                     Some(Box::new(
                         Normalization::new(
-                            mtl_context,
+                            ctx,
                             intermediate_data_type,
                             norm_config.clone(),
                             ArrayId::Main,
@@ -230,7 +231,7 @@ impl ClassifierLayer {
 
             let attention: Box<dyn EncodableBlock> = Box::new(
                 Attention::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     layer_index,
                     attention_scale,
@@ -243,7 +244,7 @@ impl ClassifierLayer {
 
             let mlp_residual_add: Box<dyn EncodableBlock> = Box::new(
                 TensorAddSwap::new(
-                    mtl_context,
+                    ctx,
                     kernel_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
                 )
@@ -275,9 +276,19 @@ impl EncodableBlock for ClassifierLayer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
+        #[cfg(not(feature = "tracing"))]
+        {
+            if self.supports_shared_encoder() {
+                let encoder = command_buffer.new_compute_command_encoder();
+                self.encode_with_shared_encoder(state, &encoder, parameters);
+                encoder.end_encoding();
+                return;
+            }
+        }
+
         #[cfg(feature = "tracing")]
         let layer_traces = state
             .traces()
@@ -407,5 +418,101 @@ impl EncodableBlock for ClassifierLayer {
                 layer_traces.borrow().outputs.clone(),
             );
         }
+
+        let _ = parameters;
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        #[cfg(feature = "tracing")]
+        {
+            false
+        }
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            self.copy_main_to_shortcut_mixer.supports_shared_encoder()
+                && self
+                    .pre_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.qkv_projection.supports_shared_encoder()
+                && self
+                    .qk_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.rope.supports_shared_encoder()
+                && self.attention.supports_shared_encoder()
+                && self.out_projection.supports_shared_encoder()
+                && self
+                    .post_attention_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.mixer_residual_add.supports_shared_encoder()
+                && self.copy_main_to_shortcut_mlp.supports_shared_encoder()
+                && self.pre_mlp_norm.supports_shared_encoder()
+                && self.mlp.supports_shared_encoder()
+                && self
+                    .post_mlp_norm
+                    .as_ref()
+                    .map(|b| b.supports_shared_encoder())
+                    .unwrap_or(true)
+                && self.mlp_residual_add.supports_shared_encoder()
+        }
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        debug_assert!(
+            self.supports_shared_encoder(),
+            "encode_with_shared_encoder called on unsupported ClassifierLayer"
+        );
+
+        self.copy_main_to_shortcut_mixer
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref pre_attn_norm) = self.pre_attention_norm {
+            pre_attn_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.qkv_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+        if let Some(ref qk_norm) = self.qk_norm {
+            qk_norm.encode_with_shared_encoder(state, encoder, parameters);
+        }
+        self.rope.encode_with_shared_encoder(state, encoder, parameters);
+        self.attention.encode_with_shared_encoder(state, encoder, parameters);
+        self.out_projection
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref post_attn_norm) = self.post_attention_norm {
+            post_attn_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.mixer_residual_add
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        self.copy_main_to_shortcut_mlp
+            .encode_with_shared_encoder(state, encoder, parameters);
+
+        self.pre_mlp_norm
+            .encode_with_shared_encoder(state, encoder, parameters);
+        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+
+        if let Some(ref post_mlp_norm) = self.post_mlp_norm {
+            post_mlp_norm
+                .encode_with_shared_encoder(state, encoder, parameters);
+        }
+
+        self.mlp_residual_add
+            .encode_with_shared_encoder(state, encoder, parameters);
     }
 }

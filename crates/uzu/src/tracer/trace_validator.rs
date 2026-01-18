@@ -286,6 +286,8 @@ impl TraceValidator {
             None,
             &token_seeds,
             token_ids.len(),
+            /*sampling_start=*/ 0,
+            /*sampling_length=*/ token_ids.len(),
             false,
             None,
             false,
@@ -294,15 +296,16 @@ impl TraceValidator {
             None,
         );
 
-        let root_command_buffer =
-            ctx.command_buffer.root_command_buffer().to_owned();
+        let command_buffer =
+            ctx.mtl_context.command_queue.new_command_buffer().to_owned();
+
         ctx.executables.encode(
             &mut state,
-            &ctx.command_buffer,
-            &EncodingParameters::new(false, false, true),
+            &command_buffer,
+            &EncodingParameters::new(false, false, false),
         );
-        ctx.command_buffer.commit();
-        root_command_buffer.wait_until_completed();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
 
         let traces = state.traces().clone();
         let data_type = ctx.model_shape.activation_data_type();

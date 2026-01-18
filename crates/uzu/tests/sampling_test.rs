@@ -5,7 +5,14 @@ use rand::{Rng, seq::SliceRandom};
 use uzu::{
     backends::metal::{
         KernelDataType, MTLContext,
-        kernel::{SamplingKernel, sampling::ArgmaxStrategy},
+        kernel::{
+            SamplingKernel,
+            dsl::{
+                GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
+                TopPKernel,
+            },
+            sampling::ArgmaxStrategy,
+        },
         metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
     },
     language_model::gumbel::{gumbel_float, revidx},
@@ -129,6 +136,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
             None,
             0,
             None,
+            0,
             &output_buffer,
             SamplingMethod::Greedy,
             batch_size,
@@ -240,11 +248,6 @@ fn test_topp_sampling_from_prob_exact_match(
         .collect();
 
     // GPU buffers
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
     let output_buf = context.device.new_buffer(
         (batch_size * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -256,6 +259,13 @@ fn test_topp_sampling_from_prob_exact_match(
 
     // Draw samples
     for draw in 0..num_samples {
+        // Create fresh logits buffer since kernel mutates in-place
+        let logits_buf = context.device.new_buffer_with_data(
+            logits.as_ptr() as *const _,
+            (logits.len() * std::mem::size_of::<f32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let seeds_buf = context.device.new_buffer_with_data(
             vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
                 as *const _,
@@ -271,6 +281,7 @@ fn test_topp_sampling_from_prob_exact_match(
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -370,14 +381,7 @@ fn test_topp_sampling_statistical_large() {
         probs[b * VOCAB..(b + 1) * VOCAB].copy_from_slice(&dist);
     }
 
-    // ===== 6. Upload logits to GPU =====
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
-
-    // ===== 7. Allocate output & counters =====
+    // ===== 6. Allocate output & counters =====
     let output_buf = context.device.new_buffer(
         (BATCH * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -386,6 +390,13 @@ fn test_topp_sampling_statistical_large() {
 
     // ===== 8. Draw NUM_DRAWS samples =====
     for draw in 0..NUM_DRAWS {
+        // Create fresh logits buffer since kernel mutates in-place
+        let logits_buf = context.device.new_buffer_with_data(
+            logits.as_ptr() as *const _,
+            (logits.len() * std::mem::size_of::<f32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let seeds_buf = context.device.new_buffer_with_data(
             vec![TEST_SAMPLING_SEED + draw as u64; BATCH].as_ptr() as *const _,
             (BATCH * std::mem::size_of::<u64>()) as u64,
@@ -401,6 +412,7 @@ fn test_topp_sampling_statistical_large() {
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -512,6 +524,7 @@ fn perf_topp_128k_vocab() {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -620,6 +633,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Greedy,
             BATCH,
@@ -711,12 +725,6 @@ fn test_categorical_sampling() {
         0.0, 1.0, 0.0, 0.0, // batch 1
     ];
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        test_logits.as_ptr() as *const _,
-        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
     let output_buffer = context.device.new_buffer(
         (batch_size * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
@@ -727,6 +735,13 @@ fn test_categorical_sampling() {
     let mut counts = vec![0; batch_size * vocab_size];
 
     for sample_idx in 0..num_samples {
+        // Create fresh logits buffer since kernel mutates in-place
+        let logits_buffer = context.device.new_buffer_with_data(
+            test_logits.as_ptr() as *const _,
+            (test_logits.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let seeds_buffer = context.device.new_buffer_with_data(
             vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size].as_ptr()
                 as *const _,
@@ -743,6 +758,7 @@ fn test_categorical_sampling() {
                 Some(&seeds_buffer),
                 0,
                 None,
+                0,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -858,12 +874,6 @@ fn test_categorical_sampling_statistical() {
         }
     }
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-
     let output_buffer = context.device.new_buffer(
         (BATCH * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
@@ -873,6 +883,13 @@ fn test_categorical_sampling_statistical() {
 
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {
+        // Create fresh logits buffer since kernel mutates in-place
+        let logits_buffer = context.device.new_buffer_with_data(
+            logits.as_ptr() as *const _,
+            (logits.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
         let seeds_buffer = context.device.new_buffer_with_data(
             vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH].as_ptr()
                 as *const _,
@@ -889,6 +906,7 @@ fn test_categorical_sampling_statistical() {
                 Some(&seeds_buffer),
                 0,
                 None,
+                0,
                 &output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -998,6 +1016,7 @@ fn perf_categorical_128k_vocab() {
             Some(&seeds_buf),
             0,
             None,
+            0,
             &output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -1059,9 +1078,8 @@ fn test_temperature_gpu_cpu_match() {
     const RTOL: f32 = 1e-6;
     const ATOL: f32 = 1e-6;
 
-    let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
-            .expect("Failed to create sampling kernel");
+    let kernel = TemperatureKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create temperature kernel");
 
     let logits: Vec<f32> = (0..BATCH * VOCAB)
         .map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01)
@@ -1082,16 +1100,14 @@ fn test_temperature_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let compute_encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode_temperature(
-            &logits_buffer,
-            &processed_buffer,
-            BATCH as u32,
-            VOCAB as u32,
-            TEMPERATURE,
-            compute_encoder,
-        )
-        .expect("encode_temperature");
+    kernel.encode(
+        &logits_buffer,
+        &processed_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        TEMPERATURE,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1140,9 +1156,8 @@ fn test_topk_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPK: u32 = 16;
 
-    let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
-            .expect("Failed to create sampling kernel");
+    let kernel = TopKKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create topk kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1165,16 +1180,14 @@ fn test_topk_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let compute_encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode_topk(
-            &logits_buffer,
-            &processed_buffer,
-            BATCH as u32,
-            VOCAB as u32,
-            TOPK,
-            compute_encoder,
-        )
-        .expect("encode_topk");
+    kernel.encode(
+        &logits_buffer,
+        &processed_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        TOPK,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1219,9 +1232,8 @@ fn test_topp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPP: f32 = 0.9;
 
-    let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
-            .expect("Failed to create sampling kernel");
+    let kernel = TopPKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create topp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1244,16 +1256,14 @@ fn test_topp_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let compute_encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode_topp(
-            &logits_buffer,
-            &processed_buffer,
-            BATCH as u32,
-            VOCAB as u32,
-            TOPP,
-            compute_encoder,
-        )
-        .expect("encode_topp");
+    kernel.encode(
+        &logits_buffer,
+        &processed_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        TOPP,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1302,9 +1312,8 @@ fn test_minp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const MINP: f32 = 0.1;
 
-    let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
-            .expect("Failed to create sampling kernel");
+    let kernel = MinPKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create minp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1327,16 +1336,14 @@ fn test_minp_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let compute_encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode_minp(
-            &logits_buffer,
-            &processed_buffer,
-            BATCH as u32,
-            VOCAB as u32,
-            MINP,
-            compute_encoder,
-        )
-        .expect("encode_minp");
+    kernel.encode(
+        &logits_buffer,
+        &processed_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        MINP,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1409,11 +1416,6 @@ fn test_minp_sampling_exact_match(
         high_prob_token_sets.push(high_prob_tokens);
     }
 
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
     let output_buf = context.device.new_buffer(
         (batch_size * std::mem::size_of::<u32>()) as u64,
         metal::MTLResourceOptions::StorageModeShared,
@@ -1423,6 +1425,13 @@ fn test_minp_sampling_exact_match(
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     for draw in 0..num_samples {
+        // Create fresh logits buffer since kernel mutates in-place
+        let logits_buf = context.device.new_buffer_with_data(
+            logits.as_ptr() as *const _,
+            (logits.len() * std::mem::size_of::<f32>()) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
         let seeds_buf = context.device.new_buffer_with_data(
             vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
                 as *const _,
@@ -1438,6 +1447,7 @@ fn test_minp_sampling_exact_match(
                 Some(&seeds_buf),
                 0,
                 None,
+                0,
                 &output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -1511,9 +1521,8 @@ fn test_gumbel_gpu_cpu_match() {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
-            .expect("Failed to create sampling kernel");
+    let kernel = GumbelKernel::new(&context, KernelDataType::Float32)
+        .expect("Failed to create gumbel kernel");
 
     let logits = vec![0.0f32; BATCH * VOCAB];
     let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();
@@ -1539,17 +1548,15 @@ fn test_gumbel_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let compute_encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode_gumbel(
-            &logits_buffer,
-            &seeds_buffer,
-            0,
-            &gumbel_logits_buffer,
-            BATCH as u32,
-            VOCAB as u32,
-            compute_encoder,
-        )
-        .expect("encode");
+    kernel.encode(
+        &logits_buffer,
+        &seeds_buffer,
+        &gumbel_logits_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        0,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();

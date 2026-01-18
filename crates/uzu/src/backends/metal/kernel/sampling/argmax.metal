@@ -71,7 +71,9 @@ static ArgmaxPair threadgroup_cooperative_argmax(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  return shared[0];
+  const ArgmaxPair result = shared[0];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
 template <ushort GRAIN_SIZE_PARAM>
@@ -146,19 +148,62 @@ static ArgmaxPair threadgroup_raking_argmax(
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  return shared[lid];
+  const ArgmaxPair result = shared[lid];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
 }
 
-template <typename T>
-void batched_argmax_main_impl(
+// Single-pass argmax
+
+SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxSingle)(
+  const device T* logits_data,
+  device uint* final_tokens,
+  constant uint& batch_size,
+  constant uint& vocab_size,
+  threadgroup ArgmaxPair shared[BLOCK_SIZE],
+  uint batch_idx GROUPS(batch_size),
+  ushort local_id THREADS(BLOCK_SIZE)
+) {
+  if (batch_idx >= batch_size)
+    return;
+
+  const uint elements_per_tile = BLOCK_SIZE * GRAIN_SIZE;
+  ArgmaxPair best = ARGMAX_INIT;
+
+  for (uint vocab_offset = 0; vocab_offset < vocab_size;
+       vocab_offset += elements_per_tile) {
+    ArgmaxPair buf[GRAIN_SIZE];
+    load_blocked_argmax_batched<GRAIN_SIZE>(
+        buf,
+        logits_data,
+        local_id,
+        batch_idx,
+        vocab_offset,
+        vocab_size
+    );
+    ArgmaxPair tile_best = thread_argmax_reduce<GRAIN_SIZE>(buf);
+    best = argmax_combine(best, tile_best);
+  }
+
+  ArgmaxPair group_best =
+      threadgroup_raking_argmax<BLOCK_SIZE>(best, shared, local_id);
+
+  if (local_id == 0) {
+    final_tokens[batch_idx] = group_best.index;
+  }
+}
+
+// Two-pass argmax
+
+SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxMain)(
     const device T* logits_data,
     device ArgmaxPair* partial_results,
     constant uint& batch_size,
     constant uint& vocab_size,
-    threadgroup ArgmaxPair* shared,
-    uint batch_idx,
-    uint vocab_group_idx,
-    ushort local_id
+    threadgroup ArgmaxPair shared[BLOCK_SIZE],
+    uint batch_idx GROUPS(batch_size),
+    uint vocab_group_idx GROUPS(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE)),
+    ushort local_id THREADS(BLOCK_SIZE)
 ) {
 
   if (batch_idx >= batch_size)
@@ -192,14 +237,14 @@ void batched_argmax_main_impl(
   }
 }
 
-void batched_argmax_final_impl(
+KERNEL(ArgmaxFinal)(
     const device ArgmaxPair* partial_results,
     device uint* final_tokens,
     constant uint& batch_size,
     constant uint& vocab_size,
-    threadgroup ArgmaxPair* shared,
-    uint batch_idx,
-    ushort local_id
+    threadgroup ArgmaxPair shared[BLOCK_SIZE],
+    uint batch_idx GROUPS(batch_size),
+    ushort local_id THREADS(BLOCK_SIZE)
 ) {
 
   if (batch_idx >= batch_size)
@@ -227,158 +272,3 @@ void batched_argmax_final_impl(
     final_tokens[batch_idx] = result.index;
   }
 }
-
-// Generate argmax main kernels using macro approach
-#define outerArguments(T)                                                      \
-  (device const T* logits_data [[buffer(0)]],                                  \
-   device ArgmaxPair* partial_results [[buffer(1)]],                           \
-   constant uint& batch_size [[buffer(2)]],                                    \
-   constant uint& vocab_size [[buffer(3)]],                                    \
-   uint2 group_position [[threadgroup_position_in_grid]],                      \
-   uint2 local_position [[thread_position_in_threadgroup]])
-
-#define innerArguments                                                         \
-  (logits_data,                                                                \
-   partial_results,                                                            \
-   batch_size,                                                                 \
-   vocab_size,                                                                 \
-   shared,                                                                     \
-   group_position.x,                                                           \
-   group_position.y,                                                           \
-   (ushort)local_position.x)
-
-#define generateArgmaxMainKernel(functionName, T, outerArgs, innerArgs)        \
-  [[max_total_threads_per_threadgroup(                                         \
-      1024                                                                     \
-  )]] kernel void functionName##_##T outerArgs {                               \
-    threadgroup ArgmaxPair shared[BLOCK_SIZE];                                 \
-    batched_argmax_main_impl<T> innerArgs;                                     \
-  }
-
-generateArgmaxMainKernel(batched_argmax_main, float, outerArguments(float), innerArguments) generateArgmaxMainKernel(
-    batched_argmax_main,
-    half,
-    outerArguments(half),
-    innerArguments
-) generateArgmaxMainKernel(batched_argmax_main, bfloat, outerArguments(bfloat), innerArguments)
-
-#undef outerArguments
-#undef innerArguments
-#undef generateArgmaxMainKernel
-
-// Generate argmax final kernels using macro approach - note: no T parameter
-// needed for final stage
-#define outerArguments(T)                                                      \
-  (device const ArgmaxPair* partial_results [[buffer(0)]],                     \
-   device uint* final_tokens [[buffer(1)]],                                    \
-   constant uint& batch_size [[buffer(2)]],                                    \
-   constant uint& vocab_size [[buffer(3)]],                                    \
-   uint batch_idx [[threadgroup_position_in_grid]],                            \
-   uint local_id [[thread_position_in_threadgroup]])
-
-#define innerArguments                                                         \
-  (partial_results,                                                            \
-   final_tokens,                                                               \
-   batch_size,                                                                 \
-   vocab_size,                                                                 \
-   shared,                                                                     \
-   batch_idx,                                                                  \
-   (ushort)local_id)
-
-#define generateArgmaxFinalKernel(functionName, T, outerArgs, innerArgs)       \
-  [[max_total_threads_per_threadgroup(                                         \
-      1024                                                                     \
-  )]] kernel void functionName##_##T outerArgs {                               \
-    threadgroup ArgmaxPair shared[BLOCK_SIZE];                                 \
-    batched_argmax_final_impl innerArgs;                                       \
-  }
-
-    generateArgmaxFinalKernel(batched_argmax_final, float, outerArguments(float), innerArguments) generateArgmaxFinalKernel(
-        batched_argmax_final,
-        half,
-        outerArguments(half),
-        innerArguments
-    ) generateArgmaxFinalKernel(batched_argmax_final, bfloat, outerArguments(bfloat), innerArguments)
-
-#undef outerArguments
-#undef innerArguments
-#undef generateArgmaxFinalKernel
-
-        template <typename T>
-        void batched_argmax_single_impl(
-            const device T* logits_data,
-            device uint* final_tokens,
-            constant uint& batch_size,
-            constant uint& vocab_size,
-            threadgroup ArgmaxPair* shared,
-            uint batch_idx,
-            ushort local_id
-        ) {
-  if (batch_idx >= batch_size)
-    return;
-
-  const uint elements_per_tile = BLOCK_SIZE * GRAIN_SIZE;
-  ArgmaxPair best = ARGMAX_INIT;
-
-  for (uint vocab_offset = 0; vocab_offset < vocab_size;
-       vocab_offset += elements_per_tile) {
-    ArgmaxPair buf[GRAIN_SIZE];
-    load_blocked_argmax_batched<GRAIN_SIZE>(
-        buf,
-        logits_data,
-        local_id,
-        batch_idx,
-        vocab_offset,
-        vocab_size
-    );
-    ArgmaxPair tile_best = thread_argmax_reduce<GRAIN_SIZE>(buf);
-    best = argmax_combine(best, tile_best);
-  }
-
-  ArgmaxPair group_best =
-      threadgroup_raking_argmax<BLOCK_SIZE>(best, shared, local_id);
-
-  if (local_id == 0) {
-    final_tokens[batch_idx] = group_best.index;
-  }
-}
-
-// Generate argmax single pass kernels using macro approach
-#define outerArguments(T)                                                      \
-  (device const T* logits_data [[buffer(0)]],                                  \
-   device uint* final_tokens [[buffer(1)]],                                    \
-   constant uint& batch_size [[buffer(2)]],                                    \
-   constant uint& vocab_size [[buffer(3)]],                                    \
-   uint batch_idx [[threadgroup_position_in_grid]],                            \
-   uint local_id [[thread_position_in_threadgroup]])
-
-#define innerArguments                                                         \
-  (logits_data,                                                                \
-   final_tokens,                                                               \
-   batch_size,                                                                 \
-   vocab_size,                                                                 \
-   shared,                                                                     \
-   batch_idx,                                                                  \
-   (ushort)local_id)
-
-#define generateArgmaxSingleKernel(functionName, T, outerArgs, innerArgs)      \
-  [[max_total_threads_per_threadgroup(                                         \
-      1024                                                                     \
-  )]] kernel void functionName##_##T outerArgs {                               \
-    threadgroup ArgmaxPair shared[BLOCK_SIZE];                                 \
-    batched_argmax_single_impl<T> innerArgs;                                   \
-  }
-
-generateArgmaxSingleKernel(batched_argmax_single, float, outerArguments(float), innerArguments) generateArgmaxSingleKernel(
-    batched_argmax_single,
-    half,
-    outerArguments(half),
-    innerArguments
-) generateArgmaxSingleKernel(batched_argmax_single, bfloat, outerArguments(bfloat), innerArguments)
-
-#undef outerArguments
-#undef innerArguments
-#undef generateArgmaxSingleKernel
-
-#undef BLOCK_SIZE
-#undef GRAIN_SIZE

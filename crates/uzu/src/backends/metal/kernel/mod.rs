@@ -1,11 +1,21 @@
+pub mod activation;
 pub mod attention;
 mod data_type;
+pub mod dsl {
+    include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
+}
 pub mod embedding;
 pub mod kv_cache_update;
 pub mod layer_norm;
 pub mod mask_update;
+pub mod matmul;
 pub mod media_kernels;
 pub mod mlp;
+pub use mlp::{
+    MLP_ACTIVATION_FC_INDEX, MLP_FUSED_FC_INDEX, MLP_HIDDEN_DIM_FC_INDEX,
+    MlpActivationType, MlpFusedConfig, make_non_fused_function_constants,
+};
+pub mod mlp_fused;
 pub mod moe;
 pub mod pooling;
 pub mod quant_matmul;
@@ -20,6 +30,7 @@ mod tensor_add_swap;
 mod tensor_copy;
 pub mod token_copy;
 
+pub use activation::ActivationKernel;
 pub use attention::{
     AttentionError, AttentionKernel, AttentionKernelVariant,
     AttentionSinglePassArguments, AttentionTwoPassArguments,
@@ -29,6 +40,7 @@ pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use layer_norm::{LayerNormArguments, LayerNormError, LayerNormKernel};
 pub use mask_update::MaskUpdateKernel;
+pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,

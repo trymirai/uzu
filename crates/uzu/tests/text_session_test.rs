@@ -16,10 +16,14 @@ fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))
 }
 
+fn build_default_text() -> String {
+    let text = String::from("Tell about London");
+    return text;
+}
+
 #[test]
 fn test_text_session_base() {
-    let text = String::from("Tell about London");
-    run(text, build_decoding_config(), 128);
+    run(build_default_text(), build_decoding_config(), 128);
 }
 
 #[test]
@@ -30,6 +34,32 @@ fn test_text_session_scenario() {
         String::from("Compare with New York"),
     ];
     run_scenario(Some(system_prompt), user_prompts);
+}
+
+#[test]
+fn test_text_session_stability() {
+    let mut session =
+        Session::new(build_model_path(), build_decoding_config()).unwrap();
+    println!("Index | TTFT, s | Prompt t/s | Generate t/s");
+    for index in 0..10 {
+        let input = Input::Text(build_default_text());
+        let output = session
+            .run(
+                input,
+                RunConfig::default().tokens_limit(128),
+                Some(|_: Output| {
+                    return true;
+                }),
+            )
+            .unwrap();
+        println!(
+            "{:.5} | {:.5} | {:.5} | {:.5}",
+            index,
+            output.stats.prefill_stats.duration,
+            output.stats.prefill_stats.processed_tokens_per_second,
+            output.stats.generate_stats.unwrap().tokens_per_second
+        );
+    }
 }
 
 fn run(

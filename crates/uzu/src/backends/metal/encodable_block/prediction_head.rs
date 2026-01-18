@@ -1,6 +1,6 @@
 //! Prediction head encodable for classification output.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -40,20 +40,19 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
     ) {
-        self.dense.encode(state, command_buffer, parameters);
-        self.activation.encode(state, command_buffer, parameters);
-        self.norm.encode(state, command_buffer, parameters);
-        self.readout.encode(state, command_buffer, parameters);
-
-        #[cfg_attr(feature = "tracing", allow(unused_variables))]
-        let root_after_head = command_buffer.root_command_buffer().to_owned();
-        command_buffer.commit_and_continue();
-
-        #[cfg(not(feature = "tracing"))]
-        root_after_head.wait_until_completed();
+        if self.supports_shared_encoder() {
+            let encoder = command_buffer.new_compute_command_encoder();
+            self.encode_with_shared_encoder(state, &encoder, parameters);
+            encoder.end_encoding();
+        } else {
+            self.dense.encode(state, command_buffer, parameters);
+            self.activation.encode(state, command_buffer, parameters);
+            self.norm.encode(state, command_buffer, parameters);
+            self.readout.encode(state, command_buffer, parameters);
+        }
 
         #[cfg(feature = "tracing")]
         {
@@ -77,8 +76,7 @@ impl EncodableBlock for ClassifierPredictionHead {
                 (batch_size * self.num_labels * data_type.size_in_bytes())
                     as u64;
 
-            let root = command_buffer.root_command_buffer();
-            let blit = root.new_blit_command_encoder();
+            let blit = command_buffer.new_blit_command_encoder();
             blit.copy_from_buffer(
                 &linear_output_buffer,
                 0,
@@ -87,10 +85,30 @@ impl EncodableBlock for ClassifierPredictionHead {
                 copy_size_bytes,
             );
             blit.end_encoding();
-
-            let root_owned = root.to_owned();
-            command_buffer.commit_and_continue();
-            root_owned.wait_until_completed();
         }
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        self.dense.supports_shared_encoder()
+            && self.activation.supports_shared_encoder()
+            && self.norm.supports_shared_encoder()
+            && self.readout.supports_shared_encoder()
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        parameters: &EncodingParameters,
+    ) {
+        self.dense.encode_with_shared_encoder(state, encoder, parameters);
+        self.activation.encode_with_shared_encoder(state, encoder, parameters);
+        self.norm.encode_with_shared_encoder(state, encoder, parameters);
+        self.readout.encode_with_shared_encoder(state, encoder, parameters);
     }
 }

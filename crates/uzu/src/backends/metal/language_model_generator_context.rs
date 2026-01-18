@@ -6,9 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use metal::Event as MTLEvent;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
-use objc2::rc::Retained;
+use metal::{CommandBuffer, Event as MTLEvent};
 
 use super::{
     CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
@@ -131,11 +129,11 @@ impl AsyncBuffers {
 
 pub struct LanguageModelGeneratorContext {
     pub mtl_context: Rc<MTLContext>,
-    pub command_buffer: Retained<MPSCommandBuffer>,
+    pub command_buffer: CommandBuffer,
 
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers,
+    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
 
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,
@@ -163,8 +161,7 @@ impl LanguageModelGeneratorContext {
         let mtl_command_queue =
             mtl_device.new_command_queue_with_max_command_buffer_count(1024);
 
-        let command_buffer =
-            MPSCommandBuffer::from_command_queue(&mtl_command_queue);
+        let command_buffer = mtl_command_queue.new_command_buffer().to_owned();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -308,10 +305,7 @@ impl LanguageModelGeneratorContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        objc2::rc::autoreleasepool(|_pool| {
-            self.command_buffer = MPSCommandBuffer::from_command_queue(
-                &self.mtl_context.command_queue,
-            );
-        });
+        self.command_buffer =
+            self.mtl_context.command_queue.new_command_buffer().to_owned();
     }
 }

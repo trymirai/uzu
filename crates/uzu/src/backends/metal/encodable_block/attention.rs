@@ -1,17 +1,33 @@
 //! Attention kernel encodable.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
     KernelDataType, MTLContext,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
-        AttentionError, AttentionKernel, AttentionKernelVariant,
-        AttentionSinglePassArguments, AttentionTwoPassArguments,
-        KVCacheUpdateArguments,
+        AttentionError, AttentionGemmArguments, AttentionKernel,
+        AttentionKernelVariant, AttentionSinglePassArguments,
+        AttentionTwoPassArguments, KVCacheUpdateArguments,
     },
 };
+
+fn env_gemm_attention_enabled() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        let raw = std::env::var("UZU_USE_GEMM_ATTENTION").ok();
+        let Some(raw) = raw else {
+            return true;
+        };
+        let v = raw.trim().to_ascii_uppercase();
+        match v.as_str() {
+            "1" | "YES" | "TRUE" | "ON" => true,
+            "0" | "NO" | "FALSE" | "OFF" => false,
+            _ => true,
+        }
+    })
+}
 
 pub struct Attention {
     kernel: AttentionKernel,
@@ -48,7 +64,27 @@ impl EncodableBlock for Attention {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
+        parameters: &EncodingParameters,
+    ) {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        compute_encoder: &ComputeCommandEncoderRef,
         parameters: &EncodingParameters,
     ) {
         let (
@@ -108,17 +144,36 @@ impl EncodableBlock for Attention {
                 (0, self.sliding_window_size)
             };
 
+        let use_mask = window_length.is_some();
+
         let sequence_length = segment_prefix_length + suffix_length;
 
         let gqa_factor = num_heads / num_groups;
         let scale =
             self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
-        let variant = self.kernel.choose_variant(
-            sequence_length,
-            head_dim,
-            self.is_causal,
-        );
+        let gemm_enabled = env_gemm_attention_enabled();
+        let use_gemm = gemm_enabled
+            && suffix_length > 8
+            && matches!(head_dim, 64 | 128 | 256);
+        if !gemm_enabled {
+            static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
+            PRINT_ONCE.call_once(|| {
+                eprintln!(
+                    "[uzu] Gemm attention disabled via UZU_USE_GEMM_ATTENTION"
+                );
+            });
+        }
+        let variant = if use_gemm {
+            AttentionKernelVariant::SinglePass
+        } else {
+            self.kernel.choose_variant(
+                sequence_length,
+                head_dim,
+                self.is_causal,
+                use_mask,
+            )
+        };
 
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
@@ -128,7 +183,6 @@ impl EncodableBlock for Attention {
         let attention_output_binding =
             state.arrays(&[ArrayId::AttentionOutput]);
 
-        let attention_bias_map = attention_bias_binding[0].clone();
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
         let mask_head_stride = 0;
@@ -143,11 +197,6 @@ impl EncodableBlock for Attention {
 
         let mut qkv_array = qkv_binding[0].borrow_mut();
         let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
-
-        // Prepare command encoder early (used for optional value extraction)
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
@@ -205,18 +254,25 @@ impl EncodableBlock for Attention {
         let attention_output_buffer =
             unsafe { attention_output_array.mtl_buffer() };
 
-        let attention_bias_buffer = attention_bias_map
-            .get(&window_length)
-            .map(|array| {
-                let mut array_ref = array.borrow_mut();
-                unsafe { array_ref.mtl_buffer().clone() }
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "Attention bias buffer not found for window length {:?}",
-                    window_length
-                );
-            });
+        let attention_bias_buffer = if use_mask {
+            let attention_bias_map = attention_bias_binding[0].clone();
+            Some(
+                attention_bias_map
+                    .get(&window_length)
+                    .map(|array| {
+                        let mut array_ref = array.borrow_mut();
+                        unsafe { array_ref.mtl_buffer().clone() }
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Attention bias buffer not found for window length {:?}",
+                            window_length
+                        );
+                    }),
+            )
+        } else {
+            None
+        };
 
         let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
@@ -238,7 +294,7 @@ impl EncodableBlock for Attention {
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
             if let Err(e) = self.kernel.encode_kv_cache_update(
-                &compute_encoder,
+                compute_encoder,
                 KVCacheUpdateArguments {
                     rotated_keys_buffer: &rotated_keys_buffer,
                     qkv_buffer: &qkv_buffer,
@@ -253,7 +309,6 @@ impl EncodableBlock for Attention {
                 },
             ) {
                 eprintln!("Failed to encode KV cache update: {:?}", e);
-                compute_encoder.end_encoding();
                 return;
             }
         }
@@ -265,8 +320,33 @@ impl EncodableBlock for Attention {
 
         match variant {
             AttentionKernelVariant::SinglePass => {
-                if let Err(e) = self.kernel.encode_single_pass(
-                    &compute_encoder,
+                if use_gemm {
+                    let mtl = &**state.mtl_context();
+                    if let Err(e) = self.kernel.encode_gemm(
+                        mtl,
+                        compute_encoder,
+                        AttentionGemmArguments {
+                            queries_buffer: &queries_buffer,
+                            keys_buffer: &key_cache_buffer,
+                            values_buffer: &value_cache_buffer,
+                            output_buffer: &attention_output_buffer,
+                            mask_buffer: attention_bias_buffer.as_ref(),
+                            sinks_buffer: sinks_buffer.as_ref(),
+                            num_heads,
+                            num_groups,
+                            suffix_length,
+                            sequence_length,
+                            segment_prefix_length,
+                            max_sequence_length,
+                            head_dim,
+                            is_causal: self.is_causal,
+                            scale,
+                        },
+                    ) {
+                        eprintln!("Failed to encode gemm attention: {:?}", e);
+                    }
+                } else if let Err(e) = self.kernel.encode_single_pass(
+                    compute_encoder,
                     AttentionSinglePassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -279,7 +359,7 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: Some(&attention_bias_buffer),
+                        mask_buffer: attention_bias_buffer.as_ref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
@@ -298,7 +378,7 @@ impl EncodableBlock for Attention {
             },
             AttentionKernelVariant::TwoPass => {
                 if let Err(e) = self.kernel.encode_two_pass(
-                    &compute_encoder,
+                    compute_encoder,
                     AttentionTwoPassArguments {
                         queries_buffer: &queries_buffer,
                         keys_buffer: &key_cache_buffer,
@@ -314,7 +394,7 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: Some(&attention_bias_buffer),
+                        mask_buffer: attention_bias_buffer.as_ref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
@@ -328,13 +408,6 @@ impl EncodableBlock for Attention {
                     eprintln!("Failed to encode two-pass attention: {:?}", e);
                 }
             },
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Tensor add-swap encodable.
 
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -35,8 +35,28 @@ impl EncodableBlock for TensorAddSwap {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
+    ) {
+        let encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &encoder, parameters);
+        encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorAddSwap expects exactly 2 arrays");
@@ -48,19 +68,11 @@ impl EncodableBlock for TensorAddSwap {
         let skip_mtl_buffer = unsafe { skip_array.mtl_buffer() };
         let main_mtl_buffer = unsafe { main_array.mtl_buffer() };
 
-        let retained_mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-
-        self.kernel.encode_into_command_buffer(
+        self.kernel.encode_with_encoder(
             &skip_mtl_buffer,
             &main_mtl_buffer,
             length,
-            &retained_mtl_command_buffer,
+            encoder,
         );
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            retained_mtl_command_buffer.wait_until_completed();
-        }
     }
 }

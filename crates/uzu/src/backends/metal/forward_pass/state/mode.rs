@@ -21,6 +21,8 @@ pub struct LanguageModelGeneratorModeState {
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace>>,
     pub active_suffix_length: usize,
+    pub sampling_start: usize,
+    pub sampling_length: usize,
     pub is_prefilling: bool,
 }
 

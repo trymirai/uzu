@@ -1,7 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use metal::Device;
-use mpsgraph::CommandBuffer;
 use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
@@ -223,10 +222,9 @@ fn run_scenario(
         },
     };
 
-    let command_buffer =
-        CommandBuffer::from_command_queue(&context.command_queue);
+    let command_buffer = context.command_queue.new_command_buffer().to_owned();
 
-    let root_command_buffer = command_buffer.root_command_buffer().to_owned();
+    let root_command_buffer = command_buffer.clone();
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,

@@ -4,7 +4,8 @@
 using namespace metal;
 
 template <typename T>
-kernel void ssm_split_inproj_kernel(
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void ssm_split_inproj_kernel(
     device const T* input [[buffer(0)]],
     device T* conv_out [[buffer(1)]],
     device T* z_out [[buffer(2)]],

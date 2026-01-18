@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
+    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
     ComputePipelineState as MTLComputePipelineState,
 };
 
@@ -35,9 +35,25 @@ impl TensorCopyKernel {
         source_buffer: &MTLBuffer,
         destination_buffer: &MTLBuffer,
         length: usize,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &CommandBufferRef,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_encoder(
+            source_buffer,
+            destination_buffer,
+            length,
+            &compute_encoder,
+        );
+        compute_encoder.end_encoding();
+    }
+
+    pub fn encode_with_encoder(
+        &self,
+        source_buffer: &MTLBuffer,
+        destination_buffer: &MTLBuffer,
+        length: usize,
+        compute_encoder: &ComputeCommandEncoderRef,
+    ) {
         compute_encoder.set_label("Tensor Copy");
 
         compute_encoder.set_buffer(0, Some(source_buffer), 0);
@@ -49,6 +65,5 @@ impl TensorCopyKernel {
         );
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
-        compute_encoder.end_encoding();
     }
 }

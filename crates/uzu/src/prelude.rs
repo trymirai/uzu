@@ -4,9 +4,7 @@
 //! frequently used types into scope.
 
 // Constants & Utilities
-// Linearizer
 // Session Core
-pub use crate::session::ChatSession;
 // Session Config
 pub use crate::session::config::{DecodingConfig, RunConfig, SpeculatorConfig};
 // Session Parameters
@@ -22,6 +20,8 @@ pub use crate::session::types::{
 // Speculators
 pub use crate::speculators::speculator::Speculator;
 pub use crate::{
-    VERSION, linearizer::trie::TokenTrie, session::ClassificationSession,
-    speculators::empty_speculator::EmptySpeculator, storage_path,
+    VERSION,
+    session::{ChatSession, ClassificationSession},
+    speculators::empty_speculator::EmptySpeculator,
+    storage_path,
 };

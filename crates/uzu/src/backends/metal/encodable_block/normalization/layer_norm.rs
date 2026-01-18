@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::Buffer as MTLBuffer;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -89,8 +88,28 @@ impl EncodableBlock for LayerNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &MPSCommandBuffer,
+        command_buffer: &CommandBufferRef,
         parameters: &EncodingParameters,
+    ) {
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        compute_encoder.end_encoding();
+
+        if parameters.wait_until_completed {
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        true
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState,
+        compute_encoder: &ComputeCommandEncoderRef,
+        _parameters: &EncodingParameters,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
@@ -109,12 +128,8 @@ impl EncodableBlock for LayerNorm {
         let batch_size = input_shape[0] as i32;
         let model_dim = input_shape[1] as i32;
 
-        let mtl_command_buffer =
-            command_buffer.root_command_buffer().to_owned();
-        let compute_encoder = mtl_command_buffer.new_compute_command_encoder();
-
         if let Err(e) = self.kernel.encode(
-            &compute_encoder,
+            compute_encoder,
             LayerNormArguments {
                 input_buffer: &input_buffer,
                 scales_buffer: &self.scales_buffer,
@@ -126,13 +141,6 @@ impl EncodableBlock for LayerNorm {
             },
         ) {
             eprintln!("Failed to encode LayerNorm kernel: {:?}", e);
-        }
-
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit_and_continue();
-            mtl_command_buffer.wait_until_completed();
         }
     }
 }

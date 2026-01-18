@@ -9,13 +9,16 @@ use thiserror::Error;
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
+mod gemm_types;
+use gemm_types::{AttnMaskParams, AttnParams};
+
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionKernelVariant {
     SinglePass,
     TwoPass,
 }
 
-type PipelineKey = (usize, bool, bool); // (head_dim, has_sinks, is_causal)
+type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
     single_pass: HashMap<PipelineKey, MTLComputePipelineState>,
@@ -25,6 +28,7 @@ pub struct AttentionKernelPipelines {
 }
 
 pub struct AttentionKernel {
+    data_type: KernelDataType,
     pipelines: AttentionKernelPipelines,
 }
 
@@ -100,16 +104,34 @@ pub struct KVCacheUpdateArguments<'a> {
     pub max_sequence_length: usize,
 }
 
+pub struct AttentionGemmArguments<'a> {
+    pub queries_buffer: &'a MTLBuffer, // buffer(0)
+    pub keys_buffer: &'a MTLBuffer,    // buffer(1)
+    pub values_buffer: &'a MTLBuffer,  // buffer(2)
+    pub output_buffer: &'a MTLBuffer,  // buffer(3)
+    pub mask_buffer: Option<&'a MTLBuffer>, // buffer(6)
+    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(7)
+    pub num_heads: usize,
+    pub num_groups: usize,
+    pub suffix_length: usize,         // qL
+    pub sequence_length: usize,       // kL (prefix + suffix)
+    pub segment_prefix_length: usize, // qL_off
+    pub max_sequence_length: usize,   // stride for K/V cache
+    pub head_dim: usize,
+    pub is_causal: bool,
+    pub scale: f32,
+}
+
 fn make_function_constants(
+    has_mask_value: bool,
     has_sinks_value: bool,
     is_causal_value: bool,
 ) -> FunctionConstantValues {
     let function_constants = FunctionConstantValues::new();
 
-    let has_mask_value = true;
     let query_transposed_value = false;
     let bool_mask_value = false;
-    let float_mask_value = true;
+    let float_mask_value = has_mask_value;
 
     function_constants.set_constant_value_at_index(
         &has_mask_value as *const bool as *const std::ffi::c_void,
@@ -160,51 +182,66 @@ impl AttentionKernel {
         // Pre-generate all supported variants for sinks and causal configurations
         for &has_sinks_value in &[false, true] {
             for &is_causal_value in &[false, true] {
-                let function_constants =
-                    make_function_constants(has_sinks_value, is_causal_value);
+                for &has_mask_value in &[false, true] {
+                    let function_constants = make_function_constants(
+                        has_mask_value,
+                        has_sinks_value,
+                        is_causal_value,
+                    );
 
-                for &head_dim in &supported_head_dims {
-                    if let Ok((pipeline, _)) = context
-                        .compute_pipeline_state_with_reflection(
-                            &format!(
-                                "attention_single_pass_{}_{}",
-                                data_suffix, head_dim
-                            ),
-                            Some(&function_constants),
-                        )
-                    {
-                        single_pass.insert(
-                            (head_dim, has_sinks_value, is_causal_value),
-                            pipeline,
-                        );
-                    }
-
-                    if let Ok((pipeline, _)) = context
-                        .compute_pipeline_state_with_reflection(
-                            &format!(
-                                "attention_2pass_1_{}_{}",
-                                data_suffix, head_dim
-                            ),
-                            Some(&function_constants),
-                        )
-                    {
-                        two_pass_1.insert(
-                            (head_dim, has_sinks_value, is_causal_value),
-                            pipeline,
-                        );
-                    }
-
-                    if !two_pass_2.contains_key(&head_dim) {
+                    for &head_dim in &supported_head_dims {
                         if let Ok((pipeline, _)) = context
                             .compute_pipeline_state_with_reflection(
                                 &format!(
-                                    "attention_2pass_2_{}_{}",
+                                    "attention_single_pass_{}_{}",
                                     data_suffix, head_dim
                                 ),
                                 Some(&function_constants),
                             )
                         {
-                            two_pass_2.insert(head_dim, pipeline);
+                            single_pass.insert(
+                                (
+                                    head_dim,
+                                    has_sinks_value,
+                                    is_causal_value,
+                                    has_mask_value,
+                                ),
+                                pipeline,
+                            );
+                        }
+
+                        if let Ok((pipeline, _)) = context
+                            .compute_pipeline_state_with_reflection(
+                                &format!(
+                                    "attention_2pass_1_{}_{}",
+                                    data_suffix, head_dim
+                                ),
+                                Some(&function_constants),
+                            )
+                        {
+                            two_pass_1.insert(
+                                (
+                                    head_dim,
+                                    has_sinks_value,
+                                    is_causal_value,
+                                    has_mask_value,
+                                ),
+                                pipeline,
+                            );
+                        }
+
+                        if !two_pass_2.contains_key(&head_dim) {
+                            if let Ok((pipeline, _)) = context
+                                .compute_pipeline_state_with_reflection(
+                                    &format!(
+                                        "attention_2pass_2_{}_{}",
+                                        data_suffix, head_dim
+                                    ),
+                                    Some(&function_constants),
+                                )
+                            {
+                                two_pass_2.insert(head_dim, pipeline);
+                            }
                         }
                     }
                 }
@@ -220,6 +257,7 @@ impl AttentionKernel {
             .ok();
 
         Ok(Self {
+            data_type,
             pipelines: AttentionKernelPipelines {
                 single_pass,
                 two_pass_1,
@@ -233,16 +271,22 @@ impl AttentionKernel {
         &self,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> bool {
-        self.pipelines.single_pass.contains_key(&(head_dim, false, is_causal))
+        self.pipelines
+            .single_pass
+            .contains_key(&(head_dim, false, is_causal, has_mask))
     }
 
     pub fn supports_two_pass(
         &self,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> bool {
-        self.pipelines.two_pass_1.contains_key(&(head_dim, false, is_causal))
+        self.pipelines
+            .two_pass_1
+            .contains_key(&(head_dim, false, is_causal, has_mask))
             && self.pipelines.two_pass_2.contains_key(&head_dim)
     }
 
@@ -251,8 +295,10 @@ impl AttentionKernel {
         sequence_length: usize,
         head_dim: usize,
         is_causal: bool,
+        has_mask: bool,
     ) -> AttentionKernelVariant {
-        if self.supports_two_pass(head_dim, is_causal) && sequence_length > 1024
+        if self.supports_two_pass(head_dim, is_causal, has_mask)
+            && sequence_length > 1024
         {
             AttentionKernelVariant::TwoPass
         } else {
@@ -266,10 +312,11 @@ impl AttentionKernel {
         args: AttentionSinglePassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
+        let has_mask = args.mask_buffer.is_some();
         let pipeline = self
             .pipelines
             .single_pass
-            .get(&(args.head_dim, has_sinks, args.is_causal))
+            .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         compute_encoder.set_compute_pipeline_state(pipeline);
@@ -363,10 +410,11 @@ impl AttentionKernel {
         args: AttentionTwoPassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
+        let has_mask = args.mask_buffer.is_some();
         let pass1_pipeline = self
             .pipelines
             .two_pass_1
-            .get(&(args.head_dim, has_sinks, args.is_causal))
+            .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
         let pass2_pipeline =
@@ -544,14 +592,180 @@ impl AttentionKernel {
             depth: args.head_dim as u64,
         };
 
+        let threadgroup_depth = std::cmp::min(args.head_dim.max(1), 64) as u64;
+
         compute_encoder.dispatch_threads(
             threads_per_grid,
             MTLSize {
                 width: 1,
                 height: 1,
-                depth: 1,
+                depth: threadgroup_depth,
             },
         );
+        Ok(())
+    }
+
+    pub fn encode_gemm(
+        &self,
+        context: &MTLContext,
+        compute_encoder: &ComputeCommandEncoderRef,
+        args: AttentionGemmArguments,
+    ) -> Result<(), AttentionError> {
+        const BQ: usize = 32;
+        const WM: u64 = 4;
+        const WN: u64 = 1;
+
+        if !matches!(args.head_dim, 64 | 128 | 256) {
+            return Err(AttentionError::UnsupportedHeadDim(args.head_dim));
+        }
+
+        let bk: usize = if args.head_dim < 128 {
+            32
+        } else {
+            16
+        };
+
+        let align_q = (args.suffix_length % BQ) == 0;
+        let align_k = (args.sequence_length % bk) == 0;
+        let has_mask = args.mask_buffer.is_some();
+        let has_sinks = args.sinks_buffer.is_some();
+
+        let fcv = FunctionConstantValues::new();
+        fcv.set_constant_value_at_index(
+            &align_q as *const bool as *const _,
+            MTLDataType::Bool,
+            200,
+        );
+        fcv.set_constant_value_at_index(
+            &align_k as *const bool as *const _,
+            MTLDataType::Bool,
+            201,
+        );
+        fcv.set_constant_value_at_index(
+            &has_mask as *const bool as *const _,
+            MTLDataType::Bool,
+            300,
+        );
+        fcv.set_constant_value_at_index(
+            &args.is_causal as *const bool as *const _,
+            MTLDataType::Bool,
+            301,
+        );
+        fcv.set_constant_value_at_index(
+            &has_sinks as *const bool as *const _,
+            MTLDataType::Bool,
+            302,
+        );
+
+        // Kernel name matches gemm_attention.metal instantiations:
+        // attention_gemm_{f16|bf16|f32}_{head_dim}_bk{bk}
+        let type_name = match self.data_type {
+            KernelDataType::Float16 => "f16",
+            KernelDataType::BFloat16 => "bf16",
+            KernelDataType::Float32 => "f32",
+        };
+
+        let function_name =
+            format!("attention_gemm_{}_{}_bk{}", type_name, args.head_dim, bk);
+
+        let cache_key = format!(
+            "{}_aq{}_ak{}_m{}_c{}_s{}",
+            function_name,
+            align_q as u8,
+            align_k as u8,
+            has_mask as u8,
+            args.is_causal as u8,
+            has_sinks as u8
+        );
+
+        let (pipeline, _) = context
+            .compute_pipeline_state_with_reflection_cached(
+                &cache_key,
+                &function_name,
+                Some(&fcv),
+            )
+            .map_err(AttentionError::MetalError)?;
+
+        compute_encoder.set_compute_pipeline_state(&pipeline);
+
+        // Buffers
+        compute_encoder.set_buffer(0, Some(args.queries_buffer), 0);
+        compute_encoder.set_buffer(1, Some(args.keys_buffer), 0);
+        compute_encoder.set_buffer(2, Some(args.values_buffer), 0);
+        compute_encoder.set_buffer(3, Some(args.output_buffer), 0);
+
+        // Params (all strides in elements)
+        let q_head_stride = (args.suffix_length * args.head_dim) as i64;
+        let q_seq_stride = args.head_dim as i64;
+
+        let kv_head_stride = (args.max_sequence_length * args.head_dim) as i64;
+        let kv_seq_stride = args.head_dim as i64;
+
+        let o_head_stride = args.head_dim as i64;
+        let o_seq_stride = (args.num_heads * args.head_dim) as i64;
+
+        let nq = (args.suffix_length + BQ - 1) / BQ;
+        let nk = (args.sequence_length + bk - 1) / bk;
+        let nq_aligned = args.suffix_length / BQ;
+        let nk_aligned = args.sequence_length / bk;
+
+        let params = AttnParams {
+            q_strides: [0, q_head_stride, q_seq_stride],
+            k_strides: [0, kv_head_stride, kv_seq_stride],
+            v_strides: [0, kv_head_stride, kv_seq_stride],
+            o_strides: [0, o_head_stride, o_seq_stride],
+            gqa_factor: (args.num_heads / args.num_groups) as i32,
+            scale: args.scale,
+            q_len: args.suffix_length as i32,
+            k_len: args.sequence_length as i32,
+            q_off: args.segment_prefix_length as i32,
+            nq_aligned: nq_aligned as i32,
+            q_rem: (args.suffix_length - nq_aligned * BQ) as i32,
+            nk: nk as i32,
+            nk_aligned: nk_aligned as i32,
+            k_rem: (args.sequence_length - nk_aligned * bk) as i32,
+        };
+
+        compute_encoder.set_bytes(
+            4,
+            size_of::<AttnParams>() as u64,
+            &params as *const AttnParams as *const _,
+        );
+
+        if let Some(mask_buffer) = args.mask_buffer {
+            let mask_params = AttnMaskParams {
+                // We use a shared bias matrix for all heads/batches.
+                m_strides: [0, 0, args.sequence_length as i64],
+            };
+            compute_encoder.set_bytes(
+                5,
+                size_of::<AttnMaskParams>() as u64,
+                &mask_params as *const AttnMaskParams as *const _,
+            );
+            compute_encoder.set_buffer(6, Some(mask_buffer), 0);
+        }
+
+        if let Some(sinks_buffer) = args.sinks_buffer {
+            compute_encoder.set_buffer(7, Some(sinks_buffer), 0);
+        }
+
+        // Dispatch
+        let threadgroups_per_grid = MTLSize {
+            width: nq as u64,
+            height: args.num_heads as u64,
+            depth: 1,
+        };
+        let threads_per_threadgroup = MTLSize {
+            width: 32,
+            height: WM,
+            depth: WN,
+        };
+
+        compute_encoder.dispatch_thread_groups(
+            threadgroups_per_grid,
+            threads_per_threadgroup,
+        );
+
         Ok(())
     }
 }

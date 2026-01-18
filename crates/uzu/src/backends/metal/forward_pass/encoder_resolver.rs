@@ -1,5 +1,4 @@
-use metal::ComputeCommandEncoder;
-use mpsgraph::CommandBuffer as MPSCommandBuffer;
+use metal::{CommandBufferRef, ComputeCommandEncoder};
 
 use super::ForwardPassState;
 use crate::backends::metal::encodable_block::{
@@ -7,12 +6,12 @@ use crate::backends::metal::encodable_block::{
 };
 
 pub struct EncoderResolver<'a> {
-    command_buffer: &'a MPSCommandBuffer,
+    command_buffer: &'a CommandBufferRef,
     encoder: Option<ComputeCommandEncoder>,
 }
 
 impl<'a> EncoderResolver<'a> {
-    pub fn new(command_buffer: &'a MPSCommandBuffer) -> Self {
+    pub fn new(command_buffer: &'a CommandBufferRef) -> Self {
         Self {
             command_buffer,
             encoder: None,
@@ -29,7 +28,6 @@ impl<'a> EncoderResolver<'a> {
             if self.encoder.is_none() {
                 self.encoder = Some(
                     self.command_buffer
-                        .root_command_buffer()
                         .new_compute_command_encoder()
                         .to_owned(),
                 );

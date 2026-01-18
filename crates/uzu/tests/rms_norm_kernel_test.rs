@@ -387,8 +387,10 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
+            input_offset: 0,
             scales_buffer: &scale_buffer,
             output_buffer: &output_buffer,
+            output_offset: 0,
             batch_size,
             model_dim,
             epsilon,
@@ -518,8 +520,10 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
+            input_offset: 0,
             scales_buffer: &scale_buffer,
             output_buffer: &output_buffer,
+            output_offset: 0,
             batch_size,
             model_dim,
             epsilon,
@@ -857,8 +861,10 @@ fn perf_rms_norm_with_size(
         &compute_encoder,
         RMSNormArguments {
             input_buffer: &input_buffer,
+            input_offset: 0,
             scales_buffer: &scale_buffer,
             output_buffer: &output_buffer,
+            output_offset: 0,
             batch_size,
             model_dim,
             epsilon: EPSILON,
