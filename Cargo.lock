@@ -2113,24 +2113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "matmul-benchmark"
-version = "0.1.7"
-dependencies = [
- "autocxx",
- "autocxx-build",
- "cmake",
- "cxx",
- "half",
- "metal",
- "mpsgraph",
- "objc2",
- "serde",
- "serde_json",
- "uzu",
- "walkdir",
-]
-
-[[package]]
 name = "matrixmultiply"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
