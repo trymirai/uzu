@@ -233,7 +233,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
-                self.skip_attention_bias_fill(true),
+                self.skip_attention_bias_fill(),
             );
 
             if should_capture {
@@ -400,7 +400,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
-            self.skip_attention_bias_fill(false),
+            self.skip_attention_bias_fill(),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -508,7 +508,7 @@ impl LanguageModelGenerator {
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
         let skip_attention_bias_fill =
-            pass_idx > 0 && self.skip_attention_bias_fill(false);
+            pass_idx > 0 && self.skip_attention_bias_fill();
 
         let skip_token_ids_copy = pass_idx > 0;
 
@@ -892,18 +892,14 @@ impl LanguageModelGenerator {
         }
     }
 
-    fn skip_attention_bias_fill(
-        &self,
-        is_prefilling: bool,
-    ) -> bool {
+    fn skip_attention_bias_fill(&self) -> bool {
         let sliding_window_sizes =
             self.context.model_shape.sliding_window_length_per_layer.clone();
         let has_sliding_window =
             sliding_window_sizes.iter().any(|size| size.is_some());
         let has_speculative_suffix =
             self.decoding_config.generate_suffix_length() > 1;
-        let should_skip =
-            !has_sliding_window && (is_prefilling || !has_speculative_suffix);
+        let should_skip = !has_sliding_window && !has_speculative_suffix;
         return should_skip;
     }
 }
