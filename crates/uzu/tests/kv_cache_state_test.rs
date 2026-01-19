@@ -60,8 +60,16 @@ fn make_test_layer(
     };
     let shape = [1, total_len.max(1), 1];
 
-    let keys = std::cell::RefCell::new(context.array(&shape, DataType::F32));
-    let values = std::cell::RefCell::new(context.array(&shape, DataType::F32));
+    let keys = std::cell::RefCell::new(context.array(
+        &shape,
+        DataType::F32,
+        "kv_cache_keys".to_string(),
+    ));
+    let values = std::cell::RefCell::new(context.array(
+        &shape,
+        DataType::F32,
+        "kv_cache_values".to_string(),
+    ));
 
     let prefix_token_positions = match &state {
         KVCacheLayerState::Full {

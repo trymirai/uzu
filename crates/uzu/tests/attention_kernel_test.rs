@@ -683,20 +683,20 @@ fn test_single_pass_attention_basic() {
     };
 
     let is_causal = false; // Non-causal attention for this test
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     println!("Using kernel variant: {:?}", variant);
     println!(
         "Supports single-pass for head_dim={}: {}",
         head_dim,
-        kernel.supports_single_pass(head_dim, is_causal)
+        kernel.supports_single_pass(head_dim, is_causal, false)
     );
     println!(
         "Supports two-pass for head_dim={}: {}",
         head_dim,
-        kernel.supports_two_pass(head_dim, is_causal)
+        kernel.supports_two_pass(head_dim, is_causal, false)
     );
 
-    if !kernel.supports_single_pass(head_dim, false) {
+    if !kernel.supports_single_pass(head_dim, false, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -952,7 +952,7 @@ fn test_single_pass_attention_with_mask() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim, false) {
+    if !kernel.supports_single_pass(head_dim, false, true) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -1033,7 +1033,7 @@ fn test_single_pass_attention_with_sinks() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim, false) {
+    if !kernel.supports_single_pass(head_dim, false, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -1111,7 +1111,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
         },
     };
 
-    if !kernel.supports_single_pass(head_dim, false) {
+    if !kernel.supports_single_pass(head_dim, false, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -1189,10 +1189,10 @@ fn test_single_pass_attention_gqa() {
     };
 
     let is_causal = false; // Non-causal attention for this test
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     println!("Using kernel variant for GQA: {:?}", variant);
 
-    if !kernel.supports_single_pass(head_dim, false) {
+    if !kernel.supports_single_pass(head_dim, false, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
@@ -1339,11 +1339,11 @@ fn test_two_pass_attention() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim, is_causal) {
+    if !kernel.supports_two_pass(head_dim, is_causal, false) {
         panic!("Two-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         panic!(
             "Two-pass not selected for seq_len={}. Got {:?}",
@@ -1409,11 +1409,11 @@ fn test_two_pass_attention_gqa() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim, is_causal) {
+    if !kernel.supports_two_pass(head_dim, is_causal, false) {
         panic!("Two-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         panic!(
             "Two-pass not selected for GQA seq_len={}. Got {:?}",
@@ -1484,7 +1484,7 @@ fn perf_two_pass_attention() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false;
 
-    if !kernel.supports_two_pass(head_dim, is_causal) {
+    if !kernel.supports_two_pass(head_dim, is_causal, false) {
         println!(
             "Skipping two-pass perf test: not supported for head_dim={}",
             head_dim
@@ -1492,7 +1492,7 @@ fn perf_two_pass_attention() {
         return;
     }
 
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal);
+    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
         println!(
             "Skipping two-pass perf test: variant {:?} selected instead",

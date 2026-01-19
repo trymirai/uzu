@@ -28,7 +28,10 @@ fn activation_to_int(activation: &Activation) -> i32 {
     }
 }
 
-fn make_function_constants(activation: &Activation) -> FunctionConstantValues {
+fn make_function_constants(
+    activation: &Activation,
+    has_bias: bool,
+) -> FunctionConstantValues {
     let function_constants = FunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
@@ -38,13 +41,21 @@ fn make_function_constants(activation: &Activation) -> FunctionConstantValues {
         0,
     );
 
+    function_constants.set_constant_value_at_index(
+        &has_bias as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        1,
+    );
+
     function_constants
 }
 
 pub struct Conv1dScanKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline_no_bias: MTLComputePipelineState,
+    pipeline_with_bias: MTLComputePipelineState,
     pack_pipeline: MTLComputePipelineState,
-    decode_pipeline: MTLComputePipelineState,
+    decode_pipeline_no_bias: MTLComputePipelineState,
+    decode_pipeline_with_bias: MTLComputePipelineState,
 }
 
 pub struct Conv1dScanArguments<'a> {
@@ -103,31 +114,62 @@ impl Conv1dScanKernel {
             format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
         let decode_name =
             format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
-        let function_constants = make_function_constants(activation);
         let activation_id = activation_to_int(activation);
-        let cache_key = format!("{}_act_{}", fn_name, activation_id);
-        let pipeline = context
-            .compute_pipeline_state_cached(
-                &cache_key,
-                &fn_name,
-                Some(&function_constants),
-            )
-            .map_err(SSMKernelError::MetalError)?;
+        let pipeline_no_bias = {
+            let function_constants = make_function_constants(activation, false);
+            let cache_key = format!("{}_act_{}_bias_0", fn_name, activation_id);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &fn_name,
+                    Some(&function_constants),
+                )
+                .map_err(SSMKernelError::MetalError)?
+        };
+        let pipeline_with_bias = {
+            let function_constants = make_function_constants(activation, true);
+            let cache_key = format!("{}_act_{}_bias_1", fn_name, activation_id);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &fn_name,
+                    Some(&function_constants),
+                )
+                .map_err(SSMKernelError::MetalError)?
+        };
         let pack_pipeline = context
             .compute_pipeline_state(&pack_name, None)
             .map_err(SSMKernelError::MetalError)?;
-        let decode_cache_key = format!("{}_act_{}", decode_name, activation_id);
-        let decode_pipeline = context
-            .compute_pipeline_state_cached(
-                &decode_cache_key,
-                &decode_name,
-                Some(&function_constants),
-            )
-            .map_err(SSMKernelError::MetalError)?;
+        let decode_pipeline_no_bias = {
+            let function_constants = make_function_constants(activation, false);
+            let cache_key =
+                format!("{}_act_{}_bias_0", decode_name, activation_id);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &decode_name,
+                    Some(&function_constants),
+                )
+                .map_err(SSMKernelError::MetalError)?
+        };
+        let decode_pipeline_with_bias = {
+            let function_constants = make_function_constants(activation, true);
+            let cache_key =
+                format!("{}_act_{}_bias_1", decode_name, activation_id);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &decode_name,
+                    Some(&function_constants),
+                )
+                .map_err(SSMKernelError::MetalError)?
+        };
         Ok(Self {
-            pipeline,
+            pipeline_no_bias,
+            pipeline_with_bias,
             pack_pipeline,
-            decode_pipeline,
+            decode_pipeline_no_bias,
+            decode_pipeline_with_bias,
         })
     }
 
@@ -190,13 +232,17 @@ impl Conv1dScanKernel {
             return Ok(());
         }
 
-        compute_encoder.set_compute_pipeline_state(&self.decode_pipeline);
+        let has_bias = args.b.is_some();
+        let pipeline = if has_bias {
+            &self.decode_pipeline_with_bias
+        } else {
+            &self.decode_pipeline_no_bias
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
         compute_encoder.set_buffer(0, Some(args.x), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
-        if let Some(bias) = args.b {
-            compute_encoder.set_buffer(2, Some(bias), 0);
-        } else {
-            compute_encoder.set_buffer(2, None, 0);
+        if has_bias {
+            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
         }
         compute_encoder.set_buffer(3, Some(args.state), 0);
         compute_encoder.set_buffer(4, Some(args.x_out), 0);
@@ -263,14 +309,18 @@ impl Conv1dScanKernel {
             return Ok(());
         }
 
-        compute_encoder.set_compute_pipeline_state(&self.pipeline);
+        let has_bias = args.b.is_some();
+        let pipeline = if has_bias {
+            &self.pipeline_with_bias
+        } else {
+            &self.pipeline_no_bias
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
 
         compute_encoder.set_buffer(0, Some(args.padded), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
-        if let Some(bias) = args.b {
-            compute_encoder.set_buffer(2, Some(bias), 0);
-        } else {
-            compute_encoder.set_buffer(2, None, 0);
+        if has_bias {
+            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
         }
         compute_encoder.set_buffer(3, Some(args.x_out), 0);
         compute_encoder.set_buffer(4, Some(args.b_out), 0);

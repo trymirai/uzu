@@ -3,6 +3,8 @@
 
 using namespace metal;
 
+constant bool has_bias [[function_constant(0)]];
+
 template <typename T>
 [[kernel, max_total_threads_per_threadgroup(32)]]
 void short_conv_pack_kernel(
@@ -51,7 +53,7 @@ void short_conv_prefill_kernel(
     device const T* padded [[buffer(0)]],
     device const T* in_proj [[buffer(1)]],
     device const T* w [[buffer(2)]],
-    device const T* b [[buffer(3)]],
+    device const T* b [[buffer(3), function_constant(has_bias)]],
     device T* out [[buffer(4)]],
     device T* state_out [[buffer(5)]],
     constant const size_t& suffix_len [[buffer(6)]],
@@ -72,11 +74,13 @@ void short_conv_prefill_kernel(
   }
 
   const device T* w_row = w + size_t(channel_idx) * size_t(kernel_size);
-  const bool has_bias = b != nullptr;
 
   // Threads [0..suffix_len-1]: Compute outputs
   if (token_idx < suffix_len) {
-    float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+    float acc = 0.0f;
+    if (has_bias) {
+      acc = float(b[channel_idx]);
+    }
 
     // Convolve using padded buffer
     for (int tap = 0; tap < kernel_size; ++tap) {
@@ -117,7 +121,7 @@ template <typename T>
 void short_conv_decode_kernel(
     device const T* in_proj [[buffer(0)]],
     device const T* w [[buffer(1)]],
-    device const T* b [[buffer(2)]],
+    device const T* b [[buffer(2), function_constant(has_bias)]],
     device const T* state [[buffer(3)]],
     device T* out [[buffer(4)]],
     device T* next_state [[buffer(5)]],
@@ -138,7 +142,6 @@ void short_conv_decode_kernel(
   const int tap_count = max(kernel_size - 1, 0);
   const size_t state_offset = size_t(channel_idx) * state_stride;
   const device T* w_row = w + size_t(channel_idx) * size_t(kernel_size);
-  const bool has_bias = b != nullptr;
 
   size_t in_proj_idx = size_t(token_idx) * in_proj_stride + size_t(channel_idx);
   float pre_conv_gate = float(in_proj[in_proj_idx]);
@@ -147,7 +150,10 @@ void short_conv_decode_kernel(
 
   float x = x_in * pre_conv_gate;
 
-  float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+  float acc = 0.0f;
+  if (has_bias) {
+    acc = float(b[channel_idx]);
+  }
 
   for (int tap = 0; tap < tap_count; ++tap) {
     float sample = float(state[state_offset + size_t(tap)]);
@@ -192,7 +198,7 @@ void short_conv_decode_kernel(
       device const type* padded [[buffer(0)]],                                 \
       device const type* in_proj [[buffer(1)]],                                \
       device const type* w [[buffer(2)]],                                      \
-      device const type* b [[buffer(3)]],                                      \
+      device const type* b [[buffer(3), function_constant(has_bias)]],         \
       device type* out [[buffer(4)]],                                          \
       device type* state_out [[buffer(5)]],                                    \
       constant const size_t& suffix_len [[buffer(6)]],                         \
@@ -208,7 +214,7 @@ void short_conv_decode_kernel(
   kernel void short_conv_decode_kernel<type>(                                  \
       device const type* x [[buffer(0)]],                                      \
       device const type* w [[buffer(1)]],                                      \
-      device const type* b [[buffer(2)]],                                      \
+      device const type* b [[buffer(2), function_constant(has_bias)]],         \
       device const type* state [[buffer(3)]],                                  \
       device type* out [[buffer(4)]],                                          \
       device type* next_state [[buffer(5)]],                                   \
