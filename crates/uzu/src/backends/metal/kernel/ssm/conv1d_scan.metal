@@ -4,6 +4,7 @@
 using namespace metal;
 
 constant int activation_type [[function_constant(0)]];
+constant bool has_bias [[function_constant(1)]];
 
 constant int ACTIVATION_IDENTITY = 0;
 constant int ACTIVATION_SILU = 1;
@@ -75,7 +76,7 @@ template <typename T>
 void conv1d_scan_kernel(
     device const T* padded [[buffer(0)]], // (prefix+suffix, channels)
     device const T* w [[buffer(1)]],      // (channels, kernel)
-    device const T* b [[buffer(2)]],      // optional (channels)
+    device const T* b [[buffer(2), function_constant(has_bias)]], // optional (channels)
     device T* x_out [[buffer(3)]],        // (suffix, inner_dim)
     device T* b_out [[buffer(4)]],        // (suffix, proj_dim)
     device T* c_out [[buffer(5)]],        // (suffix, proj_dim)
@@ -106,10 +107,12 @@ void conv1d_scan_kernel(
   const size_t state_offset = size_t(channel_idx) * state_stride;
   const size_t weight_offset = size_t(channel_idx) * size_t(kernel_value);
   const device T* w_row = w + weight_offset;
-  const bool has_bias = b != nullptr;
 
   if (token_idx < suffix_len) {
-    float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+    float acc = 0.0f;
+    if (has_bias) {
+      acc = float(b[channel_idx]);
+    }
     for (int tap = 0; tap < kernel_value; ++tap) {
       const size_t padded_idx = size_t(token_idx) + size_t(tap);
       float sample = 0.0f;
@@ -148,7 +151,7 @@ template <typename T>
 void conv1d_decode_kernel(
     device const T* x [[buffer(0)]],
     device const T* w [[buffer(1)]],
-    device const T* b [[buffer(2)]],
+    device const T* b [[buffer(2), function_constant(has_bias)]],
     device const T* state [[buffer(3)]],
     device T* x_out [[buffer(4)]],
     device T* b_out [[buffer(5)]],
@@ -177,9 +180,11 @@ void conv1d_decode_kernel(
   const size_t x_idx = size_t(token_idx) * row_stride + size_t(channel_idx);
   const size_t state_offset = size_t(channel_idx) * state_stride;
   const device T* w_row = w + size_t(channel_idx) * size_t(kernel_value);
-  const bool has_bias = b != nullptr;
 
-  float acc = has_bias ? float(b[channel_idx]) : 0.0f;
+  float acc = 0.0f;
+  if (has_bias) {
+    acc = float(b[channel_idx]);
+  }
   const int state_taps = max(kernel_value - 1, 0);
   for (int tap = 0; tap < state_taps; ++tap) {
     const size_t state_index = state_offset + size_t(tap);
@@ -238,7 +243,7 @@ void conv1d_decode_kernel(
   kernel void conv1d_scan_kernel<type>(                                        \
       device const type* padded [[buffer(0)]],                                 \
       device const type* w [[buffer(1)]],                                      \
-      device const type* b [[buffer(2)]],                                      \
+      device const type* b [[buffer(2), function_constant(has_bias)]],         \
       device type* x_out [[buffer(3)]],                                        \
       device type* b_out [[buffer(4)]],                                        \
       device type* c_out [[buffer(5)]],                                        \
@@ -266,7 +271,7 @@ instantiate_conv1d_scan_kernel(half, half);
   kernel void conv1d_decode_kernel<type>(                                      \
       device const type* x [[buffer(0)]],                                      \
       device const type* w [[buffer(1)]],                                      \
-      device const type* b [[buffer(2)]],                                      \
+      device const type* b [[buffer(2), function_constant(has_bias)]],         \
       device const type* state [[buffer(3)]],                                  \
       device type* x_out [[buffer(4)]],                                        \
       device type* b_out [[buffer(5)]],                                        \
