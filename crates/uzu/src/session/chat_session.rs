@@ -98,7 +98,7 @@ impl ChatSession {
             .and_then(|dc| dc.layer_configs)
             .map(|layers| {
                 layers.iter().any(|layer| {
-                    matches!(layer.mixer_config, MixerConfig::Mamba(_))
+                    !matches!(layer.mixer_config, MixerConfig::Attention(_))
                 })
             })
             .unwrap_or(false);
