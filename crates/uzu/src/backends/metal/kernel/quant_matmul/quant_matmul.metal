@@ -3870,6 +3870,23 @@ qmm_transposed<bfloat, 64, 8, false>(
     uint simd_lid [[thread_index_in_simdgroup]]
 );
 
+template [[host_name("qmm_transposed_bf16_g64_b8_64x64")]] [[kernel]] void
+qmm_transposed<bfloat, 64, 8, false, 64, 32, 64>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
 template [[host_name("qmv_bf16_g64_b8")]] [[kernel]] void qmv<bfloat, 64, 8>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
@@ -4109,6 +4126,23 @@ template [[host_name("qvm_bf16_g128_b8")]] [[kernel]] void qvm<bfloat, 128, 8>(
 
 template [[host_name("qmm_transposed_bf16_g128_b4_64x64")]] [[kernel]] void
 qmm_transposed<bfloat, 128, 4, true, 64, 32, 64>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmm_transposed_bf16_g128_b8_64x64")]] [[kernel]] void
+qmm_transposed<bfloat, 128, 8, true, 64, 32, 64>(
     const device uint32_t* w [[buffer(0)]],
     const device bfloat* scales [[buffer(1)]],
     const device uint8_t* zero_points [[buffer(2)]],
