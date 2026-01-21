@@ -1,12 +1,9 @@
 //! Attention kernel encodable.
 
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
-};
-
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
-    KernelDataType, MTLContext,
+    CommandBufferRef, ComputeCommandEncoderRef, KernelDataType,
+    MTLCommandBuffer, MTLCommandEncoder, MTLContext,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
         AttentionError, AttentionGemmArguments, AttentionKernel,
@@ -69,7 +66,8 @@ impl EncodableBlock for Attention {
         command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder()
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
@@ -213,8 +211,7 @@ impl EncodableBlock for Attention {
             let key_cache_buf = key_cache_array.mtl_buffer_cloned();
 
             let mut value_cache_array = value_cache_binding[0].borrow_mut();
-            let value_cache_buf =
-                value_cache_array.mtl_buffer_cloned();
+            let value_cache_buf = value_cache_array.mtl_buffer_cloned();
 
             (key_cache_buf, value_cache_buf)
         } else {
@@ -246,7 +243,15 @@ impl EncodableBlock for Attention {
                 eprintln!("Failed to prepare rotated values buffer: {:?}", e);
             }
 
-            (unsafe { objc2::rc::Retained::retain(rotated_keys_buffer as *const _ as *mut _).unwrap() }, extracted_values_buf)
+            (
+                unsafe {
+                    objc2::rc::Retained::retain(
+                        rotated_keys_buffer as *const _ as *mut _,
+                    )
+                    .unwrap()
+                },
+                extracted_values_buf,
+            )
         };
 
         let mut queries_array = rotated_queries_binding[0].borrow_mut();
@@ -290,9 +295,9 @@ impl EncodableBlock for Attention {
         let mut maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
 
-        let sinks_buffer = sinks_binding.as_ref().map(|binding| {
-            binding[0].borrow().mtl_buffer_cloned()
-        });
+        let sinks_buffer = sinks_binding
+            .as_ref()
+            .map(|binding| binding[0].borrow().mtl_buffer_cloned());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {

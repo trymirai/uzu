@@ -10,7 +10,9 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{Buffer, BufferRef, ComputeCommandEncoderRef, MTLContext, MTLError},
+    backends::metal::{
+        Buffer, BufferRef, ComputeCommandEncoderRef, MTLContext, MTLError,
+    },
 };
 
 pub struct MatmulKernel {

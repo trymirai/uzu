@@ -1,10 +1,6 @@
 use std::rc::Rc;
 
 use metal::MTLBuffer as _;
-use crate::backends::metal::{
-    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions, MTLBuffer,
-};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -13,7 +9,9 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLBuffer,
+        MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLDeviceExt,
+        MTLError, MTLResourceOptions,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
@@ -170,10 +168,13 @@ impl QuantizedEmbeddingReadout {
                     },
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context.device.new_buffer(
-                    size_bytes.try_into().unwrap(),
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                ).expect("Failed to allocate buffer");
+                let buf = mtl_context
+                    .device
+                    .new_buffer(
+                        size_bytes.try_into().unwrap(),
+                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    )
+                    .expect("Failed to allocate buffer");
                 unsafe {
                     std::ptr::write_bytes(
                         metal::MTLBuffer::contents(&*buf).as_ptr(),
@@ -223,7 +224,8 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
         command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
