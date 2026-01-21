@@ -2,7 +2,10 @@
 
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
+    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions,
+};
 
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -23,7 +26,7 @@ pub struct LayerNorm {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: MTLBuffer,
+    scales_buffer: Buffer,
 }
 
 impl LayerNorm {
@@ -47,10 +50,9 @@ impl LayerNorm {
 
         let scales_data = scales_param.buffer();
         let scales_buffer = context.device.new_buffer_with_data(
-            scales_data.as_ptr() as *const _,
-            scales_data.len() as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+            scales_data,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        ).expect("Failed to create scales buffer");
 
         let accumulation_data_type: DataType =
             config.accumulation_precision.into();
@@ -88,10 +90,11 @@ impl EncodableBlock for LayerNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -108,7 +111,7 @@ impl EncodableBlock for LayerNorm {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);

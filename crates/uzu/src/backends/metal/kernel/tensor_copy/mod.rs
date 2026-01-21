@@ -1,17 +1,17 @@
 use std::mem::size_of;
+use std::ptr::NonNull;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
+    ComputePipelineState, KernelDataType, MTLContext, MTLError,
+    metal_extensions::ComputeEncoderDispatch, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, BufferLabelExt,
 };
-
-use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
-};
-use crate::backends::metal::error::MTLError;
+use objc2::msg_send;
+use objc2_foundation::NSString;
 
 pub struct TensorCopyKernel {
-    pipeline_state: MTLComputePipelineState,
+    pipeline_state: ComputePipelineState,
 }
 
 impl TensorCopyKernel {
@@ -32,12 +32,13 @@ impl TensorCopyKernel {
 
     pub fn encode_into_command_buffer(
         &self,
-        source_buffer: &MTLBuffer,
-        destination_buffer: &MTLBuffer,
+        source_buffer: BufferRef<'_>,
+        destination_buffer: BufferRef<'_>,
         length: usize,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_encoder(
             source_buffer,
             destination_buffer,
@@ -49,20 +50,25 @@ impl TensorCopyKernel {
 
     pub fn encode_with_encoder(
         &self,
-        source_buffer: &MTLBuffer,
-        destination_buffer: &MTLBuffer,
+        source_buffer: BufferRef<'_>,
+        destination_buffer: BufferRef<'_>,
         length: usize,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
     ) {
-        compute_encoder.set_label("Tensor Copy");
+        unsafe {
+            let label = NSString::from_str("Tensor Copy");
+            let _: () = msg_send![compute_encoder, setLabel: &*label];
+        }
 
-        compute_encoder.set_buffer(0, Some(source_buffer), 0);
-        compute_encoder.set_buffer(1, Some(destination_buffer), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<i32>() as u64,
-            &(length as i32) as *const _ as *const std::ffi::c_void,
-        );
+        compute_encoder.set_buffer(Some(source_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(destination_buffer), 0, 1);
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new_unchecked(&(length as i32) as *const i32 as *mut std::ffi::c_void),
+                size_of::<i32>(),
+                2,
+            );
+        }
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
     }

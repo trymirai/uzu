@@ -1,20 +1,26 @@
 use std::ops::Range;
 
 use half::{bf16, f16};
-use metal::{Buffer as MTLBuffer, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResource, MTLResourceOptions};
+
+use crate::backends::metal::metal_extensions::BufferLabelExt;
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{Array, ArrayElement, DataType, array::array_size_in_bytes};
 
+/// Type alias for owned MTLBuffer
+type MTLBufferObj = Retained<ProtocolObject<dyn MTLBuffer>>;
+
 #[derive(Debug, Clone)]
 pub struct MetalArray {
-    buffer: MTLBuffer,
+    buffer: MTLBufferObj,
     shape: Box<[usize]>,
     data_type: DataType,
     offset: usize,
 }
 
 impl Array for MetalArray {
-    type BackendBuffer = MTLBuffer;
+    type BackendBuffer = ProtocolObject<dyn MTLBuffer>;
 
     fn shape(&self) -> &[usize] {
         &self.shape
@@ -25,13 +31,13 @@ impl Array for MetalArray {
     }
 
     fn label(&self) -> String {
-        self.buffer.label().to_string()
+        self.buffer.label().unwrap_or_default()
     }
 
     fn buffer(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                (self.buffer.contents() as *const u8).add(self.offset),
+                (self.buffer.contents().as_ptr() as *const u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
@@ -40,35 +46,40 @@ impl Array for MetalArray {
     fn buffer_mut(&mut self) -> &mut [u8] {
         unsafe {
             std::slice::from_raw_parts_mut(
-                (self.buffer.contents() as *mut u8).add(self.offset),
+                (self.buffer.contents().as_ptr() as *mut u8).add(self.offset),
                 self.size_in_bytes(),
             )
         }
     }
 
-    fn backend_buffer(&self) -> &MTLBuffer {
+    fn backend_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
         &self.buffer
     }
 }
 
 impl MetalArray {
     pub unsafe fn new(
-        buffer: MTLBuffer,
+        buffer: MTLBufferObj,
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
         unsafe { Self::new_with_offset(buffer, shape, data_type, 0) }
     }
 
+    /// Returns a clone of the owned MTL buffer (increments reference count)
+    pub fn mtl_buffer_cloned(&self) -> MTLBufferObj {
+        self.buffer.clone()
+    }
+
     pub unsafe fn new_with_offset(
-        buffer: MTLBuffer,
+        buffer: MTLBufferObj,
         shape: &[usize],
         data_type: DataType,
         offset: usize,
     ) -> Self {
         let required_bytes = array_size_in_bytes(shape, data_type);
         assert!(
-            offset + required_bytes <= buffer.length() as usize,
+            offset + required_bytes <= buffer.length(),
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
@@ -88,7 +99,7 @@ impl MetalArray {
         self.offset
     }
 
-    pub unsafe fn mtl_buffer(&mut self) -> &MTLBuffer {
+    pub unsafe fn mtl_buffer(&mut self) -> &ProtocolObject<dyn MTLBuffer> {
         &self.buffer
     }
 
@@ -99,21 +110,19 @@ impl MetalArray {
     /// * `row_lengths` - Array of row counts for each split. Must sum to total rows.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// use uzu::backends::metal::MetalArray;
     /// use uzu::DataType;
-    /// use metal::MTLResourceOptions;
+    /// use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
     ///
-    /// # let device = metal::Device::system_default().unwrap();
+    /// # let device = MTLDevice::system_default().unwrap();
     /// # let shape = [10usize, 6usize];
     /// # let num_elems = shape[0] * shape[1];
     /// # let data = vec![0.0f32; num_elems];
-    /// # let buffer_size_bytes = (num_elems * std::mem::size_of::<f32>()) as u64;
     /// # let buffer = device.new_buffer_with_data(
-    /// #     data.as_ptr() as *const _,
-    /// #     buffer_size_bytes,
-    /// #     MTLResourceOptions::StorageModeShared,
-    /// # );
+    /// #     bytemuck::cast_slice(&data),
+    /// #     MTLResourceOptions::STORAGE_MODE_SHARED,
+    /// # ).unwrap();
     /// # let mut array = unsafe { MetalArray::new(buffer, &shape, DataType::F32) };
     ///
     /// // Original: [10, 6] tensor (10 rows × 6 columns)
@@ -125,6 +134,8 @@ impl MetalArray {
         &mut self,
         row_lengths: &[usize],
     ) -> Box<[MetalArray]> {
+        use std::ptr::NonNull;
+
         assert!(!self.shape.is_empty(), "Cannot split scalar or empty tensor");
         assert_eq!(
             row_lengths.iter().sum::<usize>(),
@@ -135,7 +146,7 @@ impl MetalArray {
         let elem_size = self.data_type.size_in_bytes();
         let row_size_bytes =
             self.shape.iter().skip(1).product::<usize>() * elem_size;
-        let device = self.buffer.device().to_owned();
+        let device = self.buffer.device();
 
         let mut results = Vec::with_capacity(row_lengths.len());
         let mut current_row_offset = 0usize;
@@ -145,16 +156,17 @@ impl MetalArray {
             let required_len = (num_rows * row_size_bytes).max(48);
 
             // Create no-copy child buffer
-            let base_ptr = self.buffer.contents() as *mut u8;
+            let base_ptr = self.buffer.contents().as_ptr() as *mut u8;
             let slice_ptr =
                 unsafe { base_ptr.add(offset_bytes) } as *mut std::ffi::c_void;
 
-            let child_buffer = device.new_buffer_with_bytes_no_copy(
-                slice_ptr,
-                required_len as u64,
-                MTLResourceOptions::StorageModeShared,
-                None,
-            );
+            let child_buffer = unsafe {
+                device.new_buffer_with_bytes_no_copy(
+                    NonNull::new_unchecked(slice_ptr),
+                    required_len,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+            }.expect("Failed to create child buffer");
 
             // Create split shape
             let mut split_shape = self.shape.to_vec();

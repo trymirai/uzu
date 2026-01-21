@@ -1,11 +1,10 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, MTLContext, MTLSize, mtl_size,
 };
 
-use super::super::MTLContext;
 use crate::{
     DataType, backends::metal::encodable_block::EmbeddingError,
     config::QuantizationMode,
@@ -14,14 +13,14 @@ use crate::{
 // ---- Full Precision Embedding Lookup Kernel ----
 
 pub struct FullPrecisionEmbeddingLookupKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct FullPrecisionEmbeddingLookupArguments<'a> {
-    pub token_ids_buffer: &'a MTLBuffer, // [batch_size] as U64
-    pub weights_buffer: &'a MTLBuffer,   // [vocab_size, model_dim]
-    pub output_buffer: &'a MTLBuffer,    // [batch_size, model_dim]
+    pub token_ids_buffer: BufferRef<'a>, // [batch_size] as U64
+    pub weights_buffer: BufferRef<'a>,   // [vocab_size, model_dim]
+    pub output_buffer: BufferRef<'a>,    // [batch_size, model_dim]
     pub batch_size: u32,
     pub vocab_size: u32,
     pub model_dim: u32,
@@ -55,7 +54,7 @@ impl FullPrecisionEmbeddingLookupKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         args: FullPrecisionEmbeddingLookupArguments,
     ) -> Result<(), EmbeddingError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -91,8 +90,8 @@ impl FullPrecisionEmbeddingLookupKernel {
             / threads_per_threadgroup;
 
         encoder.dispatch_thread_groups(
-            MTLSize::new(threadgroups, 1, 1),
-            MTLSize::new(threads_per_threadgroup, 1, 1),
+            mtl_size(threadgroups, 1, 1),
+            mtl_size(threads_per_threadgroup, 1, 1),
         );
 
         Ok(())
@@ -102,16 +101,16 @@ impl FullPrecisionEmbeddingLookupKernel {
 // ---- Quantized Embedding Lookup Kernel ----
 
 pub struct QuantizedEmbeddingLookupKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct QuantizedEmbeddingLookupArguments<'a> {
-    pub token_ids_buffer: &'a MTLBuffer, // [batch_size] as U64
-    pub weights_buffer: &'a MTLBuffer, // [vocab_size, model_dim/packing_divisor] as U8/I8
-    pub scales_buffer: &'a MTLBuffer,  // [vocab_size, num_groups]
-    pub biases_buffer: &'a MTLBuffer,  // [vocab_size, num_groups]
-    pub output_buffer: &'a MTLBuffer,  // [batch_size, model_dim]
+    pub token_ids_buffer: BufferRef<'a>, // [batch_size] as U64
+    pub weights_buffer: BufferRef<'a>, // [vocab_size, model_dim/packing_divisor] as U8/I8
+    pub scales_buffer: BufferRef<'a>,  // [vocab_size, num_groups]
+    pub biases_buffer: BufferRef<'a>,  // [vocab_size, num_groups]
+    pub output_buffer: BufferRef<'a>,  // [batch_size, model_dim]
     pub batch_size: u32,
     pub vocab_size: u32,
     pub model_dim: u32,
@@ -154,7 +153,7 @@ impl QuantizedEmbeddingLookupKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         args: QuantizedEmbeddingLookupArguments,
     ) -> Result<(), EmbeddingError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -200,8 +199,8 @@ impl QuantizedEmbeddingLookupKernel {
             / threads_per_threadgroup;
 
         encoder.dispatch_thread_groups(
-            MTLSize::new(threadgroups, 1, 1),
-            MTLSize::new(threads_per_threadgroup, 1, 1),
+            mtl_size(threadgroups, 1, 1),
+            mtl_size(threads_per_threadgroup, 1, 1),
         );
 
         Ok(())

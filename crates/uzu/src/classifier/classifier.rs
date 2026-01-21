@@ -2,6 +2,7 @@
 use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
+use metal::MTLCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 #[cfg(feature = "tracing")]

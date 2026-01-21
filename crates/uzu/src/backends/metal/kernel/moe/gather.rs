@@ -1,11 +1,10 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError,
+    mtl_size,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 // ---- Gather Permuted Activations Kernel ----
 
@@ -16,17 +15,17 @@ pub enum MoeGatherError {
 }
 
 pub struct MoeGatherKernel {
-    pipeline_f16: MTLComputePipelineState,
-    pipeline_f32: MTLComputePipelineState,
-    pipeline_bf16: MTLComputePipelineState,
+    pipeline_f16: ComputePipelineState,
+    pipeline_f32: ComputePipelineState,
+    pipeline_bf16: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeGatherArguments<'a> {
-    pub x_buffer: &'a MTLBuffer,
-    pub bucketed_ids_buffer: &'a MTLBuffer,
-    pub x_perm_buffer: &'a MTLBuffer,
-    pub sumk_buffer: &'a MTLBuffer,
+    pub x_buffer: BufferRef<'a>,
+    pub bucketed_ids_buffer: BufferRef<'a>,
+    pub x_perm_buffer: BufferRef<'a>,
+    pub sumk_buffer: BufferRef<'a>,
     pub t: usize,
     pub k: usize,
     pub d_model: usize,
@@ -53,7 +52,8 @@ impl MoeGatherKernel {
         dtype: KernelDataType,
         args: MoeGatherArguments,
     ) -> Result<(), MoeGatherError> {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
                 encoder.set_compute_pipeline_state(&self.pipeline_f16);
@@ -82,18 +82,18 @@ impl MoeGatherKernel {
             encoder.end_encoding();
             return Ok(());
         }
-        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
+        let threads_per_threadgroup = mtl_size(256, 1, 1);
         let threadgroups = match dtype {
             KernelDataType::BFloat16 => {
                 const BF16_ROWS_PER_TG: usize = 8;
-                MTLSize::new(
+                mtl_size(
                     ((max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG)
                         as u64,
                     1,
                     1,
                 )
             },
-            _ => MTLSize::new(((max_rows + 255) / 256) as u64, 1, 1),
+            _ => mtl_size(((max_rows + 255) / 256) as u64, 1, 1),
         };
         encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         encoder.end_encoding();

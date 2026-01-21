@@ -1,8 +1,12 @@
 use std::mem::size_of;
+use std::ptr::NonNull;
+use std::ffi::c_void;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use metal::{MTLComputeCommandEncoder, MTLComputePipelineState};
+
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputePipelineState,
+    MTLBuffer, MTLSize, ProtocolObject,
 };
 
 use crate::{
@@ -24,16 +28,16 @@ pub enum QKNormTarget {
 }
 
 pub struct RMSNormKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
     kernel_type: RMSNormKernelType,
 }
 
 #[derive(Debug)]
 pub struct RMSNormArguments<'a> {
-    pub input_buffer: &'a MTLBuffer,
+    pub input_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub input_offset: u64,
-    pub scales_buffer: &'a MTLBuffer,
-    pub output_buffer: &'a MTLBuffer,
+    pub scales_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub output_offset: u64,
     pub batch_size: i32,
     pub model_dim: i32,
@@ -43,9 +47,9 @@ pub struct RMSNormArguments<'a> {
 
 #[derive(Debug)]
 pub struct QKNormArguments<'a> {
-    pub qkv_input_buffer: &'a MTLBuffer,
-    pub scales_buffer: &'a MTLBuffer,
-    pub qkv_output_buffer: &'a MTLBuffer,
+    pub qkv_input_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub scales_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub qkv_output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub batch_size: i32,
     pub num_q_heads: i32,
     pub num_kv_heads: i32,
@@ -189,7 +193,7 @@ impl RMSNormKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: RMSNormArguments,
     ) -> Result<(), RMSNormError> {
         if self.kernel_type != RMSNormKernelType::Standard {
@@ -200,38 +204,40 @@ impl RMSNormKernel {
 
         // Set buffers
         compute_encoder.set_buffer(
-            0,
             Some(args.input_buffer),
-            args.input_offset,
+            args.input_offset as usize,
+            0,
         );
-        compute_encoder.set_buffer(1, Some(args.scales_buffer), 0);
+        compute_encoder.set_buffer(Some(args.scales_buffer), 0, 1);
         compute_encoder.set_buffer(
-            2,
             Some(args.output_buffer),
-            args.output_offset,
+            args.output_offset as usize,
+            2,
         );
 
         // Set parameters
-        compute_encoder.set_bytes(
-            3,
-            size_of::<i32>() as u64,
-            &args.batch_size as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &args.model_dim as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<f32>() as u64,
-            &args.epsilon as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<f32>() as u64,
-            &args.scale_offset as *const f32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&args.batch_size as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                3,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.model_dim as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                4,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.epsilon as *const f32 as *mut c_void).unwrap(),
+                size_of::<f32>(),
+                5,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.scale_offset as *const f32 as *mut c_void).unwrap(),
+                size_of::<f32>(),
+                6,
+            );
+        }
 
         let threads_per_threadgroup = MTLSize {
             width: 1024,
@@ -240,12 +246,12 @@ impl RMSNormKernel {
         };
 
         let threadgroups_per_grid = MTLSize {
-            width: args.batch_size as u64,
+            width: args.batch_size as usize,
             height: 1,
             depth: 1,
         };
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
@@ -255,7 +261,7 @@ impl RMSNormKernel {
 
     pub fn encode_qk_norm(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: QKNormArguments,
     ) -> Result<(), RMSNormError> {
         if self.kernel_type != RMSNormKernelType::QueryKey {
@@ -265,41 +271,43 @@ impl RMSNormKernel {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers
-        compute_encoder.set_buffer(0, Some(args.qkv_input_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.qkv_output_buffer), 0);
+        compute_encoder.set_buffer(Some(args.qkv_input_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(args.scales_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(args.qkv_output_buffer), 0, 2);
 
         // Set parameters
-        compute_encoder.set_bytes(
-            3,
-            size_of::<i32>() as u64,
-            &args.batch_size as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &args.num_q_heads as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &args.num_kv_heads as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &args.head_dim as *const i32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<f32>() as u64,
-            &args.epsilon as *const f32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<f32>() as u64,
-            &args.scale_offset as *const f32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&args.batch_size as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                3,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.num_q_heads as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                4,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.num_kv_heads as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                5,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.head_dim as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                6,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.epsilon as *const f32 as *mut c_void).unwrap(),
+                size_of::<f32>(),
+                7,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&args.scale_offset as *const f32 as *mut c_void).unwrap(),
+                size_of::<f32>(),
+                8,
+            );
+        }
 
         // Determine which contiguous head range to normalize.
         //
@@ -320,30 +328,32 @@ impl RMSNormKernel {
         }
 
         // Pass head range to the kernel.
-        compute_encoder.set_bytes(
-            9,
-            size_of::<u32>() as u64,
-            &head_offset as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &head_count as *const u32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&head_offset as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                9,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(&head_count as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                10,
+            );
+        }
 
         // One SIMD-group per head, multiple heads per threadgroup.
-        let simd_width = self.pipeline.thread_execution_width() as u64;
+        let simd_width = self.pipeline.thread_execution_width();
         let max_threads =
-            self.pipeline.max_total_threads_per_threadgroup() as u64;
+            self.pipeline.max_total_threads_per_threadgroup();
         let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
         let heads_per_threadgroup =
-            (head_count as u64).min(max_heads_per_threadgroup).max(1);
+            (head_count as usize).min(max_heads_per_threadgroup).max(1);
 
         let num_head_tiles =
-            (head_count as u64).div_ceil(heads_per_threadgroup);
+            (head_count as usize).div_ceil(heads_per_threadgroup);
 
         let threadgroups_per_grid = MTLSize {
-            width: args.batch_size as u64,
+            width: args.batch_size as usize,
             height: num_head_tiles,
             depth: 1,
         };
@@ -354,7 +364,7 @@ impl RMSNormKernel {
             depth: 1,
         };
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );

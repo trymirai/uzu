@@ -7,7 +7,7 @@ mod rms_norm;
 use std::rc::Rc;
 
 pub use layer_norm::LayerNorm;
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{CommandBufferRef, ComputeCommandEncoderRef};
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
@@ -77,7 +77,7 @@ impl EncodableBlock for Normalization {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
         match self {
@@ -104,7 +104,7 @@ impl EncodableBlock for Normalization {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         parameters: &EncodingParameters,
     ) {
         match self {

@@ -1,18 +1,19 @@
-use metal::{Buffer as MTLBuffer, ComputeCommandEncoderRef, MTLSize};
-
 use super::{SSMKernelError, fn_suffix};
-use crate::backends::metal::{KernelDataType, MTLContext};
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, KernelDataType, MTLContext, MTLSize,
+};
 
 pub struct SplitInProjKernel {
-    pipeline: metal::ComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 pub struct SplitInProjArguments<'a> {
-    pub input: &'a MTLBuffer, // buffer(0) [suffix, total_dim]
-    pub conv_out: &'a MTLBuffer, // buffer(1) [suffix, conv_dim]
-    pub z_out: &'a MTLBuffer, // buffer(2) [suffix, inner_dim]
-    pub dt_out: &'a MTLBuffer, // buffer(3) [suffix, num_heads]
-    pub z_bias: &'a MTLBuffer, // buffer(4) [inner_dim]
+    pub input: BufferRef<'a>, // buffer(0) [suffix, total_dim]
+    pub conv_out: BufferRef<'a>, // buffer(1) [suffix, conv_dim]
+    pub z_out: BufferRef<'a>, // buffer(2) [suffix, inner_dim]
+    pub dt_out: BufferRef<'a>, // buffer(3) [suffix, num_heads]
+    pub z_bias: BufferRef<'a>, // buffer(4) [inner_dim]
     pub total_dim: usize,
     pub conv_dim: usize,
     pub inner_dim: usize,
@@ -37,7 +38,7 @@ impl SplitInProjKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: SplitInProjArguments,
     ) -> Result<(), SSMKernelError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
@@ -51,8 +52,8 @@ impl SplitInProjKernel {
         let conv_dim = args.conv_dim as i32;
         let inner_dim = args.inner_dim as i32;
         let num_heads = args.num_heads as i32;
-        let suffix = args.suffix_length as u64;
-        let cols = args.total_dim as u64;
+        let suffix = args.suffix_length;
+        let cols = args.total_dim;
 
         compute_encoder.set_bytes(
             5,

@@ -1,12 +1,10 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+    KernelDataType, MTLContext, MTLDataType, MTLError, MTLSize,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShortConvKernelError {
@@ -14,11 +12,13 @@ pub enum ShortConvKernelError {
     MetalError(#[from] MTLError),
 }
 
+use objc2::rc::Retained;
+
 fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-fn make_function_constants(has_bias: bool) -> FunctionConstantValues {
+fn make_function_constants(has_bias: bool) -> Retained<FunctionConstantValues> {
     let function_constants = FunctionConstantValues::new();
     function_constants.set_constant_value_at_index(
         &has_bias as *const bool as *const std::ffi::c_void,
@@ -29,17 +29,17 @@ fn make_function_constants(has_bias: bool) -> FunctionConstantValues {
 }
 
 pub struct ShortConvKernel {
-    pack_pipeline: MTLComputePipelineState,
-    prefill_pipeline_no_bias: MTLComputePipelineState,
-    prefill_pipeline_with_bias: MTLComputePipelineState,
-    decode_pipeline_no_bias: MTLComputePipelineState,
-    decode_pipeline_with_bias: MTLComputePipelineState,
+    pack_pipeline: ComputePipelineState,
+    prefill_pipeline_no_bias: ComputePipelineState,
+    prefill_pipeline_with_bias: ComputePipelineState,
+    decode_pipeline_no_bias: ComputePipelineState,
+    decode_pipeline_with_bias: ComputePipelineState,
 }
 
 pub struct ShortConvPackArguments<'a> {
-    pub state_in: &'a MTLBuffer,
-    pub in_proj: &'a MTLBuffer,
-    pub padded: &'a MTLBuffer,
+    pub state_in: BufferRef<'a>,
+    pub in_proj: BufferRef<'a>,
+    pub padded: BufferRef<'a>,
     pub state_stride: usize,
     pub suffix_len: usize,
     pub in_proj_stride: usize,
@@ -47,12 +47,12 @@ pub struct ShortConvPackArguments<'a> {
 }
 
 pub struct ShortConvPrefillArguments<'a> {
-    pub padded: &'a MTLBuffer,
-    pub in_proj: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub out: &'a MTLBuffer,
-    pub state_out: &'a MTLBuffer,
+    pub padded: BufferRef<'a>,
+    pub in_proj: BufferRef<'a>,
+    pub w: BufferRef<'a>,
+    pub b: Option<BufferRef<'a>>,
+    pub out: BufferRef<'a>,
+    pub state_out: BufferRef<'a>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub in_proj_stride: usize,
@@ -61,12 +61,12 @@ pub struct ShortConvPrefillArguments<'a> {
 }
 
 pub struct ShortConvDecodeArguments<'a> {
-    pub in_proj: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub state: &'a MTLBuffer,
-    pub out: &'a MTLBuffer,
-    pub next_state: &'a MTLBuffer,
+    pub in_proj: BufferRef<'a>,
+    pub w: BufferRef<'a>,
+    pub b: Option<BufferRef<'a>>,
+    pub state: BufferRef<'a>,
+    pub out: BufferRef<'a>,
+    pub next_state: BufferRef<'a>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub in_proj_stride: usize,
@@ -146,7 +146,7 @@ impl ShortConvKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: ShortConvPackArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -185,8 +185,8 @@ impl ShortConvKernel {
         };
         let padded_rows = args.state_stride + args.suffix_len;
         let threadgroups = MTLSize {
-            width: args.model_dim as u64,
-            height: padded_rows as u64,
+            width: args.model_dim,
+            height: padded_rows,
             depth: 1,
         };
 
@@ -197,7 +197,7 @@ impl ShortConvKernel {
 
     pub fn encode_prefill(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: ShortConvPrefillArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -218,7 +218,7 @@ impl ShortConvKernel {
         compute_encoder.set_buffer(1, Some(args.in_proj), 0);
         compute_encoder.set_buffer(2, Some(args.w), 0);
         if has_bias {
-            compute_encoder.set_buffer(3, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(3, args.b, 0);
         }
         compute_encoder.set_buffer(4, Some(args.out), 0);
         compute_encoder.set_buffer(5, Some(args.state_out), 0);
@@ -254,8 +254,8 @@ impl ShortConvKernel {
             depth: 1,
         };
         let threadgroups = MTLSize {
-            width: work_len as u64,
-            height: args.model_dim as u64,
+            width: work_len,
+            height: args.model_dim,
             depth: 1,
         };
 
@@ -266,7 +266,7 @@ impl ShortConvKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: ShortConvDecodeArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -283,7 +283,7 @@ impl ShortConvKernel {
         compute_encoder.set_buffer(0, Some(args.in_proj), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(2, args.b, 0);
         }
         compute_encoder.set_buffer(3, Some(args.state), 0);
         compute_encoder.set_buffer(4, Some(args.out), 0);
@@ -320,8 +320,8 @@ impl ShortConvKernel {
             depth: 1,
         };
         let threadgroups = MTLSize {
-            width: args.suffix_len as u64,
-            height: args.model_dim as u64,
+            width: args.suffix_len,
+            height: args.model_dim,
             depth: 1,
         };
 

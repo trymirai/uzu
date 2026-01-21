@@ -58,7 +58,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -71,7 +71,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -84,7 +84,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -97,7 +97,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -110,7 +110,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -123,7 +123,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -136,7 +136,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -149,7 +149,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -162,7 +162,7 @@ impl LanguageModelGeneratorAuxBuffers {
                 ) {
                     (Some(buf), Some(shape)) => {
                         Some(RefCell::new(MetalArray::new(
-                            buf.borrow().backend_buffer().clone(),
+                            buf.borrow().mtl_buffer_cloned(),
                             &shape,
                             act_dtype,
                         )))
@@ -173,7 +173,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_topk_ids.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_topk_ids_shape(
                                     suffix_length,
                                     moe.num_experts_per_token,
@@ -188,7 +188,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_topk_probs.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_topk_probs_shape(
                                     suffix_length,
                                     moe.num_experts_per_token,
@@ -203,7 +203,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_offsets.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape
                                     .moe_offsets_shape(moe.mixture_size),
                                 DataType::U32,
@@ -216,7 +216,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(_) => {
                         scratch.moe_sumk.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_sumk_shape(),
                                 DataType::U32,
                             ))
@@ -233,7 +233,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_bucketed_token_ids.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape
                                     .moe_bucketed_token_ids_shape(max_routed),
                                 DataType::U32,
@@ -251,7 +251,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_bucketed_probs.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape
                                     .moe_bucketed_probs_shape(max_routed),
                                 act_dtype,
@@ -266,7 +266,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_x_perm.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_x_perm_shape(max_routed),
                                 DataType::F16,
                             ))
@@ -278,7 +278,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_tok2row.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_tok2row_shape(
                                     suffix_length,
                                     moe.num_experts_per_token,
@@ -295,7 +295,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_y_partial.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_y_partial_shape(max_routed),
                                 DataType::F16,
                             ))
@@ -309,7 +309,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_hidden.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_hidden_shape(max_routed),
                                 DataType::F32,
                             ))
@@ -327,7 +327,7 @@ impl LanguageModelGeneratorAuxBuffers {
                         scratch.moe_two_pass_row_expert_map.as_ref().map(
                             |buf| {
                                 RefCell::new(MetalArray::new(
-                                    buf.borrow().backend_buffer().clone(),
+                                    buf.borrow().mtl_buffer_cloned(),
                                     &[max_routed],
                                     DataType::U32,
                                 ))
@@ -340,7 +340,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_tile_counts.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_counts_shape(moe.mixture_size),
                                 DataType::U32,
                             ))
@@ -353,7 +353,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(moe) => {
                         scratch.moe_tile_offsets.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape
                                     .moe_offsets_shape(moe.mixture_size),
                                 DataType::U32,
@@ -368,7 +368,7 @@ impl LanguageModelGeneratorAuxBuffers {
                             suffix_length * moe.num_experts_per_token;
                         scratch.moe_tile_map.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_tile_map_shape(max_routed),
                                 DataType::U32,
                             ))
@@ -380,7 +380,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(_) => {
                         scratch.moe_total_tiles.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_total_tiles_shape(),
                                 DataType::U32,
                             ))
@@ -393,7 +393,7 @@ impl LanguageModelGeneratorAuxBuffers {
                     MLPConfig::MixtureOfExperts(_) => {
                         scratch.moe_dispatch_args.as_ref().map(|buf| {
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &model_shape.moe_dispatch_args_shape(),
                                 DataType::U32,
                             ))
@@ -413,7 +413,7 @@ impl LanguageModelGeneratorAuxBuffers {
                                 ((moe.mixture_size + 512 - 1) / 512).max(1);
                             let entries = num_blocks * num_tiles * 512;
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &[entries],
                                 DataType::U32,
                             ))
@@ -433,7 +433,7 @@ impl LanguageModelGeneratorAuxBuffers {
                                 ((moe.mixture_size + 512 - 1) / 512).max(1);
                             let entries = num_blocks * num_tiles * 512;
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &[entries],
                                 DataType::U32,
                             ))
@@ -450,7 +450,7 @@ impl LanguageModelGeneratorAuxBuffers {
                                 ((moe.mixture_size + 512 - 1) / 512).max(1);
                             let entries = num_blocks * num_tiles;
                             RefCell::new(MetalArray::new(
-                                buf.borrow().backend_buffer().clone(),
+                                buf.borrow().mtl_buffer_cloned(),
                                 &[entries],
                                 DataType::U32,
                             ))

@@ -1,8 +1,9 @@
 use std::{cell::RefCell, ffi::c_void, mem, rc::Rc};
 
-use metal::{
+use crate::backends::metal::{
     CommandBuffer as MTLCommandBuffer, Device as MTLDevice, MTLResourceOptions,
 };
+use metal::MTLDeviceExt;
 
 use crate::{
     DataType,
@@ -271,11 +272,11 @@ fn data_to_mtl_tensor<T: Copy>(
     shape: Vec<usize>,
     data_type: DataType,
 ) -> Result<MetalArray, MTLError> {
-    let size = mem::size_of::<T>() as u64;
+    let size = mem::size_of::<T>();
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const T as *const u8, size) };
     let buffer = device.new_buffer_with_data(
-        data as *const _ as *const c_void,
-        size,
-        MTLResourceOptions::StorageModeShared,
-    );
+        bytes,
+        MTLResourceOptions::STORAGE_MODE_SHARED,
+    ).expect("Failed to create buffer");
     unsafe { Ok(MetalArray::new(buffer, &shape, data_type)) }
 }

@@ -1,7 +1,9 @@
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    FunctionConstantValues, MTLDataType, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+    MTLDataType, MTLSize, mtl_size,
 };
+use objc2::rc::Retained;
 
 use crate::{
     DataType,
@@ -56,7 +58,7 @@ impl MlpFusedConfig {
     }
 
     /// Create function constants for MLP fused matmul
-    pub fn make_function_constants(&self) -> FunctionConstantValues {
+    pub fn make_function_constants(&self) -> Retained<FunctionConstantValues> {
         let fcv = FunctionConstantValues::new();
         let fused = true;
         fcv.set_constant_value_at_index(
@@ -80,7 +82,7 @@ impl MlpFusedConfig {
 }
 
 /// Create function constants for non-fused (standard) matmul
-pub fn make_non_fused_function_constants() -> FunctionConstantValues {
+pub fn make_non_fused_function_constants() -> Retained<FunctionConstantValues> {
     let fcv = FunctionConstantValues::new();
     let fused = false;
     fcv.set_constant_value_at_index(
@@ -118,9 +120,9 @@ impl MlpGateActMulEncodable {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        fused_up: &MTLBuffer,
-        hidden: &MTLBuffer,
+        encoder: ComputeCommandEncoderRef<'_>,
+        fused_up: BufferRef<'_>,
+        hidden: BufferRef<'_>,
         m: i32,
     ) -> Result<(), MTLError> {
         self.kernel.encode(
@@ -174,15 +176,15 @@ impl MlpGateActMulKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         activation: &Activation,
-        fused_up_buffer: &MTLBuffer,
-        hidden_buffer: &MTLBuffer,
+        fused_up_buffer: BufferRef<'_>,
+        hidden_buffer: BufferRef<'_>,
         m: i32,
         h: i32,
     ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
-        let threads_per_tg = MTLSize::new(64, 1, 1);
+        let threads_per_tg = mtl_size(64, 1, 1);
         encoder.set_compute_pipeline_state(&self.pipeline);
         encoder.set_buffer(0, Some(fused_up_buffer), 0);
         encoder.set_buffer(1, Some(hidden_buffer), 0);
@@ -202,7 +204,7 @@ impl MlpGateActMulKernel {
             &act_code as *const u16 as *const _,
         );
 
-        let grid = MTLSize::new(h as u64, m as u64, 1);
+        let grid = mtl_size(h as u64, m as u64, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

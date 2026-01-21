@@ -1,12 +1,12 @@
 use std::{collections::HashMap, mem::size_of};
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+    MTLContext, MTLError, MTLSize, mtl_size,
 };
 
-use super::super::MTLContext;
-use crate::{DataType, backends::metal::MTLError, config::QuantizationMode};
+use crate::{DataType, config::QuantizationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizationType {
@@ -35,20 +35,20 @@ pub enum QuantizedMatmulError {
 }
 
 pub struct QuantizedMatmulKernel {
-    pipelines: HashMap<KernelKind, (MTLComputePipelineState, u64, u64)>,
+    pipelines: HashMap<KernelKind, (ComputePipelineState, u64, u64)>,
     output_dim: usize,
     weights_transposed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulArguments<'a> {
-    pub a_buffer: &'a MTLBuffer,
+    pub a_buffer: BufferRef<'a>,
     /// Byte offset into `a_buffer` (used for slicing the batch dimension).
     pub a_offset: u64,
-    pub b_buffer: &'a MTLBuffer,
-    pub scales_buffer: &'a MTLBuffer,
-    pub zero_points_or_biases_buffer: &'a MTLBuffer,
-    pub output_buffer: &'a MTLBuffer,
+    pub b_buffer: BufferRef<'a>,
+    pub scales_buffer: BufferRef<'a>,
+    pub zero_points_or_biases_buffer: BufferRef<'a>,
+    pub output_buffer: BufferRef<'a>,
     pub batch: i32,
     pub input_dim: i32,
     pub output_dim: i32,
@@ -107,7 +107,7 @@ impl QuantizedMatmulKernel {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
-        let function_constants = metal::FunctionConstantValues::new();
+        let function_constants = FunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,
@@ -186,7 +186,7 @@ impl QuantizedMatmulKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         args: QuantizedMatmulArguments,
     ) -> Result<(), QuantizedMatmulError> {
         let variant = self.select_variant(args.batch as usize);
@@ -237,8 +237,8 @@ impl QuantizedMatmulKernel {
                     64
                 };
                 let n_tgp_y = (n + bn - 1) / bn;
-                let threadgroups = MTLSize::new(m as u64, n_tgp_y as u64, 1);
-                let threads_per_threadgroup = MTLSize::new(bk as u64, 2, 1);
+                let threadgroups = mtl_size(m as u64, n_tgp_y as u64, 1);
+                let threads_per_threadgroup = mtl_size(bk as u64, 2, 1);
                 encoder.dispatch_thread_groups(
                     threadgroups,
                     threads_per_threadgroup,
@@ -247,8 +247,8 @@ impl QuantizedMatmulKernel {
             KernelKind::MatrixMatrix => {
                 let wm = 2;
                 let wn = 2;
-                let threads_per_threadgroup = MTLSize::new(32, wn, wm);
-                let threadgroups = MTLSize::new(
+                let threads_per_threadgroup = mtl_size(32, wn, wm);
+                let threadgroups = mtl_size(
                     (n as u64 + bn - 1) / bn,
                     (m as u64 + bm - 1) / bm,
                     1,
@@ -348,17 +348,17 @@ enum KernelKind {
 #[derive(Debug)]
 pub struct MlpFusedQmvArguments<'a> {
     /// Weight matrix [2*hidden_dim, input_dim] (up and gate concatenated, quantized)
-    pub weights: &'a MTLBuffer,
+    pub weights: BufferRef<'a>,
     /// Scales buffer
-    pub scales: &'a MTLBuffer,
+    pub scales: BufferRef<'a>,
     /// Zero points or biases buffer (depends on quantization type)
-    pub zero_points_or_biases: &'a MTLBuffer,
+    pub zero_points_or_biases: BufferRef<'a>,
     /// Input vector [input_dim]
-    pub input: &'a MTLBuffer,
+    pub input: BufferRef<'a>,
     /// Input byte offset
     pub input_offset: u64,
     /// Output vector [hidden_dim]
-    pub output: &'a MTLBuffer,
+    pub output: BufferRef<'a>,
     /// Input dimension (K)
     pub input_dim: i32,
     /// Hidden dimension (output size, half of weight rows)
@@ -370,7 +370,7 @@ pub struct MlpFusedQmvArguments<'a> {
 /// MLP Fused Quantized GEMV Kernel
 /// Computes paired up/gate projections with fused activation: out = up * activation(gate)
 pub struct MlpFusedQmvKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 impl MlpFusedQmvKernel {
@@ -396,7 +396,7 @@ impl MlpFusedQmvKernel {
         let kernel_name =
             format!("qmv_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
-        let function_constants = metal::FunctionConstantValues::new();
+        let function_constants = FunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,
@@ -415,7 +415,7 @@ impl MlpFusedQmvKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         args: &MlpFusedQmvArguments,
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -442,8 +442,8 @@ impl MlpFusedQmvKernel {
         let n_tgp_y = ((args.hidden_dim + rows_per_threadgroup - 1)
             / rows_per_threadgroup) as u64;
         let threadgroups =
-            MTLSize::new(args.batch_count.max(1) as u64, n_tgp_y, 1);
-        let threads_per_threadgroup = MTLSize::new(32, 2, 1); // 2 simdgroups, 32 threads each
+            mtl_size(args.batch_count.max(1) as u64, n_tgp_y, 1);
+        let threads_per_threadgroup = mtl_size(32, 2, 1); // 2 simdgroups, 32 threads each
 
         encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         Ok(())
@@ -454,17 +454,17 @@ impl MlpFusedQmvKernel {
 #[derive(Debug)]
 pub struct MlpFusedQmmArguments<'a> {
     /// Weight matrix [K, 2*hidden_dim] quantized (up and gate concatenated)
-    pub weights: &'a MTLBuffer,
+    pub weights: BufferRef<'a>,
     /// Scales buffer
-    pub scales: &'a MTLBuffer,
+    pub scales: BufferRef<'a>,
     /// Zero points or biases buffer (depends on quantization type)
-    pub zero_points_or_biases: &'a MTLBuffer,
+    pub zero_points_or_biases: BufferRef<'a>,
     /// Input activations [M, K]
-    pub input: &'a MTLBuffer,
+    pub input: BufferRef<'a>,
     /// Input byte offset
     pub input_offset: u64,
     /// Output [M, hidden_dim]
-    pub output: &'a MTLBuffer,
+    pub output: BufferRef<'a>,
     /// Batch size (M)
     pub batch: i32,
     /// Input dimension (K)
@@ -476,7 +476,7 @@ pub struct MlpFusedQmmArguments<'a> {
 /// MLP Fused Quantized GEMM Kernel for prefill path
 /// Computes paired up/gate projections with fused activation: out = up * activation(gate)
 pub struct MlpFusedQmmKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 impl MlpFusedQmmKernel {
@@ -502,7 +502,7 @@ impl MlpFusedQmmKernel {
         let kernel_name =
             format!("qmm_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
-        let function_constants = metal::FunctionConstantValues::new();
+        let function_constants = FunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,
@@ -521,7 +521,7 @@ impl MlpFusedQmmKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         args: &MlpFusedQmmArguments,
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -553,8 +553,8 @@ impl MlpFusedQmmKernel {
         let bn = 32;
         let tiles_m = ((args.batch + bm - 1) / bm) as u64;
         let tiles_n = ((args.hidden_dim + bn - 1) / bn) as u64;
-        let threadgroups = MTLSize::new(tiles_n, tiles_m, 1);
-        let threads_per_threadgroup = MTLSize::new(32, 2, 2); // WM=2, WN=2, 32 threads
+        let threadgroups = mtl_size(tiles_n, tiles_m, 1);
+        let threads_per_threadgroup = mtl_size(32, 2, 2); // WM=2, WN=2, 32 threads
 
         encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         Ok(())

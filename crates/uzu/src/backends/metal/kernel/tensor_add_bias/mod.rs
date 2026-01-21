@@ -1,19 +1,22 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
-};
+use metal::{MTLCommandBuffer, MTLCommandEncoder};
+use objc2::msg_send;
+use objc2_foundation::NSString;
 
-use super::{
-    KernelDataType, MTLContext,
-    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
+    ComputeEncoderLegacy, ComputePipelineState, KernelDataType, MTLContext,
+    MTLError,
+    BufferLabelExt,
+    metal_extensions::{
+        ComputeEncoderConditional, ComputeEncoderDispatch,
+    },
 };
-use crate::backends::metal::error::MTLError;
 
 #[derive(Debug)]
 pub struct TensorAddBias {
-    pipeline_state: MTLComputePipelineState,
+    pipeline_state: ComputePipelineState,
 }
 
 impl TensorAddBias {
@@ -32,35 +35,40 @@ impl TensorAddBias {
 
     pub fn encode_into_command_buffer(
         &self,
-        input: &MTLBuffer,
-        bias: &MTLBuffer,
-        output: &MTLBuffer,
+        input: BufferRef<'_>,
+        bias: BufferRef<'_>,
+        output: BufferRef<'_>,
         num_cols: usize,
         total_len: usize,
-        command_buffer: &CommandBufferRef,
-        predicate: Option<&MTLBuffer>,
+        command_buffer: CommandBufferRef<'_>,
+        predicate: Option<BufferRef<'_>>,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_encoder(
-            input, bias, output, num_cols, total_len, encoder, predicate,
+            input, bias, output, num_cols, total_len, &encoder, predicate,
         );
         encoder.end_encoding();
     }
 
     pub fn encode_with_encoder(
         &self,
-        input: &MTLBuffer,
-        bias: &MTLBuffer,
-        output: &MTLBuffer,
+        input: BufferRef<'_>,
+        bias: BufferRef<'_>,
+        output: BufferRef<'_>,
         num_cols: usize,
         total_len: usize,
-        encoder: &ComputeCommandEncoderRef,
-        predicate: Option<&MTLBuffer>,
+        encoder: ComputeCommandEncoderRef<'_>,
+        predicate: Option<BufferRef<'_>>,
     ) {
         encoder.condition(
-            predicate.map(|b| b.as_ref()),
+            predicate,
             || {
-                encoder.set_label("Tensor Add Bias");
+                unsafe {
+                    let label = NSString::from_str("Tensor Add Bias");
+                    let _: () = msg_send![encoder, setLabel: &*label];
+                }
                 encoder.set_compute_pipeline_state(&self.pipeline_state);
                 encoder.set_buffer(0, Some(input), 0);
                 encoder.set_buffer(1, Some(bias), 0);

@@ -1,6 +1,6 @@
 //! Encoding parameters for forward pass operations.
 
-use metal::{Buffer, BufferRef};
+use crate::backends::metal::{Buffer, BufferRef};
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a> {
@@ -42,7 +42,7 @@ impl<'a> EncodingParameters<'a> {
         self
     }
 
-    pub fn predicate_ref(&self) -> Option<&BufferRef> {
-        self.predicate.map(|buffer| buffer.as_ref())
+    pub fn predicate_ref(&self) -> Option<BufferRef<'_>> {
+        self.predicate.map(|buffer| &**buffer)
     }
 }

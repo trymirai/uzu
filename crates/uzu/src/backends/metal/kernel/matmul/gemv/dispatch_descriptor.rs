@@ -1,4 +1,4 @@
-use metal::MTLSize;
+use crate::backends::metal::{MTLSize, mtl_size};
 
 use super::pipeline_configuration::{
     PipelineConfiguration, select_configuration,
@@ -147,7 +147,7 @@ impl DispatchDescriptor {
         let threadgroup_count_z = batch_groups.max(1) as u64;
 
         let threadgroups =
-            MTLSize::new(threadgroup_count_x, 1, threadgroup_count_z);
+            mtl_size(threadgroup_count_x, 1, threadgroup_count_z);
         let threads_per_threadgroup =
             pipeline_configuration.threads_per_threadgroup();
 

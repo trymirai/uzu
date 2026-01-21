@@ -297,7 +297,7 @@ impl TraceValidator {
         );
 
         let command_buffer =
-            ctx.mtl_context.command_queue.new_command_buffer().to_owned();
+            ctx.mtl_context.command_queue.command_buffer().to_owned();
 
         ctx.executables.encode(
             &mut state,

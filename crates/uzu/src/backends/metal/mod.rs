@@ -14,6 +14,91 @@ pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
 
+// Re-export mtl-rs types with convenient type aliases
+pub use metal::{
+    MTLBindingExt, MTLBlitCommandEncoder, MTLBuffer, MTLCaptureDescriptor,
+    MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer,
+    MTLCommandBufferExt, MTLCommandEncoder, MTLCommandEncoderExt,
+    MTLCommandQueue, MTLCommandQueueExt, MTLCompareFunction,
+    MTLComputeCommandEncoder, MTLComputePipelineDescriptor,
+    MTLComputePipelineState, MTLDataType, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLFeatureSet, MTLFunctionConstantValues, MTLGPUFamily, MTLHeap,
+    MTLHeapExt, MTLLibrary, MTLLibraryExt, MTLPipelineOption, MTLPixelFormat,
+    MTLReadWriteTextureTier, MTLResource, MTLResourceExt, MTLResourceOptions,
+    MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
+};
+pub use objc2::{rc::Retained, runtime::ProtocolObject};
+pub use objc2_foundation::NSRange;
+
+/// Helper function for creating MTLSize (replacing MTLSize::new)
+#[inline]
+pub fn mtl_size(
+    width: u64,
+    height: u64,
+    depth: u64,
+) -> MTLSize {
+    MTLSize {
+        width: width as usize,
+        height: height as usize,
+        depth: depth as usize,
+    }
+}
+
+/// Type alias for references to MTLBuffer (replacing old BufferRef)
+pub type BufferRef<'a> = &'a ProtocolObject<dyn MTLBuffer>;
+
+/// Type alias for references to command buffers (replacing old CommandBufferRef)
+pub type CommandBufferRef<'a> = &'a ProtocolObject<dyn MTLCommandBuffer>;
+
+/// Type alias for references to compute command encoders (replacing old ComputeCommandEncoderRef)
+pub type ComputeCommandEncoderRef<'a> =
+    &'a ProtocolObject<dyn MTLComputeCommandEncoder>;
+
+/// Type alias for references to compute pipeline states
+pub type ComputePipelineStateRef<'a> =
+    &'a ProtocolObject<dyn MTLComputePipelineState>;
+
+/// Type alias for references to MTLTexture (replacing old TextureRef)
+pub type TextureRef<'a> = &'a ProtocolObject<dyn MTLTexture>;
+
+/// Type alias for owned MTLBuffer
+pub type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+
+/// Type alias for owned MTLCommandBuffer
+pub type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
+
+/// Type alias for owned MTLComputeCommandEncoder
+pub type ComputeCommandEncoder =
+    Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>;
+
+/// Type alias for owned MTLComputePipelineState
+pub type ComputePipelineState =
+    Retained<ProtocolObject<dyn MTLComputePipelineState>>;
+
+/// Type alias for owned MTLCommandQueue
+pub type CommandQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
+
+/// Type alias for owned MTLDevice
+pub type Device = Retained<ProtocolObject<dyn MTLDevice>>;
+
+/// Type alias for owned MTLHeap
+pub type Heap = Retained<ProtocolObject<dyn MTLHeap>>;
+
+/// Type alias for owned MTLLibrary  
+pub type Library = Retained<ProtocolObject<dyn MTLLibrary>>;
+
+/// Type alias for owned MTLEvent
+pub type Event = Retained<ProtocolObject<dyn MTLEvent>>;
+
+/// Type alias for owned MTLTexture
+pub type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
+
+/// Type alias for MTLFunctionConstantValues
+pub type FunctionConstantValues = MTLFunctionConstantValues;
+
+/// Type alias for MTLTextureDescriptor  
+pub type TextureDescriptor = MTLTextureDescriptor;
+
 pub use array::MetalArray;
 pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;
@@ -28,5 +113,8 @@ pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,
     MetalImagePreprocessor,
+};
+pub use metal_extensions::{
+    BufferLabelExt, ComputeEncoderLegacy, FunctionConstantValuesLegacy,
 };
 pub use placement_analysis::PlacementAnalysis;

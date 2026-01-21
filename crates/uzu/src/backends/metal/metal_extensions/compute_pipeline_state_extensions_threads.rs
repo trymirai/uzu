@@ -1,4 +1,6 @@
-use metal::{ComputePipelineState, MTLSize};
+use crate::backends::metal::{
+    MTLComputePipelineState, MTLSize, ProtocolObject,
+};
 
 /// Extensions for ComputePipelineState to provide optimized threadgroup sizes
 pub trait ComputePipelineStateThreads {
@@ -23,11 +25,13 @@ pub trait ComputePipelineStateThreads {
     /// - Returns: The maximum threadgroup size that can be used for a 3D compute kernel.
     fn max_3d_threadgroup_size(
         &self,
-        depth: u64,
+        depth: usize,
     ) -> MTLSize;
 }
 
-impl ComputePipelineStateThreads for ComputePipelineState {
+impl ComputePipelineStateThreads
+    for ProtocolObject<dyn MTLComputePipelineState>
+{
     fn execution_width_threadgroup_size(&self) -> MTLSize {
         let w = self.thread_execution_width();
 
@@ -61,7 +65,7 @@ impl ComputePipelineStateThreads for ComputePipelineState {
 
     fn max_3d_threadgroup_size(
         &self,
-        depth: u64,
+        depth: usize,
     ) -> MTLSize {
         let w = self.thread_execution_width() / depth;
         let h = self.max_total_threads_per_threadgroup() / w;

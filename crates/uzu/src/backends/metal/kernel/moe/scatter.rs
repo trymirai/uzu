@@ -1,11 +1,9 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLContext, mtl_size,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext};
 
 // ---- Scatter Buckets Kernels ----
 
@@ -16,21 +14,21 @@ pub enum MoeScatterError {
 }
 
 pub struct MoeScatterKernels {
-    pipeline_bases: MTLComputePipelineState,
-    pipeline_scatter_f16: MTLComputePipelineState,
-    pipeline_scatter_f32: MTLComputePipelineState,
-    pipeline_scatter_bf16: MTLComputePipelineState,
+    pipeline_bases: ComputePipelineState,
+    pipeline_scatter_f16: ComputePipelineState,
+    pipeline_scatter_f32: ComputePipelineState,
+    pipeline_scatter_bf16: ComputePipelineState,
     // map variants
-    pipeline_scatter_map_f16: MTLComputePipelineState,
-    pipeline_scatter_map_f32: MTLComputePipelineState,
-    pipeline_scatter_map_bf16: MTLComputePipelineState,
+    pipeline_scatter_map_f16: ComputePipelineState,
+    pipeline_scatter_map_f32: ComputePipelineState,
+    pipeline_scatter_map_bf16: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeBlockBasesArguments<'a> {
-    pub partials_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
-    pub block_bases_buffer: &'a MTLBuffer, // same shape as partials
-    pub block_alloc_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
+    pub partials_buffer: BufferRef<'a>, // [num_blocks * num_tiles * 512]
+    pub block_bases_buffer: BufferRef<'a>, // same shape as partials
+    pub block_alloc_buffer: BufferRef<'a>, // [num_blocks * num_tiles * 512]
     pub e: usize,
     pub num_blocks: usize,
     pub num_tiles: usize,
@@ -38,13 +36,13 @@ pub struct MoeBlockBasesArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoeScatterArguments<'a> {
-    pub topk_ids_buffer: &'a MTLBuffer,
-    pub topk_probs_buffer: &'a MTLBuffer,
-    pub offsets_buffer: &'a MTLBuffer,
-    pub block_bases_buffer: &'a MTLBuffer,
-    pub block_alloc_buffer: &'a MTLBuffer,
-    pub out_ids_buffer: &'a MTLBuffer,
-    pub out_probs_buffer: &'a MTLBuffer,
+    pub topk_ids_buffer: BufferRef<'a>,
+    pub topk_probs_buffer: BufferRef<'a>,
+    pub offsets_buffer: BufferRef<'a>,
+    pub block_bases_buffer: BufferRef<'a>,
+    pub block_alloc_buffer: BufferRef<'a>,
+    pub out_ids_buffer: BufferRef<'a>,
+    pub out_probs_buffer: BufferRef<'a>,
     pub t: usize,
     pub e: usize,
     pub k: usize,
@@ -55,7 +53,7 @@ pub struct MoeScatterArguments<'a> {
 #[derive(Debug)]
 pub struct MoeScatterWithMapArguments<'a> {
     pub base: MoeScatterArguments<'a>,
-    pub tok2row_buffer: &'a MTLBuffer, // [T*K] int32, initialized to -1
+    pub tok2row_buffer: BufferRef<'a>, // [T*K] int32, initialized to -1
 }
 
 impl MoeScatterKernels {
@@ -91,7 +89,8 @@ impl MoeScatterKernels {
         command_buffer: &CommandBufferRef,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         compute_encoder.set_compute_pipeline_state(&self.pipeline_bases);
         compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
         compute_encoder.set_buffer(1, Some(args.block_bases_buffer), 0);
@@ -123,8 +122,8 @@ impl MoeScatterKernels {
         );
 
         let total_entries = args.num_tiles * 512usize;
-        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(((total_entries + 255) / 256) as u64, 1, 1);
+        let threads_per_threadgroup = mtl_size(256, 1, 1);
+        let tg = mtl_size(((total_entries + 255) / 256) as u64, 1, 1);
         if total_entries > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
@@ -138,7 +137,8 @@ impl MoeScatterKernels {
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         // Select pipeline based on dtype
         match dtype {
             KernelDataType::Float16 => {
@@ -192,8 +192,8 @@ impl MoeScatterKernels {
             &nt_u32 as *const u32 as *const std::ffi::c_void,
         );
 
-        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(args.num_blocks as u64, 1, 1);
+        let threads_per_threadgroup = mtl_size(256, 1, 1);
+        let tg = mtl_size(args.num_blocks as u64, 1, 1);
         if args.num_blocks > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }
@@ -207,7 +207,8 @@ impl MoeScatterKernels {
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         let pipeline = match dtype {
             KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
             KernelDataType::Float32 => &self.pipeline_scatter_map_f32,
@@ -254,8 +255,8 @@ impl MoeScatterKernels {
         );
         compute_encoder.set_buffer(12, Some(args.tok2row_buffer), 0);
 
-        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(base.num_blocks as u64, 1, 1);
+        let threads_per_threadgroup = mtl_size(256, 1, 1);
+        let tg = mtl_size(base.num_blocks as u64, 1, 1);
         if base.num_blocks > 0 {
             compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
         }

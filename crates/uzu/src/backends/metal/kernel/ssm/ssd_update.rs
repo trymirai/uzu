@@ -1,27 +1,26 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, KernelDataType, MTLContext, MTLSize,
 };
 
 use super::{SSMKernelError, fn_suffix};
-use crate::backends::metal::{KernelDataType, MTLContext};
 
 pub struct SSDUpdateKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 pub struct SSDUpdateArguments<'a> {
-    pub x: &'a MTLBuffer,          // buffer(0)  (b, h, dh)
-    pub dt: &'a MTLBuffer,         // buffer(1)  (b, h) - raw dt values
-    pub b: &'a MTLBuffer,          // buffer(2)  (b, g, n)
-    pub c: &'a MTLBuffer,          // buffer(3)  (b, g, n)
-    pub d: &'a MTLBuffer,          // buffer(4)  (h)
-    pub z: &'a MTLBuffer,          // buffer(5)  (b, d)
-    pub state: &'a MTLBuffer,      // buffer(6)  (b, h, dh, n)
-    pub y: &'a MTLBuffer,          // buffer(7)
-    pub next_state: &'a MTLBuffer, // buffer(8)
+    pub x: BufferRef<'a>,          // buffer(0)  (b, h, dh)
+    pub dt: BufferRef<'a>,         // buffer(1)  (b, h) - raw dt values
+    pub b: BufferRef<'a>,          // buffer(2)  (b, g, n)
+    pub c: BufferRef<'a>,          // buffer(3)  (b, g, n)
+    pub d: BufferRef<'a>,          // buffer(4)  (h)
+    pub z: BufferRef<'a>,          // buffer(5)  (b, d)
+    pub state: BufferRef<'a>,      // buffer(6)  (b, h, dh, n)
+    pub y: BufferRef<'a>,          // buffer(7)
+    pub next_state: BufferRef<'a>, // buffer(8)
     pub group_size: i32,           // buffer(9)
     pub state_size: i32,           // buffer(10)
     pub x_strides: [usize; 3],     // buffer(11)
@@ -49,7 +48,7 @@ impl SSDUpdateKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: SSDUpdateArguments,
     ) -> Result<(), SSMKernelError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
@@ -101,9 +100,9 @@ impl SSDUpdateKernel {
             depth: 1,
         };
         let total_threads = MTLSize {
-            width: args.b_size as u64,
-            height: args.h_size as u64,
-            depth: args.dh_size as u64,
+            width: args.b_size,
+            height: args.h_size,
+            depth: args.dh_size,
         };
         compute_encoder
             .dispatch_threads(total_threads, threads_per_threadgroup);

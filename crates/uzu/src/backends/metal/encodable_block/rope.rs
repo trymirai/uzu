@@ -1,6 +1,8 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -35,10 +37,11 @@ impl EncodableBlock for Rope {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -55,7 +58,7 @@ impl EncodableBlock for Rope {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {

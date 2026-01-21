@@ -1,14 +1,14 @@
-use metal::Buffer as MTLBuffer;
+use crate::backends::metal::BufferRef;
 
 #[derive(Debug, Clone)]
 pub struct MatmulArguments<'a> {
-    pub a: &'a MTLBuffer,
+    pub a: BufferRef<'a>,
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,
-    pub b: &'a MTLBuffer,
-    pub c: Option<&'a MTLBuffer>,
-    pub d: &'a MTLBuffer,
-    pub bias: Option<&'a MTLBuffer>,
+    pub b: BufferRef<'a>,
+    pub c: Option<BufferRef<'a>>,
+    pub d: BufferRef<'a>,
+    pub bias: Option<BufferRef<'a>>,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
     pub batch: i32,
     /// K dimension - input_dim/reduction dimension (cols of A, rows of B)

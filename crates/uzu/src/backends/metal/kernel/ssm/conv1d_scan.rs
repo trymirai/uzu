@@ -1,18 +1,17 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+    KernelDataType, MTLContext, MTLDataType, MTLSize,
 };
+
+use objc2::rc::Retained;
 
 use super::{SSMKernelError, fn_suffix};
-use crate::{
-    backends::metal::{KernelDataType, MTLContext},
-    config::Activation,
-};
+use crate::config::Activation;
 
-const CONV1D_SCAN_THREADGROUP_SIZE: u64 = 32;
+const CONV1D_SCAN_THREADGROUP_SIZE: usize = 32;
 
 const ACTIVATION_IDENTITY: i32 = 0;
 const ACTIVATION_SILU: i32 = 1;
@@ -31,7 +30,7 @@ fn activation_to_int(activation: &Activation) -> i32 {
 fn make_function_constants(
     activation: &Activation,
     has_bias: bool,
-) -> FunctionConstantValues {
+) -> Retained<FunctionConstantValues> {
     let function_constants = FunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
@@ -51,21 +50,21 @@ fn make_function_constants(
 }
 
 pub struct Conv1dScanKernel {
-    pipeline_no_bias: MTLComputePipelineState,
-    pipeline_with_bias: MTLComputePipelineState,
-    pack_pipeline: MTLComputePipelineState,
-    decode_pipeline_no_bias: MTLComputePipelineState,
-    decode_pipeline_with_bias: MTLComputePipelineState,
+    pipeline_no_bias: ComputePipelineState,
+    pipeline_with_bias: ComputePipelineState,
+    pack_pipeline: ComputePipelineState,
+    decode_pipeline_no_bias: ComputePipelineState,
+    decode_pipeline_with_bias: ComputePipelineState,
 }
 
 pub struct Conv1dScanArguments<'a> {
-    pub padded: &'a MTLBuffer, // buffer(0) [prefix+suffix, channels]
-    pub w: &'a MTLBuffer,      // buffer(1) [channels, kernel]
-    pub b: Option<&'a MTLBuffer>, // buffer(2) [channels]
-    pub x_out: &'a MTLBuffer,  // buffer(3) [suffix, inner_dim]
-    pub b_out: &'a MTLBuffer,  // buffer(4) [suffix, proj_dim]
-    pub c_out: &'a MTLBuffer,  // buffer(5) [suffix, proj_dim]
-    pub state_out: &'a MTLBuffer, // buffer(6) [channels, kernel-1]
+    pub padded: BufferRef<'a>, // buffer(0) [prefix+suffix, channels]
+    pub w: BufferRef<'a>,      // buffer(1) [channels, kernel]
+    pub b: Option<BufferRef<'a>>, // buffer(2) [channels]
+    pub x_out: BufferRef<'a>,  // buffer(3) [suffix, inner_dim]
+    pub b_out: BufferRef<'a>,  // buffer(4) [suffix, proj_dim]
+    pub c_out: BufferRef<'a>,  // buffer(5) [suffix, proj_dim]
+    pub state_out: BufferRef<'a>, // buffer(6) [channels, kernel-1]
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub row_stride: usize,
@@ -76,9 +75,9 @@ pub struct Conv1dScanArguments<'a> {
 }
 
 pub struct Conv1dPackArguments<'a> {
-    pub state_in: &'a MTLBuffer,
-    pub x: &'a MTLBuffer,
-    pub padded: &'a MTLBuffer,
+    pub state_in: BufferRef<'a>,
+    pub x: BufferRef<'a>,
+    pub padded: BufferRef<'a>,
     pub state_stride: usize,
     pub row_stride: usize,
     pub suffix_len: usize,
@@ -86,14 +85,14 @@ pub struct Conv1dPackArguments<'a> {
 }
 
 pub struct Conv1dDecodeArguments<'a> {
-    pub x: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub state: &'a MTLBuffer,
-    pub x_out: &'a MTLBuffer,
-    pub b_out: &'a MTLBuffer,
-    pub c_out: &'a MTLBuffer,
-    pub next_state: &'a MTLBuffer,
+    pub x: BufferRef<'a>,
+    pub w: BufferRef<'a>,
+    pub b: Option<BufferRef<'a>>,
+    pub state: BufferRef<'a>,
+    pub x_out: BufferRef<'a>,
+    pub b_out: BufferRef<'a>,
+    pub c_out: BufferRef<'a>,
+    pub next_state: BufferRef<'a>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub row_stride: usize,
@@ -175,7 +174,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: Conv1dPackArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.state_stride == 0 {
@@ -214,8 +213,8 @@ impl Conv1dScanKernel {
         };
         let padded_rows = args.state_stride + args.suffix_len;
         let total_threads = MTLSize {
-            width: args.channels as u64,
-            height: padded_rows as u64,
+            width: args.channels,
+            height: padded_rows,
             depth: 1,
         };
         compute_encoder
@@ -225,7 +224,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: Conv1dDecodeArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
@@ -242,7 +241,7 @@ impl Conv1dScanKernel {
         compute_encoder.set_buffer(0, Some(args.x), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(2, args.b, 0);
         }
         compute_encoder.set_buffer(3, Some(args.state), 0);
         compute_encoder.set_buffer(4, Some(args.x_out), 0);
@@ -291,8 +290,8 @@ impl Conv1dScanKernel {
             depth: 1,
         };
         let total_threads = MTLSize {
-            width: args.suffix_len as u64,
-            height: args.channels as u64,
+            width: args.suffix_len,
+            height: args.channels,
             depth: 1,
         };
         compute_encoder
@@ -302,7 +301,7 @@ impl Conv1dScanKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: Conv1dScanArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
@@ -320,7 +319,7 @@ impl Conv1dScanKernel {
         compute_encoder.set_buffer(0, Some(args.padded), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(2, args.b, 0);
         }
         compute_encoder.set_buffer(3, Some(args.x_out), 0);
         compute_encoder.set_buffer(4, Some(args.b_out), 0);
@@ -363,10 +362,10 @@ impl Conv1dScanKernel {
             &(args.proj_dim as u32) as *const u32 as *const _,
         );
 
-        let suffix = args.suffix_len as u64;
-        let tap_count = args.kernel_size.saturating_sub(1) as u64;
+        let suffix = args.suffix_len;
+        let tap_count = args.kernel_size.saturating_sub(1) as usize;
         let work_len = suffix + tap_count;
-        let channels = args.channels as u64;
+        let channels = args.channels;
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
             height: 1,

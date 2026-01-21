@@ -1,9 +1,11 @@
 use std::fmt;
 
-use metal::{
-    Device, MTLPixelFormat, MTLStorageMode, MTLTextureUsage, Texture,
-    TextureDescriptor, TextureRef,
+use crate::backends::metal::{
+    Device, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureUsage,
+    ProtocolObject, Texture, TextureDescriptor, TextureRef, MTLDevice,
 };
+use crate::backends::metal::BufferLabelExt;
+use metal::MTLDeviceExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -62,16 +64,16 @@ impl From<TextureUsage> for MTLTextureUsage {
     fn from(usage: TextureUsage) -> Self {
         let mut result = MTLTextureUsage::empty();
         if usage.shader_read {
-            result = result | MTLTextureUsage::ShaderRead;
+            result = result | MTLTextureUsage::SHADER_READ;
         }
         if usage.shader_write {
-            result = result | MTLTextureUsage::ShaderWrite;
+            result = result | MTLTextureUsage::SHADER_WRITE;
         }
         if usage.render_target {
-            result = result | MTLTextureUsage::RenderTarget;
+            result = result | MTLTextureUsage::RENDER_TARGET;
         }
         if usage.pixel_format_view {
-            result = result | MTLTextureUsage::PixelFormatView;
+            result = result | MTLTextureUsage::PIXEL_FORMAT_VIEW;
         }
         result
     }
@@ -108,15 +110,15 @@ impl Image {
         pixel_format: PixelFormat,
         usage: TextureUsage,
     ) -> Self {
-        let descriptor = TextureDescriptor::new();
+        let descriptor = unsafe { TextureDescriptor::new() };
         descriptor.set_pixel_format(pixel_format.into());
-        descriptor.set_width(width as u64);
-        descriptor.set_height(height as u64);
+        unsafe { descriptor.set_width(width as usize) };
+        unsafe { descriptor.set_height(height as usize) };
         descriptor.set_storage_mode(MTLStorageMode::Private);
         descriptor.set_usage(usage.into());
 
-        let texture = device.new_texture(&descriptor);
-        texture.set_label("Image");
+        let texture = device.new_texture_with_descriptor(&descriptor).expect("Failed to create texture");
+        texture.set_label(Some("Image"));
 
         Self {
             texture,
@@ -130,8 +132,8 @@ impl Image {
         device: &Device,
         descriptor: &TextureDescriptor,
     ) -> Self {
-        let texture = device.new_texture(descriptor);
-        texture.set_label("Image");
+        let texture = device.new_texture_with_descriptor(descriptor).expect("Failed to create texture");
+        texture.set_label(Some("Image"));
 
         let width = descriptor.width() as u32;
         let height = descriptor.height() as u32;
@@ -174,21 +176,21 @@ impl Image {
         &self.texture
     }
 
-    pub fn texture_ref(&self) -> &TextureRef {
-        self.texture.as_ref()
+    pub fn texture_ref(&self) -> TextureRef<'_> {
+        &self.texture
     }
 
     pub fn set_label(
         &self,
         label: &str,
     ) {
-        self.texture.set_label(label);
+        self.texture.set_label(Some(label));
     }
 }
 
-impl AsRef<TextureRef> for Image {
-    fn as_ref(&self) -> &TextureRef {
-        self.texture.as_ref()
+impl AsRef<ProtocolObject<dyn MTLTexture>> for Image {
+    fn as_ref(&self) -> &ProtocolObject<dyn MTLTexture> {
+        &self.texture
     }
 }
 

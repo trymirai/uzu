@@ -1,11 +1,10 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError,
+    mtl_size,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 // ---- Finalize Kernel ----
 
@@ -16,17 +15,17 @@ pub enum MoeFinalizeError {
 }
 
 pub struct MoeFinalizeKernel {
-    pipeline_f16: MTLComputePipelineState,
-    pipeline_bf16: MTLComputePipelineState,
-    pipeline_f32: MTLComputePipelineState,
+    pipeline_f16: ComputePipelineState,
+    pipeline_bf16: ComputePipelineState,
+    pipeline_f32: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeFinalizeArguments<'a> {
-    pub tok2row_buffer: &'a MTLBuffer, // [T*K] i32
-    pub probs_buffer: &'a MTLBuffer,   // [T*K] f16/bf16
-    pub y_partial_buffer: &'a MTLBuffer, // [sum_k, d_model] f16
-    pub y_out_buffer: &'a MTLBuffer,   // [T, d_model] f16
+    pub tok2row_buffer: BufferRef<'a>, // [T*K] i32
+    pub probs_buffer: BufferRef<'a>,   // [T*K] f16/bf16
+    pub y_partial_buffer: BufferRef<'a>, // [sum_k, d_model] f16
+    pub y_out_buffer: BufferRef<'a>,   // [T, d_model] f16
     pub t: usize,
     pub d_model: usize,
     pub k: usize,
@@ -53,7 +52,8 @@ impl MoeFinalizeKernel {
         args: MoeFinalizeArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeFinalizeError> {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
                 encoder.set_compute_pipeline_state(&self.pipeline_f16);
@@ -93,10 +93,10 @@ impl MoeFinalizeKernel {
         const BN: usize = 64;
         let num_tiles_n = (args.d_model + BN - 1) / BN;
         let num_tiles_m = (args.t + BM - 1) / BM;
-        let threads_per_threadgroup = MTLSize::new(128, 1, 1); // BM * BN * 32 = 1 * 4 * 32
+        let threads_per_threadgroup = mtl_size(128, 1, 1); // BM * BN * 32 = 1 * 4 * 32
         if num_tiles_m > 0 && num_tiles_n > 0 {
             let threadgroups =
-                MTLSize::new(num_tiles_n as u64, num_tiles_m as u64, 1);
+                mtl_size(num_tiles_n as u64, num_tiles_m as u64, 1);
             encoder
                 .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         }

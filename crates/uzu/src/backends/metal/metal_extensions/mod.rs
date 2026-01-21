@@ -1,14 +1,20 @@
 #![allow(dead_code, unused_variables, unused_imports)]
 
+mod buffer_label_ext;
 mod command_encoder_extensions_device;
 mod compute_command_encoder_extensions_conditional;
 mod compute_command_encoder_extensions_dispatch;
+mod compute_encoder_legacy;
 mod compute_pipeline_state_extensions_device;
 mod compute_pipeline_state_extensions_threads;
 mod device_extensions_features;
+mod function_constant_values_legacy;
 mod library_extensions_pipeline;
 
 pub mod command_buffer_extensions;
+pub use buffer_label_ext::BufferLabelExt;
 pub use compute_command_encoder_extensions_conditional::ComputeEncoderConditional;
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
+pub use compute_encoder_legacy::ComputeEncoderLegacy;
+pub use function_constant_values_legacy::FunctionConstantValuesLegacy;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;

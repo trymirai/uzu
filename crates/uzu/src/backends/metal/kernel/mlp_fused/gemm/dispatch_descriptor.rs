@@ -1,4 +1,4 @@
-use metal::MTLSize;
+use crate::backends::metal::{MTLSize, mtl_size};
 
 use super::{
     pipeline_configuration::PipelineConfiguration,
@@ -79,8 +79,8 @@ impl DispatchDescriptor {
             batch_ndim: 0,
         };
 
-        let threadgroups = MTLSize::new(tiles_n as u64, tiles_m as u64, 1);
-        let threads_per_threadgroup = MTLSize::new(32, 2, 2);
+        let threadgroups = mtl_size(tiles_n as u64, tiles_m as u64, 1);
+        let threads_per_threadgroup = mtl_size(32, 2, 2);
 
         Ok(Self {
             pipeline_configuration,

@@ -1,6 +1,8 @@
 //! Tensor add-swap encodable.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -35,10 +37,11 @@ impl EncodableBlock for TensorAddSwap {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -55,7 +58,7 @@ impl EncodableBlock for TensorAddSwap {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&self.argument_arrays);

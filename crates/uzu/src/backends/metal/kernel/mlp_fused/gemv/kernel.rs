@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use metal::{ComputeCommandEncoderRef, ComputePipelineState};
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputeEncoderLegacy, ComputePipelineState,
+    FunctionConstantValues, FunctionConstantValuesLegacy,
+};
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -66,7 +69,7 @@ impl Kernel {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 
-            let function_constants = metal::FunctionConstantValues::new();
+            let function_constants = FunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
             function_constants.set_constant_value_at_index(
                 &activation_val as *const u32 as *const _,
@@ -86,7 +89,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {

@@ -1,12 +1,9 @@
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, MTLContext, MTLError, MTLSize, mtl_size,
 };
 
-use crate::{
-    DataType,
-    backends::metal::{MTLContext, MTLError},
-};
+use crate::DataType;
 
 pub struct PoolingKernel {
     cls_pipeline: ComputePipelineState,
@@ -32,17 +29,12 @@ impl PoolingKernel {
         Ok(format!("pool_{}_{}", pooling_type, suffix))
     }
 
-    pub fn new(
-        context: &MTLContext,
-        data_type: DataType,
-    ) -> Result<Self, MTLError> {
+    pub fn new(context: &MTLContext, data_type: DataType) -> Result<Self, MTLError> {
         let cls_fn_name = Self::kernel_name_for_type(data_type, "cls")?;
         let mean_fn_name = Self::kernel_name_for_type(data_type, "mean")?;
 
-        let cls_pipeline =
-            context.compute_pipeline_state(&cls_fn_name, None)?;
-        let mean_pipeline =
-            context.compute_pipeline_state(&mean_fn_name, None)?;
+        let cls_pipeline = context.compute_pipeline_state(&cls_fn_name, None)?;
+        let mean_pipeline = context.compute_pipeline_state(&mean_fn_name, None)?;
 
         Ok(Self {
             cls_pipeline,
@@ -52,9 +44,9 @@ impl PoolingKernel {
 
     pub fn encode_cls(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        encoder: ComputeCommandEncoderRef<'_>,
+        input_buffer: BufferRef<'_>,
+        output_buffer: BufferRef<'_>,
         batch_size: i32,
         seq_len: i32,
         hidden_dim: i32,
@@ -73,17 +65,17 @@ impl PoolingKernel {
             &hidden_dim as *const i32 as *const _,
         );
 
-        let threads_per_tg = MTLSize::new(16, 16, 1);
-        let grid = MTLSize::new(hidden_dim as u64, batch_size as u64, 1);
+        let threads_per_tg = mtl_size(16, 16, 1);
+        let grid = mtl_size(hidden_dim as u64, batch_size as u64, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }
 
     pub fn encode_mean(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        encoder: ComputeCommandEncoderRef<'_>,
+        input_buffer: BufferRef<'_>,
+        output_buffer: BufferRef<'_>,
         batch_size: i32,
         seq_len: i32,
         hidden_dim: i32,
@@ -102,8 +94,8 @@ impl PoolingKernel {
             &hidden_dim as *const i32 as *const _,
         );
 
-        let threads_per_tg = MTLSize::new(16, 16, 1);
-        let grid = MTLSize::new(hidden_dim as u64, batch_size as u64, 1);
+        let threads_per_tg = mtl_size(16, 16, 1);
+        let grid = mtl_size(hidden_dim as u64, batch_size as u64, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

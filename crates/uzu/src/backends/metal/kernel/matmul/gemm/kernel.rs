@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use metal::{
-    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState as ComputePipelineState, FunctionConstantValues,
+    FunctionConstantValuesLegacy,
 };
 
 use super::{
@@ -21,7 +23,7 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
 }
 
 impl Kernel {
@@ -137,10 +139,10 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&ComputePipelineState, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
-            let function_constants = metal::FunctionConstantValues::new();
+            let function_constants = FunctionConstantValues::new();
             function_constants.set_constant_value_at_index(
                 &configuration.has_batch as *const bool as *const _,
                 metal::MTLDataType::Bool,
@@ -196,7 +198,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {

@@ -1,5 +1,3 @@
-use metal::ComputeCommandEncoderRef;
-
 use super::{
     super::{KernelDataType, TensorAddBias},
     common::MatmulArguments,
@@ -12,7 +10,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{Buffer, BufferRef, ComputeCommandEncoderRef, MTLContext, MTLError},
 };
 
 pub struct MatmulKernel {
@@ -83,7 +81,7 @@ impl MatmulKernel {
     fn encode_dispatch_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
         descriptor: &MatmulDispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -107,7 +105,7 @@ impl MatmulKernel {
     pub fn encode(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         mut arguments: MatmulArguments,
     ) -> Result<(), MTLError> {
         Self::apply_batch_collapse(&mut arguments);
@@ -134,9 +132,9 @@ impl MatmulKernel {
     fn apply_bias_add(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
-        bias: &metal::Buffer,
+        bias: BufferRef<'_>,
     ) -> Result<(), MTLError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;

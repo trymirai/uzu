@@ -2,7 +2,10 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    Buffer, BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
+    MTLCommandBuffer, MTLCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -46,11 +49,12 @@ impl EncodableBlock for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -67,7 +71,8 @@ impl EncodableBlock for MlpBlock {
                 let fused_buf = unsafe { fused.mtl_buffer() };
                 let hidden_buf = unsafe { hidden.mtl_buffer() };
 
-                let encoder = command_buffer.new_compute_command_encoder();
+                let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
                 self.gate
                     .encode(&encoder, fused_buf, hidden_buf, m)
                     .expect("Failed to encode MLP activation/mul kernel");
@@ -91,7 +96,7 @@ impl EncodableBlock for MlpBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         params: &EncodingParameters,
     ) {
         // Up
@@ -133,9 +138,9 @@ pub struct MlpFusedBlock {
     context: Rc<MTLContext>,
     fused_up: MlpFusedUpKernel,
     down: Box<dyn EncodableBlock>,
-    weights_buffer: MTLBuffer,
-    scales_buffer: Option<MTLBuffer>,
-    zero_points_or_biases_buffer: Option<MTLBuffer>,
+    weights_buffer: Buffer,
+    scales_buffer: Option<Buffer>,
+    zero_points_or_biases_buffer: Option<Buffer>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -148,7 +153,7 @@ impl MlpFusedBlock {
     pub fn new_full_precision(
         context: Rc<MTLContext>,
         data_type: DataType,
-        weights_buffer: MTLBuffer,
+        weights_buffer: Buffer,
         input_dim: usize,
         hidden_dim: usize,
         activation: &Activation,
@@ -179,9 +184,9 @@ impl MlpFusedBlock {
     pub fn new_quantized(
         context: Rc<MTLContext>,
         data_type: DataType,
-        weights_buffer: MTLBuffer,
-        scales_buffer: MTLBuffer,
-        zero_points_or_biases_buffer: MTLBuffer,
+        weights_buffer: Buffer,
+        scales_buffer: Buffer,
+        zero_points_or_biases_buffer: Buffer,
         input_dim: usize,
         hidden_dim: usize,
         group_size: usize,
@@ -234,10 +239,10 @@ impl MlpFusedBlock {
 
     fn encode_fused_up(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input: &MTLBuffer,
+        encoder: ComputeCommandEncoderRef<'_>,
+        input: BufferRef<'_>,
         input_offset: u64,
-        output: &MTLBuffer,
+        output: BufferRef<'_>,
         batch: i32,
     ) {
         match &self.fused_up {
@@ -310,11 +315,12 @@ impl EncodableBlock for MlpFusedBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -328,7 +334,8 @@ impl EncodableBlock for MlpFusedBlock {
                 let input_buf = unsafe { input.mtl_buffer() };
                 let hidden_buf = unsafe { hidden.mtl_buffer() };
 
-                let encoder = command_buffer.new_compute_command_encoder();
+                let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
                 self.encode_fused_up(&encoder, input_buf, 0, hidden_buf, batch);
                 encoder.end_encoding();
             }
@@ -350,7 +357,7 @@ impl EncodableBlock for MlpFusedBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         params: &EncodingParameters,
     ) {
         // Fused up + activation

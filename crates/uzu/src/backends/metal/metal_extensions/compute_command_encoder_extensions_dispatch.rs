@@ -1,9 +1,10 @@
-use metal::{ComputeCommandEncoderRef, ComputePipelineState, MTLSize};
-
 use super::{
     command_encoder_extensions_device::CommandEncoderDeviceAccess,
     compute_pipeline_state_extensions_threads::ComputePipelineStateThreads,
     device_extensions_features::{DeviceFeatures, Feature},
+};
+use crate::backends::metal::{
+    ComputePipelineState, MTLComputeCommandEncoder, MTLSize, ProtocolObject, MTLComputePipelineState,
 };
 
 /// Extensions for metal::ComputeCommandEncoder to simplify dispatch operations
@@ -81,7 +82,7 @@ pub trait ComputeEncoderDispatch {
     );
 }
 
-impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
+impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
     fn dispatch_1d_covering(
         &self,
         state: &ComputePipelineState,
@@ -91,19 +92,19 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         let tg_width = threadgroup_width
             .unwrap_or(state.thread_execution_width() as usize);
         let tg_size = MTLSize {
-            width: tg_width as u64,
+            width: tg_width,
             height: 1,
             depth: 1,
         };
 
         let count = MTLSize {
-            width: ((size + tg_width - 1) / tg_width) as u64,
+            width: (size + tg_width - 1) / tg_width,
             height: 1,
             depth: 1,
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_1d_exactly(
@@ -114,8 +115,7 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
     ) {
         let tg_size = MTLSize {
             width: threadgroup_width
-                .unwrap_or(state.thread_execution_width() as usize)
-                as u64,
+                .unwrap_or(state.thread_execution_width() as usize),
             height: 1,
             depth: 1,
         };
@@ -123,7 +123,7 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(
             MTLSize {
-                width: size as u64,
+                width: size,
                 height: 1,
                 depth: 1,
             },
@@ -163,7 +163,7 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_2d_exactly(
@@ -211,7 +211,7 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_3d_exactly(

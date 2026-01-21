@@ -1,6 +1,9 @@
 //! Prediction head encodable for classification output.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    CommandBufferRef, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -40,11 +43,12 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, parameters);
             encoder.end_encoding();
         } else {
@@ -76,7 +80,9 @@ impl EncodableBlock for ClassifierPredictionHead {
                 (batch_size * self.num_labels * data_type.size_in_bytes())
                     as u64;
 
-            let blit = command_buffer.new_blit_command_encoder();
+            let blit = command_buffer
+                .new_blit_command_encoder()
+                .expect("Failed to create blit command encoder");
             blit.copy_from_buffer(
                 &linear_output_buffer,
                 0,
@@ -103,7 +109,7 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         parameters: &EncodingParameters,
     ) {
         self.dense.encode_with_shared_encoder(state, encoder, parameters);

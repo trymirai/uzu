@@ -6,9 +6,9 @@
 //! Encodables implement `EncodableBlock` and orchestrate one or more
 //! kernels to perform operations on `ForwardPassState`.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
-
-use super::forward_pass::ForwardPassState;
+use super::{
+    CommandBufferRef, ComputeCommandEncoderRef, forward_pass::ForwardPassState,
+};
 
 mod activation;
 mod attention;
@@ -62,7 +62,7 @@ pub trait EncodableBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     );
 
@@ -78,7 +78,7 @@ pub trait EncodableBlock {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: &ComputeCommandEncoderRef,
+        _encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         panic!("encode_with_shared_encoder called on unsupported type");

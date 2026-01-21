@@ -1,18 +1,18 @@
 use std::mem::size_of;
+use std::ptr::NonNull;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
+    ComputePipelineState, KernelDataType, MTLContext, MTLError,
+    metal_extensions::ComputeEncoderDispatch, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, BufferLabelExt,
 };
-
-use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
-};
-use crate::backends::metal::error::MTLError;
+use objc2::msg_send;
+use objc2_foundation::NSString;
 
 #[derive(Debug)]
 pub struct TensorAddSwapKernel {
-    pipeline_state: MTLComputePipelineState,
+    pipeline_state: ComputePipelineState,
 }
 
 impl TensorAddSwapKernel {
@@ -33,38 +33,39 @@ impl TensorAddSwapKernel {
 
     pub fn encode_into_command_buffer(
         &self,
-        skip_buffer: &MTLBuffer,
-        main_buffer: &MTLBuffer,
+        skip_buffer: BufferRef<'_>,
+        main_buffer: BufferRef<'_>,
         length: usize,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
-        self.encode_with_encoder(
-            skip_buffer,
-            main_buffer,
-            length,
-            &compute_encoder,
-        );
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+        self.encode_with_encoder(skip_buffer, main_buffer, length, &compute_encoder);
         compute_encoder.end_encoding();
     }
 
     pub fn encode_with_encoder(
         &self,
-        skip_buffer: &MTLBuffer,
-        main_buffer: &MTLBuffer,
+        skip_buffer: BufferRef<'_>,
+        main_buffer: BufferRef<'_>,
         length: usize,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
     ) {
-        compute_encoder.set_label("Tensor Add-Swap");
+        unsafe {
+            let label = NSString::from_str("Tensor Add-Swap");
+            let _: () = msg_send![compute_encoder, setLabel: &*label];
+        }
 
-        compute_encoder.set_buffer(0, Some(skip_buffer), 0);
-        compute_encoder.set_buffer(1, Some(main_buffer), 0);
+        compute_encoder.set_buffer(Some(skip_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(main_buffer), 0, 1);
 
-        compute_encoder.set_bytes(
-            2,
-            size_of::<i32>() as u64,
-            &(length as i32) as *const _ as *const std::ffi::c_void,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new_unchecked(&(length as i32) as *const i32 as *mut std::ffi::c_void),
+                size_of::<i32>(),
+                2,
+            );
+        }
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
     }

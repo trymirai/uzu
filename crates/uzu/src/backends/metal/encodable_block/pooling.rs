@@ -1,6 +1,9 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    CommandBufferRef, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
@@ -37,10 +40,11 @@ impl EncodableBlock for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -64,7 +68,9 @@ impl EncodableBlock for Pooling {
             drop(trace_arr);
             drop(traces_ref);
 
-            let blit = command_buffer.new_blit_command_encoder();
+            let blit = command_buffer
+                .new_blit_command_encoder()
+                .expect("Failed to create blit command encoder");
             blit.copy_from_buffer(
                 &output_buffer,
                 0,
@@ -89,7 +95,7 @@ impl EncodableBlock for Pooling {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let batch_size = 1;

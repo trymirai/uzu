@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
+use crate::backends::metal::{
+    Buffer, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState as ComputePipelineState, FunctionConstantValues,
+    FunctionConstantValuesLegacy, MTLDeviceExt, MTLResourceOptions,
 };
 
 use super::{
@@ -21,10 +22,10 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
-    accum_pipelines: HashMap<MlpActivationType, MTLComputePipelineState>,
-    up_accumulator_buffer: Option<MTLBuffer>,
-    gate_accumulator_buffer: Option<MTLBuffer>,
+    partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    accum_pipelines: HashMap<MlpActivationType, ComputePipelineState>,
+    up_accumulator_buffer: Option<Buffer>,
+    gate_accumulator_buffer: Option<Buffer>,
     accumulator_buffer_bytes: usize,
 }
 
@@ -93,7 +94,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&ComputePipelineState, MTLError> {
         if !self.partial_pipelines.contains_key(configuration) {
             let kernel_name = self.partial_kernel_name(configuration)?;
             let pipeline_state =
@@ -108,10 +109,10 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         activation: MlpActivationType,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&ComputePipelineState, MTLError> {
         if !self.accum_pipelines.contains_key(&activation) {
             let kernel_name = self.accum_kernel_name()?;
-            let function_constants = metal::FunctionConstantValues::new();
+            let function_constants = FunctionConstantValues::new();
             let activation_val = activation as u32;
             function_constants.set_constant_value_at_index(
                 &activation_val as *const u32 as *const _,
@@ -138,21 +139,21 @@ impl Kernel {
         {
             return;
         }
-        self.up_accumulator_buffer = Some(context.device.new_buffer(
-            required_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        ));
-        self.gate_accumulator_buffer = Some(context.device.new_buffer(
-            required_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        ));
+        self.up_accumulator_buffer = context.device.new_buffer(
+            required_bytes,
+            MTLResourceOptions::STORAGE_MODE_PRIVATE,
+        );
+        self.gate_accumulator_buffer = context.device.new_buffer(
+            required_bytes,
+            MTLResourceOptions::STORAGE_MODE_PRIVATE,
+        );
         self.accumulator_buffer_bytes = required_bytes;
     }
 
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {

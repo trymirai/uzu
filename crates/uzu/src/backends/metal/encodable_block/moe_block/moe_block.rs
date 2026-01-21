@@ -2,7 +2,10 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use metal::CommandBufferRef;
+use crate::backends::metal::{
+    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, NSRange,
+};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -28,8 +31,8 @@ use crate::{
 
 enum RouterBlock {
     Metal {
-        weights_buf: metal::Buffer,
-        biases_buf: metal::Buffer,
+        weights_buf: Buffer,
+        biases_buf: Buffer,
     },
 }
 
@@ -115,8 +118,8 @@ impl MoeBlock {
                 let biases_buf = unsafe { biases_arr.mtl_buffer().clone() };
 
                 RouterBlock::Metal {
-                    weights_buf,
-                    biases_buf,
+                    weights_buf: weights_buf.into(),
+                    biases_buf: biases_buf.into(),
                 }
             },
             LinearConfig::QLoRA {
@@ -195,7 +198,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w13_buf = unsafe { w13_arr.mtl_buffer().clone() };
+        let w13_buf = w13_arr.mtl_buffer_cloned();
 
         let mut w2_arr = experts_tree
             .subtree("down_projection")
@@ -212,7 +215,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w2_buf = unsafe { w2_arr.mtl_buffer().clone() };
+        let w2_buf = w2_arr.mtl_buffer_cloned();
 
         let mut up_biases_arr = experts_tree
             .subtree("up_projection")
@@ -229,7 +232,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let up_biases_buf = unsafe { up_biases_arr.mtl_buffer().clone() };
+        let up_biases_buf = up_biases_arr.mtl_buffer_cloned();
 
         let mut down_biases_arr = experts_tree
             .subtree("down_projection")
@@ -246,7 +249,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let down_biases_buf = unsafe { down_biases_arr.mtl_buffer().clone() };
+        let down_biases_buf = down_biases_arr.mtl_buffer_cloned();
 
         let shared_weights = SharedMoeWeights {
             w13_buf: Rc::new(w13_buf),
@@ -291,7 +294,7 @@ impl EncodableBlock for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.active_suffix_length();
@@ -318,9 +321,9 @@ impl EncodableBlock for MoeBlock {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<MetalArray>| -> metal::Buffer {
+        let clone_buffer = |array: &RefCell<MetalArray>| -> Buffer {
             let mut borrow = array.borrow_mut();
-            let buffer = unsafe { borrow.mtl_buffer().clone() };
+            let buffer = unsafe { borrow.mtl_buffer().to_owned().into() };
             buffer
         };
 
@@ -360,7 +363,9 @@ impl EncodableBlock for MoeBlock {
             KernelDataType::Float32 => 4,
         };
 
-        let blit_encoder = root.new_blit_command_encoder();
+        let blit_encoder = root
+            .new_blit_command_encoder()
+            .expect("Failed to create blit command encoder");
 
         if suffix_length > 0 && k > 0 {
             let entries = suffix_length * k;
@@ -369,16 +374,16 @@ impl EncodableBlock for MoeBlock {
 
             // Clear topk_ids and tok2row buffers
             if topk_bytes > 0 {
-                blit_encoder.fill_buffer(
+                blit_encoder.fill_buffer_range_value(
                     &topk_ids_buf,
-                    metal::NSRange::new(0, topk_bytes as u64),
+                    NSRange::new(0, (topk_bytes as u64).try_into().unwrap()),
                     0xFF,
                 );
             }
             if tok2row_bytes > 0 {
-                blit_encoder.fill_buffer(
+                blit_encoder.fill_buffer_range_value(
                     &tok2row_buf,
-                    metal::NSRange::new(0, tok2row_bytes as u64),
+                    NSRange::new(0, (tok2row_bytes as u64).try_into().unwrap()),
                     0xFF,
                 );
             }
@@ -387,9 +392,9 @@ impl EncodableBlock for MoeBlock {
             let hidden_bytes =
                 (suffix_length * k * self.hidden_dim * dtype_size) as u64;
             if hidden_bytes > 0 {
-                blit_encoder.fill_buffer(
+                blit_encoder.fill_buffer_range_value(
                     &hidden_buf,
-                    metal::NSRange::new(0, hidden_bytes),
+                    NSRange::new(0, hidden_bytes.try_into().unwrap()),
                     0,
                 );
             }
@@ -398,9 +403,9 @@ impl EncodableBlock for MoeBlock {
             let y_partial_bytes =
                 (suffix_length * k * self.model_dim * dtype_size) as u64;
             if y_partial_bytes > 0 {
-                blit_encoder.fill_buffer(
+                blit_encoder.fill_buffer_range_value(
                     &y_partial_buf,
-                    metal::NSRange::new(0, y_partial_bytes),
+                    NSRange::new(0, y_partial_bytes.try_into().unwrap()),
                     0,
                 );
             }
@@ -409,9 +414,9 @@ impl EncodableBlock for MoeBlock {
             let x_perm_bytes =
                 (suffix_length * k * self.model_dim * dtype_size) as u64;
             if x_perm_bytes > 0 {
-                blit_encoder.fill_buffer(
+                blit_encoder.fill_buffer_range_value(
                     &x_perm_buf,
-                    metal::NSRange::new(0, x_perm_bytes),
+                    NSRange::new(0, x_perm_bytes.try_into().unwrap()),
                     0,
                 );
             }
@@ -428,7 +433,7 @@ impl EncodableBlock for MoeBlock {
                 // Use the fused router+topk kernel
                 self.router_topk_kernel
                     .encode(
-                        root,
+                        &root,
                         self.router_data_type,
                         MoeRouterTopKArguments {
                             input_buffer: &main_buf,
@@ -449,7 +454,7 @@ impl EncodableBlock for MoeBlock {
 
         self.counts_offsets_kernel
             .encode(
-                root,
+                &root,
                 MoeCountsOffsetsFusedArguments {
                     topk_ids_buffer: &topk_ids_buf,
                     offsets_buffer: &offsets_buf,
@@ -467,7 +472,7 @@ impl EncodableBlock for MoeBlock {
 
         self.scatter_kernels
             .encode_block_bases(
-                root,
+                &root,
                 MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
@@ -481,7 +486,7 @@ impl EncodableBlock for MoeBlock {
 
         self.scatter_kernels
             .encode_scatter_with_map(
-                root,
+                &root,
                 MoeScatterWithMapArguments {
                     base: MoeScatterArguments {
                         topk_ids_buffer: &topk_ids_buf,
@@ -505,7 +510,7 @@ impl EncodableBlock for MoeBlock {
 
         self.gather_kernel
             .encode(
-                root,
+                &root,
                 self.data_type,
                 MoeGatherArguments {
                     x_buffer: &main_buf,
@@ -538,7 +543,7 @@ impl EncodableBlock for MoeBlock {
 
             self.experts_two_pass_decode_kernel
                 .encode(
-                    root,
+                    &root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
                         expert_offsets: &offsets_buf,
@@ -575,7 +580,7 @@ impl EncodableBlock for MoeBlock {
 
             self.experts_two_pass_prefill_kernel
                 .encode(
-                    root,
+                    &root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
                         expert_offsets: &offsets_buf,
@@ -610,7 +615,7 @@ impl EncodableBlock for MoeBlock {
 
         self.finalize_kernel
             .encode(
-                root,
+                &root,
                 MoeFinalizeArguments {
                     tok2row_buffer: &tok2row_buf,
                     probs_buffer: &topk_probs_buf,
@@ -637,7 +642,7 @@ impl EncodableBlock for MoeBlock {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: &metal::ComputeCommandEncoderRef,
+        _encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         unreachable!("MoeBlock does not support shared compute encoder");

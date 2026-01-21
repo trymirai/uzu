@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use metal::{ComputeCommandEncoderRef, ComputePipelineState};
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputeEncoderLegacy, ComputePipelineState,
+};
 
 use super::{
     dispatch_descriptor::{AxpbySource, DispatchDescriptor},
@@ -116,7 +118,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {

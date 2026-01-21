@@ -3,15 +3,17 @@ const MTLB: &[u8] =
 
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
-use metal::{
-    CommandQueue as MTLCommandQueue,
-    ComputePipelineState as MTLComputePipelineState, Device as MTLDevice,
-    FunctionConstantValues, Library as MTLLibrary,
+use crate::backends::metal::{
+    ComputePipelineState, MTLBuffer, MTLCommandQueue, MTLComputePipelineState,
+    MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
+    MTLResourceExt, MTLResourceOptions,
 };
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
     MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
 };
+use crate::backends::metal::BufferLabelExt;
 use crate::{DataType, DeviceContext, array::array_size_in_bytes};
 
 /// Apple GPU architecture generation.
@@ -65,8 +67,8 @@ pub struct DeviceArchitecture {
 }
 
 impl DeviceArchitecture {
-    pub fn from_device(device: &MTLDevice) -> Self {
-        let arch_string = device.name().to_string();
+    pub fn from_device(device: &ProtocolObject<dyn MTLDevice>) -> Self {
+        let arch_string = device.name();
 
         // Extract generation from architecture name
         // Format is typically like "Apple M3 Pro" or the GPU name "applegpu_g15d"
@@ -129,17 +131,19 @@ impl DeviceArchitecture {
 }
 
 pub struct MTLContext {
-    pub device: MTLDevice,
-    pub command_queue: MTLCommandQueue,
+    pub device: Retained<ProtocolObject<dyn MTLDevice>>,
+    pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub architecture: DeviceArchitecture,
-    pub library: MTLLibrary,
-    pipeline_cache: RefCell<HashMap<String, MTLComputePipelineState>>,
+    pub library: Retained<ProtocolObject<dyn MTLLibrary>>,
+    pipeline_cache: RefCell<
+        HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    >,
 }
 
 impl MTLContext {
     pub fn new(
-        device: MTLDevice,
-        command_queue: MTLCommandQueue,
+        device: Retained<ProtocolObject<dyn MTLDevice>>,
+        command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     ) -> Result<Self, MTLError> {
         let library = match device.new_library_with_data(MTLB) {
             Ok(lib) => lib,
@@ -192,8 +196,9 @@ impl MTLContext {
     pub fn compute_pipeline_state(
         &self,
         function_name: &str,
-        constants: Option<&FunctionConstantValues>,
-    ) -> Result<MTLComputePipelineState, MTLError> {
+        constants: Option<&MTLFunctionConstantValues>,
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         // Only cache pipelines without constants
         if constants.is_some() {
             return self
@@ -207,8 +212,9 @@ impl MTLContext {
         &self,
         cache_key: &str,
         function_name: &str,
-        constants: Option<&FunctionConstantValues>,
-    ) -> Result<MTLComputePipelineState, MTLError> {
+        constants: Option<&MTLFunctionConstantValues>,
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
             return Ok(pipeline.clone());
         }
@@ -226,8 +232,11 @@ impl MTLContext {
     pub fn compute_pipeline_state_with_reflection(
         &self,
         function_name: &str,
-        constants: Option<&FunctionConstantValues>,
-    ) -> Result<(MTLComputePipelineState, Vec<String>), MTLError> {
+        constants: Option<&MTLFunctionConstantValues>,
+    ) -> Result<
+        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, Vec<String>),
+        MTLError,
+    > {
         // Only cache pipelines without constants
         if constants.is_some() {
             return self.library.compute_pipeline_state_with_reflection(
@@ -246,8 +255,11 @@ impl MTLContext {
         &self,
         cache_key: &str,
         function_name: &str,
-        constants: Option<&FunctionConstantValues>,
-    ) -> Result<(MTLComputePipelineState, Vec<String>), MTLError> {
+        constants: Option<&MTLFunctionConstantValues>,
+    ) -> Result<
+        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, Vec<String>),
+        MTLError,
+    > {
         if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
             return Ok((pipeline.clone(), Vec::new()));
         }
@@ -273,16 +285,17 @@ impl DeviceContext for MTLContext {
         data_type: DataType,
         label: String,
     ) -> MetalArray {
-        unsafe {
-            let buffer_size_bytes = array_size_in_bytes(shape, data_type);
+        let buffer_size_bytes = array_size_in_bytes(shape, data_type);
 
-            let buffer = self.device.new_buffer(
-                buffer_size_bytes as u64,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
-            buffer.set_label(label.as_str());
-            MetalArray::new(buffer, shape, data_type)
-        }
+        let buffer = self
+            .device
+            .new_buffer(
+                buffer_size_bytes,
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
+        buffer.set_label(Some(&label));
+        MetalArray::new(buffer, shape, data_type)
     }
 }
 

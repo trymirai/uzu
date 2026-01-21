@@ -1,11 +1,10 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError,
+    mtl_size,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 const THREADS_PER_THREADGROUP: usize = 256;
 const MAX_EXPERTS: usize = 512;
@@ -25,18 +24,18 @@ pub enum MoeRouterTopKError {
 }
 
 pub struct MoeRouterTopKKernel {
-    pipeline_f16: MTLComputePipelineState,
-    pipeline_f32: MTLComputePipelineState,
-    pipeline_bf16: MTLComputePipelineState,
+    pipeline_f16: ComputePipelineState,
+    pipeline_f32: ComputePipelineState,
+    pipeline_bf16: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeRouterTopKArguments<'a> {
-    pub input_buffer: &'a MTLBuffer,  // [T, d_model]
-    pub weight_buffer: &'a MTLBuffer, // [E, d_model]
-    pub bias_buffer: &'a MTLBuffer,   // [E]
-    pub topk_ids_buffer: &'a MTLBuffer, // [T, K]
-    pub topk_probs_buffer: &'a MTLBuffer, // [T, K]
+    pub input_buffer: BufferRef<'a>,  // [T, d_model]
+    pub weight_buffer: BufferRef<'a>, // [E, d_model]
+    pub bias_buffer: BufferRef<'a>,   // [E]
+    pub topk_ids_buffer: BufferRef<'a>, // [T, K]
+    pub topk_probs_buffer: BufferRef<'a>, // [T, K]
     pub t: usize,
     pub d_model: usize,
     pub e: usize,
@@ -85,7 +84,8 @@ impl MoeRouterTopKKernel {
             });
         }
 
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f16)
@@ -140,8 +140,8 @@ impl MoeRouterTopKKernel {
             &renorm_u32 as *const u32 as *const _,
         );
 
-        let threadgroups = MTLSize::new(1, args.t as u64, 1);
-        let threads_per_tg = MTLSize::new(THREADS_PER_THREADGROUP as u64, 1, 1);
+        let threadgroups = mtl_size(1, args.t as u64, 1);
+        let threads_per_tg = mtl_size(THREADS_PER_THREADGROUP as u64, 1, 1);
 
         compute_encoder.dispatch_thread_groups(threadgroups, threads_per_tg);
         compute_encoder.end_encoding();

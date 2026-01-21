@@ -2,7 +2,9 @@
 
 use std::rc::Rc;
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -303,7 +305,7 @@ impl EncodableBlock for LayerExecutables {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
@@ -311,7 +313,8 @@ impl EncodableBlock for LayerExecutables {
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder = command_buffer.new_compute_command_encoder();
+                let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
                 self.encode_with_shared_encoder(state, &encoder, parameters);
                 encoder.end_encoding();
                 return;
@@ -528,7 +531,7 @@ impl EncodableBlock for LayerExecutables {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         parameters: &EncodingParameters,
     ) {
         debug_assert!(

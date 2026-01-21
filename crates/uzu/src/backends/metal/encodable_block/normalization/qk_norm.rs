@@ -2,7 +2,10 @@
 
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
+    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions,
+};
 
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -25,8 +28,8 @@ pub struct QKNorm {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<MTLBuffer>,
-    key_scales_buffer: Option<MTLBuffer>,
+    query_scales_buffer: Option<Buffer>,
+    key_scales_buffer: Option<Buffer>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -62,9 +65,8 @@ impl QKNorm {
 
             let scales_data = scales_param.buffer();
             let scales_buffer = context.device.new_buffer_with_data(
-                scales_data.as_ptr() as *const _,
-                scales_data.len() as u64,
-                metal::MTLResourceOptions::StorageModeShared,
+                scales_data,
+                MTLResourceOptions::STORAGE_MODE_SHARED,
             );
 
             let accumulation_data_type: DataType =
@@ -109,9 +111,8 @@ impl QKNorm {
 
             let scales_data = scales_param.buffer();
             let scales_buffer = context.device.new_buffer_with_data(
-                scales_data.as_ptr() as *const _,
-                scales_data.len() as u64,
-                metal::MTLResourceOptions::StorageModeShared,
+                scales_data,
+                MTLResourceOptions::STORAGE_MODE_SHARED,
             );
 
             let accumulation_data_type: DataType =
@@ -149,8 +150,8 @@ impl QKNorm {
             query_config,
             key_config,
             qkv_array_id,
-            query_scales_buffer,
-            key_scales_buffer,
+            query_scales_buffer: query_scales_buffer.flatten(),
+            key_scales_buffer: key_scales_buffer.flatten(),
             num_q_heads,
             num_kv_heads,
             head_dim,
@@ -162,10 +163,11 @@ impl EncodableBlock for QKNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -182,7 +184,7 @@ impl EncodableBlock for QKNorm {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);

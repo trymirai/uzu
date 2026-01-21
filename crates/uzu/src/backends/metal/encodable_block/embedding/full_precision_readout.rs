@@ -1,6 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
+    MTLCommandEncoder,
+};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -18,7 +21,7 @@ use crate::{
 
 pub struct FullPrecisionEmbeddingReadout {
     kernel: RefCell<MatmulKernel>,
-    weights_buffer: MTLBuffer,
+    weights_buffer: Buffer,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -75,7 +78,7 @@ impl FullPrecisionEmbeddingReadout {
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            weights_buffer,
+            weights_buffer: weights_buffer.into(),
             vocab_size,
             model_dim,
         })
@@ -86,10 +89,11 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -106,7 +110,7 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);

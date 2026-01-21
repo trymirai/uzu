@@ -10,10 +10,12 @@ pub enum DeviceClass {
 
 impl DeviceClass {
     pub fn detect() -> Self {
-        let device = match metal::Device::system_default() {
-            Some(d) => d,
-            None => return DeviceClass::Unknown,
-        };
+        use metal::MTLDeviceExt as _;
+        let device: crate::backends::metal::Device =
+            match <dyn metal::MTLDevice>::system_default() {
+                Some(dev) => dev,
+                None => return DeviceClass::Unknown,
+            };
 
         let name = device.name().to_lowercase();
 

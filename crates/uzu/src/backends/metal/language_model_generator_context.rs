@@ -6,7 +6,12 @@ use std::{
     rc::Rc,
 };
 
-use metal::{CommandBuffer, Event as MTLEvent};
+use metal::{MTLCommandQueue, MTLDeviceExt};
+
+use metal::MTLBuffer as _;
+use crate::backends::metal::{
+    CommandBuffer, Event, MTLCommandQueueExt, MTLResourceOptions, Buffer, Device, MTLEvent, MTLDevice,
+};
 
 use super::{
     CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
@@ -28,20 +33,22 @@ use crate::{
     },
 };
 
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 /// Pre-allocated buffers for async generation pipeline.
 /// Indexed by pass_idx to avoid race conditions between GPU passes.
 pub struct AsyncBuffers {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: metal::Buffer,
+    pub positions: Buffer,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: metal::Buffer,
+    pub seeds: Buffer,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: metal::Buffer,
+    pub results: Buffer,
     /// Metal event for GPU-side synchronization between passes
-    pub event: MTLEvent,
+    pub event: Retained<ProtocolObject<dyn MTLEvent>>,
     /// Current event counter (pass N waits on N, signals N+1)
     pub counter: Cell<u64>,
     /// Number of tokens after prefill (base for position calculation)
@@ -52,23 +59,23 @@ pub struct AsyncBuffers {
 
 impl AsyncBuffers {
     pub fn new(
-        device: &metal::DeviceRef,
+        device: &Device,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
         let positions = device.new_buffer(
-            (max_tokens * std::mem::size_of::<i32>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+            (max_tokens * std::mem::size_of::<i32>()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        ).expect("Failed to create positions buffer");
         let seeds = device.new_buffer(
-            (max_tokens * std::mem::size_of::<u64>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+            (max_tokens * std::mem::size_of::<u64>()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        ).expect("Failed to create seeds buffer");
         let results = device.new_buffer(
-            (batch_size * std::mem::size_of::<u32>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
-        let event = device.new_event();
+            (batch_size * std::mem::size_of::<u32>()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        ).expect("Failed to create results buffer");
+        let event = device.new_event().expect("Failed to create event");
 
         Self {
             positions,
@@ -90,7 +97,7 @@ impl AsyncBuffers {
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.contents() as *mut i32;
+        let ptr = self.positions.contents().as_ptr() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = (base_position + i) as i32;
@@ -104,7 +111,7 @@ impl AsyncBuffers {
         seed_source: &mut DerivableSeed,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.contents() as *mut u64;
+        let ptr = self.seeds.contents().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed_source.next();
@@ -122,7 +129,7 @@ impl AsyncBuffers {
         &self,
         pass_idx: usize,
     ) -> u32 {
-        let ptr = self.results.contents() as *const u32;
+        let ptr = self.results.contents().as_ptr() as *const u32;
         unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }
@@ -156,12 +163,11 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let mtl_device = metal::Device::system_default()
-            .ok_or(Error::UnableToCreateMetalContext)?;
+        let mtl_device: Device = <dyn metal::MTLDevice>::system_default().ok_or(Error::UnableToCreateMetalContext)?;
         let mtl_command_queue =
-            mtl_device.new_command_queue_with_max_command_buffer_count(1024);
+            mtl_device.new_command_queue_with_max_command_buffer_count(1024).ok_or(Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = mtl_command_queue.new_command_buffer().to_owned();
+        let command_buffer = mtl_command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -306,6 +312,6 @@ impl LanguageModelGeneratorContext {
 
     pub fn reset_command_buffer(&mut self) {
         self.command_buffer =
-            self.mtl_context.command_queue.new_command_buffer().to_owned();
+            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
     }
 }

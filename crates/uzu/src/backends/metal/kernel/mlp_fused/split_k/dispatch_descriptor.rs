@@ -1,4 +1,4 @@
-use metal::MTLSize;
+use crate::backends::metal::{MTLSize, mtl_size};
 
 use super::{
     pipeline_configuration::PipelineConfiguration,
@@ -92,21 +92,21 @@ impl DispatchDescriptor {
             hidden_dim,
         };
 
-        let partial_threads_per_threadgroup = MTLSize::new(
+        let partial_threads_per_threadgroup = mtl_size(
             32,
             tile.warps_per_col as u64,
             tile.warps_per_row as u64,
         );
-        let partial_threadgroups = MTLSize::new(
+        let partial_threadgroups = mtl_size(
             tile_count_n as u64,
             tile_count_m as u64,
             partition_count as u64,
         );
 
         let accum_total_threads =
-            MTLSize::new(hidden_dim as u64, batch as u64, 1);
+            mtl_size(hidden_dim as u64, batch as u64, 1);
         let accum_threads_per_threadgroup =
-            MTLSize::new(16.min(hidden_dim as u64), 16.min(batch as u64), 1);
+            mtl_size(16.min(hidden_dim as u64), 16.min(batch as u64), 1);
 
         Ok(Some(Self {
             pipeline_configuration,

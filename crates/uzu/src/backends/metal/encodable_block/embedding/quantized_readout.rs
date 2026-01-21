@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use metal::MTLBuffer as _;
+use crate::backends::metal::{
+    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
+    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions, MTLBuffer,
+};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -21,9 +25,9 @@ use crate::{
 
 pub struct QuantizedEmbeddingReadout {
     kernel: QuantizedMatmulKernel,
-    weights_buffer: MTLBuffer,
-    scales_buffer: MTLBuffer,
-    biases_buffer: MTLBuffer,
+    weights_buffer: Buffer,
+    scales_buffer: Buffer,
+    biases_buffer: Buffer,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -137,7 +141,7 @@ impl QuantizedEmbeddingReadout {
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
+        let biases_buffer: Buffer = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(EmbeddingError::MetalError(MTLError::Generic(
@@ -154,7 +158,7 @@ impl QuantizedEmbeddingReadout {
                         deq_biases.data_type(),
                     ));
                 }
-                unsafe { deq_biases.mtl_buffer().to_owned() }
+                unsafe { deq_biases.mtl_buffer().to_owned().into() }
             },
             Err(_) => {
                 // Allocate zero-initialized biases buffer
@@ -167,12 +171,12 @@ impl QuantizedEmbeddingReadout {
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
                 let buf = mtl_context.device.new_buffer(
-                    size_bytes,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
+                    size_bytes.try_into().unwrap(),
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                ).expect("Failed to allocate buffer");
                 unsafe {
                     std::ptr::write_bytes(
-                        buf.contents(),
+                        metal::MTLBuffer::contents(&*buf).as_ptr(),
                         0,
                         size_bytes as usize,
                     );
@@ -181,8 +185,8 @@ impl QuantizedEmbeddingReadout {
             },
         };
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
-        let scales_buffer = unsafe { scales.mtl_buffer().to_owned() };
+        let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
+        let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };
 
         let kernel = QuantizedMatmulKernel::new(
             mtl_context,
@@ -216,10 +220,11 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -236,7 +241,7 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);

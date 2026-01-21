@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
+use crate::backends::metal::{
+    Buffer, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState as ComputePipelineState, MTLDeviceExt, MTLResourceOptions,
 };
 
 use super::{
@@ -21,9 +21,9 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
-    accum_pipeline: Option<MTLComputePipelineState>,
-    accumulator_buffer: Option<MTLBuffer>,
+    partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    accum_pipeline: Option<ComputePipelineState>,
+    accumulator_buffer: Option<Buffer>,
     accumulator_buffer_bytes: usize,
 }
 
@@ -167,7 +167,7 @@ impl Kernel {
         &mut self,
         mtl: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&ComputePipelineState, MTLError> {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -179,7 +179,7 @@ impl Kernel {
     fn get_accum_pipeline(
         &mut self,
         mtl: &MTLContext,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&ComputePipelineState, MTLError> {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -209,7 +209,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -283,9 +283,9 @@ impl Kernel {
             return;
         }
         self.accumulator_buffer = Some(mtl.device.new_buffer(
-            required_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        ));
+            required_bytes as usize,
+            MTLResourceOptions::STORAGE_MODE_PRIVATE,
+        ).expect("Failed to create accumulator buffer"));
         self.accumulator_buffer_bytes = required_bytes;
     }
 }

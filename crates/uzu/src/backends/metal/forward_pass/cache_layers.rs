@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use metal::CommandBuffer as MTLCommandBuffer;
+use crate::backends::metal::{CommandBuffer, CommandBufferRef};
 
 use super::{
     super::{MTLContext, MetalArray},
@@ -291,7 +291,7 @@ impl CacheLayers {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: CommandBufferRef<'_>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         for layer in self.data.iter_mut() {

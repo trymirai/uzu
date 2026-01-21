@@ -1,18 +1,14 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, MTLContext, MTLError, MTLSize, mtl_size,
 };
 
-use crate::{
-    DataType,
-    backends::metal::{MTLContext, MTLError},
-    config::Activation,
-};
+use crate::{DataType, config::Activation};
 
 pub struct ActivationKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 impl ActivationKernel {
@@ -56,10 +52,10 @@ impl ActivationKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: ComputeCommandEncoderRef<'_>,
         activation: &Activation,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        input_buffer: BufferRef<'_>,
+        output_buffer: BufferRef<'_>,
         n: usize,
     ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
@@ -81,8 +77,8 @@ impl ActivationKernel {
         );
 
         encoder.dispatch_thread_groups(
-            MTLSize::new(threadgroups, 1, 1),
-            MTLSize::new(threads_per_tg, 1, 1),
+            mtl_size(threadgroups, 1, 1),
+            mtl_size(threads_per_tg, 1, 1),
         );
         Ok(())
     }

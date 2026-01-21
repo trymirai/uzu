@@ -1,20 +1,18 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+        ComputePipelineState, MTLContext, MTLError, MTLSize,
+    },
 };
 
 #[derive(Debug)]
 pub struct LayerNormArguments<'a> {
-    pub input_buffer: &'a MTLBuffer,
-    pub scales_buffer: &'a MTLBuffer,
-    pub output_buffer: &'a MTLBuffer,
+    pub input_buffer: BufferRef<'a>,
+    pub scales_buffer: BufferRef<'a>,
+    pub output_buffer: BufferRef<'a>,
     pub batch_size: i32,
     pub model_dim: i32,
     pub epsilon: f32,
@@ -37,7 +35,7 @@ pub enum LayerNormError {
 }
 
 pub struct LayerNormKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 impl LayerNormKernel {
@@ -107,7 +105,7 @@ impl LayerNormKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: LayerNormArguments,
     ) -> Result<(), LayerNormError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
@@ -136,7 +134,7 @@ impl LayerNormKernel {
         );
 
         let threadgroups_per_grid = MTLSize {
-            width: args.batch_size as u64,
+            width: args.batch_size as usize,
             height: 1,
             depth: 1,
         };

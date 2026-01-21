@@ -1,16 +1,19 @@
-use std::mem::size_of;
+use std::{mem::size_of, ptr::NonNull};
 
-use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputeCommandEncoderRef as MTLComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLResourceOptions,
-    MTLSize,
-};
+use objc2_foundation::NSString;
 use thiserror::Error;
 
 use super::{
     super::MTLError, KernelDataType, MTLContext,
     metal_extensions::ComputeEncoderDispatch,
+};
+use crate::backends::metal::{
+    Buffer, CommandBuffer as MTLCommandBuffer,
+    ComputeCommandEncoderRef as MTLComputeCommandEncoderRef,
+    ComputePipelineState, MTLBuffer, MTLCommandBuffer as MTLCommandBufferTrait,
+    MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
+    MTLDeviceExt, MTLResourceOptions, MTLSize,
+    BufferLabelExt, mtl_size,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -21,15 +24,15 @@ pub struct Swap {
 }
 
 pub struct KVLayerData {
-    pub key_buffer: MTLBuffer,
+    pub key_buffer: Buffer,
     pub key_shape: [usize; 3],
-    pub value_buffer: MTLBuffer,
+    pub value_buffer: Buffer,
     pub value_shape: [usize; 3],
 }
 
 pub struct KVCacheUpdate {
-    pipeline_state: MTLComputePipelineState,
-    indices_buffer: MTLBuffer,
+    pipeline_state: ComputePipelineState,
+    indices_buffer: Buffer,
     max_sequence_length: usize,
 }
 
@@ -66,10 +69,13 @@ impl KVCacheUpdate {
             .compute_pipeline_state_with_reflection(&function_name, None)
             .map_err(|e| KVCacheUpdateError::MetalError(e))?;
 
-        let indices_buffer = context.device.new_buffer(
-            (max_sequence_length * size_of::<Swap>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let indices_buffer = context
+            .device
+            .new_buffer(
+                max_sequence_length * size_of::<Swap>(),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .ok_or(KVCacheUpdateError::BufferCreationFailed)?;
 
         Ok(Self {
             pipeline_state,
@@ -85,14 +91,16 @@ impl KVCacheUpdate {
         destination_indices: &[usize],
         command_buffer: &MTLCommandBuffer,
     ) -> Result<(), KVCacheUpdateError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
-        compute_encoder.set_label("KV Cache Update");
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+        compute_encoder.set_label(Some("KV Cache Update"));
 
         self.encode_with_encoder(
             in_place_data,
             source_indices,
             destination_indices,
-            &compute_encoder,
+            &*compute_encoder,
         )?;
 
         compute_encoder.end_encoding();
@@ -105,7 +113,7 @@ impl KVCacheUpdate {
         in_place_data: &[KVLayerData],
         source_indices: &[usize],
         destination_indices: &[usize],
-        compute_encoder: &MTLComputeCommandEncoderRef,
+        compute_encoder: MTLComputeCommandEncoderRef<'_>,
     ) -> Result<(), KVCacheUpdateError> {
         if source_indices.len() != destination_indices.len() {
             return Err(KVCacheUpdateError::IndicesCountMismatch);
@@ -121,7 +129,8 @@ impl KVCacheUpdate {
         let use_inline_bytes = swaps.len() <= 32;
 
         if !use_inline_bytes {
-            let indices_ptr = self.indices_buffer.contents() as *mut Swap;
+            let indices_ptr =
+                self.indices_buffer.contents().as_ptr() as *mut Swap;
             unsafe {
                 for (i, swap) in swaps.iter().enumerate() {
                     *indices_ptr.add(i) = *swap;
@@ -138,44 +147,60 @@ impl KVCacheUpdate {
                 layer_data.key_shape;
 
             // Set buffers and parameters
-            compute_encoder.set_buffer(0, Some(&layer_data.key_buffer), 0);
-            compute_encoder.set_buffer(1, Some(&layer_data.value_buffer), 0);
+            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&layer_data.key_buffer), 0, 0);
+            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&layer_data.value_buffer), 0, 1);
             if use_inline_bytes {
-                compute_encoder.set_bytes(
-                    2,
-                    (swaps.len() * size_of::<Swap>()) as u64,
-                    swaps.as_ptr() as *const std::ffi::c_void,
-                );
+                unsafe {
+                    MTLComputeCommandEncoder::set_bytes(
+                        compute_encoder,
+                        NonNull::new_unchecked(swaps.as_ptr() as *mut _),
+                        swaps.len() * size_of::<Swap>(),
+                        2,
+                    );
+                }
             } else {
-                compute_encoder.set_buffer(2, Some(&self.indices_buffer), 0);
+                MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&self.indices_buffer), 0, 2);
             }
-            compute_encoder.set_bytes(
-                3,
-                size_of::<i32>() as u64,
-                &(swaps.len() as i32) as *const _ as *const std::ffi::c_void,
-            );
-            compute_encoder.set_bytes(
-                4,
-                size_of::<i32>() as u64,
-                &(num_heads as i32) as *const _ as *const std::ffi::c_void,
-            );
-            compute_encoder.set_bytes(
-                5,
-                size_of::<i32>() as u64,
-                &(max_sequence_length as i32) as *const _
-                    as *const std::ffi::c_void,
-            );
-            compute_encoder.set_bytes(
-                6,
-                size_of::<i32>() as u64,
-                &(head_dim as i32) as *const _ as *const std::ffi::c_void,
-            );
+            unsafe {
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &(swaps.len() as i32) as *const _ as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    3,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &(num_heads as i32) as *const _ as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    4,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &(max_sequence_length as i32) as *const _ as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    5,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &(head_dim as i32) as *const _ as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    6,
+                );
+            }
 
             compute_encoder.dispatch_2d_exactly(
                 &self.pipeline_state,
                 MTLSize {
-                    width: num_heads as u64,
-                    height: head_dim as u64,
+                    width: num_heads as usize,
+                    height: head_dim as usize,
                     depth: 1,
                 },
                 None,

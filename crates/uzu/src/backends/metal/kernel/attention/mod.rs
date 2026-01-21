@@ -1,13 +1,15 @@
-use std::{collections::HashMap, mem::size_of};
+use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
-};
 use thiserror::Error;
 
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
+use objc2::rc::Retained;
+
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputePipelineState,
+    FunctionConstantValues, FunctionConstantValuesLegacy, KernelDataType,
+    MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError, MTLSize,
+    mtl_size,
+};
 
 mod gemm_types;
 use gemm_types::{AttnMaskParams, AttnParams};
@@ -21,10 +23,10 @@ pub enum AttentionKernelVariant {
 type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
-    single_pass: HashMap<PipelineKey, MTLComputePipelineState>,
-    two_pass_1: HashMap<PipelineKey, MTLComputePipelineState>,
-    two_pass_2: HashMap<usize, MTLComputePipelineState>,
-    kv_cache_update: Option<MTLComputePipelineState>,
+    single_pass: HashMap<PipelineKey, ComputePipelineState>,
+    two_pass_1: HashMap<PipelineKey, ComputePipelineState>,
+    two_pass_2: HashMap<usize, ComputePipelineState>,
+    kv_cache_update: Option<ComputePipelineState>,
 }
 
 pub struct AttentionKernel {
@@ -43,10 +45,10 @@ pub enum AttentionError {
 }
 
 pub struct AttentionSinglePassArguments<'a> {
-    pub queries_buffer: &'a MTLBuffer, // buffer(0)
-    pub keys_buffer: &'a MTLBuffer,    // buffer(1)
-    pub values_buffer: &'a MTLBuffer,  // buffer(2)
-    pub output_buffer: &'a MTLBuffer,  // buffer(3)
+    pub queries_buffer: BufferRef<'a>, // buffer(0)
+    pub keys_buffer: BufferRef<'a>,    // buffer(1)
+    pub values_buffer: BufferRef<'a>,  // buffer(2)
+    pub output_buffer: BufferRef<'a>,  // buffer(3)
     pub gqa_factor: i32,               // buffer(4)
     pub sequence_length: i32,          // buffer(5) - sequence_length
     pub k_head_stride: i32,            // buffer(6)
@@ -54,11 +56,11 @@ pub struct AttentionSinglePassArguments<'a> {
     pub v_head_stride: i32,            // buffer(8)
     pub v_seq_stride: i32,             // buffer(9)
     pub scale: f32,                    // buffer(10)
-    pub mask_buffer: Option<&'a MTLBuffer>, // buffer(11/12)
+    pub mask_buffer: Option<BufferRef<'a>>, // buffer(11/12)
     pub mask_kv_seq_stride: i32,       // buffer(13)
     pub mask_q_seq_stride: i32,        // buffer(14)
     pub mask_head_stride: i32,         // buffer(15)
-    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(16)
+    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(16)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -66,13 +68,13 @@ pub struct AttentionSinglePassArguments<'a> {
 }
 
 pub struct AttentionTwoPassArguments<'a> {
-    pub queries_buffer: &'a MTLBuffer,  // buffer(0)
-    pub keys_buffer: &'a MTLBuffer,     // buffer(1)
-    pub values_buffer: &'a MTLBuffer,   // buffer(2)
-    pub partials_buffer: &'a MTLBuffer, // buffer(3) - pass 1 output
-    pub sums_buffer: &'a MTLBuffer,     // buffer(4) - pass 1 output
-    pub maxs_buffer: &'a MTLBuffer,     // buffer(5) - pass 1 output
-    pub output_buffer: &'a MTLBuffer,   // buffer(3) - pass 2 output
+    pub queries_buffer: BufferRef<'a>,  // buffer(0)
+    pub keys_buffer: BufferRef<'a>,     // buffer(1)
+    pub values_buffer: BufferRef<'a>,   // buffer(2)
+    pub partials_buffer: BufferRef<'a>, // buffer(3) - pass 1 output
+    pub sums_buffer: BufferRef<'a>,     // buffer(4) - pass 1 output
+    pub maxs_buffer: BufferRef<'a>,     // buffer(5) - pass 1 output
+    pub output_buffer: BufferRef<'a>,   // buffer(3) - pass 2 output
     pub gqa_factor: i32,                // buffer(6)
     pub sequence_length: i32,           // buffer(7) - sequence_length
     pub k_head_stride: i32,             // buffer(8)
@@ -80,11 +82,11 @@ pub struct AttentionTwoPassArguments<'a> {
     pub v_head_stride: i32,             // buffer(10)
     pub v_seq_stride: i32,              // buffer(11)
     pub scale: f32,                     // buffer(12)
-    pub mask_buffer: Option<&'a MTLBuffer>, // buffer(13/14)
+    pub mask_buffer: Option<BufferRef<'a>>, // buffer(13/14)
     pub mask_kv_seq_stride: i32,        // buffer(15)
     pub mask_q_seq_stride: i32,         // buffer(16)
     pub mask_head_stride: i32,          // buffer(17)
-    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(18)
+    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(18)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -92,10 +94,10 @@ pub struct AttentionTwoPassArguments<'a> {
 }
 
 pub struct KVCacheUpdateArguments<'a> {
-    pub rotated_keys_buffer: &'a MTLBuffer, // buffer(0)
-    pub qkv_buffer: &'a MTLBuffer,          // buffer(1)
-    pub key_cache_buffer: &'a MTLBuffer,    // buffer(2)
-    pub value_cache_buffer: &'a MTLBuffer,  // buffer(3)
+    pub rotated_keys_buffer: BufferRef<'a>, // buffer(0)
+    pub qkv_buffer: BufferRef<'a>,          // buffer(1)
+    pub key_cache_buffer: BufferRef<'a>,    // buffer(2)
+    pub value_cache_buffer: BufferRef<'a>,  // buffer(3)
     pub num_groups: usize,
     pub num_heads: usize,
     pub head_dim: usize,
@@ -105,12 +107,12 @@ pub struct KVCacheUpdateArguments<'a> {
 }
 
 pub struct AttentionGemmArguments<'a> {
-    pub queries_buffer: &'a MTLBuffer, // buffer(0)
-    pub keys_buffer: &'a MTLBuffer,    // buffer(1)
-    pub values_buffer: &'a MTLBuffer,  // buffer(2)
-    pub output_buffer: &'a MTLBuffer,  // buffer(3)
-    pub mask_buffer: Option<&'a MTLBuffer>, // buffer(6)
-    pub sinks_buffer: Option<&'a MTLBuffer>, // buffer(7)
+    pub queries_buffer: BufferRef<'a>, // buffer(0)
+    pub keys_buffer: BufferRef<'a>,    // buffer(1)
+    pub values_buffer: BufferRef<'a>,  // buffer(2)
+    pub output_buffer: BufferRef<'a>,  // buffer(3)
+    pub mask_buffer: Option<BufferRef<'a>>, // buffer(6)
+    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(7)
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -126,7 +128,7 @@ fn make_function_constants(
     has_mask_value: bool,
     has_sinks_value: bool,
     is_causal_value: bool,
-) -> FunctionConstantValues {
+) -> Retained<FunctionConstantValues> {
     let function_constants = FunctionConstantValues::new();
 
     let query_transposed_value = false;
@@ -308,7 +310,7 @@ impl AttentionKernel {
 
     pub fn encode_single_pass(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: AttentionSinglePassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
@@ -319,70 +321,135 @@ impl AttentionKernel {
             .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
             .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
 
-        compute_encoder.set_compute_pipeline_state(pipeline);
-
-        compute_encoder.set_buffer(0, Some(args.queries_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.keys_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.values_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.output_buffer), 0);
-
-        compute_encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &args.gqa_factor as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &args.sequence_length as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &args.k_head_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &args.k_seq_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<i32>() as u64,
-            &args.v_head_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<i32>() as u64,
-            &args.v_seq_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<f32>() as u64,
-            &args.scale as *const f32 as *const _,
+        MTLComputeCommandEncoder::set_compute_pipeline_state(
+            compute_encoder,
+            pipeline,
         );
 
-        if let Some(mask_buffer) = args.mask_buffer {
-            compute_encoder.set_buffer(12, Some(mask_buffer), 0); // float_mask
-            compute_encoder.set_bytes(
-                13,
-                size_of::<i32>() as u64,
-                &args.mask_kv_seq_stride as *const i32 as *const _,
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.queries_buffer),
+            0,
+            0,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.keys_buffer),
+            0,
+            1,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.values_buffer),
+            0,
+            2,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.output_buffer),
+            0,
+            3,
+        );
+
+        unsafe {
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.gqa_factor as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                4,
             );
-            compute_encoder.set_bytes(
-                14,
-                size_of::<i32>() as u64,
-                &args.mask_q_seq_stride as *const i32 as *const _,
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.sequence_length as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                5,
             );
-            compute_encoder.set_bytes(
-                15,
-                size_of::<i32>() as u64,
-                &args.mask_head_stride as *const i32 as *const _,
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.k_head_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                6,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.k_seq_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                7,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.v_head_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                8,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.v_seq_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                9,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(&args.scale as *const f32 as *mut _),
+                size_of::<f32>(),
+                10,
             );
         }
 
+        if let Some(mask_buffer) = args.mask_buffer {
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(mask_buffer),
+                0,
+                12,
+            ); // float_mask
+            unsafe {
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_kv_seq_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    13,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_q_seq_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    14,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_head_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    15,
+                );
+            }
+        }
+
         if let Some(sinks_buffer) = args.sinks_buffer {
-            compute_encoder.set_buffer(16, Some(sinks_buffer), 0);
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(sinks_buffer),
+                0,
+                16,
+            );
         }
 
         let threads_per_threadgroup = MTLSize {
@@ -391,13 +458,10 @@ impl AttentionKernel {
             depth: 1,
         };
 
-        let threadgroups_per_grid = MTLSize {
-            width: args.num_heads as u64,
-            height: args.suffix_length as u64,
-            depth: 1,
-        };
+        let threadgroups_per_grid =
+            mtl_size(args.num_heads as u64, args.suffix_length as u64, 1);
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );
@@ -406,7 +470,7 @@ impl AttentionKernel {
 
     pub fn encode_two_pass(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: AttentionTwoPassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
@@ -422,73 +486,148 @@ impl AttentionKernel {
                 AttentionError::UnsupportedHeadDim(args.head_dim)
             })?;
 
-        compute_encoder.set_compute_pipeline_state(pass1_pipeline);
-
-        compute_encoder.set_buffer(0, Some(args.queries_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.keys_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.values_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.partials_buffer), 0);
-        compute_encoder.set_buffer(4, Some(args.sums_buffer), 0);
-        compute_encoder.set_buffer(5, Some(args.maxs_buffer), 0);
-
-        compute_encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &args.gqa_factor as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &args.sequence_length as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<i32>() as u64,
-            &args.k_head_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<i32>() as u64,
-            &args.k_seq_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<i32>() as u64,
-            &args.v_head_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<i32>() as u64,
-            &args.v_seq_stride as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            12,
-            size_of::<f32>() as u64,
-            &args.scale as *const f32 as *const _,
+        MTLComputeCommandEncoder::set_compute_pipeline_state(
+            compute_encoder,
+            pass1_pipeline,
         );
 
-        // Set mask buffer if present
-        if let Some(mask_buffer) = args.mask_buffer {
-            compute_encoder.set_buffer(14, Some(mask_buffer), 0); // float_mask
-            compute_encoder.set_bytes(
-                15,
-                size_of::<i32>() as u64,
-                &args.mask_kv_seq_stride as *const i32 as *const _,
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.queries_buffer),
+            0,
+            0,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.keys_buffer),
+            0,
+            1,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.values_buffer),
+            0,
+            2,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.partials_buffer),
+            0,
+            3,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.sums_buffer),
+            0,
+            4,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.maxs_buffer),
+            0,
+            5,
+        );
+
+        unsafe {
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.gqa_factor as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                6,
             );
-            compute_encoder.set_bytes(
-                16,
-                size_of::<i32>() as u64,
-                &args.mask_q_seq_stride as *const i32 as *const _,
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.sequence_length as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                7,
             );
-            compute_encoder.set_bytes(
-                17,
-                size_of::<i32>() as u64,
-                &args.mask_head_stride as *const i32 as *const _,
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.k_head_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                8,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.k_seq_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                9,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.v_head_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                10,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &args.v_seq_stride as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                11,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(&args.scale as *const f32 as *mut _),
+                size_of::<f32>(),
+                12,
             );
         }
 
+        // Set mask buffer if present
+        if let Some(mask_buffer) = args.mask_buffer {
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(mask_buffer),
+                0,
+                14,
+            ); // float_mask
+            unsafe {
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_kv_seq_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    15,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_q_seq_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    16,
+                );
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &args.mask_head_stride as *const i32 as *mut _,
+                    ),
+                    size_of::<i32>(),
+                    17,
+                );
+            }
+        }
+
         if let Some(sinks_buffer) = args.sinks_buffer {
-            compute_encoder.set_buffer(18, Some(sinks_buffer), 0);
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(sinks_buffer),
+                0,
+                18,
+            );
         }
 
         let total_blocks_count = 32u64;
@@ -497,36 +636,56 @@ impl AttentionKernel {
             height: 1,
             depth: 1,
         };
-        let pass1_threadgroups_per_grid = MTLSize {
-            width: args.num_heads as u64,
-            height: args.suffix_length as u64,
-            depth: total_blocks_count,
-        };
+        let pass1_threadgroups_per_grid = mtl_size(
+            args.num_heads as u64,
+            args.suffix_length as u64,
+            total_blocks_count as u64,
+        );
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             pass1_threadgroups_per_grid,
             pass1_threads_per_threadgroup,
         );
 
-        compute_encoder.set_compute_pipeline_state(pass2_pipeline);
+        MTLComputeCommandEncoder::set_compute_pipeline_state(
+            compute_encoder,
+            pass2_pipeline,
+        );
 
-        compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.sums_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.maxs_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.output_buffer), 0);
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.partials_buffer),
+            0,
+            0,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.sums_buffer),
+            0,
+            1,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.maxs_buffer),
+            0,
+            2,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.output_buffer),
+            0,
+            3,
+        );
 
         let pass2_threads_per_threadgroup = MTLSize {
             width: 32 * 32,
             height: 1,
             depth: 1,
         };
-        let pass2_threadgroups_per_grid = MTLSize {
-            width: args.num_heads as u64,
-            height: args.suffix_length as u64,
-            depth: 1,
-        };
+        let pass2_threadgroups_per_grid =
+            mtl_size(args.num_heads as u64, args.suffix_length as u64, 1);
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             pass2_threadgroups_per_grid,
             pass2_threads_per_threadgroup,
         );
@@ -536,7 +695,7 @@ impl AttentionKernel {
 
     pub fn encode_kv_cache_update(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: KVCacheUpdateArguments,
     ) -> Result<(), AttentionError> {
         let pipeline =
@@ -546,55 +705,101 @@ impl AttentionKernel {
                 )
             })?;
 
-        compute_encoder.set_compute_pipeline_state(pipeline);
+        MTLComputeCommandEncoder::set_compute_pipeline_state(
+            compute_encoder,
+            pipeline,
+        );
 
         // Set buffers
-        compute_encoder.set_buffer(0, Some(args.rotated_keys_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.qkv_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.key_cache_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.value_cache_buffer), 0);
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.rotated_keys_buffer),
+            0,
+            0,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.qkv_buffer),
+            0,
+            1,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.key_cache_buffer),
+            0,
+            2,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.value_cache_buffer),
+            0,
+            3,
+        );
 
         // Set constants
-        compute_encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &(args.num_groups as i32) as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &(args.num_heads as i32) as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &(args.head_dim as i32) as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &(args.suffix_length as i32) as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<i32>() as u64,
-            &(args.segment_prefix_length as i32) as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<i32>() as u64,
-            &(args.max_sequence_length as i32) as *const i32 as *const _,
+        unsafe {
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.num_groups as i32) as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                4,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.num_heads as i32) as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                5,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.head_dim as i32) as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                6,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.suffix_length as i32) as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                7,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.segment_prefix_length as i32) as *const i32
+                        as *mut _,
+                ),
+                size_of::<i32>(),
+                8,
+            );
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(
+                    &(args.max_sequence_length as i32) as *const i32 as *mut _,
+                ),
+                size_of::<i32>(),
+                9,
+            );
+        }
+
+        let threads_per_grid = mtl_size(
+            args.num_groups as u64,
+            args.suffix_length as u64,
+            args.head_dim as u64,
         );
 
-        let threads_per_grid = MTLSize {
-            width: args.num_groups as u64,
-            height: args.suffix_length as u64,
-            depth: args.head_dim as u64,
-        };
+        let threadgroup_depth =
+            std::cmp::min(args.head_dim.max(1), 64) as usize;
 
-        let threadgroup_depth = std::cmp::min(args.head_dim.max(1), 64) as u64;
-
-        compute_encoder.dispatch_threads(
+        MTLComputeCommandEncoder::dispatch_threads(
+            compute_encoder,
             threads_per_grid,
             MTLSize {
                 width: 1,
@@ -608,7 +813,7 @@ impl AttentionKernel {
     pub fn encode_gemm(
         &self,
         context: &MTLContext,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: AttentionGemmArguments,
     ) -> Result<(), AttentionError> {
         const BQ: usize = 32;
@@ -686,13 +891,36 @@ impl AttentionKernel {
             )
             .map_err(AttentionError::MetalError)?;
 
-        compute_encoder.set_compute_pipeline_state(&pipeline);
+        MTLComputeCommandEncoder::set_compute_pipeline_state(
+            compute_encoder,
+            &pipeline,
+        );
 
         // Buffers
-        compute_encoder.set_buffer(0, Some(args.queries_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.keys_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.values_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.output_buffer), 0);
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.queries_buffer),
+            0,
+            0,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.keys_buffer),
+            0,
+            1,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.values_buffer),
+            0,
+            2,
+        );
+        MTLComputeCommandEncoder::set_buffer(
+            compute_encoder,
+            Some(args.output_buffer),
+            0,
+            3,
+        );
 
         // Params (all strides in elements)
         let q_head_stride = (args.suffix_length * args.head_dim) as i64;
@@ -726,42 +954,57 @@ impl AttentionKernel {
             k_rem: (args.sequence_length - nk_aligned * bk) as i32,
         };
 
-        compute_encoder.set_bytes(
-            4,
-            size_of::<AttnParams>() as u64,
-            &params as *const AttnParams as *const _,
-        );
+        unsafe {
+            MTLComputeCommandEncoder::set_bytes(
+                compute_encoder,
+                NonNull::new_unchecked(&params as *const AttnParams as *mut _),
+                size_of::<AttnParams>(),
+                4,
+            );
+        }
 
         if let Some(mask_buffer) = args.mask_buffer {
             let mask_params = AttnMaskParams {
                 // We use a shared bias matrix for all heads/batches.
                 m_strides: [0, 0, args.sequence_length as i64],
             };
-            compute_encoder.set_bytes(
-                5,
-                size_of::<AttnMaskParams>() as u64,
-                &mask_params as *const AttnMaskParams as *const _,
+            unsafe {
+                MTLComputeCommandEncoder::set_bytes(
+                    compute_encoder,
+                    NonNull::new_unchecked(
+                        &mask_params as *const AttnMaskParams as *mut _,
+                    ),
+                    size_of::<AttnMaskParams>(),
+                    5,
+                );
+            }
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(mask_buffer),
+                0,
+                6,
             );
-            compute_encoder.set_buffer(6, Some(mask_buffer), 0);
         }
 
         if let Some(sinks_buffer) = args.sinks_buffer {
-            compute_encoder.set_buffer(7, Some(sinks_buffer), 0);
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(sinks_buffer),
+                0,
+                16,
+            );
         }
 
         // Dispatch
-        let threadgroups_per_grid = MTLSize {
-            width: nq as u64,
-            height: args.num_heads as u64,
-            depth: 1,
-        };
+        let threadgroups_per_grid =
+            mtl_size(nq as u64, args.num_heads as u64, 1);
         let threads_per_threadgroup = MTLSize {
             width: 32,
-            height: WM,
-            depth: WN,
+            height: WM as usize,
+            depth: WN as usize,
         };
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );

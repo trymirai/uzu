@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use metal::CommandBuffer as MTLCommandBuffer;
+use crate::backends::metal::{CommandBuffer, CommandBufferRef};
 
 use super::super::{MTLContext, MetalArray};
 use crate::{
@@ -183,7 +183,7 @@ impl KVCacheLayer {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: CommandBufferRef<'_>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         match &mut self.state {
@@ -251,7 +251,7 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: CommandBufferRef<'_>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {
@@ -260,11 +260,11 @@ impl KVCacheLayer {
 
         let key_buffer = {
             let mut k = self.keys.borrow_mut();
-            unsafe { k.mtl_buffer() }.clone()
+            unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*k.mtl_buffer()) as *mut _).unwrap() }
         };
         let value_buffer = {
             let mut v = self.values.borrow_mut();
-            unsafe { v.mtl_buffer() }.clone()
+            unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*v.mtl_buffer()) as *mut _).unwrap() }
         };
 
         let k_shape = self.keys.borrow().shape().to_vec();
@@ -277,11 +277,12 @@ impl KVCacheLayer {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
+        let cmd_buf = unsafe { objc2::rc::Retained::retain(command_buffer as *const _ as *mut _).unwrap() };
         let _ = kv_cache_update.encode(
             &[layer_data],
             source_indices,
             destination_indices,
-            &command_buffer,
+            &cmd_buf,
         );
     }
 

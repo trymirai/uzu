@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use metal::CommandBufferRef;
+use crate::backends::metal::CommandBufferRef;
 
 use super::{
     EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -202,7 +202,7 @@ impl EncodableBlock for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: CommandBufferRef<'_>,
         parameters: &EncodingParameters,
     ) {
         self.embed.encode(state, command_buffer, parameters);

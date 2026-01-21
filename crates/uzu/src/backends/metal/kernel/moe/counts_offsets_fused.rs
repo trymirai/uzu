@@ -1,11 +1,9 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
+    MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, mtl_size,
 };
-
-use crate::backends::metal::{MTLContext, MTLError};
 
 // ---- Fused Counts + Offsets Kernel ----
 
@@ -22,15 +20,15 @@ pub enum MoeCountsOffsetsFusedError {
 }
 
 pub struct MoeCountsOffsetsFusedKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: ComputePipelineState,
 }
 
 #[derive(Debug)]
 pub struct MoeCountsOffsetsFusedArguments<'a> {
-    pub topk_ids_buffer: &'a MTLBuffer,
-    pub offsets_buffer: &'a MTLBuffer, // output [E+1]
-    pub sum_k_buffer: &'a MTLBuffer,   // output [1]
-    pub partials_buffer: &'a MTLBuffer, // output [num_tiles * 512] (for block_bases)
+    pub topk_ids_buffer: BufferRef<'a>,
+    pub offsets_buffer: BufferRef<'a>, // output [E+1]
+    pub sum_k_buffer: BufferRef<'a>,   // output [1]
+    pub partials_buffer: BufferRef<'a>, // output [num_tiles * 512] (for block_bases)
     pub t: usize,
     pub e: usize,
     pub k: usize,
@@ -66,7 +64,8 @@ impl MoeCountsOffsetsFusedKernel {
             });
         }
 
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         encoder.set_compute_pipeline_state(&self.pipeline);
 
         encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
@@ -94,8 +93,8 @@ impl MoeCountsOffsetsFusedKernel {
             &k_u32 as *const u32 as *const std::ffi::c_void,
         );
 
-        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
-        let tg = MTLSize::new(1, 1, 1);
+        let threads_per_threadgroup = mtl_size(128, 1, 1);
+        let tg = mtl_size(1, 1, 1);
         encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
 
         encoder.end_encoding();

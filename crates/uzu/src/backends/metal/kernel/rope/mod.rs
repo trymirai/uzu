@@ -1,15 +1,14 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
-};
 use thiserror::Error;
 
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
+use crate::backends::metal::{
+    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
+    ComputePipelineState, KernelDataType, MTLContext, MTLError, MTLSize,
+};
 
 pub struct RopeKernel {
-    pipeline_state: MTLComputePipelineState,
+    pipeline_state: ComputePipelineState,
 }
 
 #[derive(Debug, Error)]
@@ -22,13 +21,13 @@ pub enum RopeError {
 
 #[allow(dead_code)]
 pub struct RopeKernelArguments<'a> {
-    pub qkv_buffer: &'a MTLBuffer,     // buffer(0)
-    pub cosines_buffer: &'a MTLBuffer, // buffer(1)
-    pub sines_buffer: &'a MTLBuffer,   // buffer(2)
-    pub token_positions_buffer: &'a MTLBuffer, // buffer(3)
+    pub qkv_buffer: BufferRef<'a>,     // buffer(0)
+    pub cosines_buffer: BufferRef<'a>, // buffer(1)
+    pub sines_buffer: BufferRef<'a>,   // buffer(2)
+    pub token_positions_buffer: BufferRef<'a>, // buffer(3)
     pub token_positions_offset: usize, // byte offset into token_positions_buffer
-    pub rotated_queries_buffer: &'a MTLBuffer, // buffer(4)
-    pub rotated_keys_buffer: &'a MTLBuffer, // buffer(5)
+    pub rotated_queries_buffer: BufferRef<'a>, // buffer(4)
+    pub rotated_keys_buffer: BufferRef<'a>, // buffer(5)
     pub head_dim: usize,
     pub num_heads: usize,
     pub num_groups: usize,
@@ -61,7 +60,7 @@ impl RopeKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: ComputeCommandEncoderRef<'_>,
         args: RopeKernelArguments,
     ) {
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);
@@ -116,9 +115,9 @@ impl RopeKernel {
             depth: 32,
         };
         let total_threads = MTLSize {
-            width: num_heads as u64,
-            height: suffix_length as u64,
-            depth: head_dim as u64,
+            width: num_heads as usize,
+            height: suffix_length as usize,
+            depth: head_dim as usize,
         };
 
         compute_encoder

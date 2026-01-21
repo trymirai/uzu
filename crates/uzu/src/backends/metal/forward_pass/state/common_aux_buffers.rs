@@ -35,66 +35,67 @@ impl CommonAuxBuffers {
             Self {
                 suffix_length,
                 main: RefCell::new(MetalArray::new(
-                    scratch.main.borrow().backend_buffer().clone(),
+                    scratch.main.borrow_mut().mtl_buffer().into(),
                     &model_shape.main_shape(suffix_length),
                     act_dtype,
                 )),
                 shortcut: RefCell::new(MetalArray::new(
-                    scratch.shortcut.borrow().backend_buffer().clone(),
+                    scratch.shortcut.borrow_mut().mtl_buffer().into(),
                     &model_shape.main_shape(suffix_length),
                     act_dtype,
                 )),
                 qkv: RefCell::new(MetalArray::new(
-                    scratch.qkv.borrow().backend_buffer().clone(),
+                    scratch.qkv.borrow_mut().mtl_buffer().into(),
                     &model_shape.qkv_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_output: RefCell::new(MetalArray::new(
-                    scratch.attention_output.borrow().backend_buffer().clone(),
+                    scratch.attention_output.borrow().mtl_buffer_cloned(),
                     &model_shape.attention_output_shape(suffix_length),
                     act_dtype,
                 )),
                 mlp_fused_up: RefCell::new(MetalArray::new(
-                    scratch.mlp_fused_up.borrow().backend_buffer().clone(),
+                    scratch.mlp_fused_up.borrow().mtl_buffer_cloned(),
                     &model_shape.mlp_fused_up_shape(suffix_length),
                     act_dtype,
                 )),
                 mlp_hidden: RefCell::new(MetalArray::new(
-                    scratch.mlp_hidden.borrow().backend_buffer().clone(),
+                    scratch.mlp_hidden.borrow().mtl_buffer_cloned(),
                     &model_shape.mlp_hidden_shape(suffix_length),
                     act_dtype,
                 )),
                 rotated_queries: RefCell::new(MetalArray::new(
-                    scratch.rotated_queries.borrow().backend_buffer().clone(),
+                    scratch.rotated_queries.borrow().mtl_buffer_cloned(),
                     &model_shape.rotated_queries_shape(suffix_length),
                     act_dtype,
                 )),
                 rotated_keys: RefCell::new(MetalArray::new(
-                    scratch.rotated_keys.borrow().backend_buffer().clone(),
+                    scratch.rotated_keys.borrow().mtl_buffer_cloned(),
                     &model_shape.rotated_keys_shape(suffix_length),
                     act_dtype,
                 )),
                 extracted_values: RefCell::new(MetalArray::new(
-                    scratch.extracted_values.borrow().backend_buffer().clone(),
+                    scratch.extracted_values.borrow().mtl_buffer_cloned(),
                     &model_shape.extracted_values_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_partials: RefCell::new(MetalArray::new(
                     scratch
                         .attention_partials
-                        .borrow()
+                        .borrow_mut()
                         .backend_buffer()
-                        .clone(),
+                        .to_owned()
+                        .into(),
                     &model_shape.attention_partials_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_sums: RefCell::new(MetalArray::new(
-                    scratch.attention_sums.borrow().backend_buffer().clone(),
+                    scratch.attention_sums.borrow().mtl_buffer_cloned(),
                     &model_shape.attention_sums_shape(suffix_length),
                     act_dtype,
                 )),
                 attention_maxs: RefCell::new(MetalArray::new(
-                    scratch.attention_maxs.borrow().backend_buffer().clone(),
+                    scratch.attention_maxs.borrow().mtl_buffer_cloned(),
                     &model_shape.attention_maxs_shape(suffix_length),
                     act_dtype,
                 )),
