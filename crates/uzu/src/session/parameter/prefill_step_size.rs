@@ -33,7 +33,7 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         &self,
         config: &LanguageModelConfig,
     ) -> usize {
-        let default_limit: usize = 2048;
+        let default_limit: usize = 4096;
         let model_context_length =
             config.model_config.transformer_config.context_length;
 
