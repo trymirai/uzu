@@ -3183,12 +3183,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxmltree"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
-
-[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3451,26 +3445,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "shaderc"
-version = "0.10.1"
+name = "shader-slang"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ab2a6e36d1c1e2320c87e2b806a3e7b0dffaa67b82c14a39dad6cf7637208ae"
+checksum = "5f87ca0837663794c1d9db2c8c9383832557605a354a60ae754c7e56015596b7"
 dependencies = [
- "libc",
- "shaderc-sys",
+ "shader-slang-sys",
 ]
 
 [[package]]
-name = "shaderc-sys"
-version = "0.10.1"
+name = "shader-slang-sys"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdceb85b2c6d2c27b95ffe2d341063dfded0aca8046f7f60c544bbeaeaf8bcae"
+checksum = "279effb991b113c13e73108899aad05fabbf0d7a62b51c646ebad0512c40a1e3"
 dependencies = [
- "cmake",
- "libc",
- "link-cplusplus",
- "pkg-config",
- "roxmltree",
+ "bindgen",
 ]
 
 [[package]]
@@ -4234,6 +4223,7 @@ dependencies = [
  "block",
  "bytemuck",
  "clang-ast",
+ "clap",
  "depfile",
  "futures",
  "half",
@@ -4243,6 +4233,7 @@ dependencies = [
  "metal",
  "minijinja",
  "minijinja-contrib",
+ "mpsgraph",
  "ndarray",
  "num-traits",
  "objc2",
@@ -4256,7 +4247,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json5",
- "shaderc",
+ "shader-slang",
+ "shader-slang-sys",
  "syn 2.0.113",
  "sysinfo",
  "tempfile",
