@@ -71,16 +71,17 @@ itertools.workspace = true
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }
 
-# vulkan feature requires shaderc
-shaderc = { workspace = true, optional = true }
+# vulkan feature requires shader-slang
+shader-slang = { workspace = true, optional = true }
+shader-slang-sys = { workspace = true, optional = true }
 
 [features]
-default = ["metal"]
+default = ["metal", "vulkan"]
 
 metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
 metal-nax = []
 
-vulkan = ["dep:shaderc", "dep:ash"]
+vulkan = ["dep:shader-slang", "dep:shader-slang-sys", "dep:ash"]
 
 tracing = []
 

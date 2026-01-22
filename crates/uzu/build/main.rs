@@ -9,6 +9,9 @@ mod shared_types;
 #[cfg(feature = "metal")]
 mod metal;
 
+#[cfg(feature = "vulkan")]
+mod slang;
+
 use common::compiler::Compiler;
 use common::envs;
 
@@ -23,6 +26,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     debug_log!("build script started");
+    debug_log!(
+        "out dir: {:?}",
+        PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?)
+    );
 
     if envs::build_clean() {
         let out_dir =
@@ -44,6 +51,9 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new()?));
+
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(slang::SlangCompiler::new()?));
 
     try_join_all(compilers.iter().map(|c| c.build())).await?;
 
