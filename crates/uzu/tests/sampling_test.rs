@@ -1,5 +1,8 @@
 mod common;
-use metal::{Device, MTLResourceOptions};
+use bytemuck;
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLResourceOptions,
+};
 use rand::{Rng, seq::SliceRandom};
 // for Vec::shuffle
 use uzu::{
@@ -23,8 +26,10 @@ use uzu::{
 const TEST_SAMPLING_SEED: u64 = 42;
 
 fn create_test_context() -> Result<MTLContext, String> {
-    let device = Device::system_default().ok_or("No Metal device available")?;
-    let command_queue = device.new_command_queue();
+    let device =
+        <dyn MTLDevice>::system_default().ok_or("No Metal device available")?;
+    let command_queue =
+        device.new_command_queue().ok_or("Failed to create command queue")?;
     MTLContext::new(device, command_queue)
         .map_err(|e| format!("Failed to create MTLContext: {:?}", e))
 }
@@ -115,18 +120,26 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         0.1, 0.5, 2.5, 1.0, // batch 1
     ];
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        test_logits.as_ptr() as *const _,
-        (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&test_logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buffer = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = context
+        .device
+        .new_buffer(
+            batch_size * std::mem::size_of::<u32>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
     // Run sampling
@@ -149,7 +162,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     command_buffer_ref.wait_until_completed();
 
     // Check results
-    let result_ptr = output_buffer.contents() as *const u32;
+    let result_ptr = output_buffer.contents().as_ptr() as *const u32;
     let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
 
     assert_eq!(
@@ -248,10 +261,13 @@ fn test_topp_sampling_from_prob_exact_match(
         .collect();
 
     // GPU buffers
-    let output_buf = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            batch_size * std::mem::size_of::<u32>(),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // Counter for samples
     let num_samples = 1000;
@@ -260,20 +276,28 @@ fn test_topp_sampling_from_prob_exact_match(
     // Draw samples
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<f32>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&logits),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let seeds_buf = context.device.new_buffer_with_data(
-            vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
-                as *const _,
-            (batch_size * std::mem::size_of::<u64>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let seeds: Vec<u64> =
+            vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
+        let seeds_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&seeds),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let cb_ref = context.command_queue.new_command_buffer();
+        let cb_ref = context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
         kernel
             .encode(
@@ -297,7 +321,7 @@ fn test_topp_sampling_from_prob_exact_match(
         cb_ref.commit();
         cb_ref.wait_until_completed();
 
-        let ptr = output_buf.contents() as *const u32;
+        let ptr = output_buf.contents().as_ptr() as *const u32;
         let sampled_ids =
             unsafe { std::slice::from_raw_parts(ptr, batch_size) };
 
@@ -382,28 +406,39 @@ fn test_topp_sampling_statistical_large() {
     }
 
     // ===== 6. Allocate output & counters =====
-    let output_buf = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            BATCH * std::mem::size_of::<u32>(),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
     let mut counters = vec![0u32; BATCH * VOCAB];
 
     // ===== 8. Draw NUM_DRAWS samples =====
     for draw in 0..NUM_DRAWS {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<f32>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&logits),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let seeds_buf = context.device.new_buffer_with_data(
-            vec![TEST_SAMPLING_SEED + draw as u64; BATCH].as_ptr() as *const _,
-            (BATCH * std::mem::size_of::<u64>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; BATCH];
+        let seeds_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&seeds),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let cb_ref = context.command_queue.new_command_buffer();
+        let cb_ref = context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
 
         kernel
@@ -429,7 +464,7 @@ fn test_topp_sampling_statistical_large() {
         cb_ref.commit();
         cb_ref.wait_until_completed();
 
-        let ptr = output_buf.contents() as *const u32;
+        let ptr = output_buf.contents().as_ptr() as *const u32;
         let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
         for (b, &tok) in sample_ids.iter().enumerate() {
             counters[b * VOCAB + tok as usize] += 1;
@@ -497,25 +532,36 @@ fn perf_topp_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let seeds_buf = context.device.new_buffer_with_data(
-        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
-        (BATCH * std::mem::size_of::<u64>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
+    let seeds_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&seeds),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buf = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            BATCH * std::mem::size_of::<u32>() ,
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // ---- Launch once and time ----
-    let cb_ref = context.command_queue.new_command_buffer();
+    let cb_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
 
     kernel
@@ -563,7 +609,7 @@ fn perf_topp_128k_vocab() {
     }
 
     // Ensure the kernel produced *some* output (sanity).
-    let ptr = output_buf.contents() as *const u32;
+    let ptr = output_buf.contents().as_ptr() as *const u32;
     let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
     for &tok in sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
@@ -606,25 +652,36 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let seeds_buf = context.device.new_buffer_with_data(
-        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
-        (BATCH * std::mem::size_of::<u64>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
+    let seeds_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&seeds),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buf = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            BATCH * std::mem::size_of::<u32>() ,
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // ---- Launch once and time ----
-    let cb_ref = context.command_queue.new_command_buffer();
+    let cb_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
 
     kernel
@@ -667,7 +724,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     }
 
     // Ensure the kernel produced *some* output (sanity).
-    let ptr = output_buf.contents() as *const u32;
+    let ptr = output_buf.contents().as_ptr() as *const u32;
     let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
     for &tok in sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
@@ -725,10 +782,13 @@ fn test_categorical_sampling() {
         0.0, 1.0, 0.0, 0.0, // batch 1
     ];
 
-    let output_buffer = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = context
+        .device
+        .new_buffer(
+            batch_size * std::mem::size_of::<u32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // Run sampling multiple times to check distribution
     let num_samples = 1000;
@@ -736,20 +796,28 @@ fn test_categorical_sampling() {
 
     for sample_idx in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buffer = context.device.new_buffer_with_data(
-            test_logits.as_ptr() as *const _,
-            (test_logits.len() * std::mem::size_of::<f32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buffer = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&test_logits),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let seeds_buffer = context.device.new_buffer_with_data(
-            vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size].as_ptr()
-                as *const _,
-            (batch_size * std::mem::size_of::<u64>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let seeds_vec =
+            vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size];
+        let seeds_buffer = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&seeds_vec),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let command_buffer_ref = context.command_queue.new_command_buffer();
+        let command_buffer_ref = context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
 
         kernel
@@ -775,7 +843,7 @@ fn test_categorical_sampling() {
         command_buffer_ref.commit();
         command_buffer_ref.wait_until_completed();
 
-        let result_ptr = output_buffer.contents() as *const u32;
+        let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results =
             unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
 
@@ -874,30 +942,40 @@ fn test_categorical_sampling_statistical() {
         }
     }
 
-    let output_buffer = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = context
+        .device
+        .new_buffer(
+            BATCH * std::mem::size_of::<u32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let mut counts = vec![0; BATCH * VOCAB];
 
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buffer = context.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<f32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buffer = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&logits),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let seeds_buffer = context.device.new_buffer_with_data(
-            vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH].as_ptr()
-                as *const _,
-            (BATCH * std::mem::size_of::<u64>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let seeds_vec = vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH];
+        let seeds_buffer = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&seeds_vec),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let command_buffer_ref = context.command_queue.new_command_buffer();
+        let command_buffer_ref = context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
 
         kernel
@@ -923,7 +1001,7 @@ fn test_categorical_sampling_statistical() {
         command_buffer_ref.commit();
         command_buffer_ref.wait_until_completed();
 
-        let result_ptr = output_buffer.contents() as *const u32;
+        let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH) };
 
         for (batch_idx, &token) in results.iter().enumerate() {
@@ -989,25 +1067,36 @@ fn perf_categorical_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let seeds_buf = context.device.new_buffer_with_data(
-        vec![TEST_SAMPLING_SEED; BATCH].as_ptr() as *const _,
-        (BATCH * std::mem::size_of::<u64>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
+    let seeds_buf = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&seeds),
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buf = context.device.new_buffer(
-        (BATCH * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            BATCH * std::mem::size_of::<u32>() ,
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // Launch and time
-    let cb_ref = context.command_queue.new_command_buffer();
+    let cb_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
 
     kernel
@@ -1053,7 +1142,7 @@ fn perf_categorical_128k_vocab() {
     }
 
     // Sanity check
-    let ptr = output_buf.contents() as *const u32;
+    let ptr = output_buf.contents().as_ptr() as *const u32;
     let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
     for &tok in sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
@@ -1085,21 +1174,31 @@ fn test_temperature_gpu_cpu_match() {
         .map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01)
         .collect();
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let processed_buffer = context.device.new_buffer(
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let processed_buffer = context
+        .device
+        .new_buffer(
+            logits.len() * std::mem::size_of::<f32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel.encode(
         &logits_buffer,
         &processed_buffer,
@@ -1113,7 +1212,7 @@ fn test_temperature_gpu_cpu_match() {
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let gpu_ptr = processed_buffer.contents() as *const f32;
+    let gpu_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let gpu_results =
         unsafe { std::slice::from_raw_parts(gpu_ptr, logits.len()) };
 
@@ -1165,21 +1264,31 @@ fn test_topk_gpu_cpu_match() {
         *x = rng.random_range(-1024.0f32..1024.0f32);
     }
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let processed_buffer = context.device.new_buffer(
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let processed_buffer = context
+        .device
+        .new_buffer(
+            logits.len() * std::mem::size_of::<f32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel.encode(
         &logits_buffer,
         &processed_buffer,
@@ -1193,7 +1302,7 @@ fn test_topk_gpu_cpu_match() {
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let results_ptr = processed_buffer.contents() as *const f32;
+    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results =
         unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
 
@@ -1241,21 +1350,31 @@ fn test_topp_gpu_cpu_match() {
         *x = rng.random_range(-16.0f32..16.0f32);
     }
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let processed_buffer = context.device.new_buffer(
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let processed_buffer = context
+        .device
+        .new_buffer(
+            logits.len() * std::mem::size_of::<f32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel.encode(
         &logits_buffer,
         &processed_buffer,
@@ -1269,7 +1388,7 @@ fn test_topp_gpu_cpu_match() {
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let results_ptr = processed_buffer.contents() as *const f32;
+    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results =
         unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
 
@@ -1321,21 +1440,31 @@ fn test_minp_gpu_cpu_match() {
         *x = rng.random_range(-16.0f32..16.0f32);
     }
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let processed_buffer = context.device.new_buffer(
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let processed_buffer = context
+        .device
+        .new_buffer(
+            logits.len() * std::mem::size_of::<f32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel.encode(
         &logits_buffer,
         &processed_buffer,
@@ -1349,7 +1478,7 @@ fn test_minp_gpu_cpu_match() {
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let results_ptr = processed_buffer.contents() as *const f32;
+    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results =
         unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
 
@@ -1416,30 +1545,41 @@ fn test_minp_sampling_exact_match(
         high_prob_token_sets.push(high_prob_tokens);
     }
 
-    let output_buf = context.device.new_buffer(
-        (batch_size * std::mem::size_of::<u32>()) as u64,
-        metal::MTLResourceOptions::StorageModeShared,
-    );
+    let output_buf = context
+        .device
+        .new_buffer(
+            batch_size * std::mem::size_of::<u32>() ,
+            metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let num_samples = 1000;
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context.device.new_buffer_with_data(
-            logits.as_ptr() as *const _,
-            (logits.len() * std::mem::size_of::<f32>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let logits_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&logits),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let seeds_buf = context.device.new_buffer_with_data(
-            vec![TEST_SAMPLING_SEED + draw as u64; batch_size].as_ptr()
-                as *const _,
-            (batch_size * std::mem::size_of::<u64>()) as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        let seeds: Vec<u64> =
+            vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
+        let seeds_buf = context
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(&seeds),
+                metal::MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer");
 
-        let cb_ref = context.command_queue.new_command_buffer();
+        let cb_ref = context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
         kernel
             .encode(
@@ -1463,7 +1603,7 @@ fn test_minp_sampling_exact_match(
         cb_ref.commit();
         cb_ref.wait_until_completed();
 
-        let ptr = output_buf.contents() as *const u32;
+        let ptr = output_buf.contents().as_ptr() as *const u32;
         let sampled_ids =
             unsafe { std::slice::from_raw_parts(ptr, batch_size) };
 
@@ -1527,27 +1667,39 @@ fn test_gumbel_gpu_cpu_match() {
     let logits = vec![0.0f32; BATCH * VOCAB];
     let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();
 
-    let logits_buffer = context.device.new_buffer_with_data(
-        logits.as_ptr() as *const _,
-        (logits.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let logits_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&logits),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let seeds_buffer = context.device.new_buffer_with_data(
-        seeds.as_ptr() as *const _,
-        (BATCH * std::mem::size_of::<u64>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let seeds_buffer = context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&seeds),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let gumbel_logits_buffer = context.device.new_buffer(
-        (BATCH * VOCAB * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let gumbel_logits_buffer = context
+        .device
+        .new_buffer(
+            BATCH * VOCAB * std::mem::size_of::<f32>() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let command_buffer_ref = context.command_queue.new_command_buffer();
+    let command_buffer_ref = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel.encode(
         &logits_buffer,
         &seeds_buffer,
@@ -1562,7 +1714,7 @@ fn test_gumbel_gpu_cpu_match() {
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let result_ptr = gumbel_logits_buffer.contents() as *const f32;
+    let result_ptr = gumbel_logits_buffer.contents().as_ptr() as *const f32;
     let all_results =
         unsafe { std::slice::from_raw_parts(result_ptr, BATCH * VOCAB) };
 

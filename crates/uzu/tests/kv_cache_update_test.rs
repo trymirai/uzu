@@ -1,5 +1,9 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
-use metal::{Device, MTLResourceOptions};
+use bytemuck;
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLResourceOptions,
+};
 use ndarray::{Array, Array3, s};
 use uzu::backends::metal::{
     KVCacheUpdate, KernelDataType, MTLContext,
@@ -27,8 +31,10 @@ fn apply_swaps_3d<T: Clone>(
 
 #[test]
 fn test_kv_cache_update_kernel() {
-    let device = Device::system_default().expect("No Metal device found");
-    let command_queue = device.new_command_queue();
+    let device =
+        <dyn MTLDevice>::system_default().expect("No Metal device found");
+    let command_queue =
+        device.new_command_queue().expect("Failed to create command queue");
     let metal_context = match MTLContext::new(device, command_queue) {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -85,17 +91,19 @@ fn test_random_pattern(context: &MTLContext) {
 
     let device = &context.device;
 
-    let key_buffer = device.new_buffer_with_data(
-        key_data.as_slice().unwrap().as_ptr() as *const _,
-        (key_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let key_buffer = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(key_data.as_slice().unwrap()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let value_buffer = device.new_buffer_with_data(
-        value_data.as_slice().unwrap().as_ptr() as *const _,
-        (value_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let value_buffer = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(value_data.as_slice().unwrap()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let kv_layer_data = KVLayerData {
         key_buffer: key_buffer.clone(),
@@ -104,7 +112,11 @@ fn test_random_pattern(context: &MTLContext) {
         value_shape: [num_heads, seq_len, head_dim],
     };
 
-    let command_buffer = context.command_queue.new_command_buffer().to_owned();
+    let command_buffer = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer")
+        .to_owned();
     match kv_cache_update.encode(
         &[kv_layer_data],
         &source_indices,
@@ -124,8 +136,8 @@ fn test_random_pattern(context: &MTLContext) {
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    let key_result_ptr = key_buffer.contents() as *const f32;
-    let value_result_ptr = value_buffer.contents() as *const f32;
+    let key_result_ptr = key_buffer.contents().as_ptr() as *const f32;
+    let value_result_ptr = value_buffer.contents().as_ptr() as *const f32;
 
     let total_elems = num_heads * seq_len * head_dim;
 

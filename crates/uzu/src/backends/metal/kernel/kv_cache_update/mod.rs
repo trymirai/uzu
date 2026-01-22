@@ -1,6 +1,5 @@
 use std::{mem::size_of, ptr::NonNull};
 
-use objc2_foundation::NSString;
 use thiserror::Error;
 
 use super::{
@@ -8,12 +7,11 @@ use super::{
     metal_extensions::ComputeEncoderDispatch,
 };
 use crate::backends::metal::{
-    Buffer, CommandBuffer as MTLCommandBuffer,
+    Buffer, BufferLabelExt, CommandBuffer as MTLCommandBuffer,
     ComputeCommandEncoderRef as MTLComputeCommandEncoderRef,
     ComputePipelineState, MTLBuffer, MTLCommandBuffer as MTLCommandBufferTrait,
-    MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
+    MTLCommandEncoder, MTLComputeCommandEncoder,
     MTLDeviceExt, MTLResourceOptions, MTLSize,
-    BufferLabelExt, mtl_size,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -147,8 +145,18 @@ impl KVCacheUpdate {
                 layer_data.key_shape;
 
             // Set buffers and parameters
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&layer_data.key_buffer), 0, 0);
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&layer_data.value_buffer), 0, 1);
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(&layer_data.key_buffer),
+                0,
+                0,
+            );
+            MTLComputeCommandEncoder::set_buffer(
+                compute_encoder,
+                Some(&layer_data.value_buffer),
+                0,
+                1,
+            );
             if use_inline_bytes {
                 unsafe {
                     MTLComputeCommandEncoder::set_bytes(
@@ -159,7 +167,12 @@ impl KVCacheUpdate {
                     );
                 }
             } else {
-                MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(&self.indices_buffer), 0, 2);
+                MTLComputeCommandEncoder::set_buffer(
+                    compute_encoder,
+                    Some(&self.indices_buffer),
+                    0,
+                    2,
+                );
             }
             unsafe {
                 MTLComputeCommandEncoder::set_bytes(

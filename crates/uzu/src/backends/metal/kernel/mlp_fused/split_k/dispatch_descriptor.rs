@@ -1,5 +1,3 @@
-use crate::backends::metal::{MTLSize, mtl_size};
-
 use super::{
     pipeline_configuration::PipelineConfiguration,
     tile_configuration::select_tile_configuration,
@@ -7,7 +5,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        MTLContext, MTLError, MTLSize,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams,
             mlp_fused::common::MlpFusedArguments,
@@ -92,21 +90,24 @@ impl DispatchDescriptor {
             hidden_dim,
         };
 
-        let partial_threads_per_threadgroup = mtl_size(
+        let partial_threads_per_threadgroup = MTLSize::new(
             32,
-            tile.warps_per_col as u64,
-            tile.warps_per_row as u64,
+            tile.warps_per_col as usize,
+            tile.warps_per_row as usize,
         );
-        let partial_threadgroups = mtl_size(
-            tile_count_n as u64,
-            tile_count_m as u64,
-            partition_count as u64,
+        let partial_threadgroups = MTLSize::new(
+            tile_count_n as usize,
+            tile_count_m as usize,
+            partition_count as usize,
         );
 
         let accum_total_threads =
-            mtl_size(hidden_dim as u64, batch as u64, 1);
-        let accum_threads_per_threadgroup =
-            mtl_size(16.min(hidden_dim as u64), 16.min(batch as u64), 1);
+            MTLSize::new(hidden_dim as usize, batch as usize, 1);
+        let accum_threads_per_threadgroup = MTLSize::new(
+            16.min(hidden_dim as usize),
+            16.min(batch as usize),
+            1,
+        );
 
         Ok(Some(Self {
             pipeline_configuration,

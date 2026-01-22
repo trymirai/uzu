@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::backends::metal::{
     Device, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureUsage,
-    ProtocolObject, Texture, TextureDescriptor, TextureRef, MTLDevice,
+    ProtocolObject, Texture, TextureDescriptor, TextureRef,
 };
 use crate::backends::metal::BufferLabelExt;
 use metal::MTLDeviceExt;

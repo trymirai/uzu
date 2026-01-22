@@ -1,8 +1,10 @@
-use std::mem::size_of;
+use std::{ffi::c_void, mem::size_of, ptr::NonNull};
+
+use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
-    MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, mtl_size,
+    ComputePipelineState, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLContext, MTLError, MTLSize, ProtocolObject,
 };
 
 // ---- Fused Counts + Offsets Kernel ----
@@ -25,10 +27,10 @@ pub struct MoeCountsOffsetsFusedKernel {
 
 #[derive(Debug)]
 pub struct MoeCountsOffsetsFusedArguments<'a> {
-    pub topk_ids_buffer: BufferRef<'a>,
-    pub offsets_buffer: BufferRef<'a>, // output [E+1]
-    pub sum_k_buffer: BufferRef<'a>,   // output [1]
-    pub partials_buffer: BufferRef<'a>, // output [num_tiles * 512] (for block_bases)
+    pub topk_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // output [E+1]
+    pub sum_k_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // output [1]
+    pub partials_buffer: &'a ProtocolObject<dyn MTLBuffer>, // output [num_tiles * 512] (for block_bases)
     pub t: usize,
     pub e: usize,
     pub k: usize,
@@ -47,7 +49,7 @@ impl MoeCountsOffsetsFusedKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeCountsOffsetsFusedArguments,
     ) -> Result<(), MoeCountsOffsetsFusedError> {
         if args.k == 0 || args.e == 0 {
@@ -64,38 +66,41 @@ impl MoeCountsOffsetsFusedKernel {
             });
         }
 
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         encoder.set_compute_pipeline_state(&self.pipeline);
 
-        encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
-        encoder.set_buffer(1, Some(args.offsets_buffer), 0);
-        encoder.set_buffer(2, Some(args.sum_k_buffer), 0);
-        encoder.set_buffer(3, Some(args.partials_buffer), 0);
+        encoder.set_buffer(Some(args.topk_ids_buffer), 0, 0);
+        encoder.set_buffer(Some(args.offsets_buffer), 0, 1);
+        encoder.set_buffer(Some(args.sum_k_buffer), 0, 2);
+        encoder.set_buffer(Some(args.partials_buffer), 0, 3);
 
         let t_u32 = args.t as u32;
         let e_u32 = args.e as u32;
         let k_u32 = args.k as u32;
 
-        encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &t_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &k_u32 as *const u32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&t_u32 as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                4,
+            );
+            encoder.set_bytes(
+                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                5,
+            );
+            encoder.set_bytes(
+                NonNull::new(&k_u32 as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                6,
+            );
+        }
 
-        let threads_per_threadgroup = mtl_size(128, 1, 1);
-        let tg = mtl_size(1, 1, 1);
-        encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
+        let threads_per_threadgroup = MTLSize::new(128, 1, 1);
+        let tg = MTLSize::new(1, 1, 1);
+        encoder.dispatch_threadgroups(tg, threads_per_threadgroup);
 
         encoder.end_encoding();
         Ok(())

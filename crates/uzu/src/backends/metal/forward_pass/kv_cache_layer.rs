@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 
-use crate::backends::metal::{CommandBuffer, CommandBufferRef};
-
 use super::super::{MTLContext, MetalArray};
 use crate::{
     DeviceContext,
     array::Array,
-    backends::metal::kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
+    backends::metal::{
+        MTLCommandBuffer, ProtocolObject,
+        kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
+    },
 };
 
 pub type ArrayCell = RefCell<MetalArray>;
@@ -183,7 +184,7 @@ impl KVCacheLayer {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         match &mut self.state {
@@ -251,7 +252,7 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {
@@ -260,11 +261,21 @@ impl KVCacheLayer {
 
         let key_buffer = {
             let mut k = self.keys.borrow_mut();
-            unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*k.mtl_buffer()) as *mut _).unwrap() }
+            unsafe {
+                objc2::rc::Retained::retain(
+                    std::ptr::from_ref(&*k.mtl_buffer()) as *mut _,
+                )
+                .unwrap()
+            }
         };
         let value_buffer = {
             let mut v = self.values.borrow_mut();
-            unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*v.mtl_buffer()) as *mut _).unwrap() }
+            unsafe {
+                objc2::rc::Retained::retain(
+                    std::ptr::from_ref(&*v.mtl_buffer()) as *mut _,
+                )
+                .unwrap()
+            }
         };
 
         let k_shape = self.keys.borrow().shape().to_vec();
@@ -277,7 +288,10 @@ impl KVCacheLayer {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let cmd_buf = unsafe { objc2::rc::Retained::retain(command_buffer as *const _ as *mut _).unwrap() };
+        let cmd_buf = unsafe {
+            objc2::rc::Retained::retain(command_buffer as *const _ as *mut _)
+                .unwrap()
+        };
         let _ = kv_cache_update.encode(
             &[layer_data],
             source_indices,

@@ -7,11 +7,11 @@ use super::{
     MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
     MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
 };
-use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputePipelineState, FunctionConstantValues,
+use crate::backends::metal::{MTLBuffer, ProtocolObject,
+    ComputePipelineState, FunctionConstantValues,
     FunctionConstantValuesLegacy, KernelDataType, MTLBlitCommandEncoder,
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
-    MTLDataType, MTLError, NSRange, mtl_size,
+    MTLDataType, MTLError, MTLSize, NSRange,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -39,18 +39,18 @@ impl From<MoeTileError> for MoeExpertsError {
 
 #[derive(Debug)]
 pub struct MoeExpertsArguments<'a> {
-    pub x_perm_buffer: BufferRef<'a>, // [sum_k, d_model] - permuted input
-    pub expert_offsets: BufferRef<'a>, // [E+1] - expert segment offsets
-    pub w13_all: BufferRef<'a>, // [E, 2*d_ff, d_model] - transposed up projection weights
-    pub w2_all: BufferRef<'a>, // [E, d_model, d_ff] - transposed down projection weights
-    pub y_partial: BufferRef<'a>, // [sum_k, d_model] - output buffer
-    pub up_biases: BufferRef<'a>, // [E, 2*d_ff] - up projection biases
-    pub down_biases: BufferRef<'a>, // [E, d_model] - down projection biases
-    pub tile_counts: BufferRef<'a>, // [E]
-    pub tile_row_offsets: BufferRef<'a>, // [E+1]
-    pub tile_map: BufferRef<'a>, // [max_tiles * 3]
-    pub total_tiles: BufferRef<'a>, // [2]
-    pub dispatch_args: BufferRef<'a>, // [3]
+    pub x_perm_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [sum_k, d_model] - permuted input
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1] - expert segment offsets
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>, // [E, 2*d_ff, d_model] - transposed up projection weights
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model, d_ff] - transposed down projection weights
+    pub y_partial: &'a ProtocolObject<dyn MTLBuffer>, // [sum_k, d_model] - output buffer
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>, // [E, 2*d_ff] - up projection biases
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model] - down projection biases
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>, // [E]
+    pub tile_row_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>, // [max_tiles * 3]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [2]
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_n: usize,
     pub t: usize,
     pub d_model: usize,
@@ -80,20 +80,20 @@ pub struct MoeExpertsTwoPassPrefillKernel {
 
 #[derive(Debug)]
 pub struct MoeExpertsTwoPassArguments<'a> {
-    pub x_perm_buffer: BufferRef<'a>,
-    pub expert_offsets: BufferRef<'a>,
-    pub row_expert_map: BufferRef<'a>,
-    pub hidden_buffer: BufferRef<'a>,
-    pub output_buffer: BufferRef<'a>,
-    pub w13_all: BufferRef<'a>,
-    pub w2_all: BufferRef<'a>,
-    pub up_biases: BufferRef<'a>,
-    pub down_biases: BufferRef<'a>,
-    pub tile_counts: BufferRef<'a>,
-    pub tile_offsets: BufferRef<'a>,
-    pub tile_map: BufferRef<'a>,
-    pub total_tiles: BufferRef<'a>,
-    pub dispatch_args: BufferRef<'a>,
+    pub x_perm_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>,
+    pub row_expert_map: &'a ProtocolObject<dyn MTLBuffer>,
+    pub hidden_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>,
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
@@ -162,7 +162,7 @@ impl MoeExpertsTwoPassDecodeKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {
@@ -248,12 +248,16 @@ impl MoeExpertsTwoPassDecodeKernel {
                 7,
             );
             encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.gate_clip_min as *const _ as *mut _),
+                NonNull::new_unchecked(
+                    &args.gate_clip_min as *const _ as *mut _,
+                ),
                 size_of::<f32>(),
                 8,
             );
             encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.gate_clip_max as *const _ as *mut _),
+                NonNull::new_unchecked(
+                    &args.gate_clip_max as *const _ as *mut _,
+                ),
                 size_of::<f32>(),
                 9,
             );
@@ -277,7 +281,7 @@ impl MoeExpertsTwoPassDecodeKernel {
         encoder_a.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
-            mtl_size(128u64, 1, 1),
+            MTLSize::new(128, 1, 1),
         );
         encoder_a.end_encoding();
         let total_rows_u32 = args.total_rows as u32;
@@ -318,8 +322,8 @@ impl MoeExpertsTwoPassDecodeKernel {
         let col_blocks =
             (args.d_model as u32 + SIMDGROUPS_PER_TG - 1) / SIMDGROUPS_PER_TG;
         encoder_b.dispatch_threadgroups(
-            mtl_size(col_blocks as u64, args.total_rows as u64, 1),
-            mtl_size(THREADS_PER_TG as u64, 1, 1),
+            MTLSize::new(col_blocks as usize, args.total_rows, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_b.end_encoding();
         Ok(())
@@ -376,7 +380,7 @@ impl MoeExpertsTwoPassPrefillKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {
@@ -475,12 +479,16 @@ impl MoeExpertsTwoPassPrefillKernel {
                 7,
             );
             encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.gate_clip_min as *const _ as *mut _),
+                NonNull::new_unchecked(
+                    &args.gate_clip_min as *const _ as *mut _,
+                ),
                 size_of::<f32>(),
                 8,
             );
             encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.gate_clip_max as *const _ as *mut _),
+                NonNull::new_unchecked(
+                    &args.gate_clip_max as *const _ as *mut _,
+                ),
                 size_of::<f32>(),
                 9,
             );
@@ -507,7 +515,7 @@ impl MoeExpertsTwoPassPrefillKernel {
         encoder_a.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
-            mtl_size(THREADS_PER_TG as u64, 1, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_a.end_encoding();
         self.tile_map.encode_dispatch_args(
@@ -549,7 +557,7 @@ impl MoeExpertsTwoPassPrefillKernel {
         encoder_b.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
-            mtl_size(THREADS_PER_TG as u64, 1, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_b.end_encoding();
         Ok(())
@@ -560,23 +568,23 @@ impl MoeExpertsTwoPassPrefillKernel {
 #[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a> {
     /// Input activation [d_model]
-    pub x: BufferRef<'a>,
+    pub x: &'a ProtocolObject<dyn MTLBuffer>,
     /// Top-K expert indices from router [K]
-    pub topk_ids: BufferRef<'a>,
+    pub topk_ids: &'a ProtocolObject<dyn MTLBuffer>,
     /// Top-K probabilities from router [K]
-    pub topk_probs: BufferRef<'a>,
+    pub topk_probs: &'a ProtocolObject<dyn MTLBuffer>,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: BufferRef<'a>,
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: BufferRef<'a>,
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: BufferRef<'a>,
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Down biases [E, d_model]
-    pub down_biases: BufferRef<'a>,
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: BufferRef<'a>,
+    pub hidden: &'a ProtocolObject<dyn MTLBuffer>,
     /// Final output [d_model]
-    pub y: BufferRef<'a>,
+    pub y: &'a ProtocolObject<dyn MTLBuffer>,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -656,7 +664,7 @@ impl MoeExpertsSingleDecodeKernel {
     /// 2. Pass B: grid = (d_blocks, 1) - computes final y directly (fused finalize)
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsSingleDecodeArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.k == 0 {
@@ -704,34 +712,44 @@ impl MoeExpertsSingleDecodeKernel {
                     7,
                 );
                 encoder.set_bytes(
-                    NonNull::new_unchecked(&args.silu_alpha as *const _ as *mut _),
+                    NonNull::new_unchecked(
+                        &args.silu_alpha as *const _ as *mut _,
+                    ),
                     size_of::<f32>(),
                     8,
                 );
                 encoder.set_bytes(
-                    NonNull::new_unchecked(&args.gate_clip_min as *const _ as *mut _),
+                    NonNull::new_unchecked(
+                        &args.gate_clip_min as *const _ as *mut _,
+                    ),
                     size_of::<f32>(),
                     9,
                 );
                 encoder.set_bytes(
-                    NonNull::new_unchecked(&args.gate_clip_max as *const _ as *mut _),
+                    NonNull::new_unchecked(
+                        &args.gate_clip_max as *const _ as *mut _,
+                    ),
                     size_of::<f32>(),
                     10,
                 );
                 encoder.set_bytes(
-                    NonNull::new_unchecked(&args.up_clip_min as *const _ as *mut _),
+                    NonNull::new_unchecked(
+                        &args.up_clip_min as *const _ as *mut _,
+                    ),
                     size_of::<f32>(),
                     11,
                 );
                 encoder.set_bytes(
-                    NonNull::new_unchecked(&args.up_clip_max as *const _ as *mut _),
+                    NonNull::new_unchecked(
+                        &args.up_clip_max as *const _ as *mut _,
+                    ),
                     size_of::<f32>(),
                     12,
                 );
             }
             encoder.dispatch_threadgroups(
-                mtl_size(h_blocks as u64, args.k as u64, 1),
-                mtl_size(PASSA_THREADS as u64, 1, 1),
+                MTLSize::new(h_blocks as usize, args.k, 1),
+                MTLSize::new(PASSA_THREADS as usize, 1, 1),
             );
             encoder.end_encoding();
         }
@@ -772,8 +790,8 @@ impl MoeExpertsSingleDecodeKernel {
                 );
             }
             encoder.dispatch_threadgroups(
-                mtl_size(d_blocks as u64, 1, 1),
-                mtl_size(PASSB_THREADS as u64, 1, 1),
+                MTLSize::new(d_blocks as usize, 1, 1),
+                MTLSize::new(PASSB_THREADS as usize, 1, 1),
             );
             encoder.end_encoding();
         }

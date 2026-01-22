@@ -3,18 +3,20 @@ const MTLB: &[u8] =
 
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
-use crate::backends::metal::{
-    ComputePipelineState, MTLBuffer, MTLCommandQueue, MTLComputePipelineState,
-    MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceExt, MTLResourceOptions,
-};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
     MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
 };
-use crate::backends::metal::BufferLabelExt;
-use crate::{DataType, DeviceContext, array::array_size_in_bytes};
+use crate::{
+    DataType, DeviceContext,
+    array::array_size_in_bytes,
+    backends::metal::{
+        BufferLabelExt, MTLCommandQueue, MTLComputePipelineState, MTLDevice,
+        MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
+        MTLResourceOptions,
+    },
+};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -285,17 +287,19 @@ impl DeviceContext for MTLContext {
         data_type: DataType,
         label: String,
     ) -> MetalArray {
-        let buffer_size_bytes = array_size_in_bytes(shape, data_type);
+        unsafe {
+            let buffer_size_bytes = array_size_in_bytes(shape, data_type);
 
-        let buffer = self
-            .device
-            .new_buffer(
-                buffer_size_bytes,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .expect("Failed to create buffer");
-        buffer.set_label(Some(&label));
-        MetalArray::new(buffer, shape, data_type)
+            let buffer = self
+                .device
+                .new_buffer(
+                    buffer_size_bytes,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer");
+            buffer.set_label(Some(&label));
+            MetalArray::new(buffer, shape, data_type)
+        }
     }
 }
 

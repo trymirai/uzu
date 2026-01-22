@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
+
+use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState as ComputePipelineState, FunctionConstantValues,
+    ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
     FunctionConstantValuesLegacy,
 };
 
@@ -123,22 +124,32 @@ impl Kernel {
         )?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(0, Some(arguments.input), arguments.input_offset);
-        encoder.set_buffer(1, Some(arguments.weights), 0);
-        encoder.set_buffer(2, Some(arguments.output), 0);
+        encoder.set_buffer(Some(arguments.input), arguments.input_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.weights), 0, 1);
+        encoder.set_buffer(Some(arguments.output), 0, 2);
 
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<GEMMParams>() as u64,
-            &descriptor.params as *const GEMMParams as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            10,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.hidden_dim as *const i32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&descriptor.params as *const GEMMParams as *mut c_void).unwrap(),
+                std::mem::size_of::<GEMMParams>(),
+                3,
+            );
+        }
+        unsafe {
 
-        encoder.dispatch_thread_groups(
+            encoder.set_bytes(
+
+                NonNull::new(&descriptor.hidden_dim as *const i32 as *mut c_void).unwrap(),
+
+                std::mem::size_of::<i32>(),
+
+                10,
+
+            );
+
+        }
+
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

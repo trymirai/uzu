@@ -1,11 +1,12 @@
-use std::mem::size_of;
+use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
-use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState, KernelDataType, MTLContext, MTLSize,
-};
+use metal::MTLComputeCommandEncoder;
 
 use super::{SSMKernelError, fn_suffix};
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputePipelineState, KernelDataType, MTLBuffer,
+    MTLContext, MTLSize, ProtocolObject,
+};
 
 const SSD_PREFILL_SINGLE_THREADS: usize = 32;
 
@@ -22,14 +23,14 @@ pub struct SSDPrefillKernel {
 }
 
 pub struct SSDPrefillArguments<'a> {
-    pub x: BufferRef<'a>,
-    pub dt: BufferRef<'a>, // raw dt values
-    pub b: BufferRef<'a>,
-    pub c: BufferRef<'a>,
-    pub d: BufferRef<'a>,
-    pub z: BufferRef<'a>,
-    pub state: BufferRef<'a>,
-    pub y: BufferRef<'a>,
+    pub x: &'a ProtocolObject<dyn MTLBuffer>,
+    pub dt: &'a ProtocolObject<dyn MTLBuffer>, // raw dt values
+    pub b: &'a ProtocolObject<dyn MTLBuffer>,
+    pub c: &'a ProtocolObject<dyn MTLBuffer>,
+    pub d: &'a ProtocolObject<dyn MTLBuffer>,
+    pub z: &'a ProtocolObject<dyn MTLBuffer>,
+    pub state: &'a ProtocolObject<dyn MTLBuffer>,
+    pub y: &'a ProtocolObject<dyn MTLBuffer>,
     pub suffix_len: usize,
     pub group_size: i32,
     pub state_size: i32,
@@ -125,16 +126,20 @@ impl SSDPrefillKernel {
         self.bind_common_buffers(compute_encoder, args);
         let channels = args.channels as u32;
         let head_dim = args.head_dim as u32;
-        compute_encoder.set_bytes(
-            15,
-            size_of::<u32>() as u64,
-            &channels as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            16,
-            size_of::<u32>() as u64,
-            &head_dim as *const u32 as *const _,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&channels as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                15,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&head_dim as *const u32 as *mut c_void).unwrap(),
+                size_of::<u32>(),
+                16,
+            );
+        }
         let threads_per_threadgroup = MTLSize {
             width: SSD_PREFILL_SINGLE_THREADS,
             height: 1,
@@ -156,48 +161,65 @@ impl SSDPrefillKernel {
         compute_encoder: ComputeCommandEncoderRef<'_>,
         args: &SSDPrefillArguments,
     ) {
-        compute_encoder.set_buffer(0, Some(args.x), 0);
-        compute_encoder.set_buffer(1, Some(args.dt), 0);
-        compute_encoder.set_buffer(2, Some(args.b), 0);
-        compute_encoder.set_buffer(3, Some(args.c), 0);
-        compute_encoder.set_buffer(4, Some(args.d), 0);
-        compute_encoder.set_buffer(5, Some(args.z), 0);
-        compute_encoder.set_buffer(6, Some(args.state), 0);
-        compute_encoder.set_buffer(7, Some(args.y), 0);
-        compute_encoder.set_bytes(
-            8,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<i32>() as u64,
-            &args.group_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<i32>() as u64,
-            &args.state_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            11,
-            (3 * size_of::<usize>()) as u64,
-            args.x_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            12,
-            (2 * size_of::<usize>()) as u64,
-            args.dt_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            13,
-            (3 * size_of::<usize>()) as u64,
-            args.cb_strides.as_ptr() as *const _,
-        );
-        compute_encoder.set_bytes(
-            14,
-            (3 * size_of::<usize>()) as u64,
-            args.state_strides.as_ptr() as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.x), 0, 0);
+        compute_encoder.set_buffer(Some(args.dt), 0, 1);
+        compute_encoder.set_buffer(Some(args.b), 0, 2);
+        compute_encoder.set_buffer(Some(args.c), 0, 3);
+        compute_encoder.set_buffer(Some(args.d), 0, 4);
+        compute_encoder.set_buffer(Some(args.z), 0, 5);
+        compute_encoder.set_buffer(Some(args.state), 0, 6);
+        compute_encoder.set_buffer(Some(args.y), 0, 7);
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
+                    .unwrap(),
+                size_of::<usize>(),
+                8,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&args.group_size as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                9,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&args.state_size as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                10,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(args.x_strides.as_ptr() as *mut std::ffi::c_void)
+                    .unwrap(),
+                3 * size_of::<usize>(),
+                11,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(args.dt_strides.as_ptr() as *mut std::ffi::c_void)
+                    .unwrap(),
+                2 * size_of::<usize>(),
+                12,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(args.cb_strides.as_ptr() as *mut std::ffi::c_void)
+                    .unwrap(),
+                3 * size_of::<usize>(),
+                13,
+            );
+            compute_encoder.set_bytes(
+                NonNull::new(
+                    args.state_strides.as_ptr() as *mut std::ffi::c_void
+                )
+                .unwrap(),
+                3 * size_of::<usize>(),
+                14,
+            );
+        }
     }
 }

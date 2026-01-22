@@ -2,8 +2,8 @@
 
 use std::rc::Rc;
 
-use crate::backends::metal::{
-    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
+use crate::backends::metal::{ProtocolObject,
+    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
     MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions,
 };
 
@@ -163,7 +163,7 @@ impl EncodableBlock for QKNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder()

@@ -2,8 +2,8 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
+use crate::backends::metal::{ProtocolObject,
+    Buffer, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
     MTLCommandBuffer, MTLCommandEncoder, NSRange,
 };
 
@@ -106,7 +106,7 @@ impl MoeBlock {
                             e
                         ))
                     })?;
-                let weights_buf = unsafe { weights_arr.mtl_buffer().clone() };
+                let weights_buf = unsafe { weights_arr.mtl_buffer() };
 
                 let mut biases_arr =
                     router_tree.leaf("biases").map_err(|e| {
@@ -115,7 +115,7 @@ impl MoeBlock {
                             e
                         ))
                     })?;
-                let biases_buf = unsafe { biases_arr.mtl_buffer().clone() };
+                let biases_buf = unsafe { biases_arr.mtl_buffer() };
 
                 RouterBlock::Metal {
                     weights_buf: weights_buf.into(),
@@ -183,7 +183,7 @@ impl MoeBlock {
             ))
         })?;
 
-        let mut w13_arr = experts_tree
+        let w13_arr = experts_tree
             .subtree("up_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -200,7 +200,7 @@ impl MoeBlock {
             })?;
         let w13_buf = w13_arr.mtl_buffer_cloned();
 
-        let mut w2_arr = experts_tree
+        let w2_arr = experts_tree
             .subtree("down_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -217,7 +217,7 @@ impl MoeBlock {
             })?;
         let w2_buf = w2_arr.mtl_buffer_cloned();
 
-        let mut up_biases_arr = experts_tree
+        let up_biases_arr = experts_tree
             .subtree("up_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -234,7 +234,7 @@ impl MoeBlock {
             })?;
         let up_biases_buf = up_biases_arr.mtl_buffer_cloned();
 
-        let mut down_biases_arr = experts_tree
+        let down_biases_arr = experts_tree
             .subtree("down_projection")
             .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
@@ -294,7 +294,7 @@ impl EncodableBlock for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.active_suffix_length();

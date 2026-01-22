@@ -1,18 +1,23 @@
 use std::ptr::NonNull;
 
-use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLComputeCommandEncoder, MTLContext, MTLError, mtl_size,
-};
+use metal::MTLComputeCommandEncoder;
 
-use crate::DataType;
+use crate::{
+    DataType,
+    backends::metal::{
+        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        MTLError, MTLSize, ProtocolObject,
+    },
+};
 
 pub struct SigmoidKernel {
     pipeline: ComputePipelineState,
 }
 
 impl SigmoidKernel {
-    fn kernel_name_for_type(data_type: DataType) -> Result<&'static str, MTLError> {
+    fn kernel_name_for_type(
+        data_type: DataType
+    ) -> Result<&'static str, MTLError> {
         match data_type {
             DataType::F16 => Ok("apply_sigmoid_f16"),
             DataType::F32 => Ok("apply_sigmoid_f32"),
@@ -24,17 +29,22 @@ impl SigmoidKernel {
         }
     }
 
-    pub fn new(context: &MTLContext, data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(
+        context: &MTLContext,
+        data_type: DataType,
+    ) -> Result<Self, MTLError> {
         let fn_name = Self::kernel_name_for_type(data_type)?;
         let pipeline = context.compute_pipeline_state(fn_name, None)?;
-        Ok(Self { pipeline })
+        Ok(Self {
+            pipeline,
+        })
     }
 
     pub fn encode(
         &self,
         encoder: ComputeCommandEncoderRef<'_>,
-        input_buffer: BufferRef<'_>,
-        output_buffer: BufferRef<'_>,
+        input_buffer: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer: &ProtocolObject<dyn MTLBuffer>,
         total_elements: i32,
     ) -> Result<(), MTLError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -42,14 +52,16 @@ impl SigmoidKernel {
         encoder.set_buffer(Some(output_buffer), 0, 1);
         unsafe {
             encoder.set_bytes(
-                NonNull::new_unchecked(&total_elements as *const i32 as *mut std::ffi::c_void),
+                NonNull::new_unchecked(
+                    &total_elements as *const i32 as *mut std::ffi::c_void,
+                ),
                 std::mem::size_of::<i32>(),
                 2,
             );
         }
 
-        let threads_per_tg = mtl_size(256, 1, 1);
-        let grid = mtl_size(total_elements as u64, 1, 1);
+        let threads_per_tg = MTLSize::new(256, 1, 1);
+        let grid = MTLSize::new(total_elements as usize, 1, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

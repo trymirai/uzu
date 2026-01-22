@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
 };
 use objc2::rc::autoreleasepool;
 
@@ -278,7 +278,7 @@ impl EncodableBlock for ClassifierLayer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         #[cfg(not(feature = "tracing"))]

@@ -30,26 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Helper function for creating MTLSize (replacing MTLSize::new)
-#[inline]
-pub fn mtl_size(
-    width: u64,
-    height: u64,
-    depth: u64,
-) -> MTLSize {
-    MTLSize {
-        width: width as usize,
-        height: height as usize,
-        depth: depth as usize,
-    }
-}
-
-/// Type alias for references to MTLBuffer (replacing old BufferRef)
-pub type BufferRef<'a> = &'a ProtocolObject<dyn MTLBuffer>;
-
-/// Type alias for references to command buffers (replacing old CommandBufferRef)
-pub type CommandBufferRef<'a> = &'a ProtocolObject<dyn MTLCommandBuffer>;
-
 /// Type alias for references to compute command encoders (replacing old ComputeCommandEncoderRef)
 pub type ComputeCommandEncoderRef<'a> =
     &'a ProtocolObject<dyn MTLComputeCommandEncoder>;
@@ -115,6 +95,6 @@ pub use media_utils::{
     MetalImagePreprocessor,
 };
 pub use metal_extensions::{
-    BufferLabelExt, ComputeEncoderLegacy, FunctionConstantValuesLegacy,
+    BufferLabelExt, FunctionConstantValuesLegacy,
 };
 pub use placement_analysis::PlacementAnalysis;

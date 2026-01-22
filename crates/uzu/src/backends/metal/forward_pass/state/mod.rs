@@ -9,12 +9,13 @@ mod shared_buffers;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use metal::{MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt};
-
 pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
+use metal::{
+    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt,
+};
 pub use mode::{
     ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
 };
@@ -27,7 +28,9 @@ use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
-    backends::metal::{Buffer, CommandBufferRef, MTLContext, MTLResourceOptions, MetalArray},
+    backends::metal::{
+        Buffer, MTLContext, MTLResourceOptions, MetalArray, ProtocolObject,
+    },
     session::parameter::SamplingMethod,
 };
 
@@ -460,11 +463,14 @@ impl ForwardPassState {
         let batch_size = 1;
 
         let create_buffer = |size: usize| -> ArrayCell {
-            let buffer_size = (size * data_type.size_in_bytes()) as u64;
-            let buffer = context.device.new_buffer(
-                buffer_size,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            ).expect("Failed to create buffer");
+            let buffer_size = size * data_type.size_in_bytes();
+            let buffer = context
+                .device
+                .new_buffer(
+                    buffer_size,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer");
             RefCell::new(unsafe {
                 MetalArray::new(
                     buffer,
@@ -480,12 +486,14 @@ impl ForwardPassState {
             norm: create_buffer(batch_size * model_dim),
             classifier_logits: {
                 let buffer_size =
-                    (batch_size * num_labels * data_type.size_in_bytes())
-                        as u64;
-                let buffer = context.device.new_buffer(
-                    buffer_size,
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                ).expect("Failed to create buffer");
+                    batch_size * num_labels * data_type.size_in_bytes();
+                let buffer = context
+                    .device
+                    .new_buffer(
+                        buffer_size,
+                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    )
+                    .expect("Failed to create buffer");
                 RefCell::new(unsafe {
                     MetalArray::new(
                         buffer,
@@ -517,10 +525,13 @@ impl ForwardPassState {
         let create_buffer = |dims: &[usize]| -> ArrayCell {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
-            let buffer = context.device.new_buffer(
-                buffer_size,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            ).expect("Failed to create buffer");
+            let buffer = context
+                .device
+                .new_buffer(
+                    buffer_size,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer");
             RefCell::new(unsafe { MetalArray::new(buffer, dims, data_type) })
         };
 
@@ -977,7 +988,7 @@ impl ForwardPassState {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         source_array_id: ArrayId,
         destination_array: RefCell<MetalArray>,
     ) {

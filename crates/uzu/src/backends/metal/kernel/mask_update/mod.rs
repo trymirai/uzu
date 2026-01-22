@@ -1,9 +1,10 @@
 use std::ptr::NonNull;
 
+use metal::MTLComputeCommandEncoder;
+
 use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLComputeCommandEncoder, MTLContext, MTLSize, kernel::KernelDataType,
-    mtl_size,
+    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+    MTLSize, ProtocolObject, kernel::KernelDataType,
 };
 
 pub struct MaskUpdateKernel {
@@ -30,7 +31,7 @@ impl MaskUpdateKernel {
     pub fn encode(
         &self,
         encoder: ComputeCommandEncoderRef<'_>,
-        mask_buffer: BufferRef<'_>,
+        mask_buffer: &ProtocolObject<dyn MTLBuffer>,
         unmask_col: i32,
         mask_col: i32,
     ) {
@@ -52,6 +53,6 @@ impl MaskUpdateKernel {
                 2,
             );
         }
-        encoder.dispatch_threads(mtl_size(1, 1, 1), mtl_size(1, 1, 1));
+        encoder.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
     }
 }

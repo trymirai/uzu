@@ -5,38 +5,50 @@
 
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use bytemuck;
 use half::bf16;
-use metal::{Buffer as MTLBuffer, Device, MTLResourceOptions};
-use uzu::backends::metal::MTLContext;
+use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
+use uzu::backends::metal::{Buffer, MTLContext};
 
 /// Create Metal context for testing
 pub fn create_ctx() -> MTLContext {
-    let device = Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default().expect("No Metal device");
+    let queue =
+        device.new_command_queue().expect("Failed to create command queue");
     MTLContext::new(device, queue).expect("Failed to create MTLContext")
 }
 
 /// Helper to allocate buffer with data
-pub fn alloc_buffer_with_data<T>(
+pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
     ctx: &MTLContext,
     data: &[T],
-) -> MTLBuffer {
-    ctx.device.new_buffer_with_data(
-        data.as_ptr() as *const _,
-        (data.len() * std::mem::size_of::<T>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    )
+) -> Buffer {
+    if data.is_empty() {
+        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
+        ctx.device
+            .new_buffer(1, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .expect("Failed to create empty buffer")
+    } else {
+        ctx.device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(data),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer")
+    }
 }
 
 /// Helper to allocate empty buffer
 pub fn alloc_buffer<T>(
     ctx: &MTLContext,
     count: usize,
-) -> MTLBuffer {
-    ctx.device.new_buffer(
-        (count * std::mem::size_of::<T>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    )
+) -> Buffer {
+    ctx.device
+        .new_buffer(
+            count * std::mem::size_of::<T>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer")
 }
 
 /// Compare two bf16 slices with tolerance

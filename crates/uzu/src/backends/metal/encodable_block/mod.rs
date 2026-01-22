@@ -7,7 +7,8 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 use super::{
-    CommandBufferRef, ComputeCommandEncoderRef, forward_pass::ForwardPassState,
+    ComputeCommandEncoderRef, MTLCommandBuffer, ProtocolObject,
+    forward_pass::ForwardPassState,
 };
 
 mod activation;
@@ -62,7 +63,7 @@ pub trait EncodableBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     );
 

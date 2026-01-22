@@ -1,14 +1,14 @@
-use std::mem::size_of;
-use std::ptr::NonNull;
+use std::{mem::size_of, ptr::NonNull};
 
-use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState, KernelDataType, MTLContext, MTLError,
-    metal_extensions::ComputeEncoderDispatch, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, BufferLabelExt,
-};
+use metal::MTLComputeCommandEncoder;
 use objc2::msg_send;
 use objc2_foundation::NSString;
+
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputePipelineState,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+    MTLError, ProtocolObject, metal_extensions::ComputeEncoderDispatch,
+};
 
 #[derive(Debug)]
 pub struct TensorAddSwapKernel {
@@ -33,10 +33,10 @@ impl TensorAddSwapKernel {
 
     pub fn encode_into_command_buffer(
         &self,
-        skip_buffer: BufferRef<'_>,
-        main_buffer: BufferRef<'_>,
+        skip_buffer: &ProtocolObject<dyn MTLBuffer>,
+        main_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
@@ -46,8 +46,8 @@ impl TensorAddSwapKernel {
 
     pub fn encode_with_encoder(
         &self,
-        skip_buffer: BufferRef<'_>,
-        main_buffer: BufferRef<'_>,
+        skip_buffer: &ProtocolObject<dyn MTLBuffer>,
+        main_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
         compute_encoder: ComputeCommandEncoderRef<'_>,
     ) {

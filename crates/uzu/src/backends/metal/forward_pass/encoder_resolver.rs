@@ -1,18 +1,20 @@
-use crate::backends::metal::{CommandBufferRef, ComputeCommandEncoder};
 use metal::{MTLCommandBuffer, MTLCommandEncoder};
 
 use super::ForwardPassState;
-use crate::backends::metal::encodable_block::{
-    EncodableBlock, EncodingParameters,
+use crate::backends::metal::{
+    ComputeCommandEncoder, ProtocolObject,
+    encodable_block::{EncodableBlock, EncodingParameters},
 };
 
 pub struct EncoderResolver<'a> {
-    command_buffer: CommandBufferRef<'a>,
+    command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>,
     encoder: Option<ComputeCommandEncoder>,
 }
 
 impl<'a> EncoderResolver<'a> {
-    pub fn new(command_buffer: CommandBufferRef<'a>) -> Self {
+    pub fn new(
+        command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>
+    ) -> Self {
         Self {
             command_buffer,
             encoder: None,

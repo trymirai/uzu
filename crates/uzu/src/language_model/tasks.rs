@@ -4,7 +4,7 @@ use metal::{BufferExt, MTLBuffer, MTLDeviceExt};
 
 use super::LanguageModelGeneratorContext;
 use crate::backends::metal::{
-    Buffer, MTLResourceOptions, NSRange,
+    Buffer, MTLResourceOptions,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
 };
 

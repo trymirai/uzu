@@ -10,7 +10,7 @@ use metal::{MTLCommandQueue, MTLDeviceExt};
 
 use metal::MTLBuffer as _;
 use crate::backends::metal::{
-    CommandBuffer, Event, MTLCommandQueueExt, MTLResourceOptions, Buffer, Device, MTLEvent, MTLDevice,
+    CommandBuffer, MTLResourceOptions, Buffer, Device, MTLEvent,
 };
 
 use super::{
@@ -64,15 +64,15 @@ impl AsyncBuffers {
         batch_size: usize,
     ) -> Self {
         let positions = device.new_buffer(
-            (max_tokens * std::mem::size_of::<i32>()),
+            max_tokens * std::mem::size_of::<i32>() ,
             MTLResourceOptions::STORAGE_MODE_SHARED,
         ).expect("Failed to create positions buffer");
         let seeds = device.new_buffer(
-            (max_tokens * std::mem::size_of::<u64>()),
+            max_tokens * std::mem::size_of::<u64>() ,
             MTLResourceOptions::STORAGE_MODE_SHARED,
         ).expect("Failed to create seeds buffer");
         let results = device.new_buffer(
-            (batch_size * std::mem::size_of::<u32>()),
+            batch_size * std::mem::size_of::<u32>() ,
             MTLResourceOptions::STORAGE_MODE_SHARED,
         ).expect("Failed to create results buffer");
         let event = device.new_event().expect("Failed to create event");

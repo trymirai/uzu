@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::Device;
+use metal::{MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt};
 use uzu::{
     Array, DataType, DeviceContext,
     backends::metal::{
@@ -29,8 +29,8 @@ struct Scenario {
 }
 
 fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     match MTLContext::new(device, command_queue) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
@@ -230,7 +230,11 @@ fn run_scenario(
         },
     };
 
-    let command_buffer = context.command_queue.new_command_buffer().to_owned();
+    let command_buffer = context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer")
+        .to_owned();
 
     let root_command_buffer = command_buffer.clone();
     layer.update_after_acceptance(

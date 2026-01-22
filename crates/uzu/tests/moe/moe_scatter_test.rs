@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
@@ -80,7 +82,7 @@ fn test_scatter_buckets_parity() {
 
         // Use fused router+topk kernel
         let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         router_topk
             .encode(
                 &cb,
@@ -105,7 +107,7 @@ fn test_scatter_buckets_parity() {
         // Read back CPU probs for reference compare
         let probs_bf16 = unsafe {
             std::slice::from_raw_parts(
-                topk_probs_buf.contents() as *const bf16,
+                topk_probs_buf.contents().as_ptr() as *const bf16,
                 t * k,
             )
         };
@@ -113,7 +115,7 @@ fn test_scatter_buckets_parity() {
             probs_bf16.iter().map(|&h| f32::from(h)).collect();
         let topk_ids_cpu = unsafe {
             std::slice::from_raw_parts(
-                topk_ids_buf.contents() as *const i32,
+                topk_ids_buf.contents().as_ptr() as *const i32,
                 t * k,
             )
         };
@@ -125,7 +127,7 @@ fn test_scatter_buckets_parity() {
 
         let fused_kernel =
             MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         fused_kernel
             .encode(
                 &cb,
@@ -150,7 +152,7 @@ fn test_scatter_buckets_parity() {
         let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
         let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
         scatter
             .encode_block_bases(
@@ -169,12 +171,12 @@ fn test_scatter_buckets_parity() {
         cb.wait_until_completed();
 
         let sumk = unsafe {
-            std::slice::from_raw_parts(sumk_buf.contents() as *const u32, 1)
+            std::slice::from_raw_parts(sumk_buf.contents().as_ptr() as *const u32, 1)
         }[0] as usize;
         let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
         let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         scatter
             .encode_scatter(
                 &cb,
@@ -200,13 +202,13 @@ fn test_scatter_buckets_parity() {
 
         let out_ids = unsafe {
             std::slice::from_raw_parts(
-                out_ids_buf.contents() as *const i32,
+                out_ids_buf.contents().as_ptr() as *const i32,
                 sumk,
             )
         };
         let out_probs_h = unsafe {
             std::slice::from_raw_parts(
-                out_probs_buf.contents() as *const bf16,
+                out_probs_buf.contents().as_ptr() as *const bf16,
                 sumk,
             )
         };
@@ -218,7 +220,7 @@ fn test_scatter_buckets_parity() {
             cpu_expert_buckets(topk_ids_cpu, &topk_probs_cpu, t, e, k);
         let offsets_gpu = unsafe {
             std::slice::from_raw_parts(
-                offsets_buf.contents() as *const u32,
+                offsets_buf.contents().as_ptr() as *const u32,
                 e + 1,
             )
         };

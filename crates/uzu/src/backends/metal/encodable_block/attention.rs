@@ -1,8 +1,8 @@
 //! Attention kernel encodable.
 
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, KernelDataType,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, KernelDataType,
     MTLCommandBuffer, MTLCommandEncoder, MTLContext,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
@@ -63,7 +63,7 @@ impl EncodableBlock for Attention {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer
@@ -207,10 +207,10 @@ impl EncodableBlock for Attention {
             let value_cache_binding =
                 state.arrays(&[ArrayId::Values(self.layer_index)]);
 
-            let mut key_cache_array = key_cache_binding[0].borrow_mut();
+            let key_cache_array = key_cache_binding[0].borrow_mut();
             let key_cache_buf = key_cache_array.mtl_buffer_cloned();
 
-            let mut value_cache_array = value_cache_binding[0].borrow_mut();
+            let value_cache_array = value_cache_binding[0].borrow_mut();
             let value_cache_buf = value_cache_array.mtl_buffer_cloned();
 
             (key_cache_buf, value_cache_buf)
@@ -219,7 +219,7 @@ impl EncodableBlock for Attention {
             // Use the KV cache update kernel to extract values from QKV into a dedicated extracted_values buffer.
             let extracted_values_binding =
                 state.arrays(&[ArrayId::ExtractedValues]);
-            let mut extracted_values_array =
+            let extracted_values_array =
                 extracted_values_binding[0].borrow_mut();
             let extracted_values_buf =
                 extracted_values_array.mtl_buffer_cloned();

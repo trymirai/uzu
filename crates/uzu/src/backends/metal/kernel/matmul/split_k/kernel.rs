@@ -1,9 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 
-use crate::backends::metal::{
-    Buffer, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState as ComputePipelineState, MTLDeviceExt, MTLResourceOptions,
-};
+use metal::MTLComputeCommandEncoder;
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -11,7 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        Buffer, ComputeCommandEncoderRef, ComputePipelineState, MTLContext,
+        MTLDeviceExt, MTLError, MTLResourceOptions,
         kernel::matmul::common::{
             GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
             transpose_configuration,
@@ -226,43 +224,52 @@ impl Kernel {
         )?;
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
-        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
-        encoder.set_buffer(1, Some(arguments.b), 0);
-        encoder.set_buffer(2, Some(&accumulator_buffer), 0);
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<SplitKGEMMParams>() as u64,
-            &descriptor.params as *const _ as *const _,
-        );
-        encoder.dispatch_thread_groups(
+        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.b), 0, 1);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 2);
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&descriptor.params as *const _ as *mut c_void)
+                    .unwrap(),
+                std::mem::size_of::<SplitKGEMMParams>(),
+                3,
+            );
+        }
+        encoder.dispatch_threadgroups(
             descriptor.partial_threadgroups,
             descriptor.partial_threads_per_threadgroup,
         );
 
         let accum_pipeline_state = self.get_accum_pipeline(context)?;
         encoder.set_compute_pipeline_state(accum_pipeline_state);
-        encoder.set_buffer(0, Some(&accumulator_buffer), 0);
-        encoder.set_buffer(1, Some(arguments.d), 0);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 0);
+        encoder.set_buffer(Some(arguments.d), 0, 1);
 
         let partition_count = descriptor.partition_count;
         let output_elements_per_partition =
             descriptor.output_elements_per_partition;
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &partition_count as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &output_elements_per_partition as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &(arguments.ldd) as *const i32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&partition_count as *const i32 as *mut c_void)
+                    .unwrap(),
+                std::mem::size_of::<i32>(),
+                2,
+            );
+            encoder.set_bytes(
+                NonNull::new(
+                    &output_elements_per_partition as *const i32 as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i32>(),
+                3,
+            );
+            encoder.set_bytes(
+                NonNull::new(&arguments.ldd as *const i32 as *mut c_void)
+                    .unwrap(),
+                std::mem::size_of::<i32>(),
+                4,
+            );
+        }
 
         encoder.dispatch_threads(
             descriptor.accum_total_threads,
@@ -282,10 +289,14 @@ impl Kernel {
         {
             return;
         }
-        self.accumulator_buffer = Some(mtl.device.new_buffer(
-            required_bytes as usize,
-            MTLResourceOptions::STORAGE_MODE_PRIVATE,
-        ).expect("Failed to create accumulator buffer"));
+        self.accumulator_buffer = Some(
+            mtl.device
+                .new_buffer(
+                    required_bytes as usize,
+                    MTLResourceOptions::STORAGE_MODE_PRIVATE,
+                )
+                .expect("Failed to create accumulator buffer"),
+        );
         self.accumulator_buffer_bytes = required_bytes;
     }
 }

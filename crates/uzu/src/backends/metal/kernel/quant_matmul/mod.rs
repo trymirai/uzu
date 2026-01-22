@@ -1,12 +1,16 @@
-use std::{collections::HashMap, mem::size_of};
+use std::{collections::HashMap, ffi::c_void, mem::size_of, ptr::NonNull};
 
-use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
-    MTLContext, MTLError, MTLSize, mtl_size,
+use metal::MTLComputeCommandEncoder;
+
+use crate::{
+    DataType,
+    backends::metal::{
+        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLError, MTLSize,
+        ProtocolObject,
+    },
+    config::QuantizationMode,
 };
-
-use crate::{DataType, config::QuantizationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizationType {
@@ -42,13 +46,13 @@ pub struct QuantizedMatmulKernel {
 
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulArguments<'a> {
-    pub a_buffer: BufferRef<'a>,
+    pub a_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     /// Byte offset into `a_buffer` (used for slicing the batch dimension).
     pub a_offset: u64,
-    pub b_buffer: BufferRef<'a>,
-    pub scales_buffer: BufferRef<'a>,
-    pub zero_points_or_biases_buffer: BufferRef<'a>,
-    pub output_buffer: BufferRef<'a>,
+    pub b_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub scales_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub zero_points_or_biases_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub batch: i32,
     pub input_dim: i32,
     pub output_dim: i32,
@@ -202,31 +206,33 @@ impl QuantizedMatmulKernel {
         encoder.set_compute_pipeline_state(pipeline);
 
         // Set buffers
-        encoder.set_buffer(0, Some(args.b_buffer), 0);
-        encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        encoder.set_buffer(2, Some(args.zero_points_or_biases_buffer), 0);
-        encoder.set_buffer(3, Some(args.a_buffer), args.a_offset);
-        encoder.set_buffer(4, Some(args.output_buffer), 0);
+        encoder.set_buffer(Some(args.b_buffer), 0, 0);
+        encoder.set_buffer(Some(args.scales_buffer), 0, 1);
+        encoder.set_buffer(Some(args.zero_points_or_biases_buffer), 0, 2);
+        encoder.set_buffer(Some(args.a_buffer), args.a_offset as usize, 3);
+        encoder.set_buffer(Some(args.output_buffer), 0, 4);
 
         let k: i32 = args.input_dim;
         let m = args.batch;
         let n = args.output_dim;
 
-        encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &k as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &n as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &m as *const i32 as *const _,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&k as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                5,
+            );
+            encoder.set_bytes(
+                NonNull::new(&n as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                6,
+            );
+            encoder.set_bytes(
+                NonNull::new(&m as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                7,
+            );
+        }
 
         match variant {
             KernelKind::MatrixVector => {
@@ -237,9 +243,10 @@ impl QuantizedMatmulKernel {
                     64
                 };
                 let n_tgp_y = (n + bn - 1) / bn;
-                let threadgroups = mtl_size(m as u64, n_tgp_y as u64, 1);
-                let threads_per_threadgroup = mtl_size(bk as u64, 2, 1);
-                encoder.dispatch_thread_groups(
+                let threadgroups =
+                    MTLSize::new(m as usize, n_tgp_y as usize, 1);
+                let threads_per_threadgroup = MTLSize::new(bk as usize, 2, 1);
+                encoder.dispatch_threadgroups(
                     threadgroups,
                     threads_per_threadgroup,
                 );
@@ -247,13 +254,14 @@ impl QuantizedMatmulKernel {
             KernelKind::MatrixMatrix => {
                 let wm = 2;
                 let wn = 2;
-                let threads_per_threadgroup = mtl_size(32, wn, wm);
-                let threadgroups = mtl_size(
-                    (n as u64 + bn - 1) / bn,
-                    (m as u64 + bm - 1) / bm,
+                let threads_per_threadgroup =
+                    MTLSize::new(32, wn as usize, wm as usize);
+                let threadgroups = MTLSize::new(
+                    ((n as u64 + bn - 1) / bn) as usize,
+                    ((m as u64 + bm - 1) / bm) as usize,
                     1,
                 );
-                encoder.dispatch_thread_groups(
+                encoder.dispatch_threadgroups(
                     threadgroups,
                     threads_per_threadgroup,
                 );
@@ -348,17 +356,17 @@ enum KernelKind {
 #[derive(Debug)]
 pub struct MlpFusedQmvArguments<'a> {
     /// Weight matrix [2*hidden_dim, input_dim] (up and gate concatenated, quantized)
-    pub weights: BufferRef<'a>,
+    pub weights: &'a ProtocolObject<dyn MTLBuffer>,
     /// Scales buffer
-    pub scales: BufferRef<'a>,
+    pub scales: &'a ProtocolObject<dyn MTLBuffer>,
     /// Zero points or biases buffer (depends on quantization type)
-    pub zero_points_or_biases: BufferRef<'a>,
+    pub zero_points_or_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Input vector [input_dim]
-    pub input: BufferRef<'a>,
+    pub input: &'a ProtocolObject<dyn MTLBuffer>,
     /// Input byte offset
     pub input_offset: u64,
     /// Output vector [hidden_dim]
-    pub output: BufferRef<'a>,
+    pub output: &'a ProtocolObject<dyn MTLBuffer>,
     /// Input dimension (K)
     pub input_dim: i32,
     /// Hidden dimension (output size, half of weight rows)
@@ -420,32 +428,36 @@ impl MlpFusedQmvKernel {
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
-        encoder.set_buffer(0, Some(args.weights), 0);
-        encoder.set_buffer(1, Some(args.scales), 0);
-        encoder.set_buffer(2, Some(args.zero_points_or_biases), 0);
-        encoder.set_buffer(3, Some(args.input), args.input_offset);
-        encoder.set_buffer(4, Some(args.output), 0);
+        encoder.set_buffer(Some(args.weights), 0, 0);
+        encoder.set_buffer(Some(args.scales), 0, 1);
+        encoder.set_buffer(Some(args.zero_points_or_biases), 0, 2);
+        encoder.set_buffer(Some(args.input), args.input_offset as usize, 3);
+        encoder.set_buffer(Some(args.output), 0, 4);
 
-        encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &args.input_dim as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &args.hidden_dim as *const i32 as *const _,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&args.input_dim as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                5,
+            );
+            encoder.set_bytes(
+                NonNull::new(&args.hidden_dim as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                6,
+            );
+        }
 
         // Dispatch: one threadgroup per 8 output rows (num_simdgroups * results_per_simdgroup)
         let rows_per_threadgroup = 8;
         let n_tgp_y = ((args.hidden_dim + rows_per_threadgroup - 1)
             / rows_per_threadgroup) as u64;
         let threadgroups =
-            mtl_size(args.batch_count.max(1) as u64, n_tgp_y, 1);
-        let threads_per_threadgroup = mtl_size(32, 2, 1); // 2 simdgroups, 32 threads each
+            MTLSize::new(args.batch_count.max(1) as usize, n_tgp_y as usize, 1);
+        let threads_per_threadgroup = MTLSize::new(32, 2, 1); // 2 simdgroups, 32 threads each
 
-        encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
         Ok(())
     }
 }
@@ -454,17 +466,17 @@ impl MlpFusedQmvKernel {
 #[derive(Debug)]
 pub struct MlpFusedQmmArguments<'a> {
     /// Weight matrix [K, 2*hidden_dim] quantized (up and gate concatenated)
-    pub weights: BufferRef<'a>,
+    pub weights: &'a ProtocolObject<dyn MTLBuffer>,
     /// Scales buffer
-    pub scales: BufferRef<'a>,
+    pub scales: &'a ProtocolObject<dyn MTLBuffer>,
     /// Zero points or biases buffer (depends on quantization type)
-    pub zero_points_or_biases: BufferRef<'a>,
+    pub zero_points_or_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Input activations [M, K]
-    pub input: BufferRef<'a>,
+    pub input: &'a ProtocolObject<dyn MTLBuffer>,
     /// Input byte offset
     pub input_offset: u64,
     /// Output [M, hidden_dim]
-    pub output: BufferRef<'a>,
+    pub output: &'a ProtocolObject<dyn MTLBuffer>,
     /// Batch size (M)
     pub batch: i32,
     /// Input dimension (K)
@@ -526,37 +538,41 @@ impl MlpFusedQmmKernel {
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
 
-        encoder.set_buffer(0, Some(args.weights), 0);
-        encoder.set_buffer(1, Some(args.scales), 0);
-        encoder.set_buffer(2, Some(args.zero_points_or_biases), 0);
-        encoder.set_buffer(3, Some(args.input), args.input_offset);
-        encoder.set_buffer(4, Some(args.output), 0);
+        encoder.set_buffer(Some(args.weights), 0, 0);
+        encoder.set_buffer(Some(args.scales), 0, 1);
+        encoder.set_buffer(Some(args.zero_points_or_biases), 0, 2);
+        encoder.set_buffer(Some(args.input), args.input_offset as usize, 3);
+        encoder.set_buffer(Some(args.output), 0, 4);
 
-        encoder.set_bytes(
-            5,
-            size_of::<i32>() as u64,
-            &args.input_dim as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<i32>() as u64,
-            &args.hidden_dim as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &args.batch as *const i32 as *const _,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&args.input_dim as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                5,
+            );
+            encoder.set_bytes(
+                NonNull::new(&args.hidden_dim as *const i32 as *mut c_void)
+                    .unwrap(),
+                size_of::<i32>(),
+                6,
+            );
+            encoder.set_bytes(
+                NonNull::new(&args.batch as *const i32 as *mut c_void).unwrap(),
+                size_of::<i32>(),
+                7,
+            );
+        }
 
         // Dispatch: BM=32, BN=32
         let bm = 32;
         let bn = 32;
         let tiles_m = ((args.batch + bm - 1) / bm) as u64;
         let tiles_n = ((args.hidden_dim + bn - 1) / bn) as u64;
-        let threadgroups = mtl_size(tiles_n, tiles_m, 1);
-        let threads_per_threadgroup = mtl_size(32, 2, 2); // WM=2, WN=2, 32 threads
+        let threadgroups = MTLSize::new(tiles_n as usize, tiles_m as usize, 1);
+        let threads_per_threadgroup = MTLSize::new(32, 2, 2); // WM=2, WN=2, 32 threads
 
-        encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
         Ok(())
     }
 }

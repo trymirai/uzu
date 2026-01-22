@@ -2,10 +2,14 @@
 
 use std::mem::size_of;
 
-use metal::MTLResourceOptions;
+use bytemuck;
+use metal::{
+    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLResourceOptions,
+};
 use uzu::{
     backends::metal::{
-        KernelDataType, MTLContext,
+        KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
         kernel::ssm::{
             SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
             conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
@@ -14,7 +18,8 @@ use uzu::{
     config::Activation,
 };
 
-const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::StorageModeShared;
+const STORAGE_MODE: MTLResourceOptions =
+    MTLResourceOptions::STORAGE_MODE_SHARED;
 
 fn silu_scalar(x: f32) -> f32 {
     let y = 1.0 / (1.0 + (-x).exp());
@@ -30,32 +35,32 @@ fn softplus_f32(x: f32) -> f32 {
 }
 
 fn create_context() -> Option<MTLContext> {
-    let device = metal::Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     MTLContext::new(device, command_queue).ok()
 }
 
 fn write_buffer(
-    buf: &metal::BufferRef,
+    buf: &ProtocolObject<dyn MTLBuffer>,
     data: &[f32],
 ) {
     unsafe {
         std::ptr::copy_nonoverlapping(
             data.as_ptr(),
-            buf.contents() as *mut f32,
+            buf.contents().as_ptr() as *mut f32,
             data.len(),
         );
     }
 }
 
 fn read_buffer(
-    buf: &metal::BufferRef,
+    buf: &ProtocolObject<dyn MTLBuffer>,
     len: usize,
 ) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     unsafe {
         std::ptr::copy_nonoverlapping(
-            buf.contents() as *const f32,
+            buf.contents().as_ptr() as *const f32,
             out.as_mut_ptr(),
             len,
         );
@@ -63,9 +68,13 @@ fn read_buffer(
     out
 }
 
-fn zero_buffer(buf: &metal::BufferRef) {
+fn zero_buffer(buf: &ProtocolObject<dyn MTLBuffer>) {
     unsafe {
-        std::ptr::write_bytes(buf.contents(), 0, buf.length() as usize);
+        std::ptr::write_bytes(
+            buf.contents().as_ptr(),
+            0,
+            buf.length() as usize,
+        );
     }
 }
 
@@ -129,6 +138,7 @@ fn ssd_prefill_cpu_reference(
     (y_out, state)
 }
 
+#[allow(dead_code)]
 struct SSDPrefillFixture {
     suffix_len: usize,
     num_heads: usize,
@@ -218,39 +228,48 @@ fn run_prefill_kernel_mode(
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
     let device = &ctx.device;
-    let x_buf = device.new_buffer_with_data(
-        fixture.x_data.as_ptr() as *const _,
-        (fixture.total_x * 4) as u64,
-        STORAGE_MODE,
-    );
-    let dt_buf = device.new_buffer_with_data(
-        fixture.dt_data.as_ptr() as *const _,
-        (fixture.total_dt * 4) as u64,
-        STORAGE_MODE,
-    );
-    let b_buf = device.new_buffer_with_data(
-        fixture.b_data.as_ptr() as *const _,
-        (fixture.total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let c_buf = device.new_buffer_with_data(
-        fixture.c_data.as_ptr() as *const _,
-        (fixture.total_cb * 4) as u64,
-        STORAGE_MODE,
-    );
-    let d_buf = device.new_buffer_with_data(
-        fixture.d_data.as_ptr() as *const _,
-        (fixture.num_heads * 4) as u64,
-        STORAGE_MODE,
-    );
-    let z_buf = device.new_buffer_with_data(
-        fixture.z_data.as_ptr() as *const _,
-        (fixture.total_x * 4) as u64,
-        STORAGE_MODE,
-    );
-    let state_buf =
-        device.new_buffer((fixture.total_state * 4) as u64, STORAGE_MODE);
-    let y_buf = device.new_buffer((fixture.total_x * 4) as u64, STORAGE_MODE);
+    let x_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.x_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let dt_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.dt_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let b_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.b_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let c_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.c_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let d_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.d_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let z_buf = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&fixture.z_data),
+            STORAGE_MODE,
+        )
+        .expect("Failed to create buffer");
+    let state_buf = device
+        .new_buffer(fixture.total_state * 4, STORAGE_MODE)
+        .expect("Failed to create buffer");
+    let y_buf = device
+        .new_buffer(fixture.total_x * 4, STORAGE_MODE)
+        .expect("Failed to create buffer");
 
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
@@ -275,9 +294,14 @@ fn run_prefill_kernel_mode(
         head_dim: fixture.head_dim,
     };
 
-    let command_buffer = ctx.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel.encode(encoder, args, mode).unwrap();
+    let command_buffer = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
+    let encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
+    kernel.encode(&encoder, args, mode).unwrap();
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -303,42 +327,38 @@ fn run_conv_scan_once(
 ) -> (Vec<f32>, Vec<f32>) {
     let device = &ctx.device;
     let total_x = suffix_len * channels;
-    let total_w = channels * kernel_size as usize;
+    let _total_w = channels * kernel_size as usize;
     let total_state = channels * tap_count;
 
     let y_buf = if alias_io {
-        device.new_buffer_with_data(
-            x_data.as_ptr() as *const _,
-            (total_x * size_of::<f32>()) as u64,
-            STORAGE_MODE,
-        )
+        device
+            .new_buffer_with_data(bytemuck::cast_slice(x_data), STORAGE_MODE)
+            .expect("Failed to create buffer")
     } else {
         let buf = device
-            .new_buffer((total_x * size_of::<f32>()) as u64, STORAGE_MODE);
+            .new_buffer(total_x * size_of::<f32>(), STORAGE_MODE)
+            .expect("Failed to create buffer");
         zero_buffer(&buf);
         buf
     };
-    let w_buf = device.new_buffer_with_data(
-        w_data.as_ptr() as *const _,
-        (total_w * size_of::<f32>()) as u64,
-        STORAGE_MODE,
-    );
-    let b_buf = device.new_buffer_with_data(
-        b_data.as_ptr() as *const _,
-        (channels * size_of::<f32>()) as u64,
-        STORAGE_MODE,
-    );
+    let w_buf = device
+        .new_buffer_with_data(bytemuck::cast_slice(w_data), STORAGE_MODE)
+        .expect("Failed to create buffer");
+    let b_buf = device
+        .new_buffer_with_data(bytemuck::cast_slice(b_data), STORAGE_MODE)
+        .expect("Failed to create buffer");
     let state_buf = device
-        .new_buffer((total_state * size_of::<f32>()) as u64, STORAGE_MODE);
-    let scratch_buf =
-        if use_scratch && tap_count > 0 {
-            Some(device.new_buffer(
-                (total_state * size_of::<f32>()) as u64,
-                STORAGE_MODE,
-            ))
-        } else {
-            None
-        };
+        .new_buffer(total_state * size_of::<f32>(), STORAGE_MODE)
+        .expect("Failed to create buffer");
+    let scratch_buf = if use_scratch && tap_count > 0 {
+        Some(
+            device
+                .new_buffer(total_state * size_of::<f32>(), STORAGE_MODE)
+                .expect("Failed to create buffer"),
+        )
+    } else {
+        None
+    };
 
     write_buffer(&state_buf, state_init);
     if let Some(ref scratch) = scratch_buf {
@@ -346,10 +366,9 @@ fn run_conv_scan_once(
     }
 
     let padded_len = tap_count + suffix_len;
-    let padded_buf = device.new_buffer(
-        (padded_len * channels * size_of::<f32>()) as u64,
-        STORAGE_MODE,
-    );
+    let padded_buf = device
+        .new_buffer(padded_len * channels * size_of::<f32>(), STORAGE_MODE)
+        .expect("Failed to create buffer");
     {
         let mut host = vec![0.0f32; padded_len * channels];
         for tap in 0..tap_count {
@@ -383,16 +402,23 @@ fn run_conv_scan_once(
         proj_dim: 0,
     };
 
-    let command_buffer = ctx.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel.encode(encoder, args).unwrap();
+    let command_buffer = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
+    let encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
+    kernel.encode(&encoder, args).unwrap();
     encoder.end_encoding();
 
     if let Some(ref scratch) = scratch_buf {
-        let bytes = (channels * tap_count * size_of::<f32>()) as u64;
+        let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            let blit = command_buffer.new_blit_command_encoder();
-            blit.copy_from_buffer(scratch, 0, &state_buf, 0, bytes);
+            let blit = command_buffer
+                .new_blit_command_encoder()
+                .expect("Failed to create blit encoder");
+            blit.copy_buffer_to_buffer(scratch, 0, &state_buf, 0, bytes);
             blit.end_encoding();
         }
     }

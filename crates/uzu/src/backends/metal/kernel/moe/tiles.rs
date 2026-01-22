@@ -1,12 +1,10 @@
-use std::mem::size_of;
-use std::ptr::NonNull;
-use std::ffi::c_void;
+use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
 use metal::MTLComputeCommandEncoder;
 
-use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputePipelineState, MTLCommandBuffer,
-    MTLCommandEncoder, MTLContext, MTLError, mtl_size,
+use crate::backends::metal::{MTLBuffer, ProtocolObject,
+    ComputePipelineState, MTLCommandBuffer,
+    MTLCommandEncoder, MTLContext, MTLError, MTLSize,
 };
 
 // ---- Tile Kernels ----
@@ -19,32 +17,32 @@ pub enum MoeTileError {
 
 /// Arguments for tile counts encoder
 pub struct MoeTileCountsArguments<'a> {
-    pub offsets_buffer: BufferRef<'a>,     // [E+1]
-    pub tile_counts_buffer: BufferRef<'a>, // [E]
+    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // [E+1]
+    pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
     pub e: usize,
 }
 
 /// Arguments for tile scan encoder
 pub struct MoeTileScanArguments<'a> {
-    pub tile_counts_buffer: BufferRef<'a>, // [E]
-    pub tile_offsets_buffer: BufferRef<'a>, // [E+1]
-    pub total_tiles_buffer: BufferRef<'a>, // [>=2]
+    pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
+    pub tile_offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub total_tiles_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [>=2]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileMapBuildArguments<'a> {
-    pub expert_offsets: BufferRef<'a>, // [E+1]
-    pub tile_offsets: BufferRef<'a>,   // [E+1]
-    pub tile_counts: BufferRef<'a>,    // [E]
-    pub tile_map: BufferRef<'a>,       // [total_tiles * 3]
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>,   // [E+1]
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,    // [E]
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,       // [total_tiles * 3]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a> {
-    pub total_tiles: BufferRef<'a>,   // [>=1]
-    pub dispatch_args: BufferRef<'a>, // [3]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_x: u32,             // x dimension for indirect dispatch
 }
 
@@ -57,42 +55,42 @@ pub struct MoeTileMapKernel {
 
 #[derive(Debug)]
 pub struct MoePassATileCountsArguments<'a> {
-    pub expert_offsets: BufferRef<'a>, // [E+1]
-    pub tile_counts: BufferRef<'a>,    // [E]
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,    // [E]
     pub e: usize,
     pub h_blocks: u32,
 }
 
 #[derive(Debug)]
 pub struct MoePassATileScanArguments<'a> {
-    pub tile_counts: BufferRef<'a>,  // [E]
-    pub tile_offsets: BufferRef<'a>, // [E+1]
-    pub total_tiles: BufferRef<'a>,  // [>=1]
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,  // [E]
+    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,  // [>=1]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoePassARowMapArguments<'a> {
-    pub expert_offsets: BufferRef<'a>, // [E+1]
-    pub row_expert_map: BufferRef<'a>, // [total_rows]
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub row_expert_map: &'a ProtocolObject<dyn MTLBuffer>, // [total_rows]
     pub total_rows: usize,
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoePassATileBuildArguments<'a> {
-    pub expert_offsets: BufferRef<'a>, // [E+1]
-    pub tile_offsets: BufferRef<'a>,   // [E+1]
-    pub row_expert_map: BufferRef<'a>, // [total_rows]
-    pub tile_map: BufferRef<'a>,       // [total_tiles * 3]
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>,   // [E+1]
+    pub row_expert_map: &'a ProtocolObject<dyn MTLBuffer>, // [total_rows]
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,       // [total_tiles * 3]
     pub total_rows: usize,
     pub h_blocks: u32,
 }
 
 #[derive(Debug)]
 pub struct MoePassATileDispatchArguments<'a> {
-    pub total_tiles: BufferRef<'a>,   // [>=1]
-    pub dispatch_args: BufferRef<'a>, // [3]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_y: u32,
 }
 
@@ -124,7 +122,7 @@ impl MoePassATileKernel {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileCountsArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -141,14 +139,15 @@ impl MoePassATileKernel {
                 2,
             );
             encoder.set_bytes(
-                NonNull::new(&args.h_blocks as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&args.h_blocks as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 3,
             );
         }
         encoder.dispatch_threadgroups(
-            mtl_size(((args.e + 255) / 256) as u64, 1, 1),
-            mtl_size(256, 1, 1),
+            MTLSize::new((args.e + 255) / 256, 1, 1),
+            MTLSize::new(256, 1, 1),
         );
         encoder.end_encoding();
         Ok(())
@@ -156,7 +155,7 @@ impl MoePassATileKernel {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileScanArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -174,15 +173,18 @@ impl MoePassATileKernel {
                 3,
             );
         }
-        encoder.set_threadgroup_memory_length((1024 * size_of::<u32>()), 0);
-        encoder.dispatch_threadgroups(mtl_size(1, 1, 1), mtl_size(1024, 1, 1));
+        encoder.set_threadgroup_memory_length(1024 * size_of::<u32>() , 0);
+        encoder.dispatch_threadgroups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1024, 1, 1),
+        );
         encoder.end_encoding();
         Ok(())
     }
 
     pub fn encode_row_map(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassARowMapArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -195,7 +197,8 @@ impl MoePassATileKernel {
         let e_u32 = args.e as u32;
         unsafe {
             encoder.set_bytes(
-                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 2,
             );
@@ -206,8 +209,8 @@ impl MoePassATileKernel {
             );
         }
         encoder.dispatch_threadgroups(
-            mtl_size(((args.total_rows + 255) / 256) as u64, 1, 1),
-            mtl_size(256, 1, 1),
+            MTLSize::new((args.total_rows + 255) / 256, 1, 1),
+            MTLSize::new(256, 1, 1),
         );
         encoder.end_encoding();
         Ok(())
@@ -215,7 +218,7 @@ impl MoePassATileKernel {
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileBuildArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -229,12 +232,14 @@ impl MoePassATileKernel {
         let total_rows_u32 = args.total_rows as u32;
         unsafe {
             encoder.set_bytes(
-                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 4,
             );
             encoder.set_bytes(
-                NonNull::new(&args.h_blocks as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&args.h_blocks as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 5,
             );
@@ -242,8 +247,8 @@ impl MoePassATileKernel {
         let total_tiles_linear =
             (total_rows_u32 as u64).saturating_mul(args.h_blocks as u64);
         encoder.dispatch_threadgroups(
-            mtl_size(((total_tiles_linear + 255) / 256) as u64, 1, 1),
-            mtl_size(256, 1, 1),
+            MTLSize::new(((total_tiles_linear + 255) / 256) as usize, 1, 1),
+            MTLSize::new(256, 1, 1),
         );
         encoder.end_encoding();
         Ok(())
@@ -251,7 +256,7 @@ impl MoePassATileKernel {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileDispatchArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -262,12 +267,16 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.dispatch_args), 0, 1);
         unsafe {
             encoder.set_bytes(
-                NonNull::new(&args.num_tiles_y as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&args.num_tiles_y as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 2,
             );
         }
-        encoder.dispatch_threadgroups(mtl_size(1, 1, 1), mtl_size(1, 1, 1));
+        encoder.dispatch_threadgroups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1, 1, 1),
+        );
         encoder.end_encoding();
         Ok(())
     }
@@ -288,7 +297,7 @@ impl MoeTileMapKernel {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoeTileCountsArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -306,8 +315,8 @@ impl MoeTileMapKernel {
             );
         }
         encoder.dispatch_threadgroups(
-            mtl_size(((args.e + 255) / 256) as u64, 1, 1),
-            mtl_size(256, 1, 1),
+            MTLSize::new((args.e + 255) / 256, 1, 1),
+            MTLSize::new(256, 1, 1),
         );
         encoder.end_encoding();
         Ok(())
@@ -315,7 +324,7 @@ impl MoeTileMapKernel {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoeTileScanArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -333,14 +342,17 @@ impl MoeTileMapKernel {
                 3,
             );
         }
-        encoder.dispatch_threadgroups(mtl_size(1, 1, 1), mtl_size(256, 1, 1));
+        encoder.dispatch_threadgroups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
         encoder.end_encoding();
         Ok(())
     }
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoeTileMapBuildArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -360,8 +372,8 @@ impl MoeTileMapKernel {
             );
         }
         encoder.dispatch_threadgroups(
-            mtl_size(((args.e + 255) / 256) as u64, 1, 1),
-            mtl_size(256, 1, 1),
+            MTLSize::new((args.e + 255) / 256, 1, 1),
+            MTLSize::new(256, 1, 1),
         );
         encoder.end_encoding();
         Ok(())
@@ -369,7 +381,7 @@ impl MoeTileMapKernel {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoeTileDispatchArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -380,12 +392,16 @@ impl MoeTileMapKernel {
         encoder.set_buffer(Some(args.dispatch_args), 0, 1);
         unsafe {
             encoder.set_bytes(
-                NonNull::new(&args.num_tiles_x as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&args.num_tiles_x as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 2,
             );
         }
-        encoder.dispatch_threadgroups(mtl_size(1, 1, 1), mtl_size(1, 1, 1));
+        encoder.dispatch_threadgroups(
+            MTLSize::new(1, 1, 1),
+            MTLSize::new(1, 1, 1),
+        );
         encoder.end_encoding();
         Ok(())
     }

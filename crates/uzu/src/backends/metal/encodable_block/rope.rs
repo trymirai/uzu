@@ -1,7 +1,7 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -37,7 +37,7 @@ impl EncodableBlock for Rope {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer.new_compute_command_encoder()

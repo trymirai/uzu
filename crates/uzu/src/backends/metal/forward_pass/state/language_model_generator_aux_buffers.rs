@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use super::super::{ModelShape, ScratchBuffers};
 use crate::{
-    Array, DataType, DecoderConfig,
+    DataType, DecoderConfig,
     backends::metal::{MTLContext, MetalArray},
     config::MLPConfig,
 };

@@ -1,9 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 
-use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputeEncoderLegacy, ComputePipelineState,
-    FunctionConstantValues, FunctionConstantValuesLegacy,
-};
+use metal::MTLComputeCommandEncoder;
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -11,7 +8,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, kernel::mlp_fused::common::MlpFusedArguments,
+        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLContext, MTLError,
+        kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -99,40 +98,69 @@ impl Kernel {
         )?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(0, Some(arguments.weights), 0);
-        encoder.set_buffer(1, Some(arguments.input), arguments.input_offset);
-        encoder.set_buffer(3, Some(arguments.output), 0);
+        encoder.set_buffer(Some(arguments.weights), 0, 0);
+        encoder.set_buffer(
+            Some(arguments.input),
+            arguments.input_offset as usize,
+            1,
+        );
+        encoder.set_buffer(Some(arguments.output), 0, 3);
 
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.input_dim as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            5,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.hidden_dim as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            6,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.weights_ld as *const i32 as *const std::ffi::c_void,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.input_dim as *const i32 as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i32>(),
+                4,
+            );
+        }
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.hidden_dim as *const i32 as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i32>(),
+                5,
+            );
+        }
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.weights_ld as *const i32 as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i32>(),
+                6,
+            );
+        }
 
-        encoder.set_bytes(
-            11,
-            std::mem::size_of::<i64>() as u64,
-            &descriptor.vector_batch_stride as *const i64
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            12,
-            std::mem::size_of::<i64>() as u64,
-            &descriptor.matrix_batch_stride as *const i64
-                as *const std::ffi::c_void,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.vector_batch_stride as *const i64
+                        as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i64>(),
+                11,
+            );
+        }
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.matrix_batch_stride as *const i64
+                        as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<i64>(),
+                12,
+            );
+        }
 
-        encoder.dispatch_thread_groups(
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

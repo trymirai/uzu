@@ -1,7 +1,11 @@
 //! Correctness tests comparing Metal matmul kernels against ndarray
 
+use bytemuck;
 use half::bf16;
-use metal::{Device, MTLResourceOptions};
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLDeviceExt, MTLResourceOptions,
+};
 use ndarray::Array2;
 use uzu::{
     DataType,
@@ -12,8 +16,8 @@ use uzu::{
 };
 
 fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     MTLContext::new(device, command_queue).ok()
 }
 
@@ -26,20 +30,27 @@ fn run_metal_matmul(
     n: usize,
     transpose_b: bool,
 ) -> Vec<bf16> {
-    let a_buf = ctx.device.new_buffer_with_data(
-        a_data.as_ptr() as *const _,
-        (a_data.len() * core::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let b_buf = ctx.device.new_buffer_with_data(
-        b_data.as_ptr() as *const _,
-        (b_data.len() * core::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let d_buf = ctx.device.new_buffer(
-        (m * n * core::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let a_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(a_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let b_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(b_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let d_buf = ctx
+        .device
+        .new_buffer(
+            m * n * core::mem::size_of::<bf16>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let ldb = if transpose_b {
         k
@@ -49,39 +60,44 @@ fn run_metal_matmul(
 
     let mut kernel = MatmulKernel::new(DataType::BF16).expect("kernel");
 
-    let cb = ctx.command_queue.new_command_buffer().to_owned();
-    let enc = cb.new_compute_command_encoder();
-    kernel
-        .encode(
-            ctx,
-            &enc,
-            MatmulArguments {
-                a: &a_buf,
-                a_offset: 0,
-                b: &b_buf,
-                c: None,
-                d: &d_buf,
-                bias: None,
-                batch: m as i32,
-                input_dim: k as i32,
-                output_dim: n as i32,
-                lda: k as i32,
-                ldb: ldb as i32,
-                ldd: n as i32,
-                batch_count: 1,
-                alpha: 1.0,
-                beta: 0.0,
-                transpose_a: false,
-                transpose_b,
-            },
-        )
-        .expect("encode");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer")
+        .to_owned();
+    let enc = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
+    let encode_result = kernel.encode(
+        ctx,
+        &enc,
+        MatmulArguments {
+            a: &a_buf,
+            a_offset: 0,
+            b: &b_buf,
+            c: None,
+            d: &d_buf,
+            bias: None,
+            batch: m as i32,
+            input_dim: k as i32,
+            output_dim: n as i32,
+            lda: k as i32,
+            ldb: ldb as i32,
+            ldd: n as i32,
+            batch_count: 1,
+            alpha: 1.0,
+            beta: 0.0,
+            transpose_a: false,
+            transpose_b,
+        },
+    );
     enc.end_encoding();
+    encode_result.expect("encode");
     cb.commit();
     cb.wait_until_completed();
 
     unsafe {
-        let ptr = d_buf.contents() as *const bf16;
+        let ptr = d_buf.contents().as_ptr() as *const bf16;
         std::slice::from_raw_parts(ptr, m * n).to_vec()
     }
 }

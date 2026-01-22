@@ -1,9 +1,12 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
-    MTLContext,
+    Buffer, MTLContext,
     kernel::{
         KernelDataType, MoeCountsOffsetsFusedArguments,
         MoeCountsOffsetsFusedKernel,
@@ -50,7 +53,7 @@ fn gen_topk_ids_from_logits(
     t: usize,
     e: usize,
     k: usize,
-) -> (Vec<i32>, metal::Buffer) {
+) -> (Vec<i32>, Buffer) {
     let mut rng = StdRng::seed_from_u64(1234);
 
     // Generate random input and router weights
@@ -78,7 +81,10 @@ fn gen_topk_ids_from_logits(
     // Use fused router+topk kernel
     let router_topk =
         MoeRouterTopKKernel::new(ctx).expect("router_topk kernel");
-    let cb = ctx.command_queue.new_command_buffer();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let args = MoeRouterTopKArguments {
         input_buffer: &input_buf,
         weight_buffer: &weight_buf,
@@ -97,7 +103,7 @@ fn gen_topk_ids_from_logits(
     cb.commit();
     cb.wait_until_completed();
 
-    let ids_ptr = topk_ids_buf.contents() as *const i32;
+    let ids_ptr = topk_ids_buf.contents().as_ptr() as *const i32;
     let ids = unsafe { std::slice::from_raw_parts(ids_ptr, t * k) };
     (ids.to_vec(), topk_ids_buf)
 }
@@ -128,7 +134,10 @@ fn test_counts_offsets_fused_parity_random() {
 
             let kernel =
                 MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-            let cb = ctx.command_queue.new_command_buffer();
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             let args = MoeCountsOffsetsFusedArguments {
                 topk_ids_buffer: &topk_ids_buf,
                 offsets_buffer: &offsets_buf,
@@ -143,7 +152,7 @@ fn test_counts_offsets_fused_parity_random() {
             cb.wait_until_completed();
 
             // Verify offsets
-            let offsets_ptr = offsets_buf.contents() as *const u32;
+            let offsets_ptr = offsets_buf.contents().as_ptr() as *const u32;
             let offsets_gpu =
                 unsafe { std::slice::from_raw_parts(offsets_ptr, e + 1) };
             assert_eq!(
@@ -156,7 +165,7 @@ fn test_counts_offsets_fused_parity_random() {
             );
 
             // Verify sum
-            let sum_ptr = sum_k_buf.contents() as *const u32;
+            let sum_ptr = sum_k_buf.contents().as_ptr() as *const u32;
             let sum_gpu = unsafe { *sum_ptr };
             assert_eq!(
                 sum_gpu, sum_cpu,
@@ -187,7 +196,10 @@ fn test_counts_offsets_fused_edge_cases() {
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
     let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.new_command_buffer();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let args = MoeCountsOffsetsFusedArguments {
         topk_ids_buffer: &topk_ids_buf,
         offsets_buffer: &offsets_buf,
@@ -202,7 +214,10 @@ fn test_counts_offsets_fused_edge_cases() {
     cb.wait_until_completed();
 
     let offsets_gpu = unsafe {
-        std::slice::from_raw_parts(offsets_buf.contents() as *const u32, e + 1)
+        std::slice::from_raw_parts(
+            offsets_buf.contents().as_ptr() as *const u32,
+            e + 1,
+        )
     };
 
     let mut expected_offsets = vec![0u32; e + 1];
@@ -219,7 +234,10 @@ fn test_counts_offsets_fused_edge_cases() {
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
     let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.new_command_buffer();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let args = MoeCountsOffsetsFusedArguments {
         topk_ids_buffer: &topk_ids_buf,
         offsets_buffer: &offsets_buf,
@@ -234,7 +252,10 @@ fn test_counts_offsets_fused_edge_cases() {
     cb.wait_until_completed();
 
     let offsets_gpu = unsafe {
-        std::slice::from_raw_parts(offsets_buf.contents() as *const u32, e + 1)
+        std::slice::from_raw_parts(
+            offsets_buf.contents().as_ptr() as *const u32,
+            e + 1,
+        )
     };
     assert!(offsets_gpu.iter().all(|&v| v == 0));
 }

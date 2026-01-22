@@ -1,5 +1,5 @@
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
 };
 
 use super::{
@@ -41,7 +41,7 @@ impl EncodableBlock for Activation {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

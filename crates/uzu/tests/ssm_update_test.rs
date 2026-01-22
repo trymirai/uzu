@@ -1,7 +1,11 @@
 #![cfg(any(target_os = "macos"))]
 
+use bytemuck;
 use half::bf16;
-use metal::MTLResourceOptions;
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLDeviceExt, MTLResourceOptions,
+};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
@@ -172,8 +176,8 @@ fn ssd_update_ref_bf16(
 }
 
 fn create_context() -> Option<MTLContext> {
-    let device = metal::Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     MTLContext::new(device, command_queue).ok()
 }
 
@@ -220,54 +224,79 @@ fn ssd_update_with_z_bf16() {
     let cb_strides = [g * n, n, 1usize];
     let state_strides = [h * dh * n, dh * n, n, 1usize];
 
-    let x_buf = ctx.device.new_buffer_with_data(
-        x.as_ptr() as *const _,
-        (x.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let dt_buf = ctx.device.new_buffer_with_data(
-        dt.as_ptr() as *const _,
-        (dt.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let b_buf = ctx.device.new_buffer_with_data(
-        b.as_ptr() as *const _,
-        (b.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let c_buf = ctx.device.new_buffer_with_data(
-        c.as_ptr() as *const _,
-        (c.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let d_buf = ctx.device.new_buffer_with_data(
-        d.as_ptr() as *const _,
-        (d.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let z_buf = ctx.device.new_buffer_with_data(
-        z.as_ptr() as *const _,
-        (z.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let state_buf = ctx.device.new_buffer_with_data(
-        state.as_ptr() as *const _,
-        (state.len() * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let y_buf = ctx.device.new_buffer(
-        (bsz * h * dh * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let ns_buf = ctx.device.new_buffer(
-        (bsz * h * dh * n * std::mem::size_of::<bf16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let x_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&x),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let dt_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&dt),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let b_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&b),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let c_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&c),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let d_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&d),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let z_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&z),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let state_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&state),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let y_buf = ctx
+        .device
+        .new_buffer(
+            bsz * h * dh * std::mem::size_of::<bf16>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let ns_buf = ctx
+        .device
+        .new_buffer(
+            bsz * h * dh * n * std::mem::size_of::<bf16>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let kernel = SSDUpdateKernel::new(&ctx, KernelDataType::BFloat16).unwrap();
-    let cb_ref = ctx.command_queue.new_command_buffer();
+    let cb_ref = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let enc = cb.new_compute_command_encoder();
+    let enc = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel
         .encode(
             &enc,
@@ -297,10 +326,10 @@ fn ssd_update_with_z_bf16() {
     cb_ref.commit();
     cb_ref.wait_until_completed();
 
-    let y_ptr = y_buf.contents() as *const bf16;
+    let y_ptr = y_buf.contents().as_ptr() as *const bf16;
     let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };
     let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
-    let ns_ptr = ns_buf.contents() as *const bf16;
+    let ns_ptr = ns_buf.contents().as_ptr() as *const bf16;
     let ns_out =
         unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * dh * n) };
     let ns_out_f32: Vec<f32> = ns_out.iter().map(|&v| v.to_f32()).collect();

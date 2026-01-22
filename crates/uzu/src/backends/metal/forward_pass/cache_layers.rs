@@ -1,7 +1,5 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::backends::metal::{CommandBuffer, CommandBufferRef};
-
 use super::{
     super::{MTLContext, MetalArray},
     kv_cache_layer::{
@@ -13,7 +11,11 @@ use super::{
     ssm_layer::SSMLayer,
 };
 use crate::{
-    DeviceContext, array::Array, backends::metal::kernel::KVCacheUpdate,
+    DeviceContext,
+    array::Array,
+    backends::metal::{
+        MTLCommandBuffer, ProtocolObject, kernel::KVCacheUpdate,
+    },
     config::DecoderLayerType,
 };
 
@@ -291,7 +293,7 @@ impl CacheLayers {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         for layer in self.data.iter_mut() {

@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::moe::{
     MoeTileCountsArguments, MoeTileMapKernel, MoeTileScanArguments,
@@ -37,7 +39,7 @@ fn test_tile_counts_correctness() {
         // Execute kernel using kernel struct
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,
@@ -54,7 +56,7 @@ fn test_tile_counts_correctness() {
         // Compare
         let tile_counts_gpu = unsafe {
             std::slice::from_raw_parts(
-                tile_counts_buf.contents() as *const u32,
+                tile_counts_buf.contents().as_ptr() as *const u32,
                 e,
             )
         };
@@ -95,7 +97,7 @@ fn test_tile_scan_correctness() {
         // Execute kernel using kernel struct
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel
             .encode_scan(
                 &cb,
@@ -113,12 +115,12 @@ fn test_tile_scan_correctness() {
         // Compare
         let tile_offsets_gpu = unsafe {
             std::slice::from_raw_parts(
-                tile_offsets_buf.contents() as *const u32,
+                tile_offsets_buf.contents().as_ptr() as *const u32,
                 e + 1,
             )
         };
         let total_tiles_gpu =
-            unsafe { *(total_tiles_buf.contents() as *const u32) };
+            unsafe { *(total_tiles_buf.contents().as_ptr() as *const u32) };
 
         assert_eq!(
             tile_offsets_gpu,
@@ -152,7 +154,7 @@ fn test_tile_edge_cases() {
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,
@@ -168,7 +170,7 @@ fn test_tile_edge_cases() {
 
         let tile_counts_gpu = unsafe {
             std::slice::from_raw_parts(
-                tile_counts_buf.contents() as *const u32,
+                tile_counts_buf.contents().as_ptr() as *const u32,
                 e,
             )
         };
@@ -190,7 +192,7 @@ fn test_tile_edge_cases() {
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,
@@ -206,7 +208,7 @@ fn test_tile_edge_cases() {
 
         let tile_counts_gpu = unsafe {
             std::slice::from_raw_parts(
-                tile_counts_buf.contents() as *const u32,
+                tile_counts_buf.contents().as_ptr() as *const u32,
                 e,
             )
         };

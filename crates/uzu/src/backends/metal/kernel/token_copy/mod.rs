@@ -1,6 +1,8 @@
+use metal::MTLComputeCommandEncoder;
+
 use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState, MTLContext, MTLError, MTLSize, mtl_size,
+    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+    MTLError, MTLSize, ProtocolObject,
 };
 
 /// Kernel for copying sampled tokens in async pipeline.
@@ -15,9 +17,15 @@ pub struct TokenCopyKernel {
 impl TokenCopyKernel {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let (copy_to_token_ids, _) = context
-            .compute_pipeline_state_with_reflection("copy_sampled_token", None)?;
+            .compute_pipeline_state_with_reflection(
+                "copy_sampled_token",
+                None,
+            )?;
         let (copy_to_results, _) = context
-            .compute_pipeline_state_with_reflection("copy_token_to_results", None)?;
+            .compute_pipeline_state_with_reflection(
+                "copy_token_to_results",
+                None,
+            )?;
 
         Ok(Self {
             copy_to_token_ids,
@@ -29,29 +37,29 @@ impl TokenCopyKernel {
     /// For next forward pass to read the token.
     pub fn encode_to_token_ids(
         &self,
-        sampling_output: BufferRef<'_>,
-        token_ids: BufferRef<'_>,
+        sampling_output: &ProtocolObject<dyn MTLBuffer>,
+        token_ids: &ProtocolObject<dyn MTLBuffer>,
         encoder: ComputeCommandEncoderRef<'_>,
     ) {
         encoder.set_compute_pipeline_state(&self.copy_to_token_ids);
-        encoder.set_buffer(0, Some(sampling_output), 0);
-        encoder.set_buffer(1, Some(token_ids), 0);
-        encoder.dispatch_threads(mtl_size(1, 1, 1), mtl_size(1, 1, 1));
+        encoder.set_buffer(Some(sampling_output), 0, 0);
+        encoder.set_buffer(Some(token_ids), 0, 1);
+        encoder.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
     }
 
     /// Copies sampling_output[0] (u32) → results[offset] (u32)
     /// For callback to read without race condition.
     pub fn encode_to_results(
         &self,
-        sampling_output: BufferRef<'_>,
-        results: BufferRef<'_>,
+        sampling_output: &ProtocolObject<dyn MTLBuffer>,
+        results: &ProtocolObject<dyn MTLBuffer>,
         pass_idx: usize,
         encoder: ComputeCommandEncoderRef<'_>,
     ) {
-        let offset = (pass_idx * std::mem::size_of::<u32>()) as u64;
+        let offset = (pass_idx * std::mem::size_of::<u32>()) as usize;
         encoder.set_compute_pipeline_state(&self.copy_to_results);
-        encoder.set_buffer(0, Some(sampling_output), 0);
-        encoder.set_buffer(1, Some(results), offset);
-        encoder.dispatch_threads(mtl_size(1, 1, 1), mtl_size(1, 1, 1));
+        encoder.set_buffer(Some(sampling_output), 0, 0);
+        encoder.set_buffer(Some(results), offset, 1);
+        encoder.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
     }
 }

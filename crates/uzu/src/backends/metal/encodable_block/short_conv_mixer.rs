@@ -6,9 +6,9 @@ use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
     DataType,
     backends::metal::{
-        CommandBufferRef, ComputeCommandEncoderRef, KernelDataType,
-        MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLResourceOptions,
-        MetalArray,
+        ComputeCommandEncoderRef, KernelDataType, MTLCommandBuffer,
+        MTLCommandEncoder, MTLContext, MTLResourceOptions, MetalArray,
+        ProtocolObject,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
@@ -120,7 +120,7 @@ impl ShortConvMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -300,7 +300,7 @@ impl EncodableBlock for ShortConvMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

@@ -1,14 +1,14 @@
-use std::mem::size_of;
-use std::ptr::NonNull;
+use std::{mem::size_of, ptr::NonNull};
 
-use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState, KernelDataType, MTLContext, MTLError,
-    metal_extensions::ComputeEncoderDispatch, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, BufferLabelExt,
-};
+use metal::MTLComputeCommandEncoder;
 use objc2::msg_send;
 use objc2_foundation::NSString;
+
+use crate::backends::metal::{
+    ComputeCommandEncoderRef, ComputePipelineState,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+    MTLError, ProtocolObject, metal_extensions::ComputeEncoderDispatch,
+};
 
 pub struct TensorCopyKernel {
     pipeline_state: ComputePipelineState,
@@ -32,12 +32,13 @@ impl TensorCopyKernel {
 
     pub fn encode_into_command_buffer(
         &self,
-        source_buffer: BufferRef<'_>,
-        destination_buffer: BufferRef<'_>,
+        source_buffer: &ProtocolObject<dyn MTLBuffer>,
+        destination_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder()
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_encoder(
             source_buffer,
@@ -50,8 +51,8 @@ impl TensorCopyKernel {
 
     pub fn encode_with_encoder(
         &self,
-        source_buffer: BufferRef<'_>,
-        destination_buffer: BufferRef<'_>,
+        source_buffer: &ProtocolObject<dyn MTLBuffer>,
+        destination_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
         compute_encoder: ComputeCommandEncoderRef<'_>,
     ) {
@@ -64,7 +65,9 @@ impl TensorCopyKernel {
         compute_encoder.set_buffer(Some(destination_buffer), 0, 1);
         unsafe {
             compute_encoder.set_bytes(
-                NonNull::new_unchecked(&(length as i32) as *const i32 as *mut std::ffi::c_void),
+                NonNull::new_unchecked(
+                    &(length as i32) as *const i32 as *mut std::ffi::c_void,
+                ),
                 size_of::<i32>(),
                 2,
             );

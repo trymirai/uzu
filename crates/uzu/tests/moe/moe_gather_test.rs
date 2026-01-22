@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
@@ -80,7 +82,7 @@ fn test_gather_correctness() {
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather
             .encode(
                 &cb,
@@ -102,7 +104,7 @@ fn test_gather_correctness() {
         // Compare
         let x_gpu = unsafe {
             std::slice::from_raw_parts(
-                x_perm_buf.contents() as *const bf16,
+                x_perm_buf.contents().as_ptr() as *const bf16,
                 sum_k * d_model,
             )
         };

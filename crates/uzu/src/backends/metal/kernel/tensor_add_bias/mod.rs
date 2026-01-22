@@ -1,17 +1,13 @@
-use std::mem::size_of;
+use std::{mem::size_of, ptr::NonNull};
 
-use metal::{MTLCommandBuffer, MTLCommandEncoder};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
 use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputeEncoderLegacy, ComputePipelineState, KernelDataType, MTLContext,
-    MTLError,
-    BufferLabelExt,
-    metal_extensions::{
-        ComputeEncoderConditional, ComputeEncoderDispatch,
-    },
+    ComputeCommandEncoderRef, ComputePipelineState,
+    KernelDataType, MTLBuffer, MTLContext, MTLError, ProtocolObject,
+    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 
 #[derive(Debug)]
@@ -35,13 +31,13 @@ impl TensorAddBias {
 
     pub fn encode_into_command_buffer(
         &self,
-        input: BufferRef<'_>,
-        bias: BufferRef<'_>,
-        output: BufferRef<'_>,
+        input: &ProtocolObject<dyn MTLBuffer>,
+        bias: &ProtocolObject<dyn MTLBuffer>,
+        output: &ProtocolObject<dyn MTLBuffer>,
         num_cols: usize,
         total_len: usize,
-        command_buffer: CommandBufferRef<'_>,
-        predicate: Option<BufferRef<'_>>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        predicate: Option<&ProtocolObject<dyn MTLBuffer>>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -54,13 +50,13 @@ impl TensorAddBias {
 
     pub fn encode_with_encoder(
         &self,
-        input: BufferRef<'_>,
-        bias: BufferRef<'_>,
-        output: BufferRef<'_>,
+        input: &ProtocolObject<dyn MTLBuffer>,
+        bias: &ProtocolObject<dyn MTLBuffer>,
+        output: &ProtocolObject<dyn MTLBuffer>,
         num_cols: usize,
         total_len: usize,
         encoder: ComputeCommandEncoderRef<'_>,
-        predicate: Option<BufferRef<'_>>,
+        predicate: Option<&ProtocolObject<dyn MTLBuffer>>,
     ) {
         encoder.condition(
             predicate,
@@ -70,19 +66,29 @@ impl TensorAddBias {
                     let _: () = msg_send![encoder, setLabel: &*label];
                 }
                 encoder.set_compute_pipeline_state(&self.pipeline_state);
-                encoder.set_buffer(0, Some(input), 0);
-                encoder.set_buffer(1, Some(bias), 0);
-                encoder.set_buffer(2, Some(output), 0);
-                encoder.set_bytes(
-                    3,
-                    size_of::<i32>() as u64,
-                    &(num_cols as i32) as *const _ as *const _,
-                );
-                encoder.set_bytes(
-                    4,
-                    size_of::<i32>() as u64,
-                    &(total_len as i32) as *const _ as *const _,
-                );
+                encoder.set_buffer(Some(input), 0, 0);
+                encoder.set_buffer(Some(bias), 0, 1);
+                encoder.set_buffer(Some(output), 0, 2);
+                unsafe {
+                    encoder.set_bytes(
+                        NonNull::new(
+                            &(num_cols as i32) as *const i32
+                                as *mut std::ffi::c_void,
+                        )
+                        .unwrap(),
+                        size_of::<i32>(),
+                        3,
+                    );
+                    encoder.set_bytes(
+                        NonNull::new(
+                            &(total_len as i32) as *const i32
+                                as *mut std::ffi::c_void,
+                        )
+                        .unwrap(),
+                        size_of::<i32>(),
+                        4,
+                    );
+                }
                 encoder.dispatch_1d_exactly(
                     &self.pipeline_state,
                     total_len,

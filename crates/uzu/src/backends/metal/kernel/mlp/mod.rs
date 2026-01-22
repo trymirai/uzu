@@ -1,13 +1,15 @@
-use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
-    MTLDataType, MTLSize, mtl_size,
-};
+use std::{ffi::c_void, ptr::NonNull};
+
+use metal::MTLComputeCommandEncoder;
 use objc2::rc::Retained;
 
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLDataType,
+        MTLError, MTLSize, ProtocolObject,
+    },
     config::Activation,
 };
 
@@ -121,8 +123,8 @@ impl MlpGateActMulEncodable {
     pub fn encode(
         &self,
         encoder: ComputeCommandEncoderRef<'_>,
-        fused_up: BufferRef<'_>,
-        hidden: BufferRef<'_>,
+        fused_up: &ProtocolObject<dyn MTLBuffer>,
+        hidden: &ProtocolObject<dyn MTLBuffer>,
         m: i32,
     ) -> Result<(), MTLError> {
         self.kernel.encode(
@@ -178,33 +180,35 @@ impl MlpGateActMulKernel {
         &self,
         encoder: ComputeCommandEncoderRef<'_>,
         activation: &Activation,
-        fused_up_buffer: BufferRef<'_>,
-        hidden_buffer: BufferRef<'_>,
+        fused_up_buffer: &ProtocolObject<dyn MTLBuffer>,
+        hidden_buffer: &ProtocolObject<dyn MTLBuffer>,
         m: i32,
         h: i32,
     ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
-        let threads_per_tg = mtl_size(64, 1, 1);
+        let threads_per_tg = MTLSize::new(64, 1, 1);
         encoder.set_compute_pipeline_state(&self.pipeline);
-        encoder.set_buffer(0, Some(fused_up_buffer), 0);
-        encoder.set_buffer(1, Some(hidden_buffer), 0);
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &h as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &m as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<u16>() as u64,
-            &act_code as *const u16 as *const _,
-        );
+        encoder.set_buffer(Some(fused_up_buffer), 0, 0);
+        encoder.set_buffer(Some(hidden_buffer), 0, 1);
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&h as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                2,
+            );
+            encoder.set_bytes(
+                NonNull::new(&m as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                3,
+            );
+            encoder.set_bytes(
+                NonNull::new(&act_code as *const u16 as *mut c_void).unwrap(),
+                std::mem::size_of::<u16>(),
+                4,
+            );
+        }
 
-        let grid = mtl_size(h as u64, m as u64, 1);
+        let grid = MTLSize::new(h as usize, m as usize, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

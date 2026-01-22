@@ -2,8 +2,8 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    Buffer, BufferRef, CommandBufferRef, ComputeCommandEncoderRef,
+use crate::backends::metal::{MTLBuffer, ProtocolObject,
+    Buffer, ComputeCommandEncoderRef,
     MTLCommandBuffer, MTLCommandEncoder,
 };
 
@@ -49,7 +49,7 @@ impl EncodableBlock for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
@@ -240,9 +240,9 @@ impl MlpFusedBlock {
     fn encode_fused_up(
         &self,
         encoder: ComputeCommandEncoderRef<'_>,
-        input: BufferRef<'_>,
+        input: &ProtocolObject<dyn MTLBuffer>,
         input_offset: u64,
-        output: BufferRef<'_>,
+        output: &ProtocolObject<dyn MTLBuffer>,
         batch: i32,
     ) {
         match &self.fused_up {
@@ -315,7 +315,7 @@ impl EncodableBlock for MlpFusedBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

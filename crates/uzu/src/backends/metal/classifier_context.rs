@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLCommandQueueExt, MTLDevice,
+    MTLCommandBuffer, MTLCommandQueue, MTLDevice,
     MTLDeviceExt,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};

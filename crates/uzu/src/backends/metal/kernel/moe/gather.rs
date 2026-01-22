@@ -1,9 +1,10 @@
-use std::mem::size_of;
+use std::{ffi::c_void, mem::size_of, ptr::NonNull};
+
+use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    BufferRef, CommandBufferRef, ComputeEncoderLegacy, ComputePipelineState,
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError,
-    mtl_size,
+    ComputePipelineState, KernelDataType, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLContext, MTLError, MTLSize, ProtocolObject,
 };
 
 // ---- Gather Permuted Activations Kernel ----
@@ -22,10 +23,10 @@ pub struct MoeGatherKernel {
 
 #[derive(Debug)]
 pub struct MoeGatherArguments<'a> {
-    pub x_buffer: BufferRef<'a>,
-    pub bucketed_ids_buffer: BufferRef<'a>,
-    pub x_perm_buffer: BufferRef<'a>,
-    pub sumk_buffer: BufferRef<'a>,
+    pub x_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub bucketed_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub x_perm_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub sumk_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub t: usize,
     pub k: usize,
     pub d_model: usize,
@@ -48,11 +49,12 @@ impl MoeGatherKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         dtype: KernelDataType,
         args: MoeGatherArguments,
     ) -> Result<(), MoeGatherError> {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
@@ -66,36 +68,38 @@ impl MoeGatherKernel {
             },
         }
 
-        encoder.set_buffer(0, Some(args.x_buffer), 0);
-        encoder.set_buffer(1, Some(args.bucketed_ids_buffer), 0);
-        encoder.set_buffer(2, Some(args.x_perm_buffer), 0);
-        encoder.set_buffer(3, Some(args.sumk_buffer), 0);
+        encoder.set_buffer(Some(args.x_buffer), 0, 0);
+        encoder.set_buffer(Some(args.bucketed_ids_buffer), 0, 1);
+        encoder.set_buffer(Some(args.x_perm_buffer), 0, 2);
+        encoder.set_buffer(Some(args.sumk_buffer), 0, 3);
         let d_model_u32 = args.d_model as u32;
-        encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&d_model_u32 as *const u32 as *mut c_void)
+                    .unwrap(),
+                size_of::<u32>(),
+                4,
+            );
+        }
 
         let max_rows = args.t * args.k;
         if max_rows == 0 {
             encoder.end_encoding();
             return Ok(());
         }
-        let threads_per_threadgroup = mtl_size(256, 1, 1);
+        let threads_per_threadgroup = MTLSize::new(256, 1, 1);
         let threadgroups = match dtype {
             KernelDataType::BFloat16 => {
                 const BF16_ROWS_PER_TG: usize = 8;
-                mtl_size(
-                    ((max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG)
-                        as u64,
+                MTLSize::new(
+                    (max_rows + BF16_ROWS_PER_TG - 1) / BF16_ROWS_PER_TG,
                     1,
                     1,
                 )
             },
-            _ => mtl_size(((max_rows + 255) / 256) as u64, 1, 1),
+            _ => MTLSize::new((max_rows + 255) / 256, 1, 1),
         };
-        encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+        encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
         encoder.end_encoding();
         Ok(())
     }

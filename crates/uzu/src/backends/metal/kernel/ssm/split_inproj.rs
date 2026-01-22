@@ -1,7 +1,11 @@
+use std::{ffi::c_void, ptr::NonNull};
+
+use metal::MTLComputeCommandEncoder;
+
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState, KernelDataType, MTLContext, MTLSize,
+    ComputeCommandEncoderRef, ComputePipelineState, KernelDataType, MTLBuffer,
+    MTLContext, MTLSize, ProtocolObject,
 };
 
 pub struct SplitInProjKernel {
@@ -9,11 +13,11 @@ pub struct SplitInProjKernel {
 }
 
 pub struct SplitInProjArguments<'a> {
-    pub input: BufferRef<'a>, // buffer(0) [suffix, total_dim]
-    pub conv_out: BufferRef<'a>, // buffer(1) [suffix, conv_dim]
-    pub z_out: BufferRef<'a>, // buffer(2) [suffix, inner_dim]
-    pub dt_out: BufferRef<'a>, // buffer(3) [suffix, num_heads]
-    pub z_bias: BufferRef<'a>, // buffer(4) [inner_dim]
+    pub input: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0) [suffix, total_dim]
+    pub conv_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(1) [suffix, conv_dim]
+    pub z_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(2) [suffix, inner_dim]
+    pub dt_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) [suffix, num_heads]
+    pub z_bias: &'a ProtocolObject<dyn MTLBuffer>, // buffer(4) [inner_dim]
     pub total_dim: usize,
     pub conv_dim: usize,
     pub inner_dim: usize,
@@ -42,11 +46,11 @@ impl SplitInProjKernel {
         args: SplitInProjArguments,
     ) -> Result<(), SSMKernelError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
-        compute_encoder.set_buffer(0, Some(args.input), 0);
-        compute_encoder.set_buffer(1, Some(args.conv_out), 0);
-        compute_encoder.set_buffer(2, Some(args.z_out), 0);
-        compute_encoder.set_buffer(3, Some(args.dt_out), 0);
-        compute_encoder.set_buffer(4, Some(args.z_bias), 0);
+        compute_encoder.set_buffer(Some(args.input), 0, 0);
+        compute_encoder.set_buffer(Some(args.conv_out), 0, 1);
+        compute_encoder.set_buffer(Some(args.z_out), 0, 2);
+        compute_encoder.set_buffer(Some(args.dt_out), 0, 3);
+        compute_encoder.set_buffer(Some(args.z_bias), 0, 4);
 
         let total_dim = args.total_dim as i32;
         let conv_dim = args.conv_dim as i32;
@@ -55,26 +59,34 @@ impl SplitInProjKernel {
         let suffix = args.suffix_length;
         let cols = args.total_dim;
 
-        compute_encoder.set_bytes(
-            5,
-            std::mem::size_of::<i32>() as u64,
-            &total_dim as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            std::mem::size_of::<i32>() as u64,
-            &conv_dim as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            std::mem::size_of::<i32>() as u64,
-            &inner_dim as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            std::mem::size_of::<i32>() as u64,
-            &num_heads as *const i32 as *const _,
-        );
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&total_dim as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                5,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&conv_dim as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                6,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&inner_dim as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                7,
+            );
+        }
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new(&num_heads as *const i32 as *mut c_void).unwrap(),
+                std::mem::size_of::<i32>(),
+                8,
+            );
+        }
 
         let threads_per_threadgroup = MTLSize {
             width: 16,

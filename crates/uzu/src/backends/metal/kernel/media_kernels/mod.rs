@@ -1,16 +1,14 @@
 use std::{mem, ptr::NonNull};
 
-use objc2_foundation::NSString;
-use metal::MTLCommandEncoderExt;
-
 use crate::backends::metal::{
-    BufferRef, CommandBuffer, CommandBufferRef, ComputeCommandEncoder, ComputeCommandEncoderRef,
-    ComputePipelineState, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLContext, MTLSize, MTLBuffer,
+    BufferLabelExt,
+    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
+    MTLSize, ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
     image::Image,
-    metal_extensions::ComputeEncoderDispatch, BufferLabelExt,
+    metal_extensions::ComputeEncoderDispatch,
 };
 
 #[repr(C)]
@@ -51,7 +49,7 @@ impl ScalePadNormalizeImage {
         input_image: &Image,
         output_image: &Image,
         image_params_ptr: *const std::ffi::c_void,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -84,7 +82,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         _parameters: &EncodingParameters,
     ) {
         let _ = command_buffer;
@@ -124,9 +122,9 @@ impl ExtractImagePatches {
     pub fn encode_internal(
         &self,
         padded_normalized_image: &Image,
-        output_buffer_mtl: BufferRef<'_>,
+        output_buffer_mtl: &ProtocolObject<dyn MTLBuffer>,
         patch_params_ptr: *const std::ffi::c_void,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()

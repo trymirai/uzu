@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ffi::c_void, mem, rc::Rc};
+use std::{cell::RefCell, mem, rc::Rc};
 
 use crate::backends::metal::{
     CommandBuffer as MTLCommandBuffer, Device as MTLDevice, MTLResourceOptions,

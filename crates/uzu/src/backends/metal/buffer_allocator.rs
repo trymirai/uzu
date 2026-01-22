@@ -1,4 +1,4 @@
-use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLHeapExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 /// Type alias for owned MTLBuffer

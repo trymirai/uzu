@@ -1,14 +1,12 @@
 use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 
+use objc2::rc::Retained;
 use thiserror::Error;
 
-use objc2::rc::Retained;
-
-use crate::backends::metal::{
-    BufferRef, ComputeCommandEncoderRef, ComputePipelineState,
+use crate::backends::metal::{MTLBuffer, ProtocolObject,
+    ComputeCommandEncoderRef, ComputePipelineState,
     FunctionConstantValues, FunctionConstantValuesLegacy, KernelDataType,
     MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError, MTLSize,
-    mtl_size,
 };
 
 mod gemm_types;
@@ -45,10 +43,10 @@ pub enum AttentionError {
 }
 
 pub struct AttentionSinglePassArguments<'a> {
-    pub queries_buffer: BufferRef<'a>, // buffer(0)
-    pub keys_buffer: BufferRef<'a>,    // buffer(1)
-    pub values_buffer: BufferRef<'a>,  // buffer(2)
-    pub output_buffer: BufferRef<'a>,  // buffer(3)
+    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
+    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
+    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
     pub gqa_factor: i32,               // buffer(4)
     pub sequence_length: i32,          // buffer(5) - sequence_length
     pub k_head_stride: i32,            // buffer(6)
@@ -56,11 +54,11 @@ pub struct AttentionSinglePassArguments<'a> {
     pub v_head_stride: i32,            // buffer(8)
     pub v_seq_stride: i32,             // buffer(9)
     pub scale: f32,                    // buffer(10)
-    pub mask_buffer: Option<BufferRef<'a>>, // buffer(11/12)
+    pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(11/12)
     pub mask_kv_seq_stride: i32,       // buffer(13)
     pub mask_q_seq_stride: i32,        // buffer(14)
     pub mask_head_stride: i32,         // buffer(15)
-    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(16)
+    pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(16)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -68,13 +66,13 @@ pub struct AttentionSinglePassArguments<'a> {
 }
 
 pub struct AttentionTwoPassArguments<'a> {
-    pub queries_buffer: BufferRef<'a>,  // buffer(0)
-    pub keys_buffer: BufferRef<'a>,     // buffer(1)
-    pub values_buffer: BufferRef<'a>,   // buffer(2)
-    pub partials_buffer: BufferRef<'a>, // buffer(3) - pass 1 output
-    pub sums_buffer: BufferRef<'a>,     // buffer(4) - pass 1 output
-    pub maxs_buffer: BufferRef<'a>,     // buffer(5) - pass 1 output
-    pub output_buffer: BufferRef<'a>,   // buffer(3) - pass 2 output
+    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(0)
+    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(1)
+    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // buffer(2)
+    pub partials_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) - pass 1 output
+    pub sums_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(4) - pass 1 output
+    pub maxs_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(5) - pass 1 output
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // buffer(3) - pass 2 output
     pub gqa_factor: i32,                // buffer(6)
     pub sequence_length: i32,           // buffer(7) - sequence_length
     pub k_head_stride: i32,             // buffer(8)
@@ -82,11 +80,11 @@ pub struct AttentionTwoPassArguments<'a> {
     pub v_head_stride: i32,             // buffer(10)
     pub v_seq_stride: i32,              // buffer(11)
     pub scale: f32,                     // buffer(12)
-    pub mask_buffer: Option<BufferRef<'a>>, // buffer(13/14)
+    pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(13/14)
     pub mask_kv_seq_stride: i32,        // buffer(15)
     pub mask_q_seq_stride: i32,         // buffer(16)
     pub mask_head_stride: i32,          // buffer(17)
-    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(18)
+    pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(18)
     pub num_heads: usize,
     pub suffix_length: usize,
     pub head_dim: usize,
@@ -94,10 +92,10 @@ pub struct AttentionTwoPassArguments<'a> {
 }
 
 pub struct KVCacheUpdateArguments<'a> {
-    pub rotated_keys_buffer: BufferRef<'a>, // buffer(0)
-    pub qkv_buffer: BufferRef<'a>,          // buffer(1)
-    pub key_cache_buffer: BufferRef<'a>,    // buffer(2)
-    pub value_cache_buffer: BufferRef<'a>,  // buffer(3)
+    pub rotated_keys_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
+    pub qkv_buffer: &'a ProtocolObject<dyn MTLBuffer>,          // buffer(1)
+    pub key_cache_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(2)
+    pub value_cache_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
     pub num_groups: usize,
     pub num_heads: usize,
     pub head_dim: usize,
@@ -107,12 +105,12 @@ pub struct KVCacheUpdateArguments<'a> {
 }
 
 pub struct AttentionGemmArguments<'a> {
-    pub queries_buffer: BufferRef<'a>, // buffer(0)
-    pub keys_buffer: BufferRef<'a>,    // buffer(1)
-    pub values_buffer: BufferRef<'a>,  // buffer(2)
-    pub output_buffer: BufferRef<'a>,  // buffer(3)
-    pub mask_buffer: Option<BufferRef<'a>>, // buffer(6)
-    pub sinks_buffer: Option<BufferRef<'a>>, // buffer(7)
+    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
+    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
+    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
+    pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(6)
+    pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(7)
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -459,7 +457,7 @@ impl AttentionKernel {
         };
 
         let threadgroups_per_grid =
-            mtl_size(args.num_heads as u64, args.suffix_length as u64, 1);
+            MTLSize::new(args.num_heads, args.suffix_length, 1);
 
         compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
@@ -636,10 +634,10 @@ impl AttentionKernel {
             height: 1,
             depth: 1,
         };
-        let pass1_threadgroups_per_grid = mtl_size(
-            args.num_heads as u64,
-            args.suffix_length as u64,
-            total_blocks_count as u64,
+        let pass1_threadgroups_per_grid = MTLSize::new(
+            args.num_heads,
+            args.suffix_length,
+            total_blocks_count as usize,
         );
 
         compute_encoder.dispatch_threadgroups(
@@ -683,7 +681,7 @@ impl AttentionKernel {
             depth: 1,
         };
         let pass2_threadgroups_per_grid =
-            mtl_size(args.num_heads as u64, args.suffix_length as u64, 1);
+            MTLSize::new(args.num_heads, args.suffix_length, 1);
 
         compute_encoder.dispatch_threadgroups(
             pass2_threadgroups_per_grid,
@@ -789,10 +787,10 @@ impl AttentionKernel {
             );
         }
 
-        let threads_per_grid = mtl_size(
-            args.num_groups as u64,
-            args.suffix_length as u64,
-            args.head_dim as u64,
+        let threads_per_grid = MTLSize::new(
+            args.num_groups,
+            args.suffix_length,
+            args.head_dim as usize,
         );
 
         let threadgroup_depth =
@@ -997,7 +995,7 @@ impl AttentionKernel {
 
         // Dispatch
         let threadgroups_per_grid =
-            mtl_size(nq as u64, args.num_heads as u64, 1);
+            MTLSize::new(nq as usize, args.num_heads, 1);
         let threads_per_threadgroup = MTLSize {
             width: 32,
             height: WM as usize,

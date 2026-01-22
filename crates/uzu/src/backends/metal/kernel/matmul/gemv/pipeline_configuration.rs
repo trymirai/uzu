@@ -1,4 +1,4 @@
-use crate::backends::metal::{MTLSize, mtl_size};
+use crate::backends::metal::MTLSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PipelineConfiguration {
@@ -29,10 +29,10 @@ impl PipelineConfiguration {
     }
 
     pub fn threads_per_threadgroup(&self) -> MTLSize {
-        mtl_size(
+        MTLSize::new(
             32,
-            self.threadgroup_cols as u64,
-            self.threadgroup_rows as u64,
+            self.threadgroup_cols as usize,
+            self.threadgroup_rows as usize,
         )
     }
 }

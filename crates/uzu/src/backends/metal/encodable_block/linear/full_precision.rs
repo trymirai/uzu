@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer,
-        MTLCommandEncoder, MTLContext, MTLError,
+        Buffer, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+        MTLContext, MTLError, ProtocolObject,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
@@ -61,7 +61,8 @@ impl FullPrecisionLinear {
             )));
         }
 
-        let weights_buffer: Buffer = unsafe { weights.mtl_buffer() }.to_owned().into();
+        let weights_buffer: Buffer =
+            unsafe { weights.mtl_buffer() }.to_owned().into();
 
         let bias_buffer = match parameter_tree.leaf("biases") {
             Ok(mut biases) => {
@@ -105,7 +106,7 @@ impl EncodableBlock for FullPrecisionLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

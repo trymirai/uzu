@@ -1,17 +1,13 @@
-use std::mem::size_of;
-use std::ptr::NonNull;
-use std::ffi::c_void;
+use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
 use metal::{MTLComputeCommandEncoder, MTLComputePipelineState};
 
-use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState,
-    MTLBuffer, MTLSize, ProtocolObject,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        MTLError, MTLSize, ProtocolObject,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -218,22 +214,26 @@ impl RMSNormKernel {
         // Set parameters
         unsafe {
             compute_encoder.set_bytes(
-                NonNull::new(&args.batch_size as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.batch_size as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 3,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.model_dim as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.model_dim as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 4,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.epsilon as *const f32 as *mut c_void).unwrap(),
+                NonNull::new(&args.epsilon as *const f32 as *mut c_void)
+                    .unwrap(),
                 size_of::<f32>(),
                 5,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.scale_offset as *const f32 as *mut c_void).unwrap(),
+                NonNull::new(&args.scale_offset as *const f32 as *mut c_void)
+                    .unwrap(),
                 size_of::<f32>(),
                 6,
             );
@@ -278,32 +278,38 @@ impl RMSNormKernel {
         // Set parameters
         unsafe {
             compute_encoder.set_bytes(
-                NonNull::new(&args.batch_size as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.batch_size as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 3,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.num_q_heads as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.num_q_heads as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 4,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.num_kv_heads as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.num_kv_heads as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 5,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.head_dim as *const i32 as *mut c_void).unwrap(),
+                NonNull::new(&args.head_dim as *const i32 as *mut c_void)
+                    .unwrap(),
                 size_of::<i32>(),
                 6,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.epsilon as *const f32 as *mut c_void).unwrap(),
+                NonNull::new(&args.epsilon as *const f32 as *mut c_void)
+                    .unwrap(),
                 size_of::<f32>(),
                 7,
             );
             compute_encoder.set_bytes(
-                NonNull::new(&args.scale_offset as *const f32 as *mut c_void).unwrap(),
+                NonNull::new(&args.scale_offset as *const f32 as *mut c_void)
+                    .unwrap(),
                 size_of::<f32>(),
                 8,
             );
@@ -330,7 +336,8 @@ impl RMSNormKernel {
         // Pass head range to the kernel.
         unsafe {
             compute_encoder.set_bytes(
-                NonNull::new(&head_offset as *const u32 as *mut c_void).unwrap(),
+                NonNull::new(&head_offset as *const u32 as *mut c_void)
+                    .unwrap(),
                 size_of::<u32>(),
                 9,
             );
@@ -343,8 +350,7 @@ impl RMSNormKernel {
 
         // One SIMD-group per head, multiple heads per threadgroup.
         let simd_width = self.pipeline.thread_execution_width();
-        let max_threads =
-            self.pipeline.max_total_threads_per_threadgroup();
+        let max_threads = self.pipeline.max_total_threads_per_threadgroup();
         let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
         let heads_per_threadgroup =
             (head_count as usize).min(max_heads_per_threadgroup).max(1);

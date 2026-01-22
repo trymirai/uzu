@@ -1,10 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 
-use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState as ComputePipelineState, FunctionConstantValues,
-    FunctionConstantValuesLegacy,
-};
+use metal::MTLComputeCommandEncoder;
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -13,7 +9,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLContext, MTLError,
         kernel::matmul::common::{
             GEMMAddMMParams, GEMMParams, MatmulArguments,
             transpose_configuration,
@@ -208,30 +205,36 @@ impl Kernel {
         )?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
-        encoder.set_buffer(1, Some(arguments.b), 0);
+        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.b), 0, 1);
         if descriptor.pipeline_configuration.use_out_source {
             if let Some(c_buffer) = arguments.c {
-                encoder.set_buffer(2, Some(c_buffer), 0);
+                encoder.set_buffer(Some(c_buffer), 0, 2);
             }
         }
-        encoder.set_buffer(3, Some(arguments.d), 0);
+        encoder.set_buffer(Some(arguments.d), 0, 3);
 
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<GEMMParams>() as u64,
-            &descriptor.params as *const _ as *const _,
-        );
-
-        if let Some(addmm_params) = &descriptor.addmm_params {
+        unsafe {
             encoder.set_bytes(
-                5,
-                std::mem::size_of::<GEMMAddMMParams>() as u64,
-                addmm_params as *const _ as *const _,
+                NonNull::new(&descriptor.params as *const _ as *mut c_void)
+                    .unwrap(),
+                std::mem::size_of::<GEMMParams>(),
+                4,
             );
         }
 
-        encoder.dispatch_thread_groups(
+        if let Some(addmm_params) = &descriptor.addmm_params {
+            unsafe {
+                encoder.set_bytes(
+                    NonNull::new(addmm_params as *const _ as *mut c_void)
+                        .unwrap(),
+                    std::mem::size_of::<GEMMAddMMParams>(),
+                    5,
+                );
+            }
+        }
+
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

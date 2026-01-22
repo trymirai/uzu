@@ -2,8 +2,8 @@
 
 use std::{env, rc::Rc};
 
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
 };
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
@@ -509,7 +509,7 @@ impl EncodableBlock for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, KernelDataType,
+use crate::backends::metal::{ProtocolObject,
+    ComputeCommandEncoderRef, KernelDataType,
     MTLCommandBuffer, MTLCommandEncoder, MTLContext,
     forward_pass::{ArrayId, ForwardPassState},
     kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
@@ -56,7 +56,7 @@ impl EncodableBlock for Sampling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

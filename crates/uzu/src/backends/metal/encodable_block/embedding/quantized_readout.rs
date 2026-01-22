@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use metal::MTLBuffer as _;
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -9,9 +8,9 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        Buffer, CommandBufferRef, ComputeCommandEncoderRef, MTLBuffer,
-        MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLDeviceExt,
-        MTLError, MTLResourceOptions,
+        Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
+        MTLCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        MTLResourceOptions, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
@@ -221,7 +220,7 @@ impl EncodableBlock for QuantizedEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

@@ -1,10 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 
-use crate::backends::metal::{
-    Buffer, ComputeCommandEncoderRef, ComputeEncoderLegacy,
-    ComputePipelineState as ComputePipelineState, FunctionConstantValues,
-    FunctionConstantValuesLegacy, MTLDeviceExt, MTLResourceOptions,
-};
+use metal::MTLComputeCommandEncoder;
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -12,7 +8,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        Buffer, ComputeCommandEncoderRef, ComputePipelineState,
+        FunctionConstantValues, FunctionConstantValuesLegacy, MTLContext,
+        MTLDeviceExt, MTLError, MTLResourceOptions,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
             mlp_fused::common::MlpFusedArguments,
@@ -182,41 +180,63 @@ impl Kernel {
             .expect("Gate accumulator buffer must be initialized");
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
-        encoder.set_buffer(0, Some(arguments.input), arguments.input_offset);
-        encoder.set_buffer(1, Some(arguments.weights), 0);
-        encoder.set_buffer(2, Some(up_accumulator_buffer), 0);
-        encoder.set_buffer(3, Some(gate_accumulator_buffer), 0);
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<GEMMSpiltKMlpFusedParams>() as u64,
-            &descriptor.params as *const GEMMSpiltKMlpFusedParams as *const _,
+        encoder.set_buffer(
+            Some(arguments.input),
+            arguments.input_offset as usize,
+            0,
         );
-        encoder.dispatch_thread_groups(
+        encoder.set_buffer(Some(arguments.weights), 0, 1);
+        encoder.set_buffer(Some(up_accumulator_buffer), 0, 2);
+        encoder.set_buffer(Some(gate_accumulator_buffer), 0, 3);
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.params as *const GEMMSpiltKMlpFusedParams
+                        as *mut c_void,
+                )
+                .unwrap(),
+                std::mem::size_of::<GEMMSpiltKMlpFusedParams>(),
+                4,
+            );
+        }
+        encoder.dispatch_threadgroups(
             descriptor.partial_threadgroups,
             descriptor.partial_threads_per_threadgroup,
         );
 
         encoder.set_compute_pipeline_state(accum_pipeline_state);
-        encoder.set_buffer(0, Some(up_accumulator_buffer), 0);
-        encoder.set_buffer(1, Some(gate_accumulator_buffer), 0);
-        encoder.set_buffer(2, Some(arguments.output), 0);
-        encoder.set_bytes(
-            3,
-            4,
-            &descriptor.partition_count as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            4,
-            4,
-            &descriptor.output_elements_per_partition as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            5,
-            4,
-            &descriptor.ldd as *const i32 as *const std::ffi::c_void,
-        );
+        encoder.set_buffer(Some(up_accumulator_buffer), 0, 0);
+        encoder.set_buffer(Some(gate_accumulator_buffer), 0, 1);
+        encoder.set_buffer(Some(arguments.output), 0, 2);
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.partition_count as *const i32 as *mut c_void,
+                )
+                .unwrap(),
+                4,
+                3,
+            );
+        }
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(
+                    &descriptor.output_elements_per_partition as *const i32
+                        as *mut c_void,
+                )
+                .unwrap(),
+                4,
+                4,
+            );
+        }
+        unsafe {
+            encoder.set_bytes(
+                NonNull::new(&descriptor.ldd as *const i32 as *mut c_void)
+                    .unwrap(),
+                4,
+                5,
+            );
+        }
 
         encoder.dispatch_threads(
             descriptor.accum_total_threads,

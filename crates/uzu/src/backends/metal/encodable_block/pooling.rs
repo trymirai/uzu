@@ -1,15 +1,12 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use crate::backends::metal::{
-    CommandBufferRef, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
-    MTLCommandBuffer, MTLCommandEncoder,
-};
-
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
 use crate::Array;
 use crate::{
     backends::metal::{
+        ComputeCommandEncoderRef, MTLCommandBuffer,
+        MTLCommandEncoder, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::PoolingKernel,
     },
@@ -40,10 +37,11 @@ impl EncodableBlock for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: CommandBufferRef<'_>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
@@ -56,28 +54,23 @@ impl EncodableBlock for Pooling {
             };
 
             let arrays = state.arrays(&[ArrayId::ClassifierPooling]);
-            let mut pooling_array = arrays[0].borrow_mut();
-            let output_buffer =
-                unsafe { pooling_array.mtl_buffer().to_owned() };
-            drop(pooling_array);
+            let pooling_array = arrays[0].borrow();
+            let output_buffer = pooling_array.backend_buffer();
 
             let traces_rc = state.traces().clone();
             let traces_ref = traces_rc.borrow();
-            let mut trace_arr = traces_ref.output_pooling().borrow_mut();
-            let dst_buf = unsafe { trace_arr.mtl_buffer().to_owned() };
-            drop(trace_arr);
-            drop(traces_ref);
+            let trace_arr = traces_ref.output_pooling().borrow();
+            let dst_buf = trace_arr.backend_buffer();
 
             let blit = command_buffer
                 .new_blit_command_encoder()
                 .expect("Failed to create blit command encoder");
-            blit.copy_from_buffer(
-                &output_buffer,
+            blit.copy_buffer_to_buffer(
+                output_buffer,
                 0,
-                &dst_buf,
+                dst_buf,
                 0,
-                (batch_size * self.model_dim * data_type.size_in_bytes())
-                    as u64,
+                batch_size * self.model_dim * data_type.size_in_bytes(),
             );
             blit.end_encoding();
         }

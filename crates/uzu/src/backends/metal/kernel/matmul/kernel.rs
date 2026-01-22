@@ -11,7 +11,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, BufferRef, ComputeCommandEncoderRef, MTLContext, MTLError,
+        ComputeCommandEncoderRef, MTLBuffer, MTLContext, MTLError,
+        ProtocolObject,
     },
 };
 
@@ -136,7 +137,7 @@ impl MatmulKernel {
         context: &MTLContext,
         encoder: ComputeCommandEncoderRef<'_>,
         arguments: &MatmulArguments,
-        bias: BufferRef<'_>,
+        bias: &ProtocolObject<dyn MTLBuffer>,
     ) -> Result<(), MTLError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
