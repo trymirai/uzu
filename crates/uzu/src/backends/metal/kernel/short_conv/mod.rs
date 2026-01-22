@@ -2,7 +2,8 @@ use std::mem::size_of;
 
 use metal::{
     Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
+    MTLDataType, MTLSize,
 };
 
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
@@ -17,10 +18,22 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
+fn make_function_constants(has_bias: bool) -> FunctionConstantValues {
+    let function_constants = FunctionConstantValues::new();
+    function_constants.set_constant_value_at_index(
+        &has_bias as *const bool as *const std::ffi::c_void,
+        MTLDataType::Bool,
+        0,
+    );
+    function_constants
+}
+
 pub struct ShortConvKernel {
     pack_pipeline: MTLComputePipelineState,
-    prefill_pipeline: MTLComputePipelineState,
-    decode_pipeline: MTLComputePipelineState,
+    prefill_pipeline_no_bias: MTLComputePipelineState,
+    prefill_pipeline_with_bias: MTLComputePipelineState,
+    decode_pipeline_no_bias: MTLComputePipelineState,
+    decode_pipeline_with_bias: MTLComputePipelineState,
 }
 
 pub struct ShortConvPackArguments<'a> {
@@ -76,17 +89,58 @@ impl ShortConvKernel {
         let pack_pipeline = context
             .compute_pipeline_state(&pack_name, None)
             .map_err(ShortConvKernelError::MetalError)?;
-        let prefill_pipeline = context
-            .compute_pipeline_state(&prefill_name, None)
-            .map_err(ShortConvKernelError::MetalError)?;
-        let decode_pipeline = context
-            .compute_pipeline_state(&decode_name, None)
-            .map_err(ShortConvKernelError::MetalError)?;
+
+        let prefill_pipeline_no_bias = {
+            let function_constants = make_function_constants(false);
+            let cache_key = format!("{}_has_bias_0", prefill_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &prefill_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
+        let prefill_pipeline_with_bias = {
+            let function_constants = make_function_constants(true);
+            let cache_key = format!("{}_has_bias_1", prefill_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &prefill_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
+        let decode_pipeline_no_bias = {
+            let function_constants = make_function_constants(false);
+            let cache_key = format!("{}_has_bias_0", decode_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &decode_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
+        let decode_pipeline_with_bias = {
+            let function_constants = make_function_constants(true);
+            let cache_key = format!("{}_has_bias_1", decode_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &decode_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
 
         Ok(Self {
             pack_pipeline,
-            prefill_pipeline,
-            decode_pipeline,
+            prefill_pipeline_no_bias,
+            prefill_pipeline_with_bias,
+            decode_pipeline_no_bias,
+            decode_pipeline_with_bias,
         })
     }
 
@@ -153,11 +207,19 @@ impl ShortConvKernel {
         let tap_count = (args.kernel_size - 1).max(0);
         let work_len = args.suffix_len + tap_count as usize;
 
-        compute_encoder.set_compute_pipeline_state(&self.prefill_pipeline);
+        let has_bias = args.b.is_some();
+        let pipeline = if has_bias {
+            &self.prefill_pipeline_with_bias
+        } else {
+            &self.prefill_pipeline_no_bias
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
         compute_encoder.set_buffer(0, Some(args.padded), 0);
         compute_encoder.set_buffer(1, Some(args.in_proj), 0);
         compute_encoder.set_buffer(2, Some(args.w), 0);
-        compute_encoder.set_buffer(3, args.b.map(|v| &**v), 0);
+        if has_bias {
+            compute_encoder.set_buffer(3, args.b.map(|v| &**v), 0);
+        }
         compute_encoder.set_buffer(4, Some(args.out), 0);
         compute_encoder.set_buffer(5, Some(args.state_out), 0);
         compute_encoder.set_bytes(
@@ -211,10 +273,18 @@ impl ShortConvKernel {
             return Ok(());
         }
 
-        compute_encoder.set_compute_pipeline_state(&self.decode_pipeline);
+        let has_bias = args.b.is_some();
+        let pipeline = if has_bias {
+            &self.decode_pipeline_with_bias
+        } else {
+            &self.decode_pipeline_no_bias
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
         compute_encoder.set_buffer(0, Some(args.in_proj), 0);
         compute_encoder.set_buffer(1, Some(args.w), 0);
-        compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+        if has_bias {
+            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+        }
         compute_encoder.set_buffer(3, Some(args.state), 0);
         compute_encoder.set_buffer(4, Some(args.out), 0);
         compute_encoder.set_buffer(5, Some(args.next_state), 0);

@@ -18,7 +18,7 @@ pub fn handle_bench(
     println!("Model: {}", task.repo_id);
     let progress_bar = ProgressBar::new(task.number_of_runs);
     progress_bar.set_position(0);
-    let runner = Runner::new(task.clone(), model_path);
+    let runner = Runner::new(task.clone(), model_path, None);
     let results = runner.run(Some(|_: f64| {
         progress_bar.inc(1);
     }))?;

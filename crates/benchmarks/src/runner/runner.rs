@@ -9,7 +9,9 @@ use uzu::{
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
-        parameter::{ContextLength, SamplingMethod, SamplingPolicy},
+        parameter::{
+            ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy,
+        },
         types::{Input, Output},
     },
 };
@@ -22,16 +24,19 @@ use crate::runner::{
 pub struct Runner {
     pub task: Task,
     pub model_path: String,
+    pub prefill_step_size: Option<usize>,
 }
 
 impl Runner {
     pub fn new(
         task: Task,
         model_path: String,
+        prefill_step_size: Option<usize>,
     ) -> Self {
         Self {
             task,
             model_path,
+            prefill_step_size,
         }
     }
 
@@ -64,10 +69,17 @@ impl Runner {
     {
         let context_length = self.minimal_context_length()?;
 
+        let mut decoding_config = DecodingConfig::default()
+            .with_context_length(ContextLength::Custom(context_length));
+        if let Some(prefill_step_size) = self.prefill_step_size {
+            decoding_config = decoding_config.with_prefill_step_size(
+                PrefillStepSize::Custom(prefill_step_size),
+            );
+        }
+
         let mut session = ChatSession::new(
             PathBuf::from(self.model_path.clone()),
-            DecodingConfig::default()
-                .with_context_length(ContextLength::Custom(context_length)),
+            decoding_config,
         )?;
 
         let precision =

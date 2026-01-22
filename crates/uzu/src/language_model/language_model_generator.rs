@@ -233,6 +233,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
+                self.skip_attention_bias_fill(),
             );
 
             if should_capture {
@@ -399,6 +400,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
+            self.skip_attention_bias_fill(),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -506,7 +508,7 @@ impl LanguageModelGenerator {
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
         let skip_attention_bias_fill =
-            pass_idx > 0 && self.context.decoder_config.has_attention_layers();
+            pass_idx > 0 && self.skip_attention_bias_fill();
 
         let skip_token_ids_copy = pass_idx > 0;
 
@@ -716,7 +718,7 @@ impl LanguageModelGenerator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default());
+            self.run_model(task, true, false, SamplingMethod::default(), false);
     }
 
     fn run_model(
@@ -725,11 +727,16 @@ impl LanguageModelGenerator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
+        skip_attention_bias_fill: bool,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let mut state = task.create_state(&mut self.context, None);
+            let mut state = task.create_state(
+                &mut self.context,
+                None,
+                skip_attention_bias_fill,
+            );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
             }
@@ -883,5 +890,16 @@ impl LanguageModelGenerator {
             }
             self.registered_prefix_len = desired_prefix_len;
         }
+    }
+
+    fn skip_attention_bias_fill(&self) -> bool {
+        let sliding_window_sizes =
+            self.context.model_shape.sliding_window_length_per_layer.clone();
+        let has_sliding_window =
+            sliding_window_sizes.iter().any(|size| size.is_some());
+        let has_speculative_suffix =
+            self.decoding_config.generate_suffix_length() > 1;
+        let should_skip = !has_sliding_window && !has_speculative_suffix;
+        return should_skip;
     }
 }

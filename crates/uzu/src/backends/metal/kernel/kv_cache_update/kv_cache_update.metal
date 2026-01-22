@@ -12,11 +12,11 @@ template <typename T>
 void updateKVCache(
     device T* inPlaceKeys,
     device T* inPlaceValues,
-    device int2* swaps,
-    constant int& swapCount,
-    constant int& numHeads,
-    constant int& maxSequenceLength,
-    constant int& headDim,
+    const constant int2* swaps,
+    const constant int& swapCount,
+    const constant int& numHeads,
+    const constant int& maxSequenceLength,
+    const constant int& headDim,
     const uint2 position
 ) {
   for (int i = 0; i < swapCount; ++i) {
@@ -35,11 +35,11 @@ void updateKVCache(
 #define outerArguments(T)                                                      \
   (device T * inPlaceKeys [[buffer(0)]],                                       \
    device T * inPlaceValues [[buffer(1)]],                                     \
-   device int2 * swaps [[buffer(2)]],                                          \
-   constant int& swapCount [[buffer(3)]],                                      \
-   constant int& numHeads [[buffer(4)]],                                       \
-   constant int& maxSequenceLength [[buffer(5)]],                              \
-   constant int& headDim [[buffer(6)]],                                        \
+   const constant int2 * swaps [[buffer(2)]],                                  \
+   const constant int& swapCount [[buffer(3)]],                                \
+   const constant int& numHeads [[buffer(4)]],                                 \
+   const constant int& maxSequenceLength [[buffer(5)]],                        \
+   const constant int& headDim [[buffer(6)]],                                  \
    const uint2 position [[thread_position_in_grid]])
 
 #define innerArguments                                                         \

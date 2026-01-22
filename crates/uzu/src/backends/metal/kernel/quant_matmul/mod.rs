@@ -326,7 +326,10 @@ fn select_qmm_kernel_name(
     if weights_transposed {
         if output_dim % 32 != 0 {
             kernel_name.push_str("_unaligned");
-        } else if type_suffix == "bf16" && group_size == 128 && bits == 4 {
+        } else if type_suffix == "bf16"
+            && (group_size == 128 || group_size == 64)
+            && (bits == 4 || bits == 8)
+        {
             kernel_name.push_str("_64x64");
         }
     } else if input_dim % 32 == 0 {
