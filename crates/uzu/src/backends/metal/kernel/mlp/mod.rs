@@ -5,7 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValues, FunctionConstantValuesLegacy, MTLBuffer,
+        FunctionConstantValuesLegacy, MTLBuffer, MTLFunctionConstantValues,
         MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLSize,
         ProtocolObject, Retained,
     },
@@ -59,8 +59,8 @@ impl MlpFusedConfig {
     }
 
     /// Create function constants for MLP fused matmul
-    pub fn make_function_constants(&self) -> Retained<FunctionConstantValues> {
-        let fcv = FunctionConstantValues::new();
+    pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
+        let fcv = MTLFunctionConstantValues::new();
         let fused = true;
         fcv.set_constant_value_at_index(
             &fused as *const bool as *const std::ffi::c_void,
@@ -83,8 +83,8 @@ impl MlpFusedConfig {
 }
 
 /// Create function constants for non-fused (standard) matmul
-pub fn make_non_fused_function_constants() -> Retained<FunctionConstantValues> {
-    let fcv = FunctionConstantValues::new();
+pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
+    let fcv = MTLFunctionConstantValues::new();
     let fused = false;
     fcv.set_constant_value_at_index(
         &fused as *const bool as *const std::ffi::c_void,

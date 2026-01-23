@@ -6,8 +6,8 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValues,
-        FunctionConstantValuesLegacy, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
+        FunctionConstantValuesLegacy, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, MTLSize,
         ProtocolObject,
     },
     config::QuantizationMode,
@@ -112,7 +112,7 @@ impl QuantizedMatmulKernel {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
-        let function_constants = FunctionConstantValues::new();
+        let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,
@@ -405,7 +405,7 @@ impl MlpFusedQmvKernel {
         let kernel_name =
             format!("qmv_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
-        let function_constants = FunctionConstantValues::new();
+        let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,
@@ -515,7 +515,7 @@ impl MlpFusedQmmKernel {
         let kernel_name =
             format!("qmm_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
-        let function_constants = FunctionConstantValues::new();
+        let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
         function_constants.set_constant_value_at_index(
             &use_mlx_quant as *const bool as *const std::ffi::c_void,

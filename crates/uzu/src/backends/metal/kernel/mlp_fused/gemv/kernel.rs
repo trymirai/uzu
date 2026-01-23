@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValues,
         FunctionConstantValuesLegacy, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues,
         ProtocolObject, Retained,
         kernel::mlp_fused::common::MlpFusedArguments,
     },
@@ -69,7 +69,7 @@ impl Kernel {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 
-            let function_constants = FunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
             function_constants.set_constant_value_at_index(
                 &activation_val as *const u32 as *const _,

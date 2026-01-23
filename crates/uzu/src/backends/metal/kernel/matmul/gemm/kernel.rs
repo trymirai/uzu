@@ -9,8 +9,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValues,
-        FunctionConstantValuesLegacy, MTLContext, MTLError,
+        FunctionConstantValuesLegacy, MTLContext, MTLError, MTLFunctionConstantValues,
         MTLComputePipelineState, ProtocolObject, Retained,
         kernel::matmul::common::{
             GEMMAddMMParams, GEMMParams, MatmulArguments,
@@ -140,7 +139,7 @@ impl Kernel {
     ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
-            let function_constants = FunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             function_constants.set_constant_value_at_index(
                 &configuration.has_batch as *const bool as *const _,
                 metal::MTLDataType::Bool,

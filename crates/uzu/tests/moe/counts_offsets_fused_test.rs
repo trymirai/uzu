@@ -6,7 +6,7 @@ use metal::{
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
-    Buffer, MTLContext,
+    MTLContext, ProtocolObject, Retained,
     kernel::{
         KernelDataType, MoeCountsOffsetsFusedArguments,
         MoeCountsOffsetsFusedKernel,
@@ -53,7 +53,7 @@ fn gen_topk_ids_from_logits(
     t: usize,
     e: usize,
     k: usize,
-) -> (Vec<i32>, Buffer) {
+) -> (Vec<i32>, Retained<ProtocolObject<dyn MTLBuffer>>) {
     let mut rng = StdRng::seed_from_u64(1234);
 
     // Generate random input and router weights

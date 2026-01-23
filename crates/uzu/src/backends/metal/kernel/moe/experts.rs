@@ -8,8 +8,7 @@ use super::{
     MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
 };
 use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    FunctionConstantValues,
-    FunctionConstantValuesLegacy, KernelDataType, MTLBlitCommandEncoder,
+    FunctionConstantValuesLegacy, KernelDataType, MTLBlitCommandEncoder, MTLFunctionConstantValues,
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
     MTLDataType, MTLError, MTLSize, NSRange, Retained,
 };
@@ -119,7 +118,7 @@ impl MoeExpertsTwoPassDecodeKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
+                let fcv = MTLFunctionConstantValues::new();
                 fcv.set_constant_value_at_index(
                     &gate as *const u32 as *const std::ffi::c_void,
                     MTLDataType::UInt,
@@ -341,7 +340,7 @@ impl MoeExpertsTwoPassPrefillKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
+                let fcv = MTLFunctionConstantValues::new();
                 fcv.set_constant_value_at_index(
                     &gate as *const u32 as *const std::ffi::c_void,
                     MTLDataType::UInt,
@@ -625,7 +624,7 @@ impl MoeExpertsSingleDecodeKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
+                let fcv = MTLFunctionConstantValues::new();
                 fcv.set_constant_value_at_index(
                     &gate as *const u32 as *const std::ffi::c_void,
                     MTLDataType::UInt,

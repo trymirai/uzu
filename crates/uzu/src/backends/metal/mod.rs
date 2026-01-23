@@ -30,18 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for owned MTLEvent
-pub type Event = Retained<ProtocolObject<dyn MTLEvent>>;
-
-/// Type alias for owned MTLTexture
-pub type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
-
-/// Type alias for MTLFunctionConstantValues
-pub type FunctionConstantValues = MTLFunctionConstantValues;
-
-/// Type alias for MTLTextureDescriptor  
-pub type TextureDescriptor = MTLTextureDescriptor;
-
 pub use array::MetalArray;
 pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;

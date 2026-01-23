@@ -3,8 +3,8 @@ use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    FunctionConstantValues,
-    FunctionConstantValuesLegacy, MTLComputePipelineState, ProtocolObject, Retained,
+    FunctionConstantValuesLegacy, MTLComputePipelineState, MTLFunctionConstantValues,
+    ProtocolObject, Retained,
 };
 
 use super::{
@@ -94,7 +94,7 @@ impl Kernel {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
 
-            let function_constants = FunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
             function_constants.set_constant_value_at_index(
                 &activation_val as *const u32 as *const _,

@@ -3,8 +3,7 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    FunctionConstantValues,
-    FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
+    FunctionConstantValuesLegacy, KernelDataType, MTLBuffer, MTLFunctionConstantValues,
     MTLContext,
     MTLDataType, MTLError, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
 };
@@ -20,8 +19,8 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-fn make_function_constants(has_bias: bool) -> Retained<FunctionConstantValues> {
-    let function_constants = FunctionConstantValues::new();
+fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
+    let function_constants = MTLFunctionConstantValues::new();
     function_constants.set_constant_value_at_index(
         &has_bias as *const bool as *const std::ffi::c_void,
         MTLDataType::Bool,

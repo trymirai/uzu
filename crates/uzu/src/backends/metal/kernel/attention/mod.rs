@@ -4,7 +4,7 @@ use objc2::rc::Retained;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    FunctionConstantValues, FunctionConstantValuesLegacy,
+    FunctionConstantValuesLegacy, MTLFunctionConstantValues,
     KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
     MTLDataType, MTLError, MTLSize, ProtocolObject,
 };
@@ -126,8 +126,8 @@ fn make_function_constants(
     has_mask_value: bool,
     has_sinks_value: bool,
     is_causal_value: bool,
-) -> Retained<FunctionConstantValues> {
-    let function_constants = FunctionConstantValues::new();
+) -> Retained<MTLFunctionConstantValues> {
+    let function_constants = MTLFunctionConstantValues::new();
 
     let query_transposed_value = false;
     let bool_mask_value = false;
@@ -833,7 +833,7 @@ impl AttentionKernel {
         let has_mask = args.mask_buffer.is_some();
         let has_sinks = args.sinks_buffer.is_some();
 
-        let fcv = FunctionConstantValues::new();
+        let fcv = MTLFunctionConstantValues::new();
         fcv.set_constant_value_at_index(
             &align_q as *const bool as *const _,
             MTLDataType::Bool,

@@ -8,7 +8,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValues, FunctionConstantValuesLegacy,
+        FunctionConstantValuesLegacy, MTLFunctionConstantValues,
         MTLBuffer, MTLComputePipelineState, MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions,
         ProtocolObject, Retained,
         kernel::{
@@ -110,7 +110,7 @@ impl Kernel {
     ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.accum_pipelines.contains_key(&activation) {
             let kernel_name = self.accum_kernel_name()?;
-            let function_constants = FunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             let activation_val = activation as u32;
             function_constants.set_constant_value_at_index(
                 &activation_val as *const u32 as *const _,

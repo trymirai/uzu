@@ -5,8 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        FunctionConstantValues,
-        FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
+        FunctionConstantValuesLegacy, KernelDataType, MTLBuffer, MTLFunctionConstantValues,
         MTLContext,
         MTLDataType, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
     },
@@ -32,8 +31,8 @@ fn activation_to_int(activation: &Activation) -> i32 {
 fn make_function_constants(
     activation: &Activation,
     has_bias: bool,
-) -> Retained<FunctionConstantValues> {
-    let function_constants = FunctionConstantValues::new();
+) -> Retained<MTLFunctionConstantValues> {
+    let function_constants = MTLFunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
     function_constants.set_constant_value_at_index(
