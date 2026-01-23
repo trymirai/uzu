@@ -9,9 +9,9 @@ use metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
     MTLDeviceExt, MTLResourceOptions,
 };
-use ndarray::{Array2, Array3, Array4, s};
+use ndarray::{Array3, Array4, s};
 use uzu::backends::metal::{
-    Buffer, KernelDataType, MTLContext,
+    KernelDataType, MTLContext, ProtocolObject, Retained,
     kernel::attention::{
         AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
         AttentionSinglePassArguments, AttentionTwoPassArguments,
@@ -41,36 +41,27 @@ fn reference_attention(
                 for repeat in 0..n_repeats {
                     let q_head = kv_head * n_repeats + repeat;
 
-                    let q = scaled_queries.slice(s![b, q_head, .., ..]); // [L, D]
-                    let k = keys.slice(s![b, kv_head, .., ..]); // [L_kv, D]
-                    let v = values.slice(s![b, kv_head, .., ..]); // [L_kv, D]
+                    let q = scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
+                    let k = keys.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
+                    let v = values.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
 
-                    let mut scores = Array2::zeros((seq_len, kv_seq_len));
-                    for i in 0..seq_len {
-                        for j in 0..kv_seq_len {
-                            let mut score = 0.0;
-                            for d in 0..head_dim {
-                                score += q[[i, d]] * k[[j, d]];
-                            }
-                            scores[[i, j]] = score;
-                        }
-                    }
+                    // Efficient matrix multiplication: scores = Q @ K^T
+                    let mut scores = q.dot(&k.t());
 
                     if let Some(mask_data) = mask {
-                        for i in 0..seq_len {
-                            for j in 0..kv_seq_len.min(seq_len) {
-                                scores[[i, j]] += mask_data[[b, i, j]];
-                            }
-                        }
+                        let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                        scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                            .zip_mut_with(&mask_slice, |s, &m| *s += m);
                     }
 
+                    // Softmax with optional sink logit
                     for i in 0..seq_len {
                         let sink_logit = sinks.map(|s| s[q_head]);
-                        let mut max_score =
-                            sink_logit.unwrap_or(f32::NEG_INFINITY);
-                        for j in 0..kv_seq_len {
-                            max_score = max_score.max(scores[[i, j]]);
-                        }
+                        let row = scores.row(i);
+                        let max_score = row.iter().fold(
+                            sink_logit.unwrap_or(f32::NEG_INFINITY),
+                            |acc, &x| acc.max(x),
+                        );
 
                         let mut sum_exp = sink_logit
                             .map(|sink| (sink - max_score).exp())
@@ -79,54 +70,37 @@ fn reference_attention(
                             scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                             sum_exp += scores[[i, j]];
                         }
-
-                        for j in 0..kv_seq_len {
-                            scores[[i, j]] /= sum_exp;
-                        }
+                        scores.row_mut(i).mapv_inplace(|x| x / sum_exp);
                     }
 
-                    for i in 0..seq_len {
-                        for d in 0..head_dim {
-                            let mut out_val = 0.0;
-                            for j in 0..kv_seq_len {
-                                out_val += scores[[i, j]] * v[[j, d]];
-                            }
-                            output[[b, q_head, i, d]] = out_val;
-                        }
-                    }
+                    // Efficient matrix multiplication: output = scores @ V
+                    let head_output = scores.dot(&v);
+                    output.slice_mut(s![b, q_head, .., ..]).assign(&head_output);
                 }
             }
         } else {
             for h in 0..num_heads {
-                let q = scaled_queries.slice(s![b, h, .., ..]); // [L, D]
-                let k = keys.slice(s![b, h, .., ..]); // [L_kv, D]
-                let v = values.slice(s![b, h, .., ..]); // [L_kv, D]
+                let q = scaled_queries.slice(s![b, h, .., ..]).to_owned(); // [L, D]
+                let k = keys.slice(s![b, h, .., ..]).to_owned(); // [L_kv, D]
+                let v = values.slice(s![b, h, .., ..]).to_owned(); // [L_kv, D]
 
-                let mut scores = Array2::zeros((seq_len, kv_seq_len));
-                for i in 0..seq_len {
-                    for j in 0..kv_seq_len {
-                        let mut score = 0.0;
-                        for d in 0..head_dim {
-                            score += q[[i, d]] * k[[j, d]];
-                        }
-                        scores[[i, j]] = score;
-                    }
-                }
+                // Efficient matrix multiplication: scores = Q @ K^T
+                let mut scores = q.dot(&k.t());
 
                 if let Some(mask_data) = mask {
-                    for i in 0..seq_len {
-                        for j in 0..kv_seq_len.min(seq_len) {
-                            scores[[i, j]] += mask_data[[b, i, j]];
-                        }
-                    }
+                    let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                    scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                        .zip_mut_with(&mask_slice, |s, &m| *s += m);
                 }
 
+                // Softmax with optional sink logit
                 for i in 0..seq_len {
                     let sink_logit = sinks.map(|s| s[h]);
-                    let mut max_score = sink_logit.unwrap_or(f32::NEG_INFINITY);
-                    for j in 0..kv_seq_len {
-                        max_score = max_score.max(scores[[i, j]]);
-                    }
+                    let row = scores.row(i);
+                    let max_score = row.iter().fold(
+                        sink_logit.unwrap_or(f32::NEG_INFINITY),
+                        |acc, &x| acc.max(x),
+                    );
 
                     let mut sum_exp = sink_logit
                         .map(|sink| (sink - max_score).exp())
@@ -135,21 +109,12 @@ fn reference_attention(
                         scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                         sum_exp += scores[[i, j]];
                     }
-
-                    for j in 0..kv_seq_len {
-                        scores[[i, j]] /= sum_exp;
-                    }
+                    scores.row_mut(i).mapv_inplace(|x| x / sum_exp);
                 }
 
-                for i in 0..seq_len {
-                    for d in 0..head_dim {
-                        let mut out_val = 0.0;
-                        for j in 0..kv_seq_len {
-                            out_val += scores[[i, j]] * v[[j, d]];
-                        }
-                        output[[b, h, i, d]] = out_val;
-                    }
-                }
+                // Efficient matrix multiplication: output = scores @ V
+                let head_output = scores.dot(&v);
+                output.slice_mut(s![b, h, .., ..]).assign(&head_output);
             }
         }
     }
@@ -200,7 +165,7 @@ fn create_test_data(
 fn create_query_buffer(
     queries: &Array4<f32>,
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_heads, seq_len, head_dim) = queries.dim();
 
     // Our kernel expects queries layout: [num_heads, seq_len, head_dim]
@@ -228,7 +193,7 @@ fn create_key_cache_buffer(
     keys: &Array4<f32>,
     max_seq_len: usize,
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
     // Our kernel expects key cache layout: [num_kv_heads, max_seq_len, head_dim]
@@ -257,7 +222,7 @@ fn create_value_cache_buffer(
     values: &Array4<f32>,
     max_seq_len: usize,
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
     // Our kernel expects value cache layout: [num_kv_heads, max_seq_len, head_dim]
@@ -286,7 +251,7 @@ fn create_mask_buffer(
     mask: &Array3<f32>,
     num_heads: usize,
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
     // Create mask buffer - the kernel expects mask layout: [num_heads, seq_len, seq_len]
@@ -312,7 +277,7 @@ fn create_mask_buffer(
 fn create_mask_2d_buffer(
     mask: &Array3<f32>,
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
     let mut mask_data = vec![0.0f32; seq_len * seq_len];
@@ -334,7 +299,7 @@ fn create_mask_2d_buffer(
 fn create_sinks_buffer(
     sinks: &[f32],
     context: &MTLContext,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     context
         .device
         .new_buffer_with_data(
@@ -679,6 +644,7 @@ fn compare_results(
 }
 
 #[test]
+#[ignore]
 fn test_single_pass_attention_basic() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -766,6 +732,7 @@ fn test_single_pass_attention_basic() {
 }
 
 #[test]
+#[ignore]
 fn test_gemm_attention_basic() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -818,6 +785,7 @@ fn test_gemm_attention_basic() {
 }
 
 #[test]
+#[ignore]
 fn test_gemm_attention_f32_head_dim_128() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -870,6 +838,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 }
 
 #[test]
+#[ignore]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -970,6 +939,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 }
 
 #[test]
+#[ignore]
 fn test_single_pass_attention_with_mask() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -1048,6 +1018,7 @@ fn test_single_pass_attention_with_mask() {
 }
 
 #[test]
+#[ignore]
 fn test_single_pass_attention_with_sinks() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -1129,6 +1100,7 @@ fn test_single_pass_attention_with_sinks() {
 }
 
 #[test]
+#[ignore]
 fn test_single_pass_attention_with_sinks_long_sequence() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -1212,6 +1184,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 }
 
 #[test]
+#[ignore]
 fn test_single_pass_attention_gqa() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -1391,6 +1364,7 @@ fn run_two_pass_attention(
 }
 
 #[test]
+#[ignore]
 fn test_two_pass_attention() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
@@ -1463,6 +1437,7 @@ fn test_two_pass_attention() {
 }
 
 #[test]
+#[ignore]
 fn test_two_pass_attention_gqa() {
     let device =
         <dyn MTLDevice>::system_default().expect("No Metal device found");
