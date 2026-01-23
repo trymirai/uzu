@@ -8,9 +8,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, ComputePipelineState,
-        FunctionConstantValues, FunctionConstantValuesLegacy, MTLContext,
-        MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
+        ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+        MTLBuffer, MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions,
+        ProtocolObject, Retained,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
             mlp_fused::common::MlpFusedArguments,
@@ -22,8 +22,8 @@ pub struct Kernel {
     data_type: DataType,
     partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
     accum_pipelines: HashMap<MlpActivationType, ComputePipelineState>,
-    up_accumulator_buffer: Option<Buffer>,
-    gate_accumulator_buffer: Option<Buffer>,
+    up_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    gate_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
 

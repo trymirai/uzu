@@ -1,6 +1,6 @@
 //! Encoding parameters for forward pass operations.
 
-use crate::backends::metal::{Buffer, MTLBuffer, ProtocolObject};
+use crate::backends::metal::{MTLBuffer, ProtocolObject, Retained};
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a> {
@@ -8,7 +8,7 @@ pub struct EncodingParameters<'a> {
     pub enable_commit: bool,
     pub wait_until_completed: bool,
     pub projection_step: Option<usize>,
-    pub predicate: Option<&'a Buffer>,
+    pub predicate: Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>,
 }
 
 impl<'a> EncodingParameters<'a> {
@@ -36,7 +36,7 @@ impl<'a> EncodingParameters<'a> {
 
     pub fn with_predicate(
         mut self,
-        predicate: &'a Buffer,
+        predicate: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     ) -> Self {
         self.predicate = Some(predicate);
         self

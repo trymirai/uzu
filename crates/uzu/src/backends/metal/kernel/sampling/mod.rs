@@ -5,8 +5,8 @@ use thiserror::Error;
 
 use crate::{
     backends::metal::{
-        Buffer, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
-        MTLContext, MTLError, MTLResourceOptions, ProtocolObject,
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
+        MTLError, MTLResourceOptions, ProtocolObject, Retained,
         kernel::dsl::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
             BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
@@ -45,7 +45,7 @@ enum ArgmaxImplementation {
     TwoPass {
         main_kernel: ArgmaxMainKernel,
         final_kernel: ArgmaxFinalKernel,
-        partial_results_buffer: Buffer,
+        partial_results_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     },
 }
 

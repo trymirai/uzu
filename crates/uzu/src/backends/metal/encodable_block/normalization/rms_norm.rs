@@ -6,8 +6,8 @@ use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        Buffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::rms_norm::{
             RMSNormArguments, RMSNormError, RMSNormKernel, RMSNormKernelType,
@@ -22,7 +22,7 @@ pub struct RMSNorm {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Buffer,
+    scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     use_sampling_range: bool,
 }
 

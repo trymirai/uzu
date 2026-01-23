@@ -2,9 +2,9 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, MTLBlitCommandEncoder,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, NSRange,
+use crate::backends::metal::{
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, NSRange, ProtocolObject, Retained,
 };
 
 use super::{
@@ -31,8 +31,8 @@ use crate::{
 
 enum RouterBlock {
     Metal {
-        weights_buf: Buffer,
-        biases_buf: Buffer,
+        weights_buf: Retained<ProtocolObject<dyn MTLBuffer>>,
+        biases_buf: Retained<ProtocolObject<dyn MTLBuffer>>,
     },
 }
 
@@ -321,7 +321,7 @@ impl EncodableBlock for MoeBlock {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<MetalArray>| -> Buffer {
+        let clone_buffer = |array: &RefCell<MetalArray>| -> Retained<ProtocolObject<dyn MTLBuffer>> {
             let mut borrow = array.borrow_mut();
             let buffer = unsafe { borrow.mtl_buffer().to_owned().into() };
             buffer

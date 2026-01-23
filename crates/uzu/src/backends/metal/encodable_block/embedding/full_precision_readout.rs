@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder,
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
 };
 
 use super::{
@@ -21,7 +21,7 @@ use crate::{
 
 pub struct FullPrecisionEmbeddingReadout {
     kernel: RefCell<MatmulKernel>,
-    weights_buffer: Buffer,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     vocab_size: usize,
     model_dim: usize,
 }

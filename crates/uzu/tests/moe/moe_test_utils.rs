@@ -8,7 +8,7 @@
 use bytemuck;
 use half::bf16;
 use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
-use uzu::backends::metal::{Buffer, MTLContext};
+use uzu::backends::metal::{MTLBuffer, MTLContext, ProtocolObject, Retained};
 
 /// Create Metal context for testing
 pub fn create_ctx() -> MTLContext {
@@ -22,7 +22,7 @@ pub fn create_ctx() -> MTLContext {
 pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
     ctx: &MTLContext,
     data: &[T],
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     if data.is_empty() {
         // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
         ctx.device
@@ -42,7 +42,7 @@ pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
 pub fn alloc_buffer<T>(
     ctx: &MTLContext,
     count: usize,
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     ctx.device
         .new_buffer(
             count * std::mem::size_of::<T>(),

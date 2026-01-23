@@ -8,9 +8,8 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        Buffer, MTLCommandBuffer,
-        MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
@@ -22,9 +21,9 @@ use crate::{
 
 pub struct QuantizedEmbeddingReadout {
     kernel: QuantizedMatmulKernel,
-    weights_buffer: Buffer,
-    scales_buffer: Buffer,
-    biases_buffer: Buffer,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -138,7 +137,7 @@ impl QuantizedEmbeddingReadout {
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: Buffer = match parameter_tree.leaf(biases_name) {
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(EmbeddingError::MetalError(MTLError::Generic(

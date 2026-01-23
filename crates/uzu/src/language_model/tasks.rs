@@ -4,17 +4,17 @@ use metal::{BufferExt, MTLBuffer, MTLDeviceExt};
 
 use super::LanguageModelGeneratorContext;
 use crate::backends::metal::{
-    Buffer, MTLResourceOptions,
+    MTLResourceOptions, ProtocolObject, Retained,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
     pub key: String,
-    predicate_buffer: Buffer,
+    predicate_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl LanguageModelGeneratorEncodedTask {
-    pub fn predicate_buffer(&self) -> &Buffer {
+    pub fn predicate_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.predicate_buffer
     }
 

@@ -29,7 +29,7 @@ use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
     backends::metal::{
-        Buffer, MTLContext, MTLResourceOptions, MetalArray, ProtocolObject,
+        MTLBuffer, MTLContext, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
     },
     session::parameter::SamplingMethod,
 };
@@ -115,8 +115,8 @@ impl ForwardPassState {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         skip_attention_bias_fill: bool,
-        async_positions: Option<(&Buffer, usize)>,
-        async_seeds: Option<(&Buffer, usize)>,
+        async_positions: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(

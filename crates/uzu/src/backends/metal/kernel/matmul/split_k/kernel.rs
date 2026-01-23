@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, ComputePipelineState, MTLContext,
-        MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
+        ComputePipelineState, MTLBuffer, MTLContext, MTLDeviceExt, MTLError,
+        MTLResourceOptions, ProtocolObject, Retained,
         kernel::matmul::common::{
             GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
             transpose_configuration,
@@ -21,7 +21,7 @@ pub struct Kernel {
     data_type: DataType,
     partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
     accum_pipeline: Option<ComputePipelineState>,
-    accumulator_buffer: Option<Buffer>,
+    accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
 

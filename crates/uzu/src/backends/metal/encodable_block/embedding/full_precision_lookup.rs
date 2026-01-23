@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder,
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
 };
 
 use super::{
@@ -24,7 +24,7 @@ use crate::{
 
 pub struct FullPrecisionEmbeddingLookup {
     kernel: FullPrecisionEmbeddingLookupKernel,
-    weights_buffer: Buffer,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     vocab_size: u32,
     model_dim: u32,
     input_scale: f32,

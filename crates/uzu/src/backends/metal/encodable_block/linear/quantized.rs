@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder,
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
 };
 
 use crate::{
@@ -27,10 +27,10 @@ use crate::{
 pub struct QuantizedLinear {
     kernel: QuantizedMatmulKernel,
     bias_add_kernel: Option<TensorAddBias>,
-    biases_buffer: Option<Buffer>,
-    weights_buffer: Buffer,
-    scales_buffer: Buffer,
-    zero_points_or_biases_buffer: Buffer,
+    biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    zero_points_or_biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     quantization_type: QuantizationType,
     input_dim: usize,
     output_dim: usize,
@@ -114,9 +114,9 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer: Buffer =
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
-                    let biases_buf: Buffer =
+                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { objc2::rc::Retained::retain(deq_biases.mtl_buffer() as *const _ as *mut _).unwrap() };
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
@@ -152,16 +152,16 @@ impl QuantizedLinear {
                             storage_type
                         )));
                     }
-                    let scales_buffer: Buffer =
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
-                    let zps_buf: Buffer =
+                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*zero_points.mtl_buffer()) as *mut _).unwrap() };
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }
         };
 
-        let weights_buffer: Buffer =
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
             unsafe { weights.mtl_buffer() }.to_owned().into();
 
         // Optional trainable bias support
@@ -186,7 +186,7 @@ impl QuantizedLinear {
                         mtl_context,
                         KernelDataType::from(kernel_data_type),
                     )?);
-                    let biases_buffer: Buffer =
+                    let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { biases.mtl_buffer() }.to_owned().into();
                     (bias_add_kernel, Some(biases_buffer))
                 },

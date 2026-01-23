@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
@@ -15,8 +15,8 @@ use crate::{
 
 pub struct FullPrecisionLinear {
     kernel: RefCell<MatmulKernel>,
-    bias_buffer: Option<Buffer>,
-    weights_buffer: Buffer,
+    bias_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
@@ -61,7 +61,7 @@ impl FullPrecisionLinear {
             )));
         }
 
-        let weights_buffer: Buffer =
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
             unsafe { weights.mtl_buffer() }.to_owned().into();
 
         let bias_buffer = match parameter_tree.leaf("biases") {
@@ -80,7 +80,7 @@ impl FullPrecisionLinear {
                         precision
                     )));
                 }
-                let bias_buffer: Buffer =
+                let bias_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
                     unsafe { biases.mtl_buffer() }.to_owned().into();
                 Some(bias_buffer)
             },

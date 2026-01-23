@@ -6,8 +6,8 @@ use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        Buffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::rms_norm::{
             QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel,
@@ -24,8 +24,8 @@ pub struct QKNorm {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Buffer>,
-    key_scales_buffer: Option<Buffer>,
+    query_scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    key_scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,

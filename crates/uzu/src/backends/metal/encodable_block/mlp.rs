@@ -2,9 +2,9 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    Buffer,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -138,9 +138,9 @@ pub struct MlpFusedBlock {
     context: Rc<MTLContext>,
     fused_up: MlpFusedUpKernel,
     down: Box<dyn EncodableBlock>,
-    weights_buffer: Buffer,
-    scales_buffer: Option<Buffer>,
-    zero_points_or_biases_buffer: Option<Buffer>,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    zero_points_or_biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -153,7 +153,7 @@ impl MlpFusedBlock {
     pub fn new_full_precision(
         context: Rc<MTLContext>,
         data_type: DataType,
-        weights_buffer: Buffer,
+        weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
         input_dim: usize,
         hidden_dim: usize,
         activation: &Activation,
@@ -184,9 +184,9 @@ impl MlpFusedBlock {
     pub fn new_quantized(
         context: Rc<MTLContext>,
         data_type: DataType,
-        weights_buffer: Buffer,
-        scales_buffer: Buffer,
-        zero_points_or_biases_buffer: Buffer,
+        weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+        scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+        zero_points_or_biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
         input_dim: usize,
         hidden_dim: usize,
         group_size: usize,

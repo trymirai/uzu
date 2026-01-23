@@ -8,9 +8,8 @@ use std::{
 
 use metal::{MTLCommandQueue, MTLDeviceExt};
 
-use metal::MTLBuffer as _;
 use crate::backends::metal::{
-    CommandBuffer, MTLResourceOptions, Buffer, Device, MTLEvent,
+    CommandBuffer, Device, MTLBuffer, MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
 };
 
 use super::{
@@ -33,20 +32,18 @@ use crate::{
     },
 };
 
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
 /// Pre-allocated buffers for async generation pipeline.
 /// Indexed by pass_idx to avoid race conditions between GPU passes.
 pub struct AsyncBuffers {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Buffer,
+    pub positions: Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Buffer,
+    pub seeds: Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Buffer,
+    pub results: Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Metal event for GPU-side synchronization between passes
     pub event: Retained<ProtocolObject<dyn MTLEvent>>,
     /// Current event counter (pass N waits on N, signals N+1)
