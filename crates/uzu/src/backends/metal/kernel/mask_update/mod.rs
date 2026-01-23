@@ -3,12 +3,12 @@ use std::ptr::NonNull;
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, MTLBuffer, MTLContext,
-    MTLSize, ProtocolObject, kernel::KernelDataType,
+    MTLBuffer, MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject,
+    Retained, kernel::KernelDataType,
 };
 
 pub struct MaskUpdateKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl MaskUpdateKernel {

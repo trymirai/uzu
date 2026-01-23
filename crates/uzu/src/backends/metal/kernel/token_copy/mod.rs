@@ -1,8 +1,8 @@
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, MTLBuffer, MTLContext,
-    MTLError, MTLSize, ProtocolObject,
+    MTLBuffer, MTLComputePipelineState, MTLContext,
+    MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 /// Kernel for copying sampled tokens in async pipeline.
@@ -10,8 +10,8 @@ use crate::backends::metal::{
 /// 1. copy_to_token_ids: u32 → u64 for next forward pass embedding
 /// 2. copy_to_results: u32 → u32[offset] for callback to read
 pub struct TokenCopyKernel {
-    copy_to_token_ids: ComputePipelineState,
-    copy_to_results: ComputePipelineState,
+    copy_to_token_ids: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    copy_to_results: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl TokenCopyKernel {

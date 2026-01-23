@@ -1,8 +1,10 @@
 use std::{mem, ptr::NonNull};
 
+use objc2::rc::Retained;
+
 use crate::backends::metal::{
-    BufferLabelExt, ComputePipelineState, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLSize,
+    BufferLabelExt, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
     ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
@@ -30,7 +32,7 @@ pub struct PatchParameters {
 
 #[derive(Debug)]
 pub struct ScalePadNormalizeImage {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ScalePadNormalizeImage {
@@ -105,7 +107,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
 
 #[derive(Debug)]
 pub struct ExtractImagePatches {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ExtractImagePatches {

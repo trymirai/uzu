@@ -1,14 +1,13 @@
 use std::{ffi::c_void, ptr::NonNull};
 
 use metal::MTLComputeCommandEncoder;
-use objc2::rc::Retained;
 
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues,
-        FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLDataType,
-        MTLError, MTLSize, ProtocolObject,
+        FunctionConstantValues, FunctionConstantValuesLegacy, MTLBuffer,
+        MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLSize,
+        ProtocolObject, Retained,
     },
     config::Activation,
 };
@@ -96,7 +95,7 @@ pub fn make_non_fused_function_constants() -> Retained<FunctionConstantValues> {
 }
 
 pub struct MlpGateActMulKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct MlpGateActMulEncodable {

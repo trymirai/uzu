@@ -5,14 +5,14 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLContext, MTLError,
-    ProtocolObject, metal_extensions::ComputeEncoderDispatch,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderDispatch,
 };
 
 #[derive(Debug)]
 pub struct TensorAddSwapKernel {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl TensorAddSwapKernel {

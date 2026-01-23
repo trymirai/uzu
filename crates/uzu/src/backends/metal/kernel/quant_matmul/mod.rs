@@ -1,12 +1,13 @@
 use std::{collections::HashMap, ffi::c_void, mem::size_of, ptr::NonNull};
 
 use metal::MTLComputeCommandEncoder;
+use objc2::rc::Retained;
 
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues,
-        FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLError, MTLSize,
+        FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
         ProtocolObject,
     },
     config::QuantizationMode,
@@ -39,7 +40,7 @@ pub enum QuantizedMatmulError {
 }
 
 pub struct QuantizedMatmulKernel {
-    pipelines: HashMap<KernelKind, (ComputePipelineState, u64, u64)>,
+    pipelines: HashMap<KernelKind, (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64)>,
     output_dim: usize,
     weights_transposed: bool,
 }
@@ -378,7 +379,7 @@ pub struct MlpFusedQmvArguments<'a> {
 /// MLP Fused Quantized GEMV Kernel
 /// Computes paired up/gate projections with fused activation: out = up * activation(gate)
 pub struct MlpFusedQmvKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl MlpFusedQmvKernel {
@@ -488,7 +489,7 @@ pub struct MlpFusedQmmArguments<'a> {
 /// MLP Fused Quantized GEMM Kernel for prefill path
 /// Computes paired up/gate projections with fused activation: out = up * activation(gate)
 pub struct MlpFusedQmmKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl MlpFusedQmmKernel {

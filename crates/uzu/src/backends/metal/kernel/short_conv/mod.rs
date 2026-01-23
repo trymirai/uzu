@@ -3,10 +3,10 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, FunctionConstantValues,
+    FunctionConstantValues,
     FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
     MTLContext,
-    MTLDataType, MTLError, MTLSize, ProtocolObject,
+    MTLDataType, MTLError, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -15,7 +15,6 @@ pub enum ShortConvKernelError {
     MetalError(#[from] MTLError),
 }
 
-use objc2::rc::Retained;
 
 fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
@@ -32,11 +31,11 @@ fn make_function_constants(has_bias: bool) -> Retained<FunctionConstantValues> {
 }
 
 pub struct ShortConvKernel {
-    pack_pipeline: ComputePipelineState,
-    prefill_pipeline_no_bias: ComputePipelineState,
-    prefill_pipeline_with_bias: ComputePipelineState,
-    decode_pipeline_no_bias: ComputePipelineState,
-    decode_pipeline_with_bias: ComputePipelineState,
+    pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {

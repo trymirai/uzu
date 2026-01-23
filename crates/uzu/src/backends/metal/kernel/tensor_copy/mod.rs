@@ -5,14 +5,13 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputePipelineState,
     KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLContext,
-    MTLError, ProtocolObject, metal_extensions::ComputeEncoderDispatch,
+    MTLComputePipelineState, MTLContext, MTLError, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderDispatch,
 };
 
 pub struct TensorCopyKernel {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl TensorCopyKernel {

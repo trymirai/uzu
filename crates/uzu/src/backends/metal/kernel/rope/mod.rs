@@ -4,12 +4,12 @@ use metal::MTLComputeCommandEncoder;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer,
-    MTLContext, MTLError, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
+    MTLSize, ProtocolObject, Retained,
 };
 
 pub struct RopeKernel {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug, Error)]

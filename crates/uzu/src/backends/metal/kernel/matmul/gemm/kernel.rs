@@ -9,9 +9,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValues,
         FunctionConstantValuesLegacy, MTLContext, MTLError,
-        ProtocolObject,
+        MTLComputePipelineState, ProtocolObject, Retained,
         kernel::matmul::common::{
             GEMMAddMMParams, GEMMParams, MatmulArguments,
             transpose_configuration,
@@ -21,7 +21,7 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -137,7 +137,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = FunctionConstantValues::new();

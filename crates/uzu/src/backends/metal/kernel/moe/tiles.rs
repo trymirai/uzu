@@ -3,8 +3,8 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    ComputePipelineState, MTLCommandBuffer,
-    MTLCommandEncoder, MTLContext, MTLError, MTLSize,
+    MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, Retained,
 };
 
 // ---- Tile Kernels ----
@@ -47,10 +47,10 @@ pub struct MoeTileDispatchArguments<'a> {
 }
 
 pub struct MoeTileMapKernel {
-    counts_pipeline: ComputePipelineState,
-    scan_pipeline: ComputePipelineState,
-    build_pipeline: ComputePipelineState,
-    dispatch_pipeline: ComputePipelineState,
+    counts_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    scan_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    build_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    dispatch_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
@@ -95,11 +95,11 @@ pub struct MoePassATileDispatchArguments<'a> {
 }
 
 pub struct MoePassATileKernel {
-    counts_pipeline: ComputePipelineState,
-    scan_pipeline: ComputePipelineState,
-    row_map_pipeline: ComputePipelineState,
-    build_pipeline: ComputePipelineState,
-    dispatch_pipeline: ComputePipelineState,
+    counts_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    scan_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    row_map_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    build_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    dispatch_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl MoePassATileKernel {

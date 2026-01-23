@@ -151,7 +151,7 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
 
     Ok(quote! {
         pub struct #struct_name {
-            pipeline: crate::backends::metal::ComputePipelineState,
+            pipeline: crate::backends::metal::Retained<crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputePipelineState>>,
         }
 
         impl #struct_name {

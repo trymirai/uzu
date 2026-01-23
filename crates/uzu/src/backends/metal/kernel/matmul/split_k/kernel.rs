@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, MTLBuffer, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
+        MTLBuffer, MTLContext, MTLDeviceExt, MTLError,
+        MTLComputePipelineState, MTLResourceOptions, ProtocolObject, Retained,
         kernel::matmul::common::{
             GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
             transpose_configuration,
@@ -19,8 +19,8 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
-    accum_pipeline: Option<ComputePipelineState>,
+    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accum_pipeline: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
@@ -165,7 +165,7 @@ impl Kernel {
         &mut self,
         mtl: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -177,7 +177,7 @@ impl Kernel {
     fn get_accum_pipeline(
         &mut self,
         mtl: &MTLContext,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;

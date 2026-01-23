@@ -7,9 +7,9 @@ use super::{
     metal_extensions::ComputeEncoderDispatch,
 };
 use crate::backends::metal::{
-    BufferLabelExt, ComputePipelineState, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder, MTLDeviceExt, MTLResourceOptions,
-    MTLSize, ProtocolObject, Retained,
+    BufferLabelExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDeviceExt,
+    MTLResourceOptions, MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -27,7 +27,7 @@ pub struct KVLayerData {
 }
 
 pub struct KVCacheUpdate {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     indices_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     max_sequence_length: usize,
 }

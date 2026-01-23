@@ -1,15 +1,14 @@
 use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
 use metal::MTLComputeCommandEncoder;
-use objc2::rc::Retained;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValues,
         FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
         MTLContext,
-        MTLDataType, MTLSize, ProtocolObject,
+        MTLDataType, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
     },
     config::Activation,
 };
@@ -53,11 +52,11 @@ fn make_function_constants(
 }
 
 pub struct Conv1dScanKernel {
-    pipeline_no_bias: ComputePipelineState,
-    pipeline_with_bias: ComputePipelineState,
-    pack_pipeline: ComputePipelineState,
-    decode_pipeline_no_bias: ComputePipelineState,
-    decode_pipeline_with_bias: ComputePipelineState,
+    pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct Conv1dScanArguments<'a> {

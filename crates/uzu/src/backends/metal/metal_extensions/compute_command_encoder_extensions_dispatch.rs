@@ -4,7 +4,7 @@ use super::{
     device_extensions_features::{DeviceFeatures, Feature},
 };
 use crate::backends::metal::{
-    ComputePipelineState, MTLComputeCommandEncoder, MTLSize, ProtocolObject, MTLComputePipelineState,
+    MTLComputeCommandEncoder, MTLSize, ProtocolObject, MTLComputePipelineState, Retained,
 };
 
 /// Extensions for metal::ComputeCommandEncoder to simplify dispatch operations
@@ -12,7 +12,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid, covering at least the specified size.
     fn dispatch_1d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -20,7 +20,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid with exactly the specified size.
     fn dispatch_1d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -28,7 +28,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid, using the most efficient method available on the device.
     fn dispatch_1d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -36,7 +36,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid, covering at least the specified size.
     fn dispatch_2d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -44,7 +44,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid with exactly the specified size.
     fn dispatch_2d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -52,7 +52,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid, using the most efficient method available on the device.
     fn dispatch_2d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -60,7 +60,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid, covering at least the specified size.
     fn dispatch_3d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -68,7 +68,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid with exactly the specified size.
     fn dispatch_3d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -76,7 +76,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid, using the most efficient method available on the device.
     fn dispatch_3d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -85,7 +85,7 @@ pub trait ComputeEncoderDispatch {
 impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
     fn dispatch_1d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
@@ -109,7 +109,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_1d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
@@ -133,7 +133,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_1d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
@@ -149,7 +149,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_2d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
@@ -168,7 +168,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_2d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
@@ -181,7 +181,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_2d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
@@ -197,7 +197,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_3d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
@@ -216,7 +216,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_3d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
@@ -229,7 +229,7 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
 
     fn dispatch_3d(
         &self,
-        state: &ComputePipelineState,
+        state: &Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {

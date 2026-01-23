@@ -3,8 +3,8 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLContext, MTLError, MTLSize, ProtocolObject,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 // ---- Fused Counts + Offsets Kernel ----
@@ -22,7 +22,7 @@ pub enum MoeCountsOffsetsFusedError {
 }
 
 pub struct MoeCountsOffsetsFusedKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]

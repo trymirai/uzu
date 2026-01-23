@@ -3,8 +3,8 @@ use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, FunctionConstantValues,
-    FunctionConstantValuesLegacy, ProtocolObject,
+    FunctionConstantValues,
+    FunctionConstantValuesLegacy, MTLComputePipelineState, ProtocolObject, Retained,
 };
 
 use super::{
@@ -23,7 +23,7 @@ use crate::{
 pub struct Kernel {
     data_type: DataType,
     weights_transposed: bool,
-    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -90,7 +90,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
 

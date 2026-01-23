@@ -5,14 +5,14 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, MTLBuffer, MTLContext, MTLError, MTLSize,
-        ProtocolObject,
+        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
+        ProtocolObject, Retained,
     },
     config::Activation,
 };
 
 pub struct ActivationKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ActivationKernel {

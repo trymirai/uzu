@@ -5,14 +5,14 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer,
-    MTLContext, MTLError, ProtocolObject,
+    KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
+    ProtocolObject, Retained,
     metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 
 #[derive(Debug)]
 pub struct TensorAddBias {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl TensorAddBias {

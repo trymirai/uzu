@@ -5,8 +5,8 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, MTLBuffer, MTLContext,
-        MTLSize, ProtocolObject, encodable_block::EmbeddingError,
+        MTLBuffer, MTLComputePipelineState, MTLContext,
+        MTLSize, ProtocolObject, Retained, encodable_block::EmbeddingError,
     },
     config::QuantizationMode,
 };
@@ -14,7 +14,7 @@ use crate::{
 // ---- Full Precision Embedding Lookup Kernel ----
 
 pub struct FullPrecisionEmbeddingLookupKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
@@ -128,7 +128,7 @@ impl FullPrecisionEmbeddingLookupKernel {
 // ---- Quantized Embedding Lookup Kernel ----
 
 pub struct QuantizedEmbeddingLookupKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]

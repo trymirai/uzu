@@ -1,12 +1,12 @@
 use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
-use metal::{MTLComputeCommandEncoder, MTLComputePipelineState};
+use metal::MTLComputeCommandEncoder;
 
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, MTLBuffer, MTLContext,
-        MTLError, MTLSize, ProtocolObject,
+        MTLBuffer, MTLComputePipelineState, MTLContext,
+        MTLError, MTLSize, ProtocolObject, Retained,
     },
 };
 
@@ -24,7 +24,7 @@ pub enum QKNormTarget {
 }
 
 pub struct RMSNormKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     kernel_type: RMSNormKernelType,
 }
 

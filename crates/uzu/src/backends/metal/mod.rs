@@ -30,10 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for owned MTLComputePipelineState
-pub type ComputePipelineState =
-    Retained<ProtocolObject<dyn MTLComputePipelineState>>;
-
 /// Type alias for owned MTLCommandQueue
 pub type CommandQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
 

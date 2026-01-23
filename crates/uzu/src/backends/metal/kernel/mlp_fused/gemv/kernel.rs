@@ -8,9 +8,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues,
-        FunctionConstantValuesLegacy, MTLContext, MTLError,
-        ProtocolObject,
+        FunctionConstantValues,
+        FunctionConstantValuesLegacy, MTLComputePipelineState, MTLContext, MTLError,
+        ProtocolObject, Retained,
         kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
@@ -44,7 +44,7 @@ fn kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -65,7 +65,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 

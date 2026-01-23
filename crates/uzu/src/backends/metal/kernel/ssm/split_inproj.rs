@@ -4,12 +4,12 @@ use metal::MTLComputeCommandEncoder;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer,
-    MTLContext, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer,
+    MTLContext, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
 };
 
 pub struct SplitInProjKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct SplitInProjArguments<'a> {

@@ -4,8 +4,8 @@ use metal::MTLComputeCommandEncoder;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer,
-    MTLContext, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer,
+    MTLContext, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
 };
 
 const SSD_PREFILL_SINGLE_THREADS: usize = 32;
@@ -17,9 +17,9 @@ pub enum SSDPrefillMode {
 }
 
 pub struct SSDPrefillKernel {
-    sequential: ComputePipelineState,
-    single_pass: ComputePipelineState,
-    single_pass_64: ComputePipelineState,
+    sequential: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    single_pass: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    single_pass_64: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct SSDPrefillArguments<'a> {

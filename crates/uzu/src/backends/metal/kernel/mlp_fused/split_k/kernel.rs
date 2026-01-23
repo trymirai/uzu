@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
-        MTLBuffer, MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions,
+        FunctionConstantValues, FunctionConstantValuesLegacy,
+        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions,
         ProtocolObject, Retained,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
@@ -20,8 +20,8 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
-    accum_pipelines: HashMap<MlpActivationType, ComputePipelineState>,
+    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accum_pipelines: HashMap<MlpActivationType, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     up_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     gate_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
@@ -92,7 +92,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.partial_pipelines.contains_key(configuration) {
             let kernel_name = self.partial_kernel_name(configuration)?;
             let pipeline_state =
@@ -107,7 +107,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         activation: MlpActivationType,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.accum_pipelines.contains_key(&activation) {
             let kernel_name = self.accum_kernel_name()?;
             let function_constants = FunctionConstantValues::new();

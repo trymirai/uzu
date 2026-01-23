@@ -4,8 +4,8 @@ use objc2::rc::Retained;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
-    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
+    FunctionConstantValues, FunctionConstantValuesLegacy,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
     MTLDataType, MTLError, MTLSize, ProtocolObject,
 };
 
@@ -21,10 +21,10 @@ pub enum AttentionKernelVariant {
 type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
-    single_pass: HashMap<PipelineKey, ComputePipelineState>,
-    two_pass_1: HashMap<PipelineKey, ComputePipelineState>,
-    two_pass_2: HashMap<usize, ComputePipelineState>,
-    kv_cache_update: Option<ComputePipelineState>,
+    single_pass: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    two_pass_1: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    two_pass_2: HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    kv_cache_update: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 pub struct AttentionKernel {

@@ -3,8 +3,8 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLContext, MTLError, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 // ---- Gather Permuted Activations Kernel ----
@@ -16,9 +16,9 @@ pub enum MoeGatherError {
 }
 
 pub struct MoeGatherKernel {
-    pipeline_f16: ComputePipelineState,
-    pipeline_f32: ComputePipelineState,
-    pipeline_bf16: ComputePipelineState,
+    pipeline_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]

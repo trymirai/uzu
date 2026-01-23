@@ -3,8 +3,8 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputePipelineState, KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLContext, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -16,14 +16,14 @@ pub enum MoeScatterError {
 }
 
 pub struct MoeScatterKernels {
-    pipeline_bases: ComputePipelineState,
-    pipeline_scatter_f16: ComputePipelineState,
-    pipeline_scatter_f32: ComputePipelineState,
-    pipeline_scatter_bf16: ComputePipelineState,
+    pipeline_bases: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     // map variants
-    pipeline_scatter_map_f16: ComputePipelineState,
-    pipeline_scatter_map_f32: ComputePipelineState,
-    pipeline_scatter_map_bf16: ComputePipelineState,
+    pipeline_scatter_map_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
