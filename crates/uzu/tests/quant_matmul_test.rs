@@ -9,7 +9,7 @@ use metal::{
 use uzu::{
     DataType,
     backends::metal::{
-        Buffer, MTLContext,
+        MTLContext, ProtocolObject, Retained,
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
         },
@@ -421,7 +421,7 @@ fn buffer_from_f32_slice(
     ctx: &MTLContext,
     dtype: DataType,
     values: &[f32],
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> =
