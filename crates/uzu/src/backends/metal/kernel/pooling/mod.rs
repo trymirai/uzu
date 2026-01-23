@@ -1,12 +1,8 @@
-use std::ptr::NonNull;
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
-        ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
     },
 };
 
@@ -64,22 +60,8 @@ impl PoolingKernel {
         encoder.set_compute_pipeline_state(&self.cls_pipeline);
         encoder.set_buffer(Some(input_buffer), 0, 0);
         encoder.set_buffer(Some(output_buffer), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&seq_len as *const i32 as *mut std::ffi::c_void)
-                    .unwrap(),
-                std::mem::size_of::<i32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &hidden_dim as *const i32 as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                3,
-            );
-        }
+        encoder.set_value(&seq_len, 2);
+        encoder.set_value(&hidden_dim, 3);
 
         let threads_per_tg = MTLSize::new(16, 16, 1);
         let grid = MTLSize::new(hidden_dim as usize, batch_size as usize, 1);
@@ -99,22 +81,8 @@ impl PoolingKernel {
         encoder.set_compute_pipeline_state(&self.mean_pipeline);
         encoder.set_buffer(Some(input_buffer), 0, 0);
         encoder.set_buffer(Some(output_buffer), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&seq_len as *const i32 as *mut std::ffi::c_void)
-                    .unwrap(),
-                std::mem::size_of::<i32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &hidden_dim as *const i32 as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                3,
-            );
-        }
+        encoder.set_value(&seq_len, 2);
+        encoder.set_value(&hidden_dim, 3);
 
         let threads_per_tg = MTLSize::new(16, 16, 1);
         let grid = MTLSize::new(hidden_dim as usize, batch_size as usize, 1);

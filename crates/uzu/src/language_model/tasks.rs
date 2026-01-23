@@ -1,10 +1,8 @@
 use std::mem::size_of;
 
-use metal::{BufferExt, MTLBuffer, MTLDeviceExt};
-
 use super::LanguageModelGeneratorContext;
 use crate::backends::metal::{
-    MTLResourceOptions, ProtocolObject, Retained,
+    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject, Retained,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
 };
 

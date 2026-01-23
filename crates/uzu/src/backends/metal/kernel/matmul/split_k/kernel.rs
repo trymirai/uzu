@@ -1,19 +1,12 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
+use std::collections::HashMap;
 
-use metal::MTLComputeCommandEncoder;
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLContext, MTLDeviceExt, MTLError,
-        MTLComputePipelineState, MTLResourceOptions, ProtocolObject, Retained,
-        kernel::matmul::common::{
-            GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
-            transpose_configuration,
-        },
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
+        kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
 
@@ -227,14 +220,7 @@ impl Kernel {
         encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
         encoder.set_buffer(Some(arguments.b), 0, 1);
         encoder.set_buffer(Some(&accumulator_buffer), 0, 2);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&descriptor.params as *const _ as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<SplitKGEMMParams>(),
-                3,
-            );
-        }
+        encoder.set_value(&descriptor.params, 3);
         encoder.dispatch_threadgroups(
             descriptor.partial_threadgroups,
             descriptor.partial_threads_per_threadgroup,
@@ -248,28 +234,9 @@ impl Kernel {
         let partition_count = descriptor.partition_count;
         let output_elements_per_partition =
             descriptor.output_elements_per_partition;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&partition_count as *const i32 as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<i32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &output_elements_per_partition as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                3,
-            );
-            encoder.set_bytes(
-                NonNull::new(&arguments.ldd as *const i32 as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<i32>(),
-                4,
-            );
-        }
+        encoder.set_value(&partition_count, 2);
+        encoder.set_value(&output_elements_per_partition, 3);
+        encoder.set_value(&arguments.ldd, 4);
 
         encoder.dispatch_threads(
             descriptor.accum_total_threads,

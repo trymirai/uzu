@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
     MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Fused Counts + Offsets Kernel ----
@@ -80,23 +77,9 @@ impl MoeCountsOffsetsFusedKernel {
         let e_u32 = args.e as u32;
         let k_u32 = args.k as u32;
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&t_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&k_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-        }
+        encoder.set_value(&t_u32, 4);
+        encoder.set_value(&e_u32, 5);
+        encoder.set_value(&k_u32, 6);
 
         let threads_per_threadgroup = MTLSize::new(128, 1, 1);
         let tg = MTLSize::new(1, 1, 1);

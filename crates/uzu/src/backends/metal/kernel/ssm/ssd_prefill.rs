@@ -1,11 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer,
-    MTLContext, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 const SSD_PREFILL_SINGLE_THREADS: usize = 32;
@@ -126,20 +123,8 @@ impl SSDPrefillKernel {
         self.bind_common_buffers(compute_encoder, args);
         let channels = args.channels as u32;
         let head_dim = args.head_dim as u32;
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&channels as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                15,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&head_dim as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                16,
-            );
-        }
+        compute_encoder.set_value(&channels, 15);
+        compute_encoder.set_value(&head_dim, 16);
         let threads_per_threadgroup = MTLSize {
             width: SSD_PREFILL_SINGLE_THREADS,
             height: 1,
@@ -169,57 +154,12 @@ impl SSDPrefillKernel {
         compute_encoder.set_buffer(Some(args.z), 0, 5);
         compute_encoder.set_buffer(Some(args.state), 0, 6);
         compute_encoder.set_buffer(Some(args.y), 0, 7);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                8,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.group_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                10,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(args.x_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                3 * size_of::<usize>(),
-                11,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(args.dt_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                2 * size_of::<usize>(),
-                12,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(args.cb_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                3 * size_of::<usize>(),
-                13,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    args.state_strides.as_ptr() as *mut std::ffi::c_void
-                )
-                .unwrap(),
-                3 * size_of::<usize>(),
-                14,
-            );
-        }
+        compute_encoder.set_value(&args.suffix_len, 8);
+        compute_encoder.set_value(&args.group_size, 9);
+        compute_encoder.set_value(&args.state_size, 10);
+        compute_encoder.set_value(&args.x_strides, 11);
+        compute_encoder.set_value(&args.dt_strides, 12);
+        compute_encoder.set_value(&args.cb_strides, 13);
+        compute_encoder.set_value(&args.state_strides, 14);
     }
 }

@@ -1,14 +1,11 @@
 use std::rc::Rc;
 
-use metal::{MTLDeviceExt, MTLResource};
-
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
     DataType,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer,
-        MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLResourceOptions, MetalArray,
-        ProtocolObject,
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
+        MTLDeviceExt, MTLResource, MTLResourceOptions, MetalArray, ProtocolObject,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{

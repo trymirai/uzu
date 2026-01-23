@@ -1,19 +1,13 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
+use std::{collections::HashMap, ptr::NonNull};
 
-use metal::MTLComputeCommandEncoder;
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDeviceExt, MTLError,
-        MTLFunctionConstantValues, MTLResourceOptions, ProtocolObject, Retained,
-        kernel::{
-            matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
-            mlp_fused::common::MlpFusedArguments,
-        },
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLDeviceExt, MTLError, MTLFunctionConstantValues, MTLResourceOptions,
+        ProtocolObject, Retained,
+        kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
     },
 };
 
@@ -187,17 +181,7 @@ impl Kernel {
         encoder.set_buffer(Some(arguments.weights), 0, 1);
         encoder.set_buffer(Some(up_accumulator_buffer), 0, 2);
         encoder.set_buffer(Some(gate_accumulator_buffer), 0, 3);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.params as *const GEMMSpiltKMlpFusedParams
-                        as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<GEMMSpiltKMlpFusedParams>(),
-                4,
-            );
-        }
+        encoder.set_value(&descriptor.params, 4);
         encoder.dispatch_threadgroups(
             descriptor.partial_threadgroups,
             descriptor.partial_threads_per_threadgroup,
@@ -207,35 +191,9 @@ impl Kernel {
         encoder.set_buffer(Some(up_accumulator_buffer), 0, 0);
         encoder.set_buffer(Some(gate_accumulator_buffer), 0, 1);
         encoder.set_buffer(Some(arguments.output), 0, 2);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.partition_count as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                4,
-                3,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.output_elements_per_partition as *const i32
-                        as *mut c_void,
-                )
-                .unwrap(),
-                4,
-                4,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&descriptor.ldd as *const i32 as *mut c_void)
-                    .unwrap(),
-                4,
-                5,
-            );
-        }
+        encoder.set_value(&descriptor.partition_count, 3);
+        encoder.set_value(&descriptor.output_elements_per_partition, 4);
+        encoder.set_value(&descriptor.ldd, 5);
 
         encoder.dispatch_threads(
             descriptor.accum_total_threads,

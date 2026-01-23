@@ -1,6 +1,4 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
+use std::collections::HashMap;
 
 use super::{
     dispatch_descriptor::{AxpbySource, DispatchDescriptor},
@@ -9,9 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        MTLComputePipelineState, ProtocolObject, Retained,
-        kernel::matmul::common::MatmulArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, ProtocolObject, Retained, kernel::matmul::common::MatmulArguments,
     },
 };
 
@@ -169,96 +166,17 @@ impl Kernel {
 
         encoder.set_buffer(Some(arguments.d), 0, 3);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.input_dimension as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                4,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.output_dimension as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.matrix_leading_dim as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                6,
-            );
-            encoder.set_bytes(
-                NonNull::new(&descriptor.alpha as *const f32 as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<f32>(),
-                7,
-            );
-            encoder.set_bytes(
-                NonNull::new(&descriptor.beta as *const f32 as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<f32>(),
-                8,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.batch_ndim as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                9,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(descriptor.batch_shape.as_ptr() as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<i32>() * descriptor.batch_shape.len(),
-                10,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    descriptor.vector_batch_stride.as_ptr() as *mut c_void
-                )
-                .unwrap(),
-                std::mem::size_of::<i64>()
-                    * descriptor.vector_batch_stride.len(),
-                11,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    descriptor.matrix_batch_stride.as_ptr() as *mut c_void
-                )
-                .unwrap(),
-                std::mem::size_of::<i64>()
-                    * descriptor.matrix_batch_stride.len(),
-                12,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    descriptor.bias_batch_stride.as_ptr() as *mut c_void
-                )
-                .unwrap(),
-                std::mem::size_of::<i64>() * descriptor.bias_batch_stride.len(),
-                13,
-            );
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.bias_stride as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                14,
-            );
-        }
+        encoder.set_value(&descriptor.input_dimension, 4);
+        encoder.set_value(&descriptor.output_dimension, 5);
+        encoder.set_value(&descriptor.matrix_leading_dim, 6);
+        encoder.set_value(&descriptor.alpha, 7);
+        encoder.set_value(&descriptor.beta, 8);
+        encoder.set_value(&descriptor.batch_ndim, 9);
+        encoder.set_slice(&descriptor.batch_shape, 10);
+        encoder.set_slice(&descriptor.vector_batch_stride, 11);
+        encoder.set_slice(&descriptor.matrix_batch_stride, 12);
+        encoder.set_slice(&descriptor.bias_batch_stride, 13);
+        encoder.set_value(&descriptor.bias_stride, 14);
 
         encoder.dispatch_threadgroups(
             descriptor.threadgroups,

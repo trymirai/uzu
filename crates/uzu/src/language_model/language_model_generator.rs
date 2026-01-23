@@ -1,12 +1,6 @@
-use std::{
-    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
-};
+use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandEncoder,
-    MTLCommandQueue, MTLCommandBufferHandler,
-};
 
 use super::{
     LanguageModelGeneratorContext,
@@ -18,9 +12,13 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::forward_pass::{
-        AttentionBiasUpdate, EncodableBlock, EncodingParameters,
-        ForwardPassState, INVALID_POSITION,
+    backends::metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
+        MTLCommandEncoder, MTLCommandQueue,
+        forward_pass::{
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
+            INVALID_POSITION,
+        },
     },
     session::{
         config::DecodingConfig,

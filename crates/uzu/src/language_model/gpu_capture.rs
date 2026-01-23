@@ -3,13 +3,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use metal::{
-    MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCommandQueueExt,
-};
 use objc2_foundation::NSURL;
 
-use crate::{backends::metal::MTLContext, utils::env_utils::MetalEnvVar};
+use crate::{
+    backends::metal::{
+        MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt,
+        MTLContext,
+    },
+    utils::env_utils::MetalEnvVar,
+};
 
 pub struct GpuCaptureManager {
     capture_prefill_enabled: bool,

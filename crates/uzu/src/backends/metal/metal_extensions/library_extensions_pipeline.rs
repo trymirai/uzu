@@ -26,13 +26,11 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         let function = match constants {
             Some(const_values) => {
                 let mut error: *mut NSError = std::ptr::null_mut();
-                unsafe {
-                    self.new_function_with_name_constant_values_error(
-                        function_name,
-                        const_values,
-                        &mut error,
-                    )
-                }
+                self.new_function_with_name_constant_values_error(
+                    function_name,
+                    const_values,
+                    &mut error,
+                )
             }
             None => self.new_function_with_name(function_name),
         }

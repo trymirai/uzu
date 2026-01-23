@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -103,28 +100,10 @@ impl MoeScatterKernels {
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
         let cap_u32: u32 = 0;
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nb_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nt_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&cap_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-        }
+        compute_encoder.set_value(&e_u32, 3);
+        compute_encoder.set_value(&nb_u32, 4);
+        compute_encoder.set_value(&nt_u32, 5);
+        compute_encoder.set_value(&cap_u32, 6);
 
         let total_entries = args.num_tiles * 512usize;
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
@@ -172,33 +151,11 @@ impl MoeScatterKernels {
         let k_u32 = args.k as u32;
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&t_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                7,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                8,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&k_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                9,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nb_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nt_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                11,
-            );
-        }
+        compute_encoder.set_value(&t_u32, 7);
+        compute_encoder.set_value(&e_u32, 8);
+        compute_encoder.set_value(&k_u32, 9);
+        compute_encoder.set_value(&nb_u32, 10);
+        compute_encoder.set_value(&nt_u32, 11);
 
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
         let tg = MTLSize::new(args.num_blocks, 1, 1);
@@ -237,33 +194,11 @@ impl MoeScatterKernels {
         let k_u32 = base.k as u32;
         let nb_u32 = base.num_blocks as u32;
         let nt_u32 = base.num_tiles as u32;
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&t_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                7,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                8,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&k_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                9,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nb_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&nt_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                11,
-            );
-        }
+        compute_encoder.set_value(&t_u32, 7);
+        compute_encoder.set_value(&e_u32, 8);
+        compute_encoder.set_value(&k_u32, 9);
+        compute_encoder.set_value(&nb_u32, 10);
+        compute_encoder.set_value(&nt_u32, 11);
         compute_encoder.set_buffer(Some(args.tok2row_buffer), 0, 12);
 
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);

@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
-use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, Retained,
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Tile Kernels ----
@@ -132,19 +129,8 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.expert_offsets), 0, 0);
         encoder.set_buffer(Some(args.tile_counts), 0, 1);
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.h_blocks as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-        }
+        encoder.set_value(&e_u32, 2);
+        encoder.set_value(&args.h_blocks, 3);
         encoder.dispatch_threadgroups(
             MTLSize::new((args.e + 255) / 256, 1, 1),
             MTLSize::new(256, 1, 1),
@@ -166,13 +152,7 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.tile_offsets), 0, 1);
         encoder.set_buffer(Some(args.total_tiles), 0, 2);
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-        }
+        encoder.set_value(&e_u32, 3);
         encoder.set_threadgroup_memory_length(1024 * size_of::<u32>() , 0);
         encoder.dispatch_threadgroups(
             MTLSize::new(1, 1, 1),
@@ -195,19 +175,8 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.row_expert_map), 0, 1);
         let total_rows_u32 = args.total_rows as u32;
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-        }
+        encoder.set_value(&total_rows_u32, 2);
+        encoder.set_value(&e_u32, 3);
         encoder.dispatch_threadgroups(
             MTLSize::new((args.total_rows + 255) / 256, 1, 1),
             MTLSize::new(256, 1, 1),
@@ -230,20 +199,8 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.row_expert_map), 0, 2);
         encoder.set_buffer(Some(args.tile_map), 0, 3);
         let total_rows_u32 = args.total_rows as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&total_rows_u32 as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.h_blocks as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-        }
+        encoder.set_value(&total_rows_u32, 4);
+        encoder.set_value(&args.h_blocks, 5);
         let total_tiles_linear =
             (total_rows_u32 as u64).saturating_mul(args.h_blocks as u64);
         encoder.dispatch_threadgroups(
@@ -265,14 +222,7 @@ impl MoePassATileKernel {
         encoder.set_compute_pipeline_state(&self.dispatch_pipeline);
         encoder.set_buffer(Some(args.total_tiles), 0, 0);
         encoder.set_buffer(Some(args.dispatch_args), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&args.num_tiles_y as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                2,
-            );
-        }
+        encoder.set_value(&args.num_tiles_y, 2);
         encoder.dispatch_threadgroups(
             MTLSize::new(1, 1, 1),
             MTLSize::new(1, 1, 1),
@@ -307,13 +257,7 @@ impl MoeTileMapKernel {
         encoder.set_buffer(Some(args.offsets_buffer), 0, 0);
         encoder.set_buffer(Some(args.tile_counts_buffer), 0, 1);
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                2,
-            );
-        }
+        encoder.set_value(&e_u32, 2);
         encoder.dispatch_threadgroups(
             MTLSize::new((args.e + 255) / 256, 1, 1),
             MTLSize::new(256, 1, 1),
@@ -335,13 +279,7 @@ impl MoeTileMapKernel {
         encoder.set_buffer(Some(args.tile_offsets_buffer), 0, 1);
         encoder.set_buffer(Some(args.total_tiles_buffer), 0, 2);
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-        }
+        encoder.set_value(&e_u32, 3);
         encoder.dispatch_threadgroups(
             MTLSize::new(1, 1, 1),
             MTLSize::new(256, 1, 1),
@@ -364,13 +302,7 @@ impl MoeTileMapKernel {
         encoder.set_buffer(Some(args.tile_counts), 0, 2);
         encoder.set_buffer(Some(args.tile_map), 0, 3);
         let e_u32 = args.e as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-        }
+        encoder.set_value(&e_u32, 4);
         encoder.dispatch_threadgroups(
             MTLSize::new((args.e + 255) / 256, 1, 1),
             MTLSize::new(256, 1, 1),
@@ -390,14 +322,7 @@ impl MoeTileMapKernel {
         encoder.set_compute_pipeline_state(&self.dispatch_pipeline);
         encoder.set_buffer(Some(args.total_tiles), 0, 0);
         encoder.set_buffer(Some(args.dispatch_args), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&args.num_tiles_x as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                2,
-            );
-        }
+        encoder.set_value(&args.num_tiles_x, 2);
         encoder.dispatch_threadgroups(
             MTLSize::new(1, 1, 1),
             MTLSize::new(1, 1, 1),

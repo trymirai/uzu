@@ -1,14 +1,10 @@
 use std::{cell::RefCell, mem, rc::Rc};
 
-use crate::backends::metal::{
-    MTLCommandBuffer, MTLDevice, MTLResourceOptions, ProtocolObject, Retained,
-};
-use metal::MTLDeviceExt;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MetalArray,
+        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt, MTLResourceOptions, MetalArray,
+        ProtocolObject, Retained,
         error::MTLError,
         image::{Image, PixelFormat, TextureUsage},
         kernel::media_kernels::{

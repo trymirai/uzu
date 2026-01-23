@@ -1,13 +1,13 @@
-use std::{mem::size_of, ptr::NonNull};
-
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
-use objc2::msg_send;
-use objc2_foundation::NSString;
+use metal::MTLCommandEncoderExt;
 
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
     ProtocolObject, Retained,
-    metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
+    metal_extensions::{
+        ComputeEncoderConditional, ComputeEncoderDispatch,
+        ComputeEncoderSetValue,
+    },
 };
 
 #[derive(Debug)]
@@ -22,7 +22,8 @@ impl TensorAddBias {
     ) -> Result<Self, MTLError> {
         let function_name =
             format!("tensorAddBias_{}", data_type.function_name_suffix());
-        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state =
+            context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -60,34 +61,15 @@ impl TensorAddBias {
         encoder.condition(
             predicate,
             || {
-                unsafe {
-                    let label = NSString::from_str("Tensor Add Bias");
-                    let _: () = msg_send![encoder, setLabel: &*label];
-                }
+                encoder.set_label(Some("Tensor Add Bias"));
                 encoder.set_compute_pipeline_state(&self.pipeline_state);
                 encoder.set_buffer(Some(input), 0, 0);
                 encoder.set_buffer(Some(bias), 0, 1);
                 encoder.set_buffer(Some(output), 0, 2);
-                unsafe {
-                    encoder.set_bytes(
-                        NonNull::new(
-                            &(num_cols as i32) as *const i32
-                                as *mut std::ffi::c_void,
-                        )
-                        .unwrap(),
-                        size_of::<i32>(),
-                        3,
-                    );
-                    encoder.set_bytes(
-                        NonNull::new(
-                            &(total_len as i32) as *const i32
-                                as *mut std::ffi::c_void,
-                        )
-                        .unwrap(),
-                        size_of::<i32>(),
-                        4,
-                    );
-                }
+                let num_cols_i32 = num_cols as i32;
+                let total_len_i32 = total_len as i32;
+                encoder.set_value(&num_cols_i32, 3);
+                encoder.set_value(&total_len_i32, 4);
                 encoder.dispatch_1d_exactly(
                     &self.pipeline_state,
                     total_len,

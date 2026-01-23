@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Gather Permuted Activations Kernel ----
@@ -73,14 +70,7 @@ impl MoeGatherKernel {
         encoder.set_buffer(Some(args.x_perm_buffer), 0, 2);
         encoder.set_buffer(Some(args.sumk_buffer), 0, 3);
         let d_model_u32 = args.d_model as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&d_model_u32 as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-        }
+        encoder.set_value(&d_model_u32, 4);
 
         let max_rows = args.t * args.k;
         if max_rows == 0 {

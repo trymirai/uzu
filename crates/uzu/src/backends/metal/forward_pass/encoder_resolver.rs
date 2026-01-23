@@ -1,8 +1,6 @@
-use metal::{MTLCommandBuffer, MTLCommandEncoder};
-
 use super::ForwardPassState;
 use crate::backends::metal::{
-    MTLComputeCommandEncoder, ProtocolObject, Retained,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
     encodable_block::{EncodableBlock, EncodingParameters},
 };
 

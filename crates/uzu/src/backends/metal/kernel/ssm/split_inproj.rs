@@ -1,11 +1,8 @@
-use std::{ffi::c_void, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer,
-    MTLContext, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 pub struct SplitInProjKernel {
@@ -59,34 +56,10 @@ impl SplitInProjKernel {
         let suffix = args.suffix_length;
         let cols = args.total_dim;
 
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&total_dim as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                5,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&conv_dim as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                6,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&inner_dim as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                7,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&num_heads as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                8,
-            );
-        }
+        compute_encoder.set_value(&total_dim, 5);
+        compute_encoder.set_value(&conv_dim, 6);
+        compute_encoder.set_value(&inner_dim, 7);
+        compute_encoder.set_value(&num_heads, 8);
 
         let threads_per_threadgroup = MTLSize {
             width: 16,

@@ -1,21 +1,12 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
+use std::{collections::HashMap, ptr::NonNull};
 
-use metal::MTLComputeCommandEncoder;
-
-use crate::backends::metal::{
-    MTLComputePipelineState, MTLFunctionConstantValues, ProtocolObject, Retained,
-};
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        kernel::{
-            matmul::common::GEMMParams, mlp_fused::common::MlpFusedArguments,
-        },
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -127,26 +118,8 @@ impl Kernel {
         encoder.set_buffer(Some(arguments.weights), 0, 1);
         encoder.set_buffer(Some(arguments.output), 0, 2);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&descriptor.params as *const GEMMParams as *mut c_void).unwrap(),
-                std::mem::size_of::<GEMMParams>(),
-                3,
-            );
-        }
-        unsafe {
-
-            encoder.set_bytes(
-
-                NonNull::new(&descriptor.hidden_dim as *const i32 as *mut c_void).unwrap(),
-
-                std::mem::size_of::<i32>(),
-
-                10,
-
-            );
-
-        }
+        encoder.set_value(&descriptor.params, 3);
+        encoder.set_value(&descriptor.hidden_dim, 10);
 
         encoder.dispatch_threadgroups(
             descriptor.threadgroups,

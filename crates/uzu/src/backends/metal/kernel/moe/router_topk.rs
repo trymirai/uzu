@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 const THREADS_PER_THREADGROUP: usize = 256;
@@ -116,33 +113,11 @@ impl MoeRouterTopKKernel {
             0
         };
 
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&t_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&d_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&e_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                7,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&k_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                8,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&renorm_u32 as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                9,
-            );
-        }
+        compute_encoder.set_value(&t_u32, 5);
+        compute_encoder.set_value(&d_u32, 6);
+        compute_encoder.set_value(&e_u32, 7);
+        compute_encoder.set_value(&k_u32, 8);
+        compute_encoder.set_value(&renorm_u32, 9);
 
         let threadgroups = MTLSize::new(1, args.t, 1);
         let threads_per_tg = MTLSize::new(THREADS_PER_THREADGROUP, 1, 1);

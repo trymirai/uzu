@@ -13,12 +13,7 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
-use metal::{
-    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt,
-};
-pub use mode::{
-    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
-};
+pub use mode::{ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -29,7 +24,8 @@ use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
     backends::metal::{
-        MTLBuffer, MTLContext, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+        MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
     },
     session::parameter::SamplingMethod,
 };

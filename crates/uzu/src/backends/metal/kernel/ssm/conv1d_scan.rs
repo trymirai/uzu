@@ -1,12 +1,11 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
+use std::ptr::NonNull;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLDataType,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLDataType, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,
 };
@@ -185,41 +184,11 @@ impl Conv1dScanKernel {
         compute_encoder.set_buffer(Some(args.state_in), 0, 0);
         compute_encoder.set_buffer(Some(args.x), 0, 1);
         compute_encoder.set_buffer(Some(args.padded), 0, 2);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                3,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.row_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                4,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                5,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.channels as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-        }
+        compute_encoder.set_value(&args.state_stride, 3);
+        compute_encoder.set_value(&args.row_stride, 4);
+        compute_encoder.set_value(&args.suffix_len, 5);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 6);
 
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
@@ -263,65 +232,16 @@ impl Conv1dScanKernel {
         compute_encoder.set_buffer(Some(args.b_out), 0, 5);
         compute_encoder.set_buffer(Some(args.c_out), 0, 6);
         compute_encoder.set_buffer(Some(args.next_state), 0, 7);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.kernel_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                8,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.row_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                10,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.channels as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                11,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                12,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.inner_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                13,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.proj_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                14,
-            );
-        }
+        compute_encoder.set_value(&args.kernel_size, 8);
+        compute_encoder.set_value(&args.row_stride, 9);
+        compute_encoder.set_value(&args.state_stride, 10);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 11);
+        compute_encoder.set_value(&args.suffix_len, 12);
+        let inner_dim_u32 = args.inner_dim as u32;
+        compute_encoder.set_value(&inner_dim_u32, 13);
+        let proj_dim_u32 = args.proj_dim as u32;
+        compute_encoder.set_value(&proj_dim_u32, 14);
 
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
@@ -365,67 +285,16 @@ impl Conv1dScanKernel {
         compute_encoder.set_buffer(Some(args.c_out), 0, 5);
         compute_encoder.set_buffer(Some(args.state_out), 0, 6);
 
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                7,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.kernel_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                8,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.row_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                10,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.channels as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                11,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.inner_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                12,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.proj_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                13,
-            );
-        }
+        compute_encoder.set_value(&args.suffix_len, 7);
+        compute_encoder.set_value(&args.kernel_size, 8);
+        compute_encoder.set_value(&args.row_stride, 9);
+        compute_encoder.set_value(&args.state_stride, 10);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 11);
+        let inner_dim_u32 = args.inner_dim as u32;
+        compute_encoder.set_value(&inner_dim_u32, 12);
+        let proj_dim_u32 = args.proj_dim as u32;
+        compute_encoder.set_value(&proj_dim_u32, 13);
 
         let suffix = args.suffix_len;
         let tap_count = args.kernel_size.saturating_sub(1) as usize;

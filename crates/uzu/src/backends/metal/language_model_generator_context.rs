@@ -6,11 +6,9 @@ use std::{
     rc::Rc,
 };
 
-use metal::{MTLCommandQueue, MTLDeviceExt};
-
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLDevice, MTLEvent, MTLResourceOptions,
-    ProtocolObject, Retained,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLResourceOptions, ProtocolObject, Retained,
 };
 
 use super::{

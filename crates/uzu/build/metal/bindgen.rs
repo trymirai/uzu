@@ -63,13 +63,7 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
                     let arg_dtype = format_ident!("{r_type}");
                     let def = quote! { #arg_name: #arg_dtype };
                     let set = quote! {
-                        unsafe {
-                            compute_encoder.set_bytes(
-                                std::ptr::NonNull::new(std::ptr::addr_of!(#arg_name).cast_mut().cast::<std::ffi::c_void>()).unwrap(),
-                                std::mem::size_of::<#arg_dtype>(),
-                                #arg_index,
-                            );
-                        }
+                        compute_encoder.set_value(&#arg_name, #arg_index);
                     };
 
                     (def, set, quote! { #arg_name })
@@ -163,6 +157,7 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
 
             pub fn encode(&self, #(#encode_args_defs, )*compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
                 use metal::MTLComputeCommandEncoder;
+                use crate::backends::metal::ComputeEncoderSetValue;
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch

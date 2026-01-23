@@ -1,12 +1,8 @@
-use std::ptr::NonNull;
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
-        ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
     },
 };
 
@@ -50,15 +46,7 @@ impl SigmoidKernel {
         encoder.set_compute_pipeline_state(&self.pipeline);
         encoder.set_buffer(Some(input_buffer), 0, 0);
         encoder.set_buffer(Some(output_buffer), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new_unchecked(
-                    &total_elements as *const i32 as *mut std::ffi::c_void,
-                ),
-                std::mem::size_of::<i32>(),
-                2,
-            );
-        }
+        encoder.set_value(&total_elements, 2);
 
         let threads_per_tg = MTLSize::new(256, 1, 1);
         let grid = MTLSize::new(total_elements as usize, 1, 1);

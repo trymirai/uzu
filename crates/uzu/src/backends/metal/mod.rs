@@ -14,23 +14,10 @@ pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
 
-// Re-export mtl-rs types with convenient type aliases
-pub use metal::{
-    MTLBindingExt, MTLBlitCommandEncoder, MTLBuffer, MTLCaptureDescriptor,
-    MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer,
-    MTLCommandBufferExt, MTLCommandEncoder, MTLCommandEncoderExt,
-    MTLCommandQueue, MTLCommandQueueExt, MTLCompareFunction,
-    MTLComputeCommandEncoder, MTLComputePipelineDescriptor,
-    MTLComputePipelineState, MTLDataType, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLFeatureSet, MTLFunctionConstantValues, MTLGPUFamily, MTLHeap,
-    MTLHeapExt, MTLLibrary, MTLLibraryExt, MTLPipelineOption, MTLPixelFormat,
-    MTLReadWriteTextureTier, MTLResource, MTLResourceExt, MTLResourceOptions,
-    MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
-};
-pub use objc2::{rc::Retained, runtime::ProtocolObject};
-pub use objc2_foundation::NSRange;
+pub use metal::prelude::*;
 
 pub use array::MetalArray;
+pub use metal_extensions::ComputeEncoderSetValue;
 pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;
 pub use context::{

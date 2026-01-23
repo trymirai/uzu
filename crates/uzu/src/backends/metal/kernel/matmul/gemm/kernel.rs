@@ -1,6 +1,4 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
+use std::{collections::HashMap, ptr::NonNull};
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -9,12 +7,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        ProtocolObject, Retained,
-        kernel::matmul::common::{
-            GEMMAddMMParams, GEMMParams, MatmulArguments,
-            transpose_configuration,
-        },
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
 
@@ -213,24 +208,10 @@ impl Kernel {
         }
         encoder.set_buffer(Some(arguments.d), 0, 3);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&descriptor.params as *const _ as *mut c_void)
-                    .unwrap(),
-                std::mem::size_of::<GEMMParams>(),
-                4,
-            );
-        }
+        encoder.set_value(&descriptor.params, 4);
 
         if let Some(addmm_params) = &descriptor.addmm_params {
-            unsafe {
-                encoder.set_bytes(
-                    NonNull::new(addmm_params as *const _ as *mut c_void)
-                        .unwrap(),
-                    std::mem::size_of::<GEMMAddMMParams>(),
-                    5,
-                );
-            }
+            encoder.set_value(addmm_params, 5);
         }
 
         encoder.dispatch_threadgroups(

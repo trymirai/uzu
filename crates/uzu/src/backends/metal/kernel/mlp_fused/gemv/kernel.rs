@@ -1,15 +1,11 @@
-use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
+use std::{collections::HashMap, ptr::NonNull};
 
-use metal::MTLComputeCommandEncoder;
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
@@ -106,59 +102,11 @@ impl Kernel {
         );
         encoder.set_buffer(Some(arguments.output), 0, 3);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.input_dim as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                4,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.hidden_dim as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                5,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.weights_ld as *const i32 as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i32>(),
-                6,
-            );
-        }
-
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.vector_batch_stride as *const i64
-                        as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i64>(),
-                11,
-            );
-        }
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(
-                    &descriptor.matrix_batch_stride as *const i64
-                        as *mut c_void,
-                )
-                .unwrap(),
-                std::mem::size_of::<i64>(),
-                12,
-            );
-        }
+        encoder.set_value(&descriptor.input_dim, 4);
+        encoder.set_value(&descriptor.hidden_dim, 5);
+        encoder.set_value(&descriptor.weights_ld, 6);
+        encoder.set_value(&descriptor.vector_batch_stride, 11);
+        encoder.set_value(&descriptor.matrix_batch_stride, 12);
 
         encoder.dispatch_threadgroups(
             descriptor.threadgroups,

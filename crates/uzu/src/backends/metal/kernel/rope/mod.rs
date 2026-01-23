@@ -1,11 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
-    MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 pub struct RopeKernel {
@@ -84,35 +81,11 @@ impl RopeKernel {
         let suffix_length = args.suffix_length as u32;
         let max_sequence_length = args.max_sequence_length as u32;
 
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&head_dim as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&num_heads as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                7,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&num_groups as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                8,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&suffix_length as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                9,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&max_sequence_length as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-        }
+        compute_encoder.set_value(&head_dim, 6);
+        compute_encoder.set_value(&num_heads, 7);
+        compute_encoder.set_value(&num_groups, 8);
+        compute_encoder.set_value(&suffix_length, 9);
+        compute_encoder.set_value(&max_sequence_length, 10);
 
         let threads_per_threadgroup = MTLSize {
             width: 1,

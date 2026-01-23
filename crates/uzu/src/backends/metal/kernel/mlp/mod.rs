@@ -1,12 +1,11 @@
-use std::{ffi::c_void, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
+use std::ptr::NonNull;
 
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
+        Retained,
     },
     config::Activation,
 };
@@ -188,23 +187,9 @@ impl MlpGateActMulKernel {
         encoder.set_compute_pipeline_state(&self.pipeline);
         encoder.set_buffer(Some(fused_up_buffer), 0, 0);
         encoder.set_buffer(Some(hidden_buffer), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&h as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(&m as *const i32 as *mut c_void).unwrap(),
-                std::mem::size_of::<i32>(),
-                3,
-            );
-            encoder.set_bytes(
-                NonNull::new(&act_code as *const u16 as *mut c_void).unwrap(),
-                std::mem::size_of::<u16>(),
-                4,
-            );
-        }
+        encoder.set_value(&h, 2);
+        encoder.set_value(&m, 3);
+        encoder.set_value(&act_code, 4);
 
         let grid = MTLSize::new(h as usize, m as usize, 1);
         encoder.dispatch_threads(grid, threads_per_tg);

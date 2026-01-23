@@ -1,13 +1,11 @@
-use std::{collections::HashMap, ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-use objc2::rc::Retained;
+use std::{collections::HashMap, ptr::NonNull};
 
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        MTLSize, ProtocolObject,
+        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
     },
     config::QuantizationMode,
 };
@@ -216,23 +214,9 @@ impl QuantizedMatmulKernel {
         let m = args.batch;
         let n = args.output_dim;
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&k as *const i32 as *mut c_void).unwrap(),
-                size_of::<i32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&n as *const i32 as *mut c_void).unwrap(),
-                size_of::<i32>(),
-                6,
-            );
-            encoder.set_bytes(
-                NonNull::new(&m as *const i32 as *mut c_void).unwrap(),
-                size_of::<i32>(),
-                7,
-            );
-        }
+        encoder.set_value(&k, 5);
+        encoder.set_value(&n, 6);
+        encoder.set_value(&m, 7);
 
         match variant {
             KernelKind::MatrixVector => {
@@ -434,20 +418,8 @@ impl MlpFusedQmvKernel {
         encoder.set_buffer(Some(args.input), args.input_offset as usize, 3);
         encoder.set_buffer(Some(args.output), 0, 4);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&args.input_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.hidden_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                6,
-            );
-        }
+        encoder.set_value(&args.input_dim, 5);
+        encoder.set_value(&args.hidden_dim, 6);
 
         // Dispatch: one threadgroup per 8 output rows (num_simdgroups * results_per_simdgroup)
         let rows_per_threadgroup = 8;
@@ -544,25 +516,9 @@ impl MlpFusedQmmKernel {
         encoder.set_buffer(Some(args.input), args.input_offset as usize, 3);
         encoder.set_buffer(Some(args.output), 0, 4);
 
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&args.input_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.hidden_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                6,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.batch as *const i32 as *mut c_void).unwrap(),
-                size_of::<i32>(),
-                7,
-            );
-        }
+        encoder.set_value(&args.input_dim, 5);
+        encoder.set_value(&args.hidden_dim, 6);
+        encoder.set_value(&args.batch, 7);
 
         // Dispatch: BM=32, BN=32
         let bm = 32;

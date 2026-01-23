@@ -1,5 +1,6 @@
-use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use super::{
+    MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLResourceOptions, ProtocolObject, Retained,
+};
 
 /// Type alias for owned MTLBuffer
 pub type MTLBufferObj = Retained<ProtocolObject<dyn MTLBuffer>>;

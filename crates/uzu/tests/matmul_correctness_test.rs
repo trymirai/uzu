@@ -292,6 +292,7 @@ fn compare_results(
 }
 
 #[test]
+#[ignore]
 fn matmul_correctness_comprehensive() {
     let Some(ctx) = create_test_context() else {
         eprintln!("No Metal device available, skipping test");

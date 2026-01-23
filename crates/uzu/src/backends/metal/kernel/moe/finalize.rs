@@ -1,10 +1,7 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Finalize Kernel ----
@@ -74,23 +71,9 @@ impl MoeFinalizeKernel {
         let t_u = args.t as u32;
         let dm_u = args.d_model as u32;
         let k_u = args.k as u32;
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&t_u as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-            encoder.set_bytes(
-                NonNull::new(&dm_u as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&k_u as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-        }
+        encoder.set_value(&t_u, 4);
+        encoder.set_value(&dm_u, 5);
+        encoder.set_value(&k_u, 6);
 
         // Launch tiles over (N tiles, M tiles)
         const BM: usize = 32;

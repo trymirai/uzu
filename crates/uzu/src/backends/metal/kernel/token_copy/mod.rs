@@ -1,8 +1,6 @@
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    MTLBuffer, MTLComputePipelineState, MTLContext,
-    MTLError, MTLSize, ProtocolObject, Retained,
+    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
+    ProtocolObject, Retained,
 };
 
 /// Kernel for copying sampled tokens in async pipeline.

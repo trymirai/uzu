@@ -1,11 +1,10 @@
 use std::{mem::size_of, ptr::NonNull};
 
-use metal::MTLComputeCommandEncoder;
 use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
     MTLComputePipelineState, MTLContext, MTLError, ProtocolObject, Retained,
     metal_extensions::ComputeEncoderDispatch,
 };

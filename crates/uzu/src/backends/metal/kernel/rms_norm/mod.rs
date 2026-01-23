@@ -1,12 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext,
-        MTLError, MTLSize, ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
     },
 };
 
@@ -212,32 +208,10 @@ impl RMSNormKernel {
         );
 
         // Set parameters
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.batch_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                3,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.model_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                4,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.epsilon as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                5,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.scale_offset as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                6,
-            );
-        }
+        compute_encoder.set_value(&args.batch_size, 3);
+        compute_encoder.set_value(&args.model_dim, 4);
+        compute_encoder.set_value(&args.epsilon, 5);
+        compute_encoder.set_value(&args.scale_offset, 6);
 
         let threads_per_threadgroup = MTLSize {
             width: 1024,
@@ -276,44 +250,12 @@ impl RMSNormKernel {
         compute_encoder.set_buffer(Some(args.qkv_output_buffer), 0, 2);
 
         // Set parameters
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.batch_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                3,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.num_q_heads as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                4,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.num_kv_heads as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                5,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.head_dim as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                6,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.epsilon as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                7,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&args.scale_offset as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                8,
-            );
-        }
+        compute_encoder.set_value(&args.batch_size, 3);
+        compute_encoder.set_value(&args.num_q_heads, 4);
+        compute_encoder.set_value(&args.num_kv_heads, 5);
+        compute_encoder.set_value(&args.head_dim, 6);
+        compute_encoder.set_value(&args.epsilon, 7);
+        compute_encoder.set_value(&args.scale_offset, 8);
 
         // Determine which contiguous head range to normalize.
         //
@@ -334,19 +276,8 @@ impl RMSNormKernel {
         }
 
         // Pass head range to the kernel.
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&head_offset as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                9,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(&head_count as *const u32 as *mut c_void).unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-        }
+        compute_encoder.set_value(&head_offset, 9);
+        compute_encoder.set_value(&head_count, 10);
 
         // One SIMD-group per head, multiple heads per threadgroup.
         let simd_width = self.pipeline.thread_execution_width();

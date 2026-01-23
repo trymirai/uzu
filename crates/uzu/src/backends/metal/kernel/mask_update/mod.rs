@@ -1,10 +1,8 @@
 use std::ptr::NonNull;
 
-use metal::MTLComputeCommandEncoder;
-
 use crate::backends::metal::{
-    MTLBuffer, MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject,
-    Retained, kernel::KernelDataType,
+    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    ProtocolObject, Retained, kernel::KernelDataType,
 };
 
 pub struct MaskUpdateKernel {

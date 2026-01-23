@@ -1,12 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
-        ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
     },
     config::Activation,
 };
@@ -68,18 +64,8 @@ impl ActivationKernel {
         encoder.set_compute_pipeline_state(&self.pipeline);
         encoder.set_buffer(Some(input_buffer), 0, 0);
         encoder.set_buffer(Some(output_buffer), 0, 1);
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&(n as i32) as *const i32 as *mut c_void).unwrap(),
-                size_of::<i32>(),
-                2,
-            );
-            encoder.set_bytes(
-                NonNull::new(&act_code as *const u16 as *mut c_void).unwrap(),
-                size_of::<u16>(),
-                3,
-            );
-        }
+        encoder.set_value(&(n as i32), 2);
+        encoder.set_value(&act_code, 3);
 
         encoder.dispatch_threadgroups(
             MTLSize::new(threadgroups as usize, 1, 1),

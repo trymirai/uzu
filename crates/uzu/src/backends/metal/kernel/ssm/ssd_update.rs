@@ -1,11 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer,
-    MTLContext, MTLSize, MTLComputePipelineState, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
 
 pub struct SSDUpdateKernel {
@@ -64,50 +61,12 @@ impl SSDUpdateKernel {
         compute_encoder.set_buffer(Some(args.y), 0, 7);
         compute_encoder.set_buffer(Some(args.next_state), 0, 8);
 
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.group_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                10,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(args.x_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                3 * size_of::<usize>(),
-                11,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(args.dt_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                2 * size_of::<usize>(),
-                12,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(args.cb_strides.as_ptr() as *mut std::ffi::c_void)
-                    .unwrap(),
-                3 * size_of::<usize>(),
-                13,
-            );
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    args.state_strides.as_ptr() as *mut std::ffi::c_void
-                )
-                .unwrap(),
-                4 * size_of::<usize>(),
-                14,
-            );
-        }
+        compute_encoder.set_value(&args.group_size, 9);
+        compute_encoder.set_value(&args.state_size, 10);
+        compute_encoder.set_value(&args.x_strides, 11);
+        compute_encoder.set_value(&args.dt_strides, 12);
+        compute_encoder.set_value(&args.cb_strides, 13);
+        compute_encoder.set_value(&args.state_strides, 14);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,

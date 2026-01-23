@@ -1,12 +1,8 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputePipelineState, MTLContext,
-        MTLSize, ProtocolObject, Retained, encodable_block::EmbeddingError,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLSize, ProtocolObject, Retained, encodable_block::EmbeddingError,
     },
     config::QuantizationMode,
 };
@@ -76,36 +72,10 @@ impl FullPrecisionEmbeddingLookupKernel {
             2,
         );
 
-        unsafe {
-            MTLComputeCommandEncoder::set_bytes(
-                encoder,
-                NonNull::new(&args.batch_size as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                3,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                encoder,
-                NonNull::new(&args.vocab_size as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                4,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                encoder,
-                NonNull::new(&args.model_dim as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                encoder,
-                NonNull::new(&args.input_scale as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                6,
-            );
-        }
+        encoder.set_value(&args.batch_size, 3);
+        encoder.set_value(&args.vocab_size, 4);
+        encoder.set_value(&args.model_dim, 5);
+        encoder.set_value(&args.input_scale, 6);
 
         let total_threads = (args.batch_size * args.model_dim) as u64;
         let threads_per_threadgroup = 256u64;
@@ -188,38 +158,11 @@ impl QuantizedEmbeddingLookupKernel {
         encoder.set_buffer(Some(args.output_buffer), 0, 4);
 
         // Set constants
-        unsafe {
-            encoder.set_bytes(
-                NonNull::new(&args.batch_size as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                5,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.vocab_size as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.model_dim as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                7,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.group_size as *const u32 as *mut c_void)
-                    .unwrap(),
-                size_of::<u32>(),
-                8,
-            );
-            encoder.set_bytes(
-                NonNull::new(&args.input_scale as *const f32 as *mut c_void)
-                    .unwrap(),
-                size_of::<f32>(),
-                9,
-            );
-        }
+        encoder.set_value(&args.batch_size, 5);
+        encoder.set_value(&args.vocab_size, 6);
+        encoder.set_value(&args.model_dim, 7);
+        encoder.set_value(&args.group_size, 8);
+        encoder.set_value(&args.input_scale, 9);
 
         // Dispatch one thread per output element
         let total_threads = (args.batch_size * args.model_dim) as u64;

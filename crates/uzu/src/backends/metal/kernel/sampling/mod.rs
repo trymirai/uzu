@@ -1,16 +1,14 @@
 use std::mem::size_of;
 
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt};
 use thiserror::Error;
 
 use crate::{
     backends::metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
-        MTLError, MTLResourceOptions, ProtocolObject, Retained,
+        KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         kernel::dsl::{
-            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-            BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-            TopKKernel, TopPKernel,
+            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel,
+            MinPKernel, TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
     session::parameter::SamplingMethod,

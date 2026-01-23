@@ -1,10 +1,9 @@
 use std::collections::HashSet;
 
 use crate::backends::metal::{
-    MTLDevice, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier,
+    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier,
     ProtocolObject,
 };
-use metal::MTLDeviceExt;
 
 /// Enum representing various Metal features that may or may not be supported by a device.
 #[derive(Debug, Clone, PartialEq, Eq)]

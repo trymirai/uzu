@@ -1,10 +1,9 @@
-use std::{ffi::c_void, mem::size_of, ptr::NonNull};
-
-use metal::MTLComputeCommandEncoder;
+use std::ptr::NonNull;
 
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
-    MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues,
+    MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -157,43 +156,10 @@ impl ShortConvKernel {
         compute_encoder.set_buffer(Some(args.state_in), 0, 0);
         compute_encoder.set_buffer(Some(args.in_proj), 0, 1);
         compute_encoder.set_buffer(Some(args.padded), 0, 2);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                3,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                4,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &args.in_proj_stride as *const usize as *mut c_void,
-                )
-                .unwrap(),
-                size_of::<usize>(),
-                5,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.model_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                6,
-            );
-        }
+        compute_encoder.set_value(&args.state_stride, 3);
+        compute_encoder.set_value(&args.suffix_len, 4);
+        compute_encoder.set_value(&args.in_proj_stride, 5);
+        compute_encoder.set_value(&(args.model_dim as u32), 6);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,
@@ -239,51 +205,11 @@ impl ShortConvKernel {
         }
         compute_encoder.set_buffer(Some(args.out), 0, 4);
         compute_encoder.set_buffer(Some(args.state_out), 0, 5);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                6,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.kernel_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                7,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &args.in_proj_stride as *const usize as *mut c_void,
-                )
-                .unwrap(),
-                size_of::<usize>(),
-                8,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.model_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-        }
+        compute_encoder.set_value(&args.suffix_len, 6);
+        compute_encoder.set_value(&args.kernel_size, 7);
+        compute_encoder.set_value(&args.in_proj_stride, 8);
+        compute_encoder.set_value(&args.state_stride, 9);
+        compute_encoder.set_value(&(args.model_dim as u32), 10);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,
@@ -325,51 +251,11 @@ impl ShortConvKernel {
         compute_encoder.set_buffer(Some(args.state), 0, 3);
         compute_encoder.set_buffer(Some(args.out), 0, 4);
         compute_encoder.set_buffer(Some(args.next_state), 0, 5);
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.suffix_len as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                6,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.kernel_size as *const i32 as *mut c_void)
-                    .unwrap(),
-                size_of::<i32>(),
-                7,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &args.in_proj_stride as *const usize as *mut c_void,
-                )
-                .unwrap(),
-                size_of::<usize>(),
-                8,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(&args.state_stride as *const usize as *mut c_void)
-                    .unwrap(),
-                size_of::<usize>(),
-                9,
-            );
-        }
-        unsafe {
-            compute_encoder.set_bytes(
-                NonNull::new(
-                    &(args.model_dim as u32) as *const u32
-                        as *mut std::ffi::c_void,
-                )
-                .unwrap(),
-                size_of::<u32>(),
-                10,
-            );
-        }
+        compute_encoder.set_value(&args.suffix_len, 6);
+        compute_encoder.set_value(&args.kernel_size, 7);
+        compute_encoder.set_value(&args.in_proj_stride, 8);
+        compute_encoder.set_value(&args.state_stride, 9);
+        compute_encoder.set_value(&(args.model_dim as u32), 10);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,

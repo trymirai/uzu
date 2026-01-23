@@ -3,6 +3,7 @@
 mod command_buffer_timing;
 mod compute_command_encoder_extensions_conditional;
 mod compute_command_encoder_extensions_dispatch;
+mod compute_command_encoder_extensions_set_value;
 mod compute_pipeline_state_extensions_threads;
 mod device_extensions_features;
 mod library_extensions_pipeline;
@@ -10,4 +11,5 @@ mod library_extensions_pipeline;
 pub use command_buffer_timing::CommandBufferTimingExt;
 pub use compute_command_encoder_extensions_conditional::ComputeEncoderConditional;
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
+pub use compute_command_encoder_extensions_set_value::ComputeEncoderSetValue;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;

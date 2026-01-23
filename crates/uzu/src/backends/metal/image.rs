@@ -1,11 +1,9 @@
 use std::fmt;
 
 use crate::backends::metal::{
-    MTLDevice, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureDescriptor,
-    MTLTextureUsage, ProtocolObject, Retained,
+    MTLDevice, MTLDeviceExt, MTLPixelFormat, MTLResourceExt, MTLStorageMode, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage, ProtocolObject, Retained,
 };
-use crate::backends::metal::MTLResourceExt;
-use metal::MTLDeviceExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
