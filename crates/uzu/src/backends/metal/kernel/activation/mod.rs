@@ -35,8 +35,7 @@ impl ActivationKernel {
         data_type: DataType,
     ) -> Result<Self, MTLError> {
         let fn_name = Self::kernel_name_for_type(data_type)?;
-        let (pipeline, _) =
-            context.compute_pipeline_state_with_reflection(fn_name, None)?;
+        let pipeline = context.compute_pipeline_state(fn_name, None)?;
         Ok(Self {
             pipeline,
         })

@@ -6,8 +6,8 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDeviceExt, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use ndarray::{Array3, Array4, s};
 use uzu::backends::metal::{
@@ -16,7 +16,7 @@ use uzu::backends::metal::{
         AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
         AttentionSinglePassArguments, AttentionTwoPassArguments,
     },
-    metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+    metal_extensions::CommandBufferTimingExt,
 };
 
 fn reference_attention(

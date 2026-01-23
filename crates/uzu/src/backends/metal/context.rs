@@ -231,51 +231,6 @@ impl MTLContext {
         Ok(pipeline)
     }
 
-    pub fn compute_pipeline_state_with_reflection(
-        &self,
-        function_name: &str,
-        constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<
-        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, Vec<String>),
-        MTLError,
-    > {
-        // Only cache pipelines without constants
-        if constants.is_some() {
-            return self.library.compute_pipeline_state_with_reflection(
-                function_name,
-                constants,
-            );
-        }
-        self.compute_pipeline_state_with_reflection_cached(
-            function_name,
-            function_name,
-            None,
-        )
-    }
-
-    pub fn compute_pipeline_state_with_reflection_cached(
-        &self,
-        cache_key: &str,
-        function_name: &str,
-        constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<
-        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, Vec<String>),
-        MTLError,
-    > {
-        if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
-            return Ok((pipeline.clone(), Vec::new()));
-        }
-
-        let (pipeline, arg_names) = self
-            .library
-            .compute_pipeline_state_with_reflection(function_name, constants)?;
-
-        self.pipeline_cache
-            .borrow_mut()
-            .insert(cache_key.to_string(), pipeline.clone());
-
-        Ok((pipeline, arg_names))
-    }
 }
 
 impl DeviceContext for MTLContext {

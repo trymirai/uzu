@@ -20,8 +20,7 @@ impl MaskUpdateKernel {
             "update_attention_mask_{}",
             data_type.function_name_suffix()
         );
-        let (pipeline, _) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline = context.compute_pipeline_state(&function_name, None)?;
 
         Ok(Self {
             pipeline,

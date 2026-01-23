@@ -4,8 +4,8 @@
 use bytemuck;
 use half::{bf16, f16};
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDeviceExt, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use uzu::{
     DataType,
@@ -15,7 +15,7 @@ use uzu::{
             QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel,
             RMSNormKernelType,
         },
-        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+        metal_extensions::CommandBufferTimingExt,
     },
 };
 

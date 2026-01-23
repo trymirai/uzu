@@ -181,12 +181,11 @@ impl Kernel {
                 configuration.use_out_source as u8,
                 configuration.do_axpby as u8
             );
-            let (pipeline_state, _) = context
-                .compute_pipeline_state_with_reflection_cached(
-                    &cache_key,
-                    &kernel_name,
-                    Some(&function_constants),
-                )?;
+            let pipeline_state = context.compute_pipeline_state_cached(
+                &cache_key,
+                &kernel_name,
+                Some(&function_constants),
+            )?;
             self.pipelines.insert(configuration.clone(), pipeline_state);
         }
         Ok(self.pipelines.get(configuration).unwrap())

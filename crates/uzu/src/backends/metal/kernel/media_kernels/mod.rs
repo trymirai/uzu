@@ -38,8 +38,7 @@ pub struct ScalePadNormalizeImage {
 impl ScalePadNormalizeImage {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "scalePadNormalizeImage";
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -113,8 +112,7 @@ pub struct ExtractImagePatches {
 impl ExtractImagePatches {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "extractImagePatches";
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })

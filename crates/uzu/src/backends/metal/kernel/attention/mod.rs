@@ -189,15 +189,10 @@ impl AttentionKernel {
                     );
 
                     for &head_dim in &supported_head_dims {
-                        if let Ok((pipeline, _)) = context
-                            .compute_pipeline_state_with_reflection(
-                                &format!(
-                                    "attention_single_pass_{}_{}",
-                                    data_suffix, head_dim
-                                ),
-                                Some(&function_constants),
-                            )
-                        {
+                        if let Ok(pipeline) = context.compute_pipeline_state(
+                            &format!("attention_single_pass_{}_{}", data_suffix, head_dim),
+                            Some(&function_constants),
+                        ) {
                             single_pass.insert(
                                 (
                                     head_dim,
@@ -209,15 +204,10 @@ impl AttentionKernel {
                             );
                         }
 
-                        if let Ok((pipeline, _)) = context
-                            .compute_pipeline_state_with_reflection(
-                                &format!(
-                                    "attention_2pass_1_{}_{}",
-                                    data_suffix, head_dim
-                                ),
-                                Some(&function_constants),
-                            )
-                        {
+                        if let Ok(pipeline) = context.compute_pipeline_state(
+                            &format!("attention_2pass_1_{}_{}", data_suffix, head_dim),
+                            Some(&function_constants),
+                        ) {
                             two_pass_1.insert(
                                 (
                                     head_dim,
@@ -230,15 +220,10 @@ impl AttentionKernel {
                         }
 
                         if !two_pass_2.contains_key(&head_dim) {
-                            if let Ok((pipeline, _)) = context
-                                .compute_pipeline_state_with_reflection(
-                                    &format!(
-                                        "attention_2pass_2_{}_{}",
-                                        data_suffix, head_dim
-                                    ),
-                                    Some(&function_constants),
-                                )
-                            {
+                            if let Ok(pipeline) = context.compute_pipeline_state(
+                                &format!("attention_2pass_2_{}_{}", data_suffix, head_dim),
+                                Some(&function_constants),
+                            ) {
                                 two_pass_2.insert(head_dim, pipeline);
                             }
                         }
@@ -248,11 +233,7 @@ impl AttentionKernel {
         }
 
         let kv_cache_update = context
-            .compute_pipeline_state_with_reflection(
-                &format!("update_kv_cache_{}", data_suffix),
-                None,
-            )
-            .map(|(pipeline, _)| pipeline)
+            .compute_pipeline_state(&format!("update_kv_cache_{}", data_suffix), None)
             .ok();
 
         Ok(Self {
@@ -880,12 +861,8 @@ impl AttentionKernel {
             has_sinks as u8
         );
 
-        let (pipeline, _) = context
-            .compute_pipeline_state_with_reflection_cached(
-                &cache_key,
-                &function_name,
-                Some(&fcv),
-            )
+        let pipeline = context
+            .compute_pipeline_state_cached(&cache_key, &function_name, Some(&fcv))
             .map_err(AttentionError::MetalError)?;
 
         MTLComputeCommandEncoder::set_compute_pipeline_state(

@@ -23,8 +23,7 @@ impl TensorAddSwapKernel {
         let function_name =
             format!("tensorAddSwap_{}", data_type.function_name_suffix());
 
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
 
         Ok(Self {
             pipeline_state,

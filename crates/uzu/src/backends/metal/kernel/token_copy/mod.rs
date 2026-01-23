@@ -16,16 +16,8 @@ pub struct TokenCopyKernel {
 
 impl TokenCopyKernel {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
-        let (copy_to_token_ids, _) = context
-            .compute_pipeline_state_with_reflection(
-                "copy_sampled_token",
-                None,
-            )?;
-        let (copy_to_results, _) = context
-            .compute_pipeline_state_with_reflection(
-                "copy_token_to_results",
-                None,
-            )?;
+        let copy_to_token_ids = context.compute_pipeline_state("copy_sampled_token", None)?;
+        let copy_to_results = context.compute_pipeline_state("copy_token_to_results", None)?;
 
         Ok(Self {
             copy_to_token_ids,

@@ -1,7 +1,8 @@
 mod common;
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use rand::{Rng, seq::SliceRandom};
 // for Vec::shuffle
@@ -16,7 +17,7 @@ use uzu::{
             },
             sampling::ArgmaxStrategy,
         },
-        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+        metal_extensions::CommandBufferTimingExt,
     },
     language_model::gumbel::{gumbel_float, revidx},
     session::parameter::SamplingMethod,

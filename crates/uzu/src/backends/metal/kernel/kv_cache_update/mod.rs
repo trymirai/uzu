@@ -60,9 +60,8 @@ impl KVCacheUpdate {
         let function_name =
             format!("updateKVCache_{}", data_type.function_name_suffix());
 
-        // Use MetalContext's compute_pipeline_state_with_reflection method
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)
+        let pipeline_state = context
+            .compute_pipeline_state(&function_name, None)
             .map_err(|e| KVCacheUpdateError::MetalError(e))?;
 
         let indices_buffer = context

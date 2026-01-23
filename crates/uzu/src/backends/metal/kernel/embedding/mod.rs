@@ -41,16 +41,13 @@ impl FullPrecisionEmbeddingLookupKernel {
                 return Err(EmbeddingError::UnsupportedDataType(other));
             },
         };
-        let kernel_name =
-            format!("full_precision_embedding_lookup_{}", dtype_suffix);
+        let kernel_name = format!("full_precision_embedding_lookup_{}", dtype_suffix);
 
-        let (pipeline, _) = mtl_context
-            .compute_pipeline_state_with_reflection(&kernel_name, None)
+        let pipeline = mtl_context
+            .compute_pipeline_state(&kernel_name, None)
             .map_err(EmbeddingError::MetalError)?;
 
-        Ok(Self {
-            pipeline,
-        })
+        Ok(Self { pipeline })
     }
 
     pub fn encode(
@@ -169,13 +166,11 @@ impl QuantizedEmbeddingLookupKernel {
             dtype_suffix, mode_suffix
         );
 
-        let (pipeline, _) = mtl_context
-            .compute_pipeline_state_with_reflection(&kernel_name, None)
+        let pipeline = mtl_context
+            .compute_pipeline_state(&kernel_name, None)
             .map_err(EmbeddingError::MetalError)?;
 
-        Ok(Self {
-            pipeline,
-        })
+        Ok(Self { pipeline })
     }
 
     pub fn encode(
