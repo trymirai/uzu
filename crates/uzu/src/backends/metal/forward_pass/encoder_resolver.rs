@@ -2,13 +2,13 @@ use metal::{MTLCommandBuffer, MTLCommandEncoder};
 
 use super::ForwardPassState;
 use crate::backends::metal::{
-    ComputeCommandEncoder, ProtocolObject,
+    MTLComputeCommandEncoder, ProtocolObject, Retained,
     encodable_block::{EncodableBlock, EncodingParameters},
 };
 
 pub struct EncoderResolver<'a> {
     command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>,
-    encoder: Option<ComputeCommandEncoder>,
+    encoder: Option<Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>>,
 }
 
 impl<'a> EncoderResolver<'a> {
