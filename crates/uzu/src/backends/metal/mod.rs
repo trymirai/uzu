@@ -30,9 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for references to MTLTexture (replacing old TextureRef)
-pub type TextureRef<'a> = &'a ProtocolObject<dyn MTLTexture>;
-
 /// Type alias for owned MTLBuffer
 pub type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 

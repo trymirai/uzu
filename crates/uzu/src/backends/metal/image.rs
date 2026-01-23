@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::backends::metal::{
     Device, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureUsage,
-    ProtocolObject, Texture, TextureDescriptor, TextureRef,
+    ProtocolObject, Texture, TextureDescriptor,
 };
 use crate::backends::metal::BufferLabelExt;
 use metal::MTLDeviceExt;
@@ -176,7 +176,7 @@ impl Image {
         &self.texture
     }
 
-    pub fn texture_ref(&self) -> TextureRef<'_> {
+    pub fn texture_ref(&self) -> &ProtocolObject<dyn MTLTexture> {
         &self.texture
     }
 
