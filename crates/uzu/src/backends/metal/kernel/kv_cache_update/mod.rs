@@ -8,10 +8,9 @@ use super::{
 };
 use crate::backends::metal::{
     Buffer, BufferLabelExt, CommandBuffer as MTLCommandBuffer,
-    ComputeCommandEncoderRef as MTLComputeCommandEncoderRef,
     ComputePipelineState, MTLBuffer, MTLCommandBuffer as MTLCommandBufferTrait,
-    MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLDeviceExt, MTLResourceOptions, MTLSize,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLDeviceExt,
+    MTLResourceOptions, MTLSize, ProtocolObject,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -111,7 +110,7 @@ impl KVCacheUpdate {
         in_place_data: &[KVLayerData],
         source_indices: &[usize],
         destination_indices: &[usize],
-        compute_encoder: MTLComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) -> Result<(), KVCacheUpdateError> {
         if source_indices.len() != destination_indices.len() {
             return Err(KVCacheUpdateError::IndicesCountMismatch);

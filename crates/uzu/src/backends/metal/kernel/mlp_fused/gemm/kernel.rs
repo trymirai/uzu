@@ -3,8 +3,8 @@ use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
-    FunctionConstantValuesLegacy,
+    ComputePipelineState, FunctionConstantValues,
+    FunctionConstantValuesLegacy, ProtocolObject,
 };
 
 use super::{
@@ -114,7 +114,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {

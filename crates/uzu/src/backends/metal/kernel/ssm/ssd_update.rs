@@ -4,7 +4,7 @@ use metal::MTLComputeCommandEncoder;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, KernelDataType, MTLBuffer,
+    ComputePipelineState, KernelDataType, MTLBuffer,
     MTLContext, MTLSize, ProtocolObject,
 };
 
@@ -49,7 +49,7 @@ impl SSDUpdateKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: SSDUpdateArguments,
     ) -> Result<(), SSMKernelError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);

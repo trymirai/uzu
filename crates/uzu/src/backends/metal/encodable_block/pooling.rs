@@ -5,8 +5,8 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::Array;
 use crate::{
     backends::metal::{
-        ComputeCommandEncoderRef, MTLCommandBuffer,
-        MTLCommandEncoder, ProtocolObject,
+        MTLCommandBuffer,
+        MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::PoolingKernel,
     },
@@ -88,7 +88,7 @@ impl EncodableBlock for Pooling {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let batch_size = 1;

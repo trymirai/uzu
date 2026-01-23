@@ -7,7 +7,7 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 use super::{
-    ComputeCommandEncoderRef, MTLCommandBuffer, ProtocolObject,
+    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject,
     forward_pass::ForwardPassState,
 };
 
@@ -79,7 +79,7 @@ pub trait EncodableBlock {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: ComputeCommandEncoderRef<'_>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         panic!("encode_with_shared_encoder called on unsupported type");

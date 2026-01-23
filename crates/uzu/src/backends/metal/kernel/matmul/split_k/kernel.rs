@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, ComputeCommandEncoderRef, ComputePipelineState, MTLContext,
-        MTLDeviceExt, MTLError, MTLResourceOptions,
+        Buffer, ComputePipelineState, MTLContext,
+        MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
         kernel::matmul::common::{
             GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
             transpose_configuration,
@@ -207,7 +207,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {

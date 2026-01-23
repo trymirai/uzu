@@ -5,7 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        ComputePipelineState, MTLBuffer, MTLContext,
         MTLError, MTLSize, ProtocolObject,
     },
 };
@@ -107,7 +107,7 @@ impl LayerNormKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: LayerNormArguments,
     ) -> Result<(), LayerNormError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);

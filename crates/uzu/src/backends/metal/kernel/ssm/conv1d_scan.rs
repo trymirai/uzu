@@ -6,8 +6,9 @@ use objc2::rc::Retained;
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
-        FunctionConstantValuesLegacy, KernelDataType, MTLBuffer, MTLContext,
+        ComputePipelineState, FunctionConstantValues,
+        FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
+        MTLContext,
         MTLDataType, MTLSize, ProtocolObject,
     },
     config::Activation,
@@ -176,7 +177,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dPackArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.state_stride == 0 {
@@ -241,7 +242,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dDecodeArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
@@ -342,7 +343,7 @@ impl Conv1dScanKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dScanArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {

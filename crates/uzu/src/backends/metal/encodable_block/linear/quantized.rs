@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder,
+    Buffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use crate::{
@@ -290,7 +290,7 @@ impl EncodableBlock for QuantizedLinear {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

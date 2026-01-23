@@ -1,9 +1,9 @@
 //! Attention kernel encodable.
 
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef, KernelDataType,
-    MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+use crate::backends::metal::{
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLContext, ProtocolObject,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
         AttentionError, AttentionGemmArguments, AttentionKernel,
@@ -85,7 +85,7 @@ impl EncodableBlock for Attention {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let (

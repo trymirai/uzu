@@ -3,8 +3,9 @@ use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
-    FunctionConstantValuesLegacy, KernelDataType, MTLBuffer, MTLContext,
+    ComputePipelineState, FunctionConstantValues,
+    FunctionConstantValuesLegacy, KernelDataType, MTLBuffer,
+    MTLContext,
     MTLDataType, MTLError, MTLSize, ProtocolObject,
 };
 
@@ -148,7 +149,7 @@ impl ShortConvKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvPackArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -216,7 +217,7 @@ impl ShortConvKernel {
 
     pub fn encode_prefill(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvPrefillArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -305,7 +306,7 @@ impl ShortConvKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvDecodeArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {

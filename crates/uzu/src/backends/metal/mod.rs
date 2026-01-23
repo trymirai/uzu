@@ -30,14 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for references to compute command encoders (replacing old ComputeCommandEncoderRef)
-pub type ComputeCommandEncoderRef<'a> =
-    &'a ProtocolObject<dyn MTLComputeCommandEncoder>;
-
-/// Type alias for references to compute pipeline states
-pub type ComputePipelineStateRef<'a> =
-    &'a ProtocolObject<dyn MTLComputePipelineState>;
-
 /// Type alias for references to MTLTexture (replacing old TextureRef)
 pub type TextureRef<'a> = &'a ProtocolObject<dyn MTLTexture>;
 
@@ -94,7 +86,5 @@ pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,
     MetalImagePreprocessor,
 };
-pub use metal_extensions::{
-    BufferLabelExt, FunctionConstantValuesLegacy,
-};
+pub use metal_extensions::{BufferLabelExt, FunctionConstantValuesLegacy};
 pub use placement_analysis::PlacementAnalysis;

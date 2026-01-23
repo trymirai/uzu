@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+    ComputePipelineState, MTLBuffer, MTLContext,
     MTLSize, ProtocolObject, kernel::KernelDataType,
 };
 
@@ -30,7 +30,7 @@ impl MaskUpdateKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         mask_buffer: &ProtocolObject<dyn MTLBuffer>,
         unmask_col: i32,
         mask_col: i32,

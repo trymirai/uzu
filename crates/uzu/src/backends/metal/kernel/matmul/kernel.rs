@@ -11,7 +11,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, MTLBuffer, MTLContext, MTLError,
+        MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
         ProtocolObject,
     },
 };
@@ -84,7 +84,7 @@ impl MatmulKernel {
     fn encode_dispatch_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &MatmulDispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -108,7 +108,7 @@ impl MatmulKernel {
     pub fn encode(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         mut arguments: MatmulArguments,
     ) -> Result<(), MTLError> {
         Self::apply_batch_collapse(&mut arguments);
@@ -135,7 +135,7 @@ impl MatmulKernel {
     fn apply_bias_add(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         bias: &ProtocolObject<dyn MTLBuffer>,
     ) -> Result<(), MTLError> {

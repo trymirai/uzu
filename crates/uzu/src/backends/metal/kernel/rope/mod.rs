@@ -4,7 +4,7 @@ use metal::MTLComputeCommandEncoder;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, KernelDataType, MTLBuffer,
+    ComputePipelineState, KernelDataType, MTLBuffer,
     MTLContext, MTLError, MTLSize, ProtocolObject,
 };
 
@@ -61,7 +61,7 @@ impl RopeKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: RopeKernelArguments,
     ) {
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);

@@ -8,9 +8,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, ComputeCommandEncoderRef, ComputePipelineState,
+        Buffer, ComputePipelineState,
         FunctionConstantValues, FunctionConstantValuesLegacy, MTLContext,
-        MTLDeviceExt, MTLError, MTLResourceOptions,
+        MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
             mlp_fused::common::MlpFusedArguments,
@@ -151,7 +151,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {

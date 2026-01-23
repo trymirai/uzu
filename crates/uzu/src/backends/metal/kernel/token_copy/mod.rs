@@ -1,7 +1,7 @@
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+    ComputePipelineState, MTLBuffer, MTLContext,
     MTLError, MTLSize, ProtocolObject,
 };
 
@@ -39,7 +39,7 @@ impl TokenCopyKernel {
         &self,
         sampling_output: &ProtocolObject<dyn MTLBuffer>,
         token_ids: &ProtocolObject<dyn MTLBuffer>,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         encoder.set_compute_pipeline_state(&self.copy_to_token_ids);
         encoder.set_buffer(Some(sampling_output), 0, 0);
@@ -54,7 +54,7 @@ impl TokenCopyKernel {
         sampling_output: &ProtocolObject<dyn MTLBuffer>,
         results: &ProtocolObject<dyn MTLBuffer>,
         pass_idx: usize,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let offset = (pass_idx * std::mem::size_of::<u32>()) as usize;
         encoder.set_compute_pipeline_state(&self.copy_to_results);

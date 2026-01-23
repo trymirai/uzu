@@ -8,8 +8,8 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-        MTLCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        Buffer, MTLCommandBuffer,
+        MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
         MTLResourceOptions, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::embedding::{
@@ -243,7 +243,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);

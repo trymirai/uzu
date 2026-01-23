@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 use objc2::rc::autoreleasepool;
 
@@ -469,7 +469,7 @@ impl EncodableBlock for ClassifierLayer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         debug_assert!(

@@ -3,10 +3,10 @@ use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 use objc2::rc::Retained;
 use thiserror::Error;
 
-use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    ComputeCommandEncoderRef, ComputePipelineState,
-    FunctionConstantValues, FunctionConstantValuesLegacy, KernelDataType,
-    MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError, MTLSize,
+use crate::backends::metal::{
+    ComputePipelineState, FunctionConstantValues, FunctionConstantValuesLegacy,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
+    MTLDataType, MTLError, MTLSize, ProtocolObject,
 };
 
 mod gemm_types;
@@ -47,17 +47,17 @@ pub struct AttentionSinglePassArguments<'a> {
     pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
     pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
     pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
-    pub gqa_factor: i32,               // buffer(4)
-    pub sequence_length: i32,          // buffer(5) - sequence_length
-    pub k_head_stride: i32,            // buffer(6)
-    pub k_seq_stride: i32,             // buffer(7)
-    pub v_head_stride: i32,            // buffer(8)
-    pub v_seq_stride: i32,             // buffer(9)
-    pub scale: f32,                    // buffer(10)
+    pub gqa_factor: i32,                                   // buffer(4)
+    pub sequence_length: i32, // buffer(5) - sequence_length
+    pub k_head_stride: i32,   // buffer(6)
+    pub k_seq_stride: i32,    // buffer(7)
+    pub v_head_stride: i32,   // buffer(8)
+    pub v_seq_stride: i32,    // buffer(9)
+    pub scale: f32,           // buffer(10)
     pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(11/12)
-    pub mask_kv_seq_stride: i32,       // buffer(13)
-    pub mask_q_seq_stride: i32,        // buffer(14)
-    pub mask_head_stride: i32,         // buffer(15)
+    pub mask_kv_seq_stride: i32, // buffer(13)
+    pub mask_q_seq_stride: i32, // buffer(14)
+    pub mask_head_stride: i32, // buffer(15)
     pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(16)
     pub num_heads: usize,
     pub suffix_length: usize,
@@ -66,24 +66,24 @@ pub struct AttentionSinglePassArguments<'a> {
 }
 
 pub struct AttentionTwoPassArguments<'a> {
-    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(0)
-    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(1)
-    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // buffer(2)
+    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
+    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
+    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
     pub partials_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) - pass 1 output
-    pub sums_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(4) - pass 1 output
-    pub maxs_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // buffer(5) - pass 1 output
-    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // buffer(3) - pass 2 output
-    pub gqa_factor: i32,                // buffer(6)
-    pub sequence_length: i32,           // buffer(7) - sequence_length
-    pub k_head_stride: i32,             // buffer(8)
-    pub k_seq_stride: i32,              // buffer(9)
-    pub v_head_stride: i32,             // buffer(10)
-    pub v_seq_stride: i32,              // buffer(11)
-    pub scale: f32,                     // buffer(12)
+    pub sums_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(4) - pass 1 output
+    pub maxs_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(5) - pass 1 output
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) - pass 2 output
+    pub gqa_factor: i32,                                  // buffer(6)
+    pub sequence_length: i32, // buffer(7) - sequence_length
+    pub k_head_stride: i32,   // buffer(8)
+    pub k_seq_stride: i32,    // buffer(9)
+    pub v_head_stride: i32,   // buffer(10)
+    pub v_seq_stride: i32,    // buffer(11)
+    pub scale: f32,           // buffer(12)
     pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(13/14)
-    pub mask_kv_seq_stride: i32,        // buffer(15)
-    pub mask_q_seq_stride: i32,         // buffer(16)
-    pub mask_head_stride: i32,          // buffer(17)
+    pub mask_kv_seq_stride: i32, // buffer(15)
+    pub mask_q_seq_stride: i32, // buffer(16)
+    pub mask_head_stride: i32, // buffer(17)
     pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(18)
     pub num_heads: usize,
     pub suffix_length: usize,
@@ -308,7 +308,7 @@ impl AttentionKernel {
 
     pub fn encode_single_pass(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: AttentionSinglePassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
@@ -468,7 +468,7 @@ impl AttentionKernel {
 
     pub fn encode_two_pass(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: AttentionTwoPassArguments,
     ) -> Result<(), AttentionError> {
         let has_sinks = args.sinks_buffer.is_some();
@@ -693,7 +693,7 @@ impl AttentionKernel {
 
     pub fn encode_kv_cache_update(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: KVCacheUpdateArguments,
     ) -> Result<(), AttentionError> {
         let pipeline =
@@ -811,7 +811,7 @@ impl AttentionKernel {
     pub fn encode_gemm(
         &self,
         context: &MTLContext,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: AttentionGemmArguments,
     ) -> Result<(), AttentionError> {
         const BQ: usize = 32;

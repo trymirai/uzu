@@ -5,7 +5,7 @@ use metal::{MTLComputeCommandEncoder, MTLComputePipelineState};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        ComputePipelineState, MTLBuffer, MTLContext,
         MTLError, MTLSize, ProtocolObject,
     },
 };
@@ -189,7 +189,7 @@ impl RMSNormKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: RMSNormArguments,
     ) -> Result<(), RMSNormError> {
         if self.kernel_type != RMSNormKernelType::Standard {
@@ -261,7 +261,7 @@ impl RMSNormKernel {
 
     pub fn encode_qk_norm(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: QKNormArguments,
     ) -> Result<(), RMSNormError> {
         if self.kernel_type != RMSNormKernelType::QueryKey {

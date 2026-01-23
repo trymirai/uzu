@@ -3,7 +3,7 @@
 use std::{env, rc::Rc};
 
 use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
@@ -147,7 +147,7 @@ impl MambaMixer {
     fn encode_pipeline_with_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -173,7 +173,7 @@ impl MambaMixer {
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -221,7 +221,7 @@ impl MambaMixer {
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -337,7 +337,7 @@ impl MambaMixer {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -417,7 +417,7 @@ impl MambaMixer {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -559,7 +559,7 @@ impl EncodableBlock for MambaMixer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);

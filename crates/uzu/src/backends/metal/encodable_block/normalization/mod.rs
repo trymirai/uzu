@@ -14,7 +14,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, MTLCommandBuffer, MTLContext, ProtocolObject,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{LayerNormError, RMSNormError},
     },
@@ -103,7 +103,7 @@ impl EncodableBlock for Normalization {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         match self {

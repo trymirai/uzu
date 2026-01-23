@@ -3,8 +3,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLBlitCommandEncoder,
-    MTLCommandBuffer, MTLCommandEncoder, NSRange,
+    Buffer, MTLBlitCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, NSRange,
 };
 
 use super::{
@@ -642,7 +642,7 @@ impl EncodableBlock for MoeBlock {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: ComputeCommandEncoderRef<'_>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         unreachable!("MoeBlock does not support shared compute encoder");

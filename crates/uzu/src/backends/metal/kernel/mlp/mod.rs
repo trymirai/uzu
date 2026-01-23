@@ -6,7 +6,7 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        ComputePipelineState, FunctionConstantValues,
         FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLDataType,
         MTLError, MTLSize, ProtocolObject,
     },
@@ -122,7 +122,7 @@ impl MlpGateActMulEncodable {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         fused_up: &ProtocolObject<dyn MTLBuffer>,
         hidden: &ProtocolObject<dyn MTLBuffer>,
         m: i32,
@@ -178,7 +178,7 @@ impl MlpGateActMulKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         activation: &Activation,
         fused_up_buffer: &ProtocolObject<dyn MTLBuffer>,
         hidden_buffer: &ProtocolObject<dyn MTLBuffer>,

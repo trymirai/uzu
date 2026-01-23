@@ -5,7 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        ComputePipelineState, MTLBuffer, MTLContext,
         MTLError, MTLSize, ProtocolObject,
     },
 };
@@ -54,7 +54,7 @@ impl PoolingKernel {
 
     pub fn encode_cls(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         input_buffer: &ProtocolObject<dyn MTLBuffer>,
         output_buffer: &ProtocolObject<dyn MTLBuffer>,
         batch_size: i32,
@@ -89,7 +89,7 @@ impl PoolingKernel {
 
     pub fn encode_mean(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         input_buffer: &ProtocolObject<dyn MTLBuffer>,
         output_buffer: &ProtocolObject<dyn MTLBuffer>,
         batch_size: i32,

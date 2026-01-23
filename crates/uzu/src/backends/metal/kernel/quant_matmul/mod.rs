@@ -5,7 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, FunctionConstantValues,
+        ComputePipelineState, FunctionConstantValues,
         FunctionConstantValuesLegacy, MTLBuffer, MTLContext, MTLError, MTLSize,
         ProtocolObject,
     },
@@ -190,7 +190,7 @@ impl QuantizedMatmulKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: QuantizedMatmulArguments,
     ) -> Result<(), QuantizedMatmulError> {
         let variant = self.select_variant(args.batch as usize);
@@ -423,7 +423,7 @@ impl MlpFusedQmvKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &MlpFusedQmvArguments,
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
@@ -533,7 +533,7 @@ impl MlpFusedQmmKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &MlpFusedQmmArguments,
     ) -> Result<(), QuantizedMatmulError> {
         encoder.set_compute_pipeline_state(&self.pipeline);

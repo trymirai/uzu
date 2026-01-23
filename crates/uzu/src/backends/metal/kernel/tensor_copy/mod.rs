@@ -5,8 +5,9 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState,
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+    ComputePipelineState,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLContext,
     MTLError, ProtocolObject, metal_extensions::ComputeEncoderDispatch,
 };
 
@@ -54,7 +55,7 @@ impl TensorCopyKernel {
         source_buffer: &ProtocolObject<dyn MTLBuffer>,
         destination_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unsafe {
             let label = NSString::from_str("Tensor Copy");

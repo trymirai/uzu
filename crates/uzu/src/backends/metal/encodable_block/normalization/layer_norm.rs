@@ -2,16 +2,12 @@
 
 use std::rc::Rc;
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions,
-};
-
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        Buffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::layer_norm::{
             LayerNormArguments, LayerNormError, LayerNormKernel,
@@ -49,10 +45,13 @@ impl LayerNorm {
         })?;
 
         let scales_data = scales_param.buffer();
-        let scales_buffer = context.device.new_buffer_with_data(
-            scales_data,
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        ).expect("Failed to create scales buffer");
+        let scales_buffer = context
+            .device
+            .new_buffer_with_data(
+                scales_data,
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create scales buffer");
 
         let accumulation_data_type: DataType =
             config.accumulation_precision.into();
@@ -93,7 +92,8 @@ impl EncodableBlock for LayerNorm {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder()
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
@@ -111,7 +111,7 @@ impl EncodableBlock for LayerNorm {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);

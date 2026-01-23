@@ -1,10 +1,9 @@
 use std::{mem, ptr::NonNull};
 
 use crate::backends::metal::{
-    BufferLabelExt,
-    ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
-    MTLSize, ProtocolObject,
+    BufferLabelExt, ComputePipelineState, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLSize,
+    ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
     image::Image,
@@ -95,7 +94,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: ComputeCommandEncoderRef<'_>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         unreachable!(

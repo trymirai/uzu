@@ -5,9 +5,9 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState,
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
-    MTLError, ProtocolObject, metal_extensions::ComputeEncoderDispatch,
+    ComputePipelineState, KernelDataType, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLContext, MTLError,
+    ProtocolObject, metal_extensions::ComputeEncoderDispatch,
 };
 
 #[derive(Debug)]
@@ -38,9 +38,15 @@ impl TensorAddSwapKernel {
         length: usize,
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder()
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
-        self.encode_with_encoder(skip_buffer, main_buffer, length, &compute_encoder);
+        self.encode_with_encoder(
+            skip_buffer,
+            main_buffer,
+            length,
+            &compute_encoder,
+        );
         compute_encoder.end_encoding();
     }
 
@@ -49,7 +55,7 @@ impl TensorAddSwapKernel {
         skip_buffer: &ProtocolObject<dyn MTLBuffer>,
         main_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unsafe {
             let label = NSString::from_str("Tensor Add-Swap");
@@ -61,7 +67,9 @@ impl TensorAddSwapKernel {
 
         unsafe {
             compute_encoder.set_bytes(
-                NonNull::new_unchecked(&(length as i32) as *const i32 as *mut std::ffi::c_void),
+                NonNull::new_unchecked(
+                    &(length as i32) as *const i32 as *mut std::ffi::c_void,
+                ),
                 size_of::<i32>(),
                 2,
             );

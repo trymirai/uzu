@@ -2,16 +2,12 @@
 
 use std::rc::Rc;
 
-use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder, MTLDeviceExt, MTLResourceOptions,
-};
-
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        Buffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::rms_norm::{
             QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel,
@@ -166,7 +162,8 @@ impl EncodableBlock for QKNorm {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder()
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
@@ -184,7 +181,7 @@ impl EncodableBlock for QKNorm {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);

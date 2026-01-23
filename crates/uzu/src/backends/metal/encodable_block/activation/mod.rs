@@ -1,5 +1,5 @@
 use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{
@@ -70,7 +70,7 @@ impl EncodableBlock for Activation {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

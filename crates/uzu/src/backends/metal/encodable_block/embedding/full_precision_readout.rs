@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder,
+    Buffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{
@@ -110,7 +110,7 @@ impl EncodableBlock for FullPrecisionEmbeddingReadout {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);

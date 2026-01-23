@@ -5,7 +5,7 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, MTLBuffer, MTLContext,
+        ComputePipelineState, MTLBuffer, MTLContext,
         MTLError, MTLSize, ProtocolObject,
     },
 };
@@ -42,7 +42,7 @@ impl SigmoidKernel {
 
     pub fn encode(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         input_buffer: &ProtocolObject<dyn MTLBuffer>,
         output_buffer: &ProtocolObject<dyn MTLBuffer>,
         total_elements: i32,

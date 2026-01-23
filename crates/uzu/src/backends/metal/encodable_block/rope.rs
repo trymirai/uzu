@@ -1,7 +1,7 @@
 //! Rope (Rotary Position Embedding) encodable.
 
 use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -58,7 +58,7 @@ impl EncodableBlock for Rope {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {

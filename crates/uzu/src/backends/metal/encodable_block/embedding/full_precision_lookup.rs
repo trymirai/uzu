@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use crate::backends::metal::{ProtocolObject,
-    Buffer, ComputeCommandEncoderRef, MTLCommandBuffer,
-    MTLCommandEncoder,
+    Buffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{
@@ -111,7 +111,7 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);

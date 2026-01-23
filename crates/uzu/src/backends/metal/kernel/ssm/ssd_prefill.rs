@@ -4,7 +4,7 @@ use metal::MTLComputeCommandEncoder;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState, KernelDataType, MTLBuffer,
+    ComputePipelineState, KernelDataType, MTLBuffer,
     MTLContext, MTLSize, ProtocolObject,
 };
 
@@ -71,7 +71,7 @@ impl SSDPrefillKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: SSDPrefillArguments,
         mode: SSDPrefillMode,
     ) -> Result<(), SSMKernelError> {
@@ -87,7 +87,7 @@ impl SSDPrefillKernel {
 
     fn encode_sequential(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &SSDPrefillArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.head_dim == 0 || args.suffix_len == 0 {
@@ -112,7 +112,7 @@ impl SSDPrefillKernel {
 
     fn encode_single(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &SSDPrefillArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.head_dim == 0 || args.suffix_len == 0 {
@@ -158,7 +158,7 @@ impl SSDPrefillKernel {
 
     fn bind_common_buffers(
         &self,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &SSDPrefillArguments,
     ) {
         compute_encoder.set_buffer(Some(args.x), 0, 0);

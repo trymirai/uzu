@@ -6,8 +6,7 @@ use crate::Array;
 #[cfg(feature = "tracing")]
 use crate::backends::metal::forward_pass::ArrayId;
 use crate::backends::metal::{ProtocolObject,
-    ComputeCommandEncoderRef,
-    MTLCommandBuffer, MTLCommandEncoder, forward_pass::ForwardPassState,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, forward_pass::ForwardPassState,
 };
 
 pub struct ClassifierPredictionHead {
@@ -103,7 +102,7 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         self.dense.encode_with_shared_encoder(state, encoder, parameters);

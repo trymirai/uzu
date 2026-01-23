@@ -9,7 +9,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, ComputePipelineState, MTLContext, MTLError,
+        ComputePipelineState, MTLContext, MTLError,
+        ProtocolObject,
         kernel::matmul::common::MatmulArguments,
     },
 };
@@ -117,7 +118,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {

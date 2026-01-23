@@ -5,8 +5,8 @@ use objc2::msg_send;
 use objc2_foundation::NSString;
 
 use crate::backends::metal::{
-    ComputeCommandEncoderRef, ComputePipelineState,
-    KernelDataType, MTLBuffer, MTLContext, MTLError, ProtocolObject,
+    ComputePipelineState, KernelDataType, MTLBuffer,
+    MTLContext, MTLError, ProtocolObject,
     metal_extensions::{ComputeEncoderConditional, ComputeEncoderDispatch},
 };
 
@@ -55,7 +55,7 @@ impl TensorAddBias {
         output: &ProtocolObject<dyn MTLBuffer>,
         num_cols: usize,
         total_len: usize,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         predicate: Option<&ProtocolObject<dyn MTLBuffer>>,
     ) {
         encoder.condition(

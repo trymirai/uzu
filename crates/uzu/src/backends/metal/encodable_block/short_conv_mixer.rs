@@ -6,8 +6,8 @@ use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeCommandEncoderRef, KernelDataType, MTLCommandBuffer,
-        MTLCommandEncoder, MTLContext, MTLResourceOptions, MetalArray,
+        KernelDataType, MTLCommandBuffer,
+        MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLResourceOptions, MetalArray,
         ProtocolObject,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
@@ -151,7 +151,7 @@ impl ShortConvMixer {
     fn encode_pipeline_with_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -175,7 +175,7 @@ impl ShortConvMixer {
     fn run_prefill_conv(
         &self,
         state: &mut ForwardPassState,
-        compute: ComputeCommandEncoderRef,
+        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -249,7 +249,7 @@ impl ShortConvMixer {
     fn run_decode_conv(
         &self,
         state: &mut ForwardPassState,
-        compute: ComputeCommandEncoderRef,
+        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -327,7 +327,7 @@ impl EncodableBlock for ShortConvMixer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);

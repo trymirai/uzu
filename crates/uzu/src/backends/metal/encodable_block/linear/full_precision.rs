@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     DataType,
     backends::metal::{
-        Buffer, ComputeCommandEncoderRef, MTLCommandBuffer, MTLCommandEncoder,
-        MTLContext, MTLError, ProtocolObject,
+        Buffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
@@ -162,7 +162,7 @@ impl EncodableBlock for FullPrecisionLinear {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

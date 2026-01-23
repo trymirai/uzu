@@ -1,14 +1,12 @@
 use std::mem::size_of;
 
-use metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt,
-};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLDeviceExt};
 use thiserror::Error;
 
 use crate::{
     backends::metal::{
-        Buffer, ComputeCommandEncoderRef, KernelDataType,
-        MTLBuffer, MTLContext, MTLError, MTLResourceOptions, ProtocolObject,
+        Buffer, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+        MTLContext, MTLError, MTLResourceOptions, ProtocolObject,
         kernel::dsl::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
             BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
@@ -132,7 +130,7 @@ impl SamplingKernel {
                 let partial_results_buffer = context
                     .device
                     .new_buffer(
-                        max_partial_results * size_of::<ArgmaxPair>() ,
+                        max_partial_results * size_of::<ArgmaxPair>(),
                         MTLResourceOptions::STORAGE_MODE_SHARED,
                     )
                     .expect("Failed to create partial results buffer");
@@ -201,7 +199,7 @@ impl SamplingKernel {
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        compute_encoder: ComputeCommandEncoderRef<'_>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) -> Result<(), SamplingError> {
         if batch_size > self.max_batch_size {
             return Err(SamplingError::BatchSizeExceeded(

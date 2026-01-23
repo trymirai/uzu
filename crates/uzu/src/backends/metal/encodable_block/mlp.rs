@@ -3,8 +3,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    Buffer, ComputeCommandEncoderRef,
-    MTLCommandBuffer, MTLCommandEncoder,
+    Buffer,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -96,7 +96,7 @@ impl EncodableBlock for MlpBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         params: &EncodingParameters,
     ) {
         // Up
@@ -239,7 +239,7 @@ impl MlpFusedBlock {
 
     fn encode_fused_up(
         &self,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         input: &ProtocolObject<dyn MTLBuffer>,
         input_offset: u64,
         output: &ProtocolObject<dyn MTLBuffer>,
@@ -357,7 +357,7 @@ impl EncodableBlock for MlpFusedBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: ComputeCommandEncoderRef<'_>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         params: &EncodingParameters,
     ) {
         // Fused up + activation
