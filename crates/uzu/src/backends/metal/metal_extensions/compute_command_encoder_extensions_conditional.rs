@@ -7,7 +7,7 @@ use crate::backends::metal::{
 /// Low-level, unsafe conditional control of Metal encoders.
 /// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.
 trait ComputeEncoderRawConditional {
-    unsafe fn encode_start_if(
+    fn encode_start_if(
         &self,
         predicate: &ProtocolObject<dyn MTLBuffer>,
         offset: usize,
@@ -15,9 +15,9 @@ trait ComputeEncoderRawConditional {
         reference_value: u32,
     );
 
-    unsafe fn encode_start_else(&self);
+    fn encode_start_else(&self);
 
-    unsafe fn encode_end_if(&self) -> bool;
+    fn encode_end_if(&self) -> bool;
 }
 
 /// Safe conditional wrapper that uses the raw unsafe methods internally.
@@ -35,28 +35,30 @@ pub trait ComputeEncoderConditional {
 impl ComputeEncoderRawConditional
     for ProtocolObject<dyn MTLComputeCommandEncoder>
 {
-    unsafe fn encode_start_if(
+    fn encode_start_if(
         &self,
         predicate: &ProtocolObject<dyn MTLBuffer>,
         offset: usize,
         comparison: MTLCompareFunction,
         reference_value: u32,
     ) {
-        let _: () = msg_send![
-            self,
-            encodeStartIf: predicate,
-            offset: offset,
-            comparison: comparison,
-            referenceValue: reference_value
-        ];
+        let _: () = unsafe {
+            msg_send![
+                self,
+                encodeStartIf: predicate,
+                offset: offset,
+                comparison: comparison,
+                referenceValue: reference_value
+            ]
+        };
     }
 
-    unsafe fn encode_start_else(&self) {
-        let _: () = msg_send![self, encodeStartElse];
+    fn encode_start_else(&self) {
+        let _: () = unsafe { msg_send![self, encodeStartElse] };
     }
 
-    unsafe fn encode_end_if(&self) -> bool {
-        let result: bool = msg_send![self, encodeEndIf];
+    fn encode_end_if(&self) -> bool {
+        let result: bool = unsafe { msg_send![self, encodeEndIf] };
         result
     }
 }
@@ -75,14 +77,14 @@ where
         ElseBlock: FnOnce(),
     {
         match (predicate, else_block) {
-            (Some(p), Some(else_fn)) => unsafe {
+            (Some(p), Some(else_fn)) => {
                 self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
                 if_block();
                 self.encode_start_else();
                 else_fn();
                 self.encode_end_if();
             },
-            (Some(p), None) => unsafe {
+            (Some(p), None) => {
                 self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
                 if_block();
                 self.encode_end_if();
