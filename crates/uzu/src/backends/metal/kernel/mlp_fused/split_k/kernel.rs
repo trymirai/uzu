@@ -8,9 +8,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesLegacy, MTLFunctionConstantValues,
-        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions,
-        ProtocolObject, Retained,
+        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDeviceExt, MTLError,
+        MTLFunctionConstantValues, MTLResourceOptions, ProtocolObject, Retained,
         kernel::{
             matmul::common::GEMMSpiltKMlpFusedParams, mlp::MlpActivationType,
             mlp_fused::common::MlpFusedArguments,
@@ -112,8 +111,8 @@ impl Kernel {
             let kernel_name = self.accum_kernel_name()?;
             let function_constants = MTLFunctionConstantValues::new();
             let activation_val = activation as u32;
-            function_constants.set_constant_value_at_index(
-                &activation_val as *const u32 as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&activation_val).cast(),
                 metal::MTLDataType::UInt,
                 52,
             );

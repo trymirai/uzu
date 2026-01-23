@@ -7,10 +7,10 @@ use super::{
     MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
     MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
 };
-use crate::backends::metal::{MTLBuffer, ProtocolObject,
-    FunctionConstantValuesLegacy, KernelDataType, MTLBlitCommandEncoder, MTLFunctionConstantValues,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-    MTLDataType, MTLError, MTLSize, NSRange, Retained,
+use crate::backends::metal::{
+    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
+    MTLFunctionConstantValues, MTLSize, NSRange, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -119,14 +119,14 @@ impl MoeExpertsTwoPassDecodeKernel {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
                 let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );
                 let tile_h: u32 = 512;
-                fcv.set_constant_value_at_index(
-                    &tile_h as *const u32 as *const std::ffi::c_void,
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&tile_h).cast(),
                     MTLDataType::UInt,
                     32,
                 );
@@ -341,8 +341,8 @@ impl MoeExpertsTwoPassPrefillKernel {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
                 let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );
@@ -625,8 +625,8 @@ impl MoeExpertsSingleDecodeKernel {
             for dtype in &dtypes {
                 let suffix = dtype_suffix(*dtype);
                 let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );

@@ -9,8 +9,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesLegacy, MTLContext, MTLError, MTLFunctionConstantValues,
-        MTLComputePipelineState, ProtocolObject, Retained,
+        MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
+        ProtocolObject, Retained,
         kernel::matmul::common::{
             GEMMAddMMParams, GEMMParams, MatmulArguments,
             transpose_configuration,
@@ -140,33 +140,33 @@ impl Kernel {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = MTLFunctionConstantValues::new();
-            function_constants.set_constant_value_at_index(
-                &configuration.has_batch as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.has_batch).cast(),
                 metal::MTLDataType::Bool,
                 10,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.use_out_source as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.use_out_source).cast(),
                 metal::MTLDataType::Bool,
                 100,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.do_axpby as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.do_axpby).cast(),
                 metal::MTLDataType::Bool,
                 110,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_m as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_m).cast(),
                 metal::MTLDataType::Bool,
                 200,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_n as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_n).cast(),
                 metal::MTLDataType::Bool,
                 201,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_k as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_k).cast(),
                 metal::MTLDataType::Bool,
                 202,
             );

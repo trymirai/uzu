@@ -6,9 +6,8 @@ use objc2::rc::Retained;
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesLegacy, MTLBuffer, MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, MTLSize,
-        ProtocolObject,
+        MTLBuffer, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
+        MTLSize, ProtocolObject,
     },
     config::QuantizationMode,
 };
@@ -114,8 +113,8 @@ impl QuantizedMatmulKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_at_index(
-            &use_mlx_quant as *const bool as *const std::ffi::c_void,
+        function_constants.set_constant_value_type_at_index(
+            NonNull::from(&use_mlx_quant).cast(),
             metal::MTLDataType::Bool,
             40,
         );
@@ -407,8 +406,8 @@ impl MlpFusedQmvKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_at_index(
-            &use_mlx_quant as *const bool as *const std::ffi::c_void,
+        function_constants.set_constant_value_type_at_index(
+            NonNull::from(&use_mlx_quant).cast(),
             metal::MTLDataType::Bool,
             40,
         );
@@ -517,8 +516,8 @@ impl MlpFusedQmmKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_at_index(
-            &use_mlx_quant as *const bool as *const std::ffi::c_void,
+        function_constants.set_constant_value_type_at_index(
+            NonNull::from(&use_mlx_quant).cast(),
             metal::MTLDataType::Bool,
             40,
         );

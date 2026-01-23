@@ -5,9 +5,8 @@ use metal::MTLComputeCommandEncoder;
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesLegacy, MTLBuffer, MTLFunctionConstantValues,
-        MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLSize,
-        ProtocolObject, Retained,
+        MTLBuffer, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
+        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
     },
     config::Activation,
 };
@@ -62,21 +61,21 @@ impl MlpFusedConfig {
     pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
         let fcv = MTLFunctionConstantValues::new();
         let fused = true;
-        fcv.set_constant_value_at_index(
-            &fused as *const bool as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&fused).cast(),
             MTLDataType::Bool,
-            MLP_FUSED_FC_INDEX,
+            MLP_FUSED_FC_INDEX as usize,
         );
-        fcv.set_constant_value_at_index(
-            &self.hidden_dim as *const u32 as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&self.hidden_dim).cast(),
             MTLDataType::UInt,
-            MLP_HIDDEN_DIM_FC_INDEX,
+            MLP_HIDDEN_DIM_FC_INDEX as usize,
         );
         let act_val = self.activation as u32;
-        fcv.set_constant_value_at_index(
-            &act_val as *const u32 as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&act_val).cast(),
             MTLDataType::UInt,
-            MLP_ACTIVATION_FC_INDEX,
+            MLP_ACTIVATION_FC_INDEX as usize,
         );
         fcv
     }
@@ -86,10 +85,10 @@ impl MlpFusedConfig {
 pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
     let fcv = MTLFunctionConstantValues::new();
     let fused = false;
-    fcv.set_constant_value_at_index(
-        &fused as *const bool as *const std::ffi::c_void,
+    fcv.set_constant_value_type_at_index(
+        NonNull::from(&fused).cast(),
         MTLDataType::Bool,
-        MLP_FUSED_FC_INDEX,
+        MLP_FUSED_FC_INDEX as usize,
     );
     fcv
 }

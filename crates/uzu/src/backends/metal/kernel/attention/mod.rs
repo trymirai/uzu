@@ -4,9 +4,8 @@ use objc2::rc::Retained;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    FunctionConstantValuesLegacy, MTLFunctionConstantValues,
     KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-    MTLDataType, MTLError, MTLSize, ProtocolObject,
+    MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
 };
 
 mod gemm_types;
@@ -133,33 +132,33 @@ fn make_function_constants(
     let bool_mask_value = false;
     let float_mask_value = has_mask_value;
 
-    function_constants.set_constant_value_at_index(
-        &has_mask_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&has_mask_value).cast(),
         MTLDataType::Bool,
         20,
     ); // has_mask
-    function_constants.set_constant_value_at_index(
-        &query_transposed_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&query_transposed_value).cast(),
         MTLDataType::Bool,
         21,
     ); // query_transposed
-    function_constants.set_constant_value_at_index(
-        &bool_mask_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&bool_mask_value).cast(),
         MTLDataType::Bool,
         23,
     ); // bool_mask
-    function_constants.set_constant_value_at_index(
-        &float_mask_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&float_mask_value).cast(),
         MTLDataType::Bool,
         24,
     ); // float_mask
-    function_constants.set_constant_value_at_index(
-        &is_causal_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&is_causal_value).cast(),
         MTLDataType::Bool,
         22,
     ); // do_causal
-    function_constants.set_constant_value_at_index(
-        &has_sinks_value as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&has_sinks_value).cast(),
         MTLDataType::Bool,
         25,
     ); // has_sinks
@@ -834,28 +833,28 @@ impl AttentionKernel {
         let has_sinks = args.sinks_buffer.is_some();
 
         let fcv = MTLFunctionConstantValues::new();
-        fcv.set_constant_value_at_index(
-            &align_q as *const bool as *const _,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&align_q).cast(),
             MTLDataType::Bool,
             200,
         );
-        fcv.set_constant_value_at_index(
-            &align_k as *const bool as *const _,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&align_k).cast(),
             MTLDataType::Bool,
             201,
         );
-        fcv.set_constant_value_at_index(
-            &has_mask as *const bool as *const _,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&has_mask).cast(),
             MTLDataType::Bool,
             300,
         );
-        fcv.set_constant_value_at_index(
-            &args.is_causal as *const bool as *const _,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&args.is_causal).cast(),
             MTLDataType::Bool,
             301,
         );
-        fcv.set_constant_value_at_index(
-            &has_sinks as *const bool as *const _,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&has_sinks).cast(),
             MTLDataType::Bool,
             302,
         );

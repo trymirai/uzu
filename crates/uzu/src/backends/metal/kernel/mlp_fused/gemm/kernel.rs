@@ -3,8 +3,7 @@ use std::{collections::HashMap, ffi::c_void, ptr::NonNull};
 use metal::MTLComputeCommandEncoder;
 
 use crate::backends::metal::{
-    FunctionConstantValuesLegacy, MTLComputePipelineState, MTLFunctionConstantValues,
-    ProtocolObject, Retained,
+    MTLComputePipelineState, MTLFunctionConstantValues, ProtocolObject, Retained,
 };
 
 use super::{
@@ -96,8 +95,8 @@ impl Kernel {
 
             let function_constants = MTLFunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
-            function_constants.set_constant_value_at_index(
-                &activation_val as *const u32 as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&activation_val).cast(),
                 metal::MTLDataType::UInt,
                 52,
             );
