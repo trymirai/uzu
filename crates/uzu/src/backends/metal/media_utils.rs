@@ -1,7 +1,7 @@
 use std::{cell::RefCell, mem, rc::Rc};
 
 use crate::backends::metal::{
-    Device as MTLDevice, MTLCommandBuffer, MTLResourceOptions, ProtocolObject,
+    MTLCommandBuffer, MTLDevice, MTLResourceOptions, ProtocolObject, Retained,
 };
 use metal::MTLDeviceExt;
 
@@ -133,7 +133,7 @@ pub fn calculate_image_preprocessing_requirements(
 }
 
 pub struct MetalImagePreprocessor {
-    device: MTLDevice,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
     scale_pad_normalize_kernel: ScalePadNormalizeImage,
     extract_patches_kernel: ExtractImagePatches,
 }
@@ -267,7 +267,7 @@ impl MetalImagePreprocessor {
 }
 
 fn data_to_mtl_tensor<T: Copy>(
-    device: &MTLDevice,
+    device: &Retained<ProtocolObject<dyn MTLDevice>>,
     data: &T,
     shape: Vec<usize>,
     data_type: DataType,

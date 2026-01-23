@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::backends::metal::{
-    Device, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureUsage,
-    ProtocolObject, Texture, TextureDescriptor,
+    MTLDevice, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureUsage,
+    ProtocolObject, Retained, Texture, TextureDescriptor,
 };
 use crate::backends::metal::BufferLabelExt;
 use metal::MTLDeviceExt;
@@ -89,7 +89,7 @@ pub struct Image {
 
 impl Image {
     pub fn new(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         width: u32,
         height: u32,
         pixel_format: PixelFormat,
@@ -104,7 +104,7 @@ impl Image {
     }
 
     pub fn new_with_usage(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         width: u32,
         height: u32,
         pixel_format: PixelFormat,
@@ -129,7 +129,7 @@ impl Image {
     }
 
     pub fn new_with_descriptor(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         descriptor: &TextureDescriptor,
     ) -> Self {
         let texture = device.new_texture_with_descriptor(descriptor).expect("Failed to create texture");

@@ -9,7 +9,8 @@ use std::{
 use metal::{MTLCommandQueue, MTLDeviceExt};
 
 use crate::backends::metal::{
-    Device, MTLBuffer, MTLCommandBuffer, MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
+    MTLBuffer, MTLCommandBuffer, MTLDevice, MTLEvent, MTLResourceOptions,
+    ProtocolObject, Retained,
 };
 
 use super::{
@@ -56,7 +57,7 @@ pub struct AsyncBuffers {
 
 impl AsyncBuffers {
     pub fn new(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
@@ -160,7 +161,7 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let mtl_device: Device = <dyn metal::MTLDevice>::system_default().ok_or(Error::UnableToCreateMetalContext)?;
+        let mtl_device: Retained<ProtocolObject<dyn MTLDevice>> = <dyn metal::MTLDevice>::system_default().ok_or(Error::UnableToCreateMetalContext)?;
         let mtl_command_queue =
             mtl_device.new_command_queue_with_max_command_buffer_count(1024).ok_or(Error::UnableToCreateMetalContext)?;
 
