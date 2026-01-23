@@ -7,7 +7,7 @@ use super::{
     metal_extensions::ComputeEncoderDispatch,
 };
 use crate::backends::metal::{
-    BufferLabelExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
     MTLComputeCommandEncoder, MTLComputePipelineState, MTLDeviceExt,
     MTLResourceOptions, MTLSize, ProtocolObject, Retained,
 };

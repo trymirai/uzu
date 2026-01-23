@@ -1,6 +1,5 @@
 #![allow(dead_code, unused_variables, unused_imports)]
 
-mod buffer_label_ext;
 mod command_encoder_extensions_device;
 mod compute_command_encoder_extensions_conditional;
 mod compute_command_encoder_extensions_dispatch;
@@ -10,7 +9,6 @@ mod device_extensions_features;
 mod library_extensions_pipeline;
 
 pub mod command_buffer_extensions;
-pub use buffer_label_ext::BufferLabelExt;
 pub use compute_command_encoder_extensions_conditional::ComputeEncoderConditional;
 pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;

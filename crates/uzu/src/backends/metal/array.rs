@@ -3,7 +3,7 @@ use std::ops::Range;
 use half::{bf16, f16};
 use metal::{MTLBuffer, MTLDeviceExt, MTLResource, MTLResourceOptions};
 
-use crate::backends::metal::metal_extensions::BufferLabelExt;
+use crate::backends::metal::MTLResourceExt;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{Array, ArrayElement, DataType, array::array_size_in_bytes};

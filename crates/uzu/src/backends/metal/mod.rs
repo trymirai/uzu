@@ -45,5 +45,4 @@ pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,
     MetalImagePreprocessor,
 };
-pub use metal_extensions::BufferLabelExt;
 pub use placement_analysis::PlacementAnalysis;

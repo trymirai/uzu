@@ -12,7 +12,7 @@ use crate::{
     DataType, DeviceContext,
     array::array_size_in_bytes,
     backends::metal::{
-        BufferLabelExt, MTLCommandQueue, MTLComputePipelineState, MTLDevice,
+        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLResourceExt,
         MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
         MTLResourceOptions,
     },

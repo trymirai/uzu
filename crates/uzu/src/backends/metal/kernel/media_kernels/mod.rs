@@ -3,7 +3,7 @@ use std::{mem, ptr::NonNull};
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
-    BufferLabelExt, MTLBuffer, MTLCommandBuffer,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoderExt,
     MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
     ProtocolObject,
     error::MTLError,

@@ -4,7 +4,7 @@ use crate::backends::metal::{
     MTLDevice, MTLPixelFormat, MTLStorageMode, MTLTexture, MTLTextureDescriptor,
     MTLTextureUsage, ProtocolObject, Retained,
 };
-use crate::backends::metal::BufferLabelExt;
+use crate::backends::metal::MTLResourceExt;
 use metal::MTLDeviceExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
