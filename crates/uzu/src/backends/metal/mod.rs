@@ -30,9 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for owned MTLLibrary  
-pub type Library = Retained<ProtocolObject<dyn MTLLibrary>>;
-
 /// Type alias for owned MTLEvent
 pub type Event = Retained<ProtocolObject<dyn MTLEvent>>;
 
