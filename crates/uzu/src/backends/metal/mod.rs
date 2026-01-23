@@ -30,9 +30,6 @@ pub use metal::{
 pub use objc2::{rc::Retained, runtime::ProtocolObject};
 pub use objc2_foundation::NSRange;
 
-/// Type alias for owned MTLCommandBuffer
-pub type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
-
 /// Type alias for owned MTLComputeCommandEncoder
 pub type ComputeCommandEncoder =
     Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>;

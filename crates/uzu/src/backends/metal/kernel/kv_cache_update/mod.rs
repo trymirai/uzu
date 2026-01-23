@@ -7,10 +7,9 @@ use super::{
     metal_extensions::ComputeEncoderDispatch,
 };
 use crate::backends::metal::{
-    BufferLabelExt, CommandBuffer as MTLCommandBuffer, ComputePipelineState,
-    MTLBuffer, MTLCommandBuffer as MTLCommandBufferTrait, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLDeviceExt, MTLResourceOptions, MTLSize,
-    ProtocolObject, Retained,
+    BufferLabelExt, ComputePipelineState, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLDeviceExt, MTLResourceOptions,
+    MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -86,7 +85,7 @@ impl KVCacheUpdate {
         in_place_data: &[KVLayerData],
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) -> Result<(), KVCacheUpdateError> {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()

@@ -9,7 +9,7 @@ use std::{
 use metal::{MTLCommandQueue, MTLDeviceExt};
 
 use crate::backends::metal::{
-    CommandBuffer, Device, MTLBuffer, MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
+    Device, MTLBuffer, MTLCommandBuffer, MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
 };
 
 use super::{
@@ -133,7 +133,7 @@ impl AsyncBuffers {
 
 pub struct LanguageModelGeneratorContext {
     pub mtl_context: Rc<MTLContext>,
-    pub command_buffer: CommandBuffer,
+    pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,

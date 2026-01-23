@@ -1,7 +1,7 @@
 use std::{cell::RefCell, mem, rc::Rc};
 
 use crate::backends::metal::{
-    CommandBuffer as MTLCommandBuffer, Device as MTLDevice, MTLResourceOptions,
+    Device as MTLDevice, MTLCommandBuffer, MTLResourceOptions, ProtocolObject,
 };
 use metal::MTLDeviceExt;
 
@@ -151,7 +151,7 @@ impl MetalImagePreprocessor {
 
     pub unsafe fn encode_preprocessing(
         &self,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         input_image: &Image,
         params: &ImagePreprocessingParams,
         requirements: &ImagePreprocessingRequirements,
