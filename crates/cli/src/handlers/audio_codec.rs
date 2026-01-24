@@ -316,7 +316,7 @@ fn resample_mono(input: &[f32], sr_in: u32, sr_out: u32) -> Result<Vec<f32>, Str
         1024,
         1,
         1,
-        FixedSync::Input,
+        FixedSync::Both,
     )
     .map_err(|e| format!("Failed to create resampler: {e}"))?;
 
