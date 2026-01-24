@@ -1,4 +1,5 @@
 pub mod backends;
+pub mod audio_codec;
 pub mod classifier;
 pub mod config;
 pub mod language_model;

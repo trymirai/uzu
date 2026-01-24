@@ -4,3 +4,5 @@ pub mod serve;
 pub use serve::handle_serve;
 pub mod bench;
 pub use bench::handle_bench;
+pub mod audio_codec;
+pub use audio_codec::handle_nanocodec_roundtrip;

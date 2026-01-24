@@ -31,6 +31,10 @@ objc2 = { workspace = true, optional = true}
 objc2-foundation = { workspace = true, optional = true}
 block = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
+tar = "0.4.44"
+zip = "7.2.0"
+serde_yaml = "0.9.34"
+tempfile.workspace = true
 
 # macos requires objc2 even on non-metal (but shouldn't)
 [target.'cfg(target_os = "macos")'.dependencies]

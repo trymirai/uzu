@@ -1,4 +1,5 @@
 pub mod activation;
+pub mod audio_codec;
 pub mod attention;
 mod data_type;
 pub mod dsl {
@@ -31,6 +32,13 @@ mod tensor_copy;
 pub mod token_copy;
 
 pub use activation::ActivationKernel;
+pub use audio_codec::{
+    AddKernel, AudioCodecKernelError, CausalConv1dArguments, CausalConv1dKernel,
+    CausalConvTranspose1dArguments, CausalConvTranspose1dKernel,
+    ClampKernel, Conv1dArguments, Conv1dKernel, FsqDecodeArguments,
+    FsqDecodeKernel, FsqEncodeArguments, FsqEncodeKernel, HalfSnakeKernel,
+    LeakyReluKernel, ScaleKernel, TanhKernel,
+};
 pub use attention::{
     AttentionError, AttentionKernel, AttentionKernelVariant,
     AttentionSinglePassArguments, AttentionTwoPassArguments,

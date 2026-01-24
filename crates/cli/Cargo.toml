@@ -21,3 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 comfy-table.workspace = true
+hound = "3.5.1"
+rubato = "1.0.0"
+audioadapter-buffers = "2.0.0"
+metal.workspace = true
