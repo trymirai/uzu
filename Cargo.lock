@@ -4237,6 +4237,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokenizers",
  "tokio",
+ "vk-mem",
  "walkdir",
  "xgrammar-rs",
 ]
@@ -4258,6 +4259,17 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vk-mem"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d7ba61d9155d2a6eb77693f6e83953c392cda219d2882fb0a95f781c5eb06ec"
+dependencies = [
+ "ash",
+ "bitflags 2.9.4",
+ "cc",
+]
 
 [[package]]
 name = "walkdir"

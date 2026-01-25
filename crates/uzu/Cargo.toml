@@ -32,8 +32,9 @@ objc2-foundation = { workspace = true, optional = true}
 block = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
-# vulkan feature requires ash
+# vulkan feature requires ash and vk-mem
 ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # macos requires objc2 even on non-metal (but shouldn't)
@@ -81,7 +82,7 @@ default = ["metal", "vulkan"]
 metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
 metal-nax = []
 
-vulkan = ["dep:shader-slang", "dep:shader-slang-sys", "dep:ash"]
+vulkan = ["dep:ash", "dep:shader-slang", "dep:shader-slang-sys", "dep:vk-mem"]
 
 tracing = []
 
