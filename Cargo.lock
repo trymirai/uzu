@@ -113,6 +113,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "ash"
+version = "0.38.0+1.3.281"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3468,6 +3477,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "shader-slang"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f87ca0837663794c1d9db2c8c9383832557605a354a60ae754c7e56015596b7"
+dependencies = [
+ "shader-slang-sys",
+]
+
+[[package]]
+name = "shader-slang-sys"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "279effb991b113c13e73108899aad05fabbf0d7a62b51c646ebad0512c40a1e3"
+dependencies = [
+ "bindgen",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4220,6 +4247,7 @@ name = "uzu"
 version = "0.1.7"
 dependencies = [
  "anyhow",
+ "ash",
  "async-trait",
  "bindgen",
  "bitflags 2.10.0",
@@ -4251,12 +4279,15 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json5",
+ "shader-slang",
+ "shader-slang-sys",
  "syn 2.0.113",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.17",
  "tokenizers",
  "tokio",
+ "vk-mem",
  "walkdir",
  "xgrammar-rs",
 ]
@@ -4278,6 +4309,17 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vk-mem"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d7ba61d9155d2a6eb77693f6e83953c392cda219d2882fb0a95f781c5eb06ec"
+dependencies = [
+ "ash",
+ "bitflags 2.9.4",
+ "cc",
+]
 
 [[package]]
 name = "walkdir"
