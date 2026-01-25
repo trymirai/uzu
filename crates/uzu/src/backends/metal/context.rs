@@ -1,19 +1,18 @@
-const MTLB: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
-
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
+    Metal, MetalArray, error::MTLError, kernel,
+    metal_extensions::LibraryPipelineExtensions,
 };
 use crate::{
     DataType, DeviceContext,
     array::array_size_in_bytes,
+    backends::common::Context,
     backends::metal::{
-        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLResourceExt,
-        MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
+        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+        MTLFunctionConstantValues, MTLLibrary, MTLResourceExt,
         MTLResourceOptions,
     },
 };
@@ -143,31 +142,6 @@ pub struct MTLContext {
 }
 
 impl MTLContext {
-    pub fn new(
-        device: Retained<ProtocolObject<dyn MTLDevice>>,
-        command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    ) -> Result<Self, MTLError> {
-        let library = match device.new_library_with_data(MTLB) {
-            Ok(lib) => lib,
-            Err(e) => {
-                return Err(MTLError::Generic(format!(
-                    "Failed to create Metal library: {}",
-                    e
-                )));
-            },
-        };
-
-        let architecture = DeviceArchitecture::from_device(&device);
-
-        Ok(Self {
-            device,
-            command_queue,
-            architecture,
-            library,
-            pipeline_cache: RefCell::new(HashMap::new()),
-        })
-    }
-
     /// Returns true if NAX kernels are available on this device.
     pub fn is_nax_available(&self) -> bool {
         cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
@@ -230,7 +204,48 @@ impl MTLContext {
 
         Ok(pipeline)
     }
+}
 
+impl Context for MTLContext {
+    type Backend = Metal;
+
+    fn new() -> Result<Rc<Self>, MTLError> {
+        let device: Retained<ProtocolObject<dyn MTLDevice>> =
+            <dyn metal::MTLDevice>::system_default().ok_or(
+                MTLError::Generic("cannot open system default device".into()),
+            )?;
+
+        let command_queue = device
+            .new_command_queue_with_max_command_buffer_count(1024)
+            .ok_or(MTLError::Generic("cannot create command queue".into()))?;
+
+        let library =
+            device.new_library_with_data(kernel::MTLB).map_err(|nserror| {
+                MTLError::Generic(format!(
+                    "Failed to create Metal library: {}",
+                    nserror
+                ))
+            })?;
+
+        let architecture = DeviceArchitecture::from_device(&device);
+
+        Ok(Rc::new(Self {
+            device,
+            command_queue,
+            architecture,
+            library,
+            pipeline_cache: RefCell::new(HashMap::new()),
+        }))
+    }
+
+    fn allocate_command_buffer(
+        &self
+    ) -> Result<
+        <Self::Backend as crate::backends::common::Backend>::CommandBuffer,
+        <Self::Backend as crate::backends::common::Backend>::Error,
+    > {
+        todo!()
+    }
 }
 
 impl DeviceContext for MTLContext {

@@ -3,6 +3,9 @@ mod data_type;
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
+pub(super) const MTLB: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
+
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod media_kernels;
@@ -68,3 +71,16 @@ pub use media_kernels::{
     ExtractImagePatches, ImageParameters, PatchParameters,
     ScalePadNormalizeImage,
 };
+
+// This should be autogened, only with hand-written snippets for legacy non-dsl kernels.
+use crate::backends::common::Kernels;
+
+use super::Metal;
+
+pub struct MetalKernels;
+
+impl Kernels for MetalKernels {
+    type Backend = Metal;
+
+    // Every kernel should have a trait here
+}
