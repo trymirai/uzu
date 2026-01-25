@@ -1,5 +1,3 @@
-extern crate alloc;
-
 pub mod backends;
 pub mod classifier;
 pub mod config;

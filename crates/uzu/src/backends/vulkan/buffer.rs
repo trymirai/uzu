@@ -79,6 +79,8 @@ impl VkBuffer {
         Ok(slice)
     }
 
+    // This method only needs to fit the Array trait.
+    // TODO: replace [Array::buffer_mut] with callback style
     pub fn get_bytes_mut(&self) -> Result<&mut [u8], VkBufferError> {
         let mut slice: &mut [u8] = &mut [];
         self.map_action_unmap(|ptr| {
