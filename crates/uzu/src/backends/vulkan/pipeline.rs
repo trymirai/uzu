@@ -1,4 +1,4 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use ash::vk;
 use crate::backends::vulkan::context::VkContext;
@@ -16,6 +16,7 @@ impl VkComputePipeline {
         ctx: &VkContext,
         shader_module: vk::ShaderModule,
         descriptor_set_layout: vk::DescriptorSetLayout,
+        entry_point: &str
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let pipeline_layout = {
             let info = vk::PipelineLayoutCreateInfo::default()
@@ -24,10 +25,11 @@ impl VkComputePipeline {
         };
         
         let pipeline = {
+            let entry_cstring = CString::new(entry_point)?;
             let stage_info = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader_module)
-                .name(MAIN);
+                .name(entry_cstring.as_c_str());
             let info = vk::ComputePipelineCreateInfo::default()
                 .stage(stage_info)
                 .layout(pipeline_layout);

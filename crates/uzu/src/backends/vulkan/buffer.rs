@@ -44,7 +44,7 @@ impl VkBuffer {
         self.buffer
     }
 
-    pub fn map_unmap<F>(&self, mut action: F) -> Result<(), VkBufferError>
+    pub fn map_action_unmap<F>(&self, mut action: F) -> Result<(), VkBufferError>
         where F: FnMut(*mut u8) -> ()
     {
         let mut alloc_cell = RefCell::new(self.allocation);
@@ -64,7 +64,7 @@ impl VkBuffer {
     }
 
     pub fn fill(&mut self, data: &[u8]) -> Result<(), VkBufferError> {
-        self.map_unmap(|ptr| {
+        self.map_action_unmap(|ptr| {
             let slice = unsafe { std::slice::from_raw_parts_mut(ptr, data.len()) };
             slice.copy_from_slice(data);
         })?;
@@ -73,7 +73,7 @@ impl VkBuffer {
 
     pub fn get_bytes(&self) -> Result<&[u8], VkBufferError> {
         let mut slice: &[u8] = &[];
-        self.map_unmap(|ptr| {
+        self.map_action_unmap(|ptr| {
             slice = unsafe { std::slice::from_raw_parts(ptr, self.size() as usize) };
         })?;
         Ok(slice)
@@ -81,7 +81,7 @@ impl VkBuffer {
 
     pub fn get_bytes_mut(&self) -> Result<&mut [u8], VkBufferError> {
         let mut slice: &mut [u8] = &mut [];
-        self.map_unmap(|ptr| {
+        self.map_action_unmap(|ptr| {
             slice = unsafe { std::slice::from_raw_parts_mut(ptr, self.size() as usize) };
         })?;
         Ok(slice)
