@@ -279,8 +279,7 @@ impl SlangCompiler {
             .context("missing OPT_LEVEL")?
             .as_str()
         {
-            "0" => OptimizationLevel::None,
-            "1" => OptimizationLevel::Default,
+            "0" => OptimizationLevel::Default,
             _ => OptimizationLevel::High,
         };
 
