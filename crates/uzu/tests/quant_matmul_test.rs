@@ -1,11 +1,15 @@
 use std::time::Instant;
 
+use bytemuck;
 use half::{bf16, f16};
-use metal::{Buffer, Device, MTLResourceOptions};
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLDeviceExt, MTLResourceOptions,
+};
 use uzu::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MTLContext, ProtocolObject, Retained,
         kernel::quant_matmul::{
             QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
         },
@@ -14,8 +18,8 @@ use uzu::{
 };
 
 fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     MTLContext::new(device, command_queue).ok()
 }
 
@@ -417,31 +421,35 @@ fn buffer_from_f32_slice(
     ctx: &MTLContext,
     dtype: DataType,
     values: &[f32],
-) -> Buffer {
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> =
                 values.iter().map(|&v| f16::from_f32(v)).collect();
-            ctx.device.new_buffer_with_data(
-                data.as_ptr() as *const std::ffi::c_void,
-                (data.len() * std::mem::size_of::<f16>()) as u64,
-                MTLResourceOptions::StorageModeShared,
-            )
+            ctx.device
+                .new_buffer_with_data(
+                    bytemuck::cast_slice(&data),
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer")
         },
         DataType::BF16 => {
             let data: Vec<bf16> =
                 values.iter().map(|&v| bf16::from_f32(v)).collect();
-            ctx.device.new_buffer_with_data(
-                data.as_ptr() as *const std::ffi::c_void,
-                (data.len() * std::mem::size_of::<bf16>()) as u64,
-                MTLResourceOptions::StorageModeShared,
-            )
+            ctx.device
+                .new_buffer_with_data(
+                    bytemuck::cast_slice(&data),
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer")
         },
-        DataType::F32 => ctx.device.new_buffer_with_data(
-            values.as_ptr() as *const std::ffi::c_void,
-            (values.len() * std::mem::size_of::<f32>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        ),
+        DataType::F32 => ctx
+            .device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(values),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer"),
         other => {
             panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
         },
@@ -495,28 +503,35 @@ fn execute_quantized_matmul(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = ctx.device.new_buffer_with_data(
-        weights_packed.as_ptr() as *const _,
-        (weights_packed.len() * std::mem::size_of::<u8>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let w_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&weights_packed),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
     let s_buf = buffer_from_f32_slice(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
-        QuantizationType::ZeroPoint => ctx.device.new_buffer_with_data(
-            params.zero_points.as_ptr() as *const _,
-            (params.zero_points.len() * std::mem::size_of::<u8>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        ),
+        QuantizationType::ZeroPoint => ctx
+            .device
+            .new_buffer_with_data(
+                &params.zero_points,
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer"),
         QuantizationType::Mlx => {
             buffer_from_f32_slice(ctx, data_type, &params.biases)
         },
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
-    let y_buf = ctx.device.new_buffer(
-        (batch * output_dim * data_type.size_in_bytes()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let y_buf = ctx
+        .device
+        .new_buffer(
+            batch * output_dim * data_type.size_in_bytes() ,
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernel::new(
         &ctx,
@@ -548,9 +563,14 @@ fn execute_quantized_matmul(
                 output_dim: output_dim as i32,
                 quantization_type,
             };
-            let cb_ref = ctx.command_queue.new_command_buffer();
-            let encoder = cb_ref.new_compute_command_encoder();
-            kernel.encode(encoder, args).unwrap();
+            let cb_ref = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
+            let encoder = cb_ref
+                .new_compute_command_encoder()
+                .expect("Failed to create compute encoder");
+            kernel.encode(&encoder, args).unwrap();
             encoder.end_encoding();
             cb_ref.commit();
             cb_ref.wait_until_completed();
@@ -571,9 +591,14 @@ fn execute_quantized_matmul(
             output_dim: output_dim as i32,
             quantization_type,
         };
-        let cb_ref = ctx.command_queue.new_command_buffer();
-        let encoder = cb_ref.new_compute_command_encoder();
-        kernel.encode(encoder, args).unwrap();
+        let cb_ref = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let encoder = cb_ref
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
+        kernel.encode(&encoder, args).unwrap();
         encoder.end_encoding();
         cb_ref.commit();
         cb_ref.wait_until_completed();
@@ -600,21 +625,21 @@ fn execute_quantized_matmul(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.contents() as *const f16;
+                let y_ptr = y_buf.contents().as_ptr() as *const f16;
                 let y_out = unsafe {
                     std::slice::from_raw_parts(y_ptr, batch * output_dim)
                 };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.contents() as *const bf16;
+                let y_ptr = y_buf.contents().as_ptr() as *const bf16;
                 let y_out = unsafe {
                     std::slice::from_raw_parts(y_ptr, batch * output_dim)
                 };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                let y_ptr = y_buf.contents() as *const f32;
+                let y_ptr = y_buf.contents().as_ptr() as *const f32;
                 let y_out = unsafe {
                     std::slice::from_raw_parts(y_ptr, batch * output_dim)
                 };

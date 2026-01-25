@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use metal::{Device as MTLDevice, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
@@ -63,7 +63,7 @@ fn person_schema_metal_bitmask() {
 
     let mut matcher = GrammarMatcher::new(&compiled, None, true, -1).unwrap();
 
-    let device = match MTLDevice::system_default() {
+    let device = match <dyn MTLDevice>::system_default() {
         Some(d) => d,
         None => {
             eprintln!("Skipping test: no Metal device available");
@@ -79,15 +79,16 @@ fn person_schema_metal_bitmask() {
 
     // xgrammar expects an int32 mask tensor of shape [buffer_size]
     let elems = batch * buffer_size;
-    let bytes = (elems * core::mem::size_of::<i32>()) as u64;
-    let buffer =
-        device.new_buffer(bytes, MTLResourceOptions::StorageModeShared);
+    let bytes = elems * core::mem::size_of::<i32>();
+    let buffer = device
+        .new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
     let mut metal_bitmask =
         unsafe { MetalArray::new(buffer, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {
-        data: unsafe { metal_bitmask.mtl_buffer().contents() },
+        data: unsafe { metal_bitmask.mtl_buffer().contents().as_ptr() },
         device: DLDevice {
             device_type: DLDeviceType::kDLCPU,
             device_id,

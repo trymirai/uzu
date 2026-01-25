@@ -1,11 +1,8 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 const THREADS_PER_THREADGROUP: usize = 256;
 const MAX_EXPERTS: usize = 512;
@@ -25,18 +22,18 @@ pub enum MoeRouterTopKError {
 }
 
 pub struct MoeRouterTopKKernel {
-    pipeline_f16: MTLComputePipelineState,
-    pipeline_f32: MTLComputePipelineState,
-    pipeline_bf16: MTLComputePipelineState,
+    pipeline_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
 pub struct MoeRouterTopKArguments<'a> {
-    pub input_buffer: &'a MTLBuffer,  // [T, d_model]
-    pub weight_buffer: &'a MTLBuffer, // [E, d_model]
-    pub bias_buffer: &'a MTLBuffer,   // [E]
-    pub topk_ids_buffer: &'a MTLBuffer, // [T, K]
-    pub topk_probs_buffer: &'a MTLBuffer, // [T, K]
+    pub input_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, d_model]
+    pub weight_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model]
+    pub bias_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // [E]
+    pub topk_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, K]
+    pub topk_probs_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, K]
     pub t: usize,
     pub d_model: usize,
     pub e: usize,
@@ -61,7 +58,7 @@ impl MoeRouterTopKKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         dtype: KernelDataType,
         args: MoeRouterTopKArguments,
     ) -> Result<(), MoeRouterTopKError> {
@@ -85,7 +82,9 @@ impl MoeRouterTopKKernel {
             });
         }
 
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_f16)
@@ -98,11 +97,11 @@ impl MoeRouterTopKKernel {
             },
         }
 
-        compute_encoder.set_buffer(0, Some(args.input_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.weight_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.bias_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.topk_ids_buffer), 0);
-        compute_encoder.set_buffer(4, Some(args.topk_probs_buffer), 0);
+        compute_encoder.set_buffer(Some(args.input_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(args.weight_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(args.bias_buffer), 0, 2);
+        compute_encoder.set_buffer(Some(args.topk_ids_buffer), 0, 3);
+        compute_encoder.set_buffer(Some(args.topk_probs_buffer), 0, 4);
 
         let t_u32 = args.t as u32;
         let d_u32 = args.d_model as u32;
@@ -114,36 +113,16 @@ impl MoeRouterTopKKernel {
             0
         };
 
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &t_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &d_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<u32>() as u64,
-            &k_u32 as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<u32>() as u64,
-            &renorm_u32 as *const u32 as *const _,
-        );
+        compute_encoder.set_value(&t_u32, 5);
+        compute_encoder.set_value(&d_u32, 6);
+        compute_encoder.set_value(&e_u32, 7);
+        compute_encoder.set_value(&k_u32, 8);
+        compute_encoder.set_value(&renorm_u32, 9);
 
-        let threadgroups = MTLSize::new(1, args.t as u64, 1);
-        let threads_per_tg = MTLSize::new(THREADS_PER_THREADGROUP as u64, 1, 1);
+        let threadgroups = MTLSize::new(1, args.t, 1);
+        let threads_per_tg = MTLSize::new(THREADS_PER_THREADGROUP, 1, 1);
 
-        compute_encoder.dispatch_thread_groups(threadgroups, threads_per_tg);
+        compute_encoder.dispatch_threadgroups(threadgroups, threads_per_tg);
         compute_encoder.end_encoding();
 
         Ok(())

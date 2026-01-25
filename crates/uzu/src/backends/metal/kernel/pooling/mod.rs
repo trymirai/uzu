@@ -1,16 +1,14 @@
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLSize,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    },
 };
 
 pub struct PoolingKernel {
-    cls_pipeline: ComputePipelineState,
-    mean_pipeline: ComputePipelineState,
+    cls_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    mean_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl PoolingKernel {
@@ -52,58 +50,42 @@ impl PoolingKernel {
 
     pub fn encode_cls(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        input_buffer: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer: &ProtocolObject<dyn MTLBuffer>,
         batch_size: i32,
         seq_len: i32,
         hidden_dim: i32,
     ) -> Result<(), MTLError> {
         encoder.set_compute_pipeline_state(&self.cls_pipeline);
-        encoder.set_buffer(0, Some(input_buffer), 0);
-        encoder.set_buffer(1, Some(output_buffer), 0);
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &seq_len as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &hidden_dim as *const i32 as *const _,
-        );
+        encoder.set_buffer(Some(input_buffer), 0, 0);
+        encoder.set_buffer(Some(output_buffer), 0, 1);
+        encoder.set_value(&seq_len, 2);
+        encoder.set_value(&hidden_dim, 3);
 
         let threads_per_tg = MTLSize::new(16, 16, 1);
-        let grid = MTLSize::new(hidden_dim as u64, batch_size as u64, 1);
+        let grid = MTLSize::new(hidden_dim as usize, batch_size as usize, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }
 
     pub fn encode_mean(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        input_buffer: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer: &ProtocolObject<dyn MTLBuffer>,
         batch_size: i32,
         seq_len: i32,
         hidden_dim: i32,
     ) -> Result<(), MTLError> {
         encoder.set_compute_pipeline_state(&self.mean_pipeline);
-        encoder.set_buffer(0, Some(input_buffer), 0);
-        encoder.set_buffer(1, Some(output_buffer), 0);
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &seq_len as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &hidden_dim as *const i32 as *const _,
-        );
+        encoder.set_buffer(Some(input_buffer), 0, 0);
+        encoder.set_buffer(Some(output_buffer), 0, 1);
+        encoder.set_value(&seq_len, 2);
+        encoder.set_value(&hidden_dim, 3);
 
         let threads_per_tg = MTLSize::new(16, 16, 1);
-        let grid = MTLSize::new(hidden_dim as u64, batch_size as u64, 1);
+        let grid = MTLSize::new(hidden_dim as usize, batch_size as usize, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

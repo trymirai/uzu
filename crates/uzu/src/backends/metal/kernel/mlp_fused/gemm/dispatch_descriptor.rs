@@ -1,5 +1,3 @@
-use metal::MTLSize;
-
 use super::{
     pipeline_configuration::PipelineConfiguration,
     tile_configuration::select_tile_configuration,
@@ -7,7 +5,7 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        MTLContext, MTLError, MTLSize,
         kernel::{
             matmul::common::GEMMParams, mlp_fused::common::MlpFusedArguments,
         },
@@ -79,7 +77,7 @@ impl DispatchDescriptor {
             batch_ndim: 0,
         };
 
-        let threadgroups = MTLSize::new(tiles_n as u64, tiles_m as u64, 1);
+        let threadgroups = MTLSize::new(tiles_n as usize, tiles_m as usize, 1);
         let threads_per_threadgroup = MTLSize::new(32, 2, 2);
 
         Ok(Self {

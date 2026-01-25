@@ -2,15 +2,14 @@
 
 use std::rc::Rc;
 
-use metal::CommandBufferRef;
-
 use super::{
     EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
 };
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLContext, ModelShape,
+        KernelDataType, MTLCommandBuffer, MTLContext, ModelShape,
+        ProtocolObject,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
         forward_pass::{ArrayId, ForwardPassState, RopeType},
@@ -202,7 +201,7 @@ impl EncodableBlock for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         self.embed.encode(state, command_buffer, parameters);

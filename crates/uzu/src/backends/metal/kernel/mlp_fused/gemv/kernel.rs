@@ -1,14 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ptr::NonNull};
 
-use metal::{ComputeCommandEncoderRef, ComputePipelineState};
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, kernel::mlp_fused::common::MlpFusedArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -41,7 +39,7 @@ fn kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -62,14 +60,14 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 
-            let function_constants = metal::FunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
-            function_constants.set_constant_value_at_index(
-                &activation_val as *const u32 as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&activation_val).cast(),
                 metal::MTLDataType::UInt,
                 52,
             );
@@ -86,7 +84,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {
@@ -96,40 +94,21 @@ impl Kernel {
         )?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(0, Some(arguments.weights), 0);
-        encoder.set_buffer(1, Some(arguments.input), arguments.input_offset);
-        encoder.set_buffer(3, Some(arguments.output), 0);
+        encoder.set_buffer(Some(arguments.weights), 0, 0);
+        encoder.set_buffer(
+            Some(arguments.input),
+            arguments.input_offset as usize,
+            1,
+        );
+        encoder.set_buffer(Some(arguments.output), 0, 3);
 
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.input_dim as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            5,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.hidden_dim as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            6,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.weights_ld as *const i32 as *const std::ffi::c_void,
-        );
+        encoder.set_value(&descriptor.input_dim, 4);
+        encoder.set_value(&descriptor.hidden_dim, 5);
+        encoder.set_value(&descriptor.weights_ld, 6);
+        encoder.set_value(&descriptor.vector_batch_stride, 11);
+        encoder.set_value(&descriptor.matrix_batch_stride, 12);
 
-        encoder.set_bytes(
-            11,
-            std::mem::size_of::<i64>() as u64,
-            &descriptor.vector_batch_stride as *const i64
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            12,
-            std::mem::size_of::<i64>() as u64,
-            &descriptor.matrix_batch_stride as *const i64
-                as *const std::ffi::c_void,
-        );
-
-        encoder.dispatch_thread_groups(
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

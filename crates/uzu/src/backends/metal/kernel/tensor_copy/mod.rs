@@ -1,17 +1,16 @@
-use std::mem::size_of;
+use std::{mem::size_of, ptr::NonNull};
 
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
-};
+use objc2::msg_send;
+use objc2_foundation::NSString;
 
-use super::{
-    KernelDataType, MTLContext, metal_extensions::ComputeEncoderDispatch,
+use crate::backends::metal::{
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderDispatch,
 };
-use crate::backends::metal::error::MTLError;
 
 pub struct TensorCopyKernel {
-    pipeline_state: MTLComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl TensorCopyKernel {
@@ -22,8 +21,7 @@ impl TensorCopyKernel {
         let function_name =
             format!("tensorCopy_{}", data_type.function_name_suffix());
 
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
 
         Ok(Self {
             pipeline_state,
@@ -32,12 +30,14 @@ impl TensorCopyKernel {
 
     pub fn encode_into_command_buffer(
         &self,
-        source_buffer: &MTLBuffer,
-        destination_buffer: &MTLBuffer,
+        source_buffer: &ProtocolObject<dyn MTLBuffer>,
+        destination_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_encoder(
             source_buffer,
             destination_buffer,
@@ -49,20 +49,27 @@ impl TensorCopyKernel {
 
     pub fn encode_with_encoder(
         &self,
-        source_buffer: &MTLBuffer,
-        destination_buffer: &MTLBuffer,
+        source_buffer: &ProtocolObject<dyn MTLBuffer>,
+        destination_buffer: &ProtocolObject<dyn MTLBuffer>,
         length: usize,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
-        compute_encoder.set_label("Tensor Copy");
+        unsafe {
+            let label = NSString::from_str("Tensor Copy");
+            let _: () = msg_send![compute_encoder, setLabel: &*label];
+        }
 
-        compute_encoder.set_buffer(0, Some(source_buffer), 0);
-        compute_encoder.set_buffer(1, Some(destination_buffer), 0);
-        compute_encoder.set_bytes(
-            2,
-            size_of::<i32>() as u64,
-            &(length as i32) as *const _ as *const std::ffi::c_void,
-        );
+        compute_encoder.set_buffer(Some(source_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(destination_buffer), 0, 1);
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new_unchecked(
+                    &(length as i32) as *const i32 as *mut std::ffi::c_void,
+                ),
+                size_of::<i32>(),
+                2,
+            );
+        }
 
         compute_encoder.dispatch_1d_exactly(&self.pipeline_state, length, None);
     }

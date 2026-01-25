@@ -1,8 +1,12 @@
 //! Correctness tests for MLP fused kernels
 //! Compares fused (matmul + activation) output against separate operations
 
+use bytemuck;
 use half::f16;
-use metal::{Device, MTLResourceOptions};
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLDeviceExt, MTLResourceOptions,
+};
 use objc2::rc::autoreleasepool;
 use uzu::{
     DataType,
@@ -16,8 +20,8 @@ use uzu::{
 };
 
 fn create_test_context() -> Option<MTLContext> {
-    let device = Device::system_default()?;
-    let command_queue = device.new_command_queue();
+    let device = <dyn MTLDevice>::system_default()?;
+    let command_queue = device.new_command_queue()?;
     MTLContext::new(device, command_queue).ok()
 }
 
@@ -78,25 +82,38 @@ fn run_fused_gemv(
     hidden_dim: usize,
     activation: MlpActivationType,
 ) -> Vec<f16> {
-    let input_buf = ctx.device.new_buffer_with_data(
-        input.as_ptr() as *const _,
-        (input.len() * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let weights_buf = ctx.device.new_buffer_with_data(
-        weights.as_ptr() as *const _,
-        (weights.len() * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = ctx.device.new_buffer(
-        (hidden_dim * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(input),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let weights_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(weights),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let output_buf = ctx
+        .device
+        .new_buffer(
+            hidden_dim * core::mem::size_of::<f16>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
-    let cb = ctx.command_queue.new_command_buffer().to_owned();
-    let enc = cb.new_compute_command_encoder();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer")
+        .to_owned();
+    let enc = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     let args = MlpFusedArguments {
         input: &input_buf,
@@ -119,7 +136,7 @@ fn run_fused_gemv(
     cb.wait_until_completed();
 
     unsafe {
-        let ptr = output_buf.contents() as *const f16;
+        let ptr = output_buf.contents().as_ptr() as *const f16;
         std::slice::from_raw_parts(ptr, hidden_dim).to_vec()
     }
 }
@@ -134,25 +151,38 @@ fn run_fused_gemm(
     hidden_dim: usize,
     activation: MlpActivationType,
 ) -> Vec<f16> {
-    let input_buf = ctx.device.new_buffer_with_data(
-        input.as_ptr() as *const _,
-        (input.len() * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let weights_buf = ctx.device.new_buffer_with_data(
-        weights.as_ptr() as *const _,
-        (weights.len() * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = ctx.device.new_buffer(
-        (m * hidden_dim * core::mem::size_of::<f16>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(input),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let weights_buf = ctx
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(weights),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+    let output_buf = ctx
+        .device
+        .new_buffer(
+            m * hidden_dim * core::mem::size_of::<f16>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
-    let cb = ctx.command_queue.new_command_buffer().to_owned();
-    let enc = cb.new_compute_command_encoder();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer")
+        .to_owned();
+    let enc = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     let args = MlpFusedArguments {
         input: &input_buf,
@@ -175,7 +205,7 @@ fn run_fused_gemm(
     cb.wait_until_completed();
 
     unsafe {
-        let ptr = output_buf.contents() as *const f16;
+        let ptr = output_buf.contents().as_ptr() as *const f16;
         std::slice::from_raw_parts(ptr, m * hidden_dim).to_vec()
     }
 }

@@ -1,11 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
-
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
@@ -16,8 +15,8 @@ use crate::{
 
 pub struct FullPrecisionLinear {
     kernel: RefCell<MatmulKernel>,
-    bias_buffer: Option<MTLBuffer>,
-    weights_buffer: MTLBuffer,
+    bias_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
@@ -62,8 +61,8 @@ impl FullPrecisionLinear {
             )));
         }
 
-        let weights_buffer: MTLBuffer =
-            unsafe { weights.mtl_buffer() }.to_owned();
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+            unsafe { weights.mtl_buffer() }.to_owned().into();
 
         let bias_buffer = match parameter_tree.leaf("biases") {
             Ok(mut biases) => {
@@ -81,8 +80,8 @@ impl FullPrecisionLinear {
                         precision
                     )));
                 }
-                let bias_buffer: MTLBuffer =
-                    unsafe { biases.mtl_buffer() }.to_owned();
+                let bias_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                    unsafe { biases.mtl_buffer() }.to_owned().into();
                 Some(bias_buffer)
             },
             Err(_) => None,
@@ -107,7 +106,7 @@ impl EncodableBlock for FullPrecisionLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -119,7 +118,9 @@ impl EncodableBlock for FullPrecisionLinear {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
 
         let args = MatmulArguments {
             a: input_buffer,
@@ -127,7 +128,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
-            bias: self.bias_buffer.as_ref(),
+            bias: self.bias_buffer.as_ref().map(|v| v.as_ref()),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,
@@ -143,7 +144,7 @@ impl EncodableBlock for FullPrecisionLinear {
 
         let mut kernel = self.kernel.borrow_mut();
         kernel
-            .encode(state.mtl_context(), encoder, args)
+            .encode(state.mtl_context(), &encoder, args)
             .expect("Failed to encode matmul kernel");
 
         encoder.end_encoding();
@@ -161,7 +162,7 @@ impl EncodableBlock for FullPrecisionLinear {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -179,7 +180,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
-            bias: self.bias_buffer.as_ref(),
+            bias: self.bias_buffer.as_ref().map(|v| v.as_ref()),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,

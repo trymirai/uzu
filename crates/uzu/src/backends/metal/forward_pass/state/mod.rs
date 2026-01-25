@@ -13,9 +13,7 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
-pub use mode::{
-    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
-};
+pub use mode::{ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -25,7 +23,10 @@ use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
-    backends::metal::{MTLContext, MetalArray},
+    backends::metal::{
+        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
+        MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+    },
     session::parameter::SamplingMethod,
 };
 
@@ -56,7 +57,7 @@ impl ForwardPassState {
         let suffix_length = token_ids.len();
         let mut token_ids_array = unsafe {
             MetalArray::new(
-                scratch.token_ids.borrow().backend_buffer().clone(),
+                scratch.token_ids.borrow().mtl_buffer_cloned(),
                 &[suffix_length],
                 DataType::U64,
             )
@@ -73,7 +74,7 @@ impl ForwardPassState {
         let suffix_length = token_positions.len();
         let mut token_positions_array = unsafe {
             MetalArray::new(
-                scratch.token_positions.borrow().backend_buffer().clone(),
+                scratch.token_positions.borrow().mtl_buffer_cloned(),
                 &[suffix_length],
                 DataType::I32,
             )
@@ -110,8 +111,8 @@ impl ForwardPassState {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         skip_attention_bias_fill: bool,
-        async_positions: Option<(&metal::Buffer, usize)>,
-        async_seeds: Option<(&metal::Buffer, usize)>,
+        async_positions: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -128,7 +129,7 @@ impl ForwardPassState {
         let token_ids_cell = if skip_token_ids_copy {
             RefCell::new(unsafe {
                 MetalArray::new(
-                    scratch.token_ids.borrow().backend_buffer().clone(),
+                    scratch.token_ids.borrow().mtl_buffer_cloned(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -158,7 +159,7 @@ impl ForwardPassState {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
             let mut bitmask_array = unsafe {
                 MetalArray::new(
-                    scratch.token_bitmask.borrow().backend_buffer().clone(),
+                    scratch.token_bitmask.borrow().mtl_buffer_cloned(),
                     &bitmask_shape,
                     DataType::U32,
                 )
@@ -184,7 +185,7 @@ impl ForwardPassState {
         } else {
             let mut token_seeds_array = unsafe {
                 MetalArray::new(
-                    scratch.token_seeds.borrow().backend_buffer().clone(),
+                    scratch.token_seeds.borrow().mtl_buffer_cloned(),
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -196,7 +197,7 @@ impl ForwardPassState {
         // Logits
         let logits_cell = RefCell::new(unsafe {
             MetalArray::new(
-                scratch.logits.borrow().backend_buffer().clone(),
+                scratch.logits.borrow().mtl_buffer_cloned(),
                 &model_shape.logits_shape(suffix_length),
                 model_shape.activation_data_type(),
             )
@@ -205,7 +206,7 @@ impl ForwardPassState {
         // Sampling output
         let sampling_output = Some(RefCell::new(unsafe {
             MetalArray::new(
-                scratch.sampling_output.borrow().backend_buffer().clone(),
+                scratch.sampling_output.borrow().mtl_buffer_cloned(),
                 &[suffix_length],
                 DataType::U32,
             )
@@ -295,7 +296,7 @@ impl ForwardPassState {
                         [suffix_length, suffix_length + prefix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.borrow().backend_buffer().clone(),
+                            buffer.borrow().mtl_buffer_cloned(),
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -400,7 +401,7 @@ impl ForwardPassState {
                     let attention_bias_shape = [suffix_length, suffix_length];
                     let array = unsafe {
                         MetalArray::new(
-                            buffer.borrow().backend_buffer().clone(),
+                            buffer.borrow().mtl_buffer_cloned(),
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -458,11 +459,14 @@ impl ForwardPassState {
         let batch_size = 1;
 
         let create_buffer = |size: usize| -> ArrayCell {
-            let buffer_size = (size * data_type.size_in_bytes()) as u64;
-            let buffer = context.device.new_buffer(
-                buffer_size,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
+            let buffer_size = size * data_type.size_in_bytes();
+            let buffer = context
+                .device
+                .new_buffer(
+                    buffer_size,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer");
             RefCell::new(unsafe {
                 MetalArray::new(
                     buffer,
@@ -478,12 +482,14 @@ impl ForwardPassState {
             norm: create_buffer(batch_size * model_dim),
             classifier_logits: {
                 let buffer_size =
-                    (batch_size * num_labels * data_type.size_in_bytes())
-                        as u64;
-                let buffer = context.device.new_buffer(
-                    buffer_size,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
+                    batch_size * num_labels * data_type.size_in_bytes();
+                let buffer = context
+                    .device
+                    .new_buffer(
+                        buffer_size,
+                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    )
+                    .expect("Failed to create buffer");
                 RefCell::new(unsafe {
                     MetalArray::new(
                         buffer,
@@ -514,11 +520,14 @@ impl ForwardPassState {
 
         let create_buffer = |dims: &[usize]| -> ArrayCell {
             let size: usize = dims.iter().product();
-            let buffer_size = (size * data_type.size_in_bytes()) as u64;
-            let buffer = context.device.new_buffer(
-                buffer_size,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
+            let buffer_size = size * data_type.size_in_bytes();
+            let buffer = context
+                .device
+                .new_buffer(
+                    buffer_size,
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create buffer");
             RefCell::new(unsafe { MetalArray::new(buffer, dims, data_type) })
         };
 
@@ -975,25 +984,27 @@ impl ForwardPassState {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &metal::CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         source_array_id: ArrayId,
         destination_array: RefCell<MetalArray>,
     ) {
         let source_ref = self.arrays(&[source_array_id])[0].clone();
-        let mut src_borrow = source_ref.borrow_mut();
-        let mut dst_borrow = destination_array.borrow_mut();
+        let src_borrow = source_ref.borrow();
+        let dst_borrow = destination_array.borrow();
 
-        let src_buf = unsafe { src_borrow.mtl_buffer().clone() };
-        let dst_buf = unsafe { dst_borrow.mtl_buffer().clone() };
+        let src_buf = src_borrow.mtl_buffer_cloned();
+        let dst_buf = dst_borrow.mtl_buffer_cloned();
 
-        let copy_size_bytes = dst_borrow.size_in_bytes() as u64;
+        let copy_size_bytes = dst_borrow.size_in_bytes();
         debug_assert_eq!(
             dst_borrow.size_in_bytes(),
             src_borrow.size_in_bytes()
         );
 
-        let blit_encoder = command_buffer.new_blit_command_encoder();
-        blit_encoder.copy_from_buffer(
+        let blit_encoder = command_buffer
+            .new_blit_command_encoder()
+            .expect("Failed to create blit command encoder");
+        blit_encoder.copy_buffer_to_buffer(
             &src_buf,
             0,
             &dst_buf,

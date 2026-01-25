@@ -1,29 +1,20 @@
 use std::collections::HashMap;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
-};
-
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        kernel::matmul::common::{
-            GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
-            transpose_configuration,
-        },
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
+        kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
-    accum_pipeline: Option<MTLComputePipelineState>,
-    accumulator_buffer: Option<MTLBuffer>,
+    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accum_pipeline: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
 
@@ -167,7 +158,7 @@ impl Kernel {
         &mut self,
         mtl: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -179,7 +170,7 @@ impl Kernel {
     fn get_accum_pipeline(
         &mut self,
         mtl: &MTLContext,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -209,7 +200,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -226,43 +217,26 @@ impl Kernel {
         )?;
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
-        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
-        encoder.set_buffer(1, Some(arguments.b), 0);
-        encoder.set_buffer(2, Some(&accumulator_buffer), 0);
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<SplitKGEMMParams>() as u64,
-            &descriptor.params as *const _ as *const _,
-        );
-        encoder.dispatch_thread_groups(
+        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.b), 0, 1);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 2);
+        encoder.set_value(&descriptor.params, 3);
+        encoder.dispatch_threadgroups(
             descriptor.partial_threadgroups,
             descriptor.partial_threads_per_threadgroup,
         );
 
         let accum_pipeline_state = self.get_accum_pipeline(context)?;
         encoder.set_compute_pipeline_state(accum_pipeline_state);
-        encoder.set_buffer(0, Some(&accumulator_buffer), 0);
-        encoder.set_buffer(1, Some(arguments.d), 0);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 0);
+        encoder.set_buffer(Some(arguments.d), 0, 1);
 
         let partition_count = descriptor.partition_count;
         let output_elements_per_partition =
             descriptor.output_elements_per_partition;
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &partition_count as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &output_elements_per_partition as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &(arguments.ldd) as *const i32 as *const std::ffi::c_void,
-        );
+        encoder.set_value(&partition_count, 2);
+        encoder.set_value(&output_elements_per_partition, 3);
+        encoder.set_value(&arguments.ldd, 4);
 
         encoder.dispatch_threads(
             descriptor.accum_total_threads,
@@ -282,10 +256,14 @@ impl Kernel {
         {
             return;
         }
-        self.accumulator_buffer = Some(mtl.device.new_buffer(
-            required_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        ));
+        self.accumulator_buffer = Some(
+            mtl.device
+                .new_buffer(
+                    required_bytes as usize,
+                    MTLResourceOptions::STORAGE_MODE_PRIVATE,
+                )
+                .expect("Failed to create accumulator buffer"),
+        );
         self.accumulator_buffer_bytes = required_bytes;
     }
 }

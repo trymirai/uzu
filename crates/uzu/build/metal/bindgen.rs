@@ -47,14 +47,14 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         })
         .enumerate()
         .map(|(i, ka)| {
-            let arg_index = i as u64;
+            let arg_index = i;
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
-                    let def = quote! { #arg_name: &metal::Buffer };
+                    let def = quote! { #arg_name: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer> };
                     let set = quote! {
-                        compute_encoder.set_buffer(#arg_index, Some(#arg_name), 0);
+                        compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
                     };
 
                     (def, set, quote! { #arg_name })
@@ -63,7 +63,7 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
                     let arg_dtype = format_ident!("{r_type}");
                     let def = quote! { #arg_name: #arg_dtype };
                     let set = quote! {
-                        compute_encoder.set_bytes(#arg_index, std::mem::size_of::<#arg_dtype>() as u64, std::ptr::addr_of!(#arg_name).cast::<std::ffi::c_void>());
+                        compute_encoder.set_value(&#arg_name, #arg_index);
                     };
 
                     (def, set, quote! { #arg_name })
@@ -101,8 +101,8 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
 
         quote! {
             compute_encoder.dispatch_threads(
-                metal::MTLSize::new(#((#threads) as u64, )*),
-                metal::MTLSize::new(#((#threads_per_group) as u64, )*),
+                crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
+                crate::backends::metal::MTLSize::new(#((#threads_per_group) as usize, )*),
             );
         }
     } else {
@@ -136,32 +136,34 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         threads.extend(repeat_n(quote! {1}, 3 - threads.len()));
 
         quote! {
-            compute_encoder.dispatch_thread_groups(
-                metal::MTLSize::new(#((#groups) as u64, )*),
-                metal::MTLSize::new(#((#threads) as u64, )*),
+            compute_encoder.dispatch_threadgroups(
+                crate::backends::metal::MTLSize::new(#((#groups) as usize, )*),
+                crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
             );
         }
     };
 
     Ok(quote! {
         pub struct #struct_name {
-            pipeline: metal::ComputePipelineState,
+            pipeline: crate::backends::metal::Retained<crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputePipelineState>>,
         }
 
         impl #struct_name {
             pub fn new(context: &crate::backends::metal::MTLContext #specialize_extra_argument) -> Result<Self, crate::backends::metal::MTLError> {
-                let func = context.library.get_function(#specialize_kernel_format, None)?;
-                let pipeline = context.device.new_compute_pipeline_state_with_function(&func)?;
+                use crate::backends::metal::metal_extensions::LibraryPipelineExtensions;
+                let pipeline = context.library.compute_pipeline_state(#specialize_kernel_format, None)?;
                 Ok(Self { pipeline })
             }
 
-            pub fn encode(&self, #(#encode_args_defs, )*compute_encoder: &metal::ComputeCommandEncoderRef) {
+            pub fn encode(&self, #(#encode_args_defs, )*compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
+                use metal::MTLComputeCommandEncoder;
+                use crate::backends::metal::ComputeEncoderSetValue;
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
             }
 
-            pub fn encode_if(&self, #(#encode_args_defs, )*compute_encoder: &metal::ComputeCommandEncoderRef, predicate: Option<&metal::BufferRef>) {
+            pub fn encode_if(&self, #(#encode_args_defs, )*compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
                 use crate::backends::metal::metal_extensions::ComputeEncoderConditional;
                 compute_encoder.condition(
                     predicate,

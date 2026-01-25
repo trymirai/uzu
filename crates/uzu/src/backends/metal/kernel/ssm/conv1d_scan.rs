@@ -1,18 +1,16 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
-};
+use std::ptr::NonNull;
 
 use super::{SSMKernelError, fn_suffix};
 use crate::{
-    backends::metal::{KernelDataType, MTLContext},
+    backends::metal::{
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLDataType, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
+    },
     config::Activation,
 };
 
-const CONV1D_SCAN_THREADGROUP_SIZE: u64 = 32;
+const CONV1D_SCAN_THREADGROUP_SIZE: usize = 32;
 
 const ACTIVATION_IDENTITY: i32 = 0;
 const ACTIVATION_SILU: i32 = 1;
@@ -31,18 +29,18 @@ fn activation_to_int(activation: &Activation) -> i32 {
 fn make_function_constants(
     activation: &Activation,
     has_bias: bool,
-) -> FunctionConstantValues {
-    let function_constants = FunctionConstantValues::new();
+) -> Retained<MTLFunctionConstantValues> {
+    let function_constants = MTLFunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
-    function_constants.set_constant_value_at_index(
-        &activation_type as *const i32 as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&activation_type).cast(),
         MTLDataType::Int,
         0,
     );
 
-    function_constants.set_constant_value_at_index(
-        &has_bias as *const bool as *const std::ffi::c_void,
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&has_bias).cast(),
         MTLDataType::Bool,
         1,
     );
@@ -51,21 +49,21 @@ fn make_function_constants(
 }
 
 pub struct Conv1dScanKernel {
-    pipeline_no_bias: MTLComputePipelineState,
-    pipeline_with_bias: MTLComputePipelineState,
-    pack_pipeline: MTLComputePipelineState,
-    decode_pipeline_no_bias: MTLComputePipelineState,
-    decode_pipeline_with_bias: MTLComputePipelineState,
+    pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct Conv1dScanArguments<'a> {
-    pub padded: &'a MTLBuffer, // buffer(0) [prefix+suffix, channels]
-    pub w: &'a MTLBuffer,      // buffer(1) [channels, kernel]
-    pub b: Option<&'a MTLBuffer>, // buffer(2) [channels]
-    pub x_out: &'a MTLBuffer,  // buffer(3) [suffix, inner_dim]
-    pub b_out: &'a MTLBuffer,  // buffer(4) [suffix, proj_dim]
-    pub c_out: &'a MTLBuffer,  // buffer(5) [suffix, proj_dim]
-    pub state_out: &'a MTLBuffer, // buffer(6) [channels, kernel-1]
+    pub padded: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0) [prefix+suffix, channels]
+    pub w: &'a ProtocolObject<dyn MTLBuffer>, // buffer(1) [channels, kernel]
+    pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(2) [channels]
+    pub x_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) [suffix, inner_dim]
+    pub b_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(4) [suffix, proj_dim]
+    pub c_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(5) [suffix, proj_dim]
+    pub state_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(6) [channels, kernel-1]
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub row_stride: usize,
@@ -76,9 +74,9 @@ pub struct Conv1dScanArguments<'a> {
 }
 
 pub struct Conv1dPackArguments<'a> {
-    pub state_in: &'a MTLBuffer,
-    pub x: &'a MTLBuffer,
-    pub padded: &'a MTLBuffer,
+    pub state_in: &'a ProtocolObject<dyn MTLBuffer>,
+    pub x: &'a ProtocolObject<dyn MTLBuffer>,
+    pub padded: &'a ProtocolObject<dyn MTLBuffer>,
     pub state_stride: usize,
     pub row_stride: usize,
     pub suffix_len: usize,
@@ -86,14 +84,14 @@ pub struct Conv1dPackArguments<'a> {
 }
 
 pub struct Conv1dDecodeArguments<'a> {
-    pub x: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub state: &'a MTLBuffer,
-    pub x_out: &'a MTLBuffer,
-    pub b_out: &'a MTLBuffer,
-    pub c_out: &'a MTLBuffer,
-    pub next_state: &'a MTLBuffer,
+    pub x: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub state: &'a ProtocolObject<dyn MTLBuffer>,
+    pub x_out: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b_out: &'a ProtocolObject<dyn MTLBuffer>,
+    pub c_out: &'a ProtocolObject<dyn MTLBuffer>,
+    pub next_state: &'a ProtocolObject<dyn MTLBuffer>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub row_stride: usize,
@@ -175,7 +173,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dPackArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.state_stride == 0 {
@@ -183,29 +181,14 @@ impl Conv1dScanKernel {
         }
 
         compute_encoder.set_compute_pipeline_state(&self.pack_pipeline);
-        compute_encoder.set_buffer(0, Some(args.state_in), 0);
-        compute_encoder.set_buffer(1, Some(args.x), 0);
-        compute_encoder.set_buffer(2, Some(args.padded), 0);
-        compute_encoder.set_bytes(
-            3,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<usize>() as u64,
-            &args.row_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &(args.channels as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.state_in), 0, 0);
+        compute_encoder.set_buffer(Some(args.x), 0, 1);
+        compute_encoder.set_buffer(Some(args.padded), 0, 2);
+        compute_encoder.set_value(&args.state_stride, 3);
+        compute_encoder.set_value(&args.row_stride, 4);
+        compute_encoder.set_value(&args.suffix_len, 5);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 6);
 
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
@@ -214,8 +197,8 @@ impl Conv1dScanKernel {
         };
         let padded_rows = args.state_stride + args.suffix_len;
         let total_threads = MTLSize {
-            width: args.channels as u64,
-            height: padded_rows as u64,
+            width: args.channels,
+            height: padded_rows,
             depth: 1,
         };
         compute_encoder
@@ -225,7 +208,7 @@ impl Conv1dScanKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dDecodeArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
@@ -239,51 +222,26 @@ impl Conv1dScanKernel {
             &self.decode_pipeline_no_bias
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
-        compute_encoder.set_buffer(0, Some(args.x), 0);
-        compute_encoder.set_buffer(1, Some(args.w), 0);
+        compute_encoder.set_buffer(Some(args.x), 0, 0);
+        compute_encoder.set_buffer(Some(args.w), 0, 1);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(args.b, 0, 2);
         }
-        compute_encoder.set_buffer(3, Some(args.state), 0);
-        compute_encoder.set_buffer(4, Some(args.x_out), 0);
-        compute_encoder.set_buffer(5, Some(args.b_out), 0);
-        compute_encoder.set_buffer(6, Some(args.c_out), 0);
-        compute_encoder.set_buffer(7, Some(args.next_state), 0);
-        compute_encoder.set_bytes(
-            8,
-            size_of::<i32>() as u64,
-            &args.kernel_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<usize>() as u64,
-            &args.row_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<u32>() as u64,
-            &(args.channels as u32) as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            12,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            13,
-            size_of::<u32>() as u64,
-            &(args.inner_dim as u32) as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            14,
-            size_of::<u32>() as u64,
-            &(args.proj_dim as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.state), 0, 3);
+        compute_encoder.set_buffer(Some(args.x_out), 0, 4);
+        compute_encoder.set_buffer(Some(args.b_out), 0, 5);
+        compute_encoder.set_buffer(Some(args.c_out), 0, 6);
+        compute_encoder.set_buffer(Some(args.next_state), 0, 7);
+        compute_encoder.set_value(&args.kernel_size, 8);
+        compute_encoder.set_value(&args.row_stride, 9);
+        compute_encoder.set_value(&args.state_stride, 10);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 11);
+        compute_encoder.set_value(&args.suffix_len, 12);
+        let inner_dim_u32 = args.inner_dim as u32;
+        compute_encoder.set_value(&inner_dim_u32, 13);
+        let proj_dim_u32 = args.proj_dim as u32;
+        compute_encoder.set_value(&proj_dim_u32, 14);
 
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
@@ -291,8 +249,8 @@ impl Conv1dScanKernel {
             depth: 1,
         };
         let total_threads = MTLSize {
-            width: args.suffix_len as u64,
-            height: args.channels as u64,
+            width: args.suffix_len,
+            height: args.channels,
             depth: 1,
         };
         compute_encoder
@@ -302,7 +260,7 @@ impl Conv1dScanKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: Conv1dScanArguments,
     ) -> Result<(), SSMKernelError> {
         if args.channels == 0 || args.suffix_len == 0 || args.kernel_size <= 0 {
@@ -317,56 +275,31 @@ impl Conv1dScanKernel {
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
 
-        compute_encoder.set_buffer(0, Some(args.padded), 0);
-        compute_encoder.set_buffer(1, Some(args.w), 0);
+        compute_encoder.set_buffer(Some(args.padded), 0, 0);
+        compute_encoder.set_buffer(Some(args.w), 0, 1);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(args.b, 0, 2);
         }
-        compute_encoder.set_buffer(3, Some(args.x_out), 0);
-        compute_encoder.set_buffer(4, Some(args.b_out), 0);
-        compute_encoder.set_buffer(5, Some(args.c_out), 0);
-        compute_encoder.set_buffer(6, Some(args.state_out), 0);
+        compute_encoder.set_buffer(Some(args.x_out), 0, 3);
+        compute_encoder.set_buffer(Some(args.b_out), 0, 4);
+        compute_encoder.set_buffer(Some(args.c_out), 0, 5);
+        compute_encoder.set_buffer(Some(args.state_out), 0, 6);
 
-        compute_encoder.set_bytes(
-            7,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<i32>() as u64,
-            &args.kernel_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<usize>() as u64,
-            &args.row_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<u32>() as u64,
-            &(args.channels as u32) as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            12,
-            size_of::<u32>() as u64,
-            &(args.inner_dim as u32) as *const u32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            13,
-            size_of::<u32>() as u64,
-            &(args.proj_dim as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_value(&args.suffix_len, 7);
+        compute_encoder.set_value(&args.kernel_size, 8);
+        compute_encoder.set_value(&args.row_stride, 9);
+        compute_encoder.set_value(&args.state_stride, 10);
+        let channels_u32 = args.channels as u32;
+        compute_encoder.set_value(&channels_u32, 11);
+        let inner_dim_u32 = args.inner_dim as u32;
+        compute_encoder.set_value(&inner_dim_u32, 12);
+        let proj_dim_u32 = args.proj_dim as u32;
+        compute_encoder.set_value(&proj_dim_u32, 13);
 
-        let suffix = args.suffix_len as u64;
-        let tap_count = args.kernel_size.saturating_sub(1) as u64;
+        let suffix = args.suffix_len;
+        let tap_count = args.kernel_size.saturating_sub(1) as usize;
         let work_len = suffix + tap_count;
-        let channels = args.channels as u64;
+        let channels = args.channels;
         let threads_per_threadgroup = MTLSize {
             width: CONV1D_SCAN_THREADGROUP_SIZE,
             height: 1,

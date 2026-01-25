@@ -1,13 +1,11 @@
-use std::mem;
+use std::{mem, ptr::NonNull};
 
-use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer, CommandBufferRef,
-    ComputeCommandEncoder, ComputePipelineState, MTLSize,
-    foreign_types::{ForeignType, ForeignTypeRef},
-};
+use objc2::rc::Retained;
 
 use crate::backends::metal::{
-    MTLContext,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoderExt,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
     image::Image,
@@ -34,14 +32,13 @@ pub struct PatchParameters {
 
 #[derive(Debug)]
 pub struct ScalePadNormalizeImage {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ScalePadNormalizeImage {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "scalePadNormalizeImage";
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -52,27 +49,27 @@ impl ScalePadNormalizeImage {
         input_image: &Image,
         output_image: &Image,
         image_params_ptr: *const std::ffi::c_void,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
-        let compute_encoder = unsafe {
-            ComputeCommandEncoder::from_ptr(
-                command_buffer.new_compute_command_encoder().as_ptr(),
-            )
-        };
-        compute_encoder.set_label("ScalePadNormalizeImageEncoder");
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+        compute_encoder.set_label(Some("ScalePadNormalizeImageEncoder"));
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);
-        compute_encoder.set_texture(0, Some(input_image.texture_ref()));
-        compute_encoder.set_texture(1, Some(output_image.texture_ref()));
-        compute_encoder.set_bytes(
-            0,
-            mem::size_of::<ImageParameters>() as u64,
-            image_params_ptr,
-        );
+        compute_encoder.set_texture(Some(input_image.texture_ref()), 0);
+        compute_encoder.set_texture(Some(output_image.texture_ref()), 1);
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new_unchecked(image_params_ptr as *mut _),
+                mem::size_of::<ImageParameters>(),
+                0,
+            );
+        }
 
         let grid_size = MTLSize {
-            width: output_image.width() as u64,
-            height: output_image.height() as u64,
+            width: output_image.width() as usize,
+            height: output_image.height() as usize,
             depth: 1,
         };
 
@@ -85,7 +82,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         _parameters: &EncodingParameters,
     ) {
         let _ = command_buffer;
@@ -98,7 +95,7 @@ impl EncodableBlock for ScalePadNormalizeImage {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState,
-        _encoder: &metal::ComputeCommandEncoderRef,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         unreachable!(
@@ -109,14 +106,13 @@ impl EncodableBlock for ScalePadNormalizeImage {
 
 #[derive(Debug)]
 pub struct ExtractImagePatches {
-    pipeline_state: ComputePipelineState,
+    pipeline_state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ExtractImagePatches {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "extractImagePatches";
-        let (pipeline_state, _argument_names) = context
-            .compute_pipeline_state_with_reflection(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -125,27 +121,30 @@ impl ExtractImagePatches {
     pub fn encode_internal(
         &self,
         padded_normalized_image: &Image,
-        output_buffer_mtl: &MTLBuffer,
+        output_buffer_mtl: &ProtocolObject<dyn MTLBuffer>,
         patch_params_ptr: *const std::ffi::c_void,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
-        let compute_encoder =
-            command_buffer.new_compute_command_encoder().to_owned();
-        compute_encoder.set_label("ExtractImagePatchesEncoder");
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+        compute_encoder.set_label(Some("ExtractImagePatchesEncoder"));
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);
         compute_encoder
-            .set_texture(0, Some(padded_normalized_image.texture_ref()));
-        compute_encoder.set_buffer(0, Some(output_buffer_mtl), 0);
-        compute_encoder.set_bytes(
-            1,
-            mem::size_of::<PatchParameters>() as u64,
-            patch_params_ptr,
-        );
+            .set_texture(Some(padded_normalized_image.texture_ref()), 0);
+        compute_encoder.set_buffer(Some(output_buffer_mtl), 0, 0);
+        unsafe {
+            compute_encoder.set_bytes(
+                NonNull::new_unchecked(patch_params_ptr as *mut _),
+                mem::size_of::<PatchParameters>(),
+                1,
+            );
+        }
 
         let grid_size = MTLSize {
-            width: padded_normalized_image.width() as u64,
-            height: padded_normalized_image.height() as u64,
+            width: padded_normalized_image.width() as usize,
+            height: padded_normalized_image.height() as usize,
             depth: 1,
         };
 

@@ -26,10 +26,10 @@ sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
 
-# metal feature requires objc2, block (for callbacks) and metal
-objc2 = { workspace = true, optional = true}
-objc2-foundation = { workspace = true, optional = true}
-block = { workspace = true, optional = true }
+# metal feature requires objc2, block2 (for callbacks) and metal
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+block2 = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
 # macos requires objc2 even on non-metal (but shouldn't)
@@ -67,7 +67,13 @@ clang-ast = { workspace = true, optional = true }
 [features]
 default = ["metal"]
 
-metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
+metal = [
+    "dep:clang-ast",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:block2",
+    "dep:metal",
+]
 metal-nax = []
 
 tracing = []

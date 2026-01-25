@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-
-use metal::{
-    ComputeCommandEncoderRef, ComputePipelineState as MTLComputePipelineState,
-};
+use std::{collections::HashMap, ptr::NonNull};
 
 use super::{
     DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
@@ -11,17 +7,15 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        kernel::matmul::common::{
-            GEMMAddMMParams, GEMMParams, MatmulArguments,
-            transpose_configuration,
-        },
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -137,37 +131,37 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
-            let function_constants = metal::FunctionConstantValues::new();
-            function_constants.set_constant_value_at_index(
-                &configuration.has_batch as *const bool as *const _,
+            let function_constants = MTLFunctionConstantValues::new();
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.has_batch).cast(),
                 metal::MTLDataType::Bool,
                 10,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.use_out_source as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.use_out_source).cast(),
                 metal::MTLDataType::Bool,
                 100,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.do_axpby as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.do_axpby).cast(),
                 metal::MTLDataType::Bool,
                 110,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_m as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_m).cast(),
                 metal::MTLDataType::Bool,
                 200,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_n as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_n).cast(),
                 metal::MTLDataType::Bool,
                 201,
             );
-            function_constants.set_constant_value_at_index(
-                &configuration.align_k as *const bool as *const _,
+            function_constants.set_constant_value_type_at_index(
+                NonNull::from(&configuration.align_k).cast(),
                 metal::MTLDataType::Bool,
                 202,
             );
@@ -182,12 +176,11 @@ impl Kernel {
                 configuration.use_out_source as u8,
                 configuration.do_axpby as u8
             );
-            let (pipeline_state, _) = context
-                .compute_pipeline_state_with_reflection_cached(
-                    &cache_key,
-                    &kernel_name,
-                    Some(&function_constants),
-                )?;
+            let pipeline_state = context.compute_pipeline_state_cached(
+                &cache_key,
+                &kernel_name,
+                Some(&function_constants),
+            )?;
             self.pipelines.insert(configuration.clone(), pipeline_state);
         }
         Ok(self.pipelines.get(configuration).unwrap())
@@ -196,7 +189,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -206,30 +199,22 @@ impl Kernel {
         )?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
-        encoder.set_buffer(1, Some(arguments.b), 0);
+        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.b), 0, 1);
         if descriptor.pipeline_configuration.use_out_source {
             if let Some(c_buffer) = arguments.c {
-                encoder.set_buffer(2, Some(c_buffer), 0);
+                encoder.set_buffer(Some(c_buffer), 0, 2);
             }
         }
-        encoder.set_buffer(3, Some(arguments.d), 0);
+        encoder.set_buffer(Some(arguments.d), 0, 3);
 
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<GEMMParams>() as u64,
-            &descriptor.params as *const _ as *const _,
-        );
+        encoder.set_value(&descriptor.params, 4);
 
         if let Some(addmm_params) = &descriptor.addmm_params {
-            encoder.set_bytes(
-                5,
-                std::mem::size_of::<GEMMAddMMParams>() as u64,
-                addmm_params as *const _ as *const _,
-            );
+            encoder.set_value(addmm_params, 5);
         }
 
-        encoder.dispatch_thread_groups(
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

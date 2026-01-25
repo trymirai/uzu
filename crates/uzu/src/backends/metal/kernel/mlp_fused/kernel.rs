@@ -1,4 +1,4 @@
-use metal::ComputeCommandEncoderRef;
+use crate::backends::metal::{MTLComputeCommandEncoder, ProtocolObject};
 
 use super::{
     common::MlpFusedArguments,
@@ -68,7 +68,7 @@ impl MlpFusedKernel {
     fn encode_dispatch_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
         descriptor: &MlpFusedDispatchDescriptor,
     ) -> Result<(), MTLError> {
@@ -92,7 +92,7 @@ impl MlpFusedKernel {
     pub fn encode(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
     ) -> Result<(), MTLError> {
         let descriptor = choose_dispatch_descriptor(

@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
@@ -163,7 +165,7 @@ fn run_router_topk_once(
     // For BFloat16 kernel, probs buffer must be bf16, not f32
     let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
-    let cb = ctx.command_queue.new_command_buffer();
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let args = MoeRouterTopKArguments {
         input_buffer: &input_buf,
         weight_buffer: &weight_buf,
@@ -182,8 +184,8 @@ fn run_router_topk_once(
     cb.commit();
     cb.wait_until_completed();
 
-    let ids_ptr = ids_buf.contents() as *const i32;
-    let probs_ptr = probs_buf.contents() as *const bf16;
+    let ids_ptr = ids_buf.contents().as_ptr() as *const i32;
+    let probs_ptr = probs_buf.contents().as_ptr() as *const bf16;
     let ids_gpu =
         unsafe { std::slice::from_raw_parts(ids_ptr, t * k) }.to_vec();
     let probs_bf16_gpu =

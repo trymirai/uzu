@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
@@ -94,7 +96,7 @@ fn test_finalize_correctness() {
 
         // Execute finalize kernel
         let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize kernel");
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         finalize
             .encode(
                 &cb,
@@ -116,7 +118,7 @@ fn test_finalize_correctness() {
         // Compare
         let y_gpu = unsafe {
             std::slice::from_raw_parts(
-                y_out_buf.contents() as *const bf16,
+                y_out_buf.contents().as_ptr() as *const bf16,
                 t * d_model,
             )
         };

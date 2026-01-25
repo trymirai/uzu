@@ -1,8 +1,5 @@
-use std::{
-    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
-};
+use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
 
-use block::ConcreteBlock;
 use itertools::{Either, Itertools, izip};
 
 use super::{
@@ -15,9 +12,13 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::forward_pass::{
-        AttentionBiasUpdate, EncodableBlock, EncodingParameters,
-        ForwardPassState, INVALID_POSITION,
+    backends::metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
+        MTLCommandEncoder, MTLCommandQueue,
+        forward_pass::{
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
+            INVALID_POSITION,
+        },
     },
     session::{
         config::DecodingConfig,
@@ -435,7 +436,8 @@ impl LanguageModelGenerator {
         {
             unsafe {
                 let ptr =
-                    mask_buffer.borrow().backend_buffer().contents() as *mut u8;
+                    mask_buffer.borrow().backend_buffer().contents().as_ptr()
+                        as *mut u8;
                 std::ptr::write_bytes(
                     ptr,
                     0,
@@ -488,7 +490,7 @@ impl LanguageModelGenerator {
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.contents() as *const u32;
+            let ptr = async_positions_buffer.contents().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
@@ -552,7 +554,7 @@ impl LanguageModelGenerator {
         // Wait on previous pass if this is a continuation
         if is_continuation {
             root_command_buffer
-                .encode_wait_for_event(&async_event, current_counter);
+                .encode_wait_for_event_value(&async_event, current_counter);
         }
 
         self.context.executables.encode(
@@ -573,27 +575,27 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer =
-            unsafe { sampling_output.borrow_mut().mtl_buffer().clone() };
+        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
         let token_ids_buffer = self
             .context
             .scratch_buffers
             .token_ids
             .borrow()
-            .backend_buffer()
-            .clone();
+            .mtl_buffer_cloned();
 
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = root_command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.context.token_copy.encode_to_token_ids(
             &sampling_output_buffer,
             &token_ids_buffer,
-            encoder,
+            &encoder,
         );
         self.context.token_copy.encode_to_results(
             &sampling_output_buffer,
             &results_buffer,
             slot,
-            encoder,
+            &encoder,
         );
         encoder.end_encoding();
 
@@ -612,7 +614,9 @@ impl LanguageModelGenerator {
                 .register_accepted_tokens(&[token_position]);
         }
 
-        let encoder = root_command_buffer.new_compute_command_encoder();
+        let encoder = root_command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
 
         if let Some(mask_update) = &self.context.mask_update {
             let updates: Vec<AttentionBiasUpdate> = self
@@ -628,7 +632,7 @@ impl LanguageModelGenerator {
                 {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
-                            encoder,
+                            &encoder,
                             mask_buffer.borrow().backend_buffer(),
                             update.unmask_col,
                             update.mask_col,
@@ -642,25 +646,26 @@ impl LanguageModelGenerator {
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        root_command_buffer.encode_signal_event(&async_event, next_counter);
+        root_command_buffer
+            .encode_signal_event_value(&async_event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
         let results_buffer_clone = results_buffer.clone();
         let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
 
-        let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+        let handler = MTLCommandBufferHandler::new(move |_| {
             let token = {
-                let ptr = results_buffer_clone.contents() as *const u32;
+                let ptr =
+                    results_buffer_clone.contents().as_ptr() as *const u32;
                 unsafe { *ptr.add(slot) as u64 }
             };
             if let Some(cb) = callback.lock().unwrap().take() {
                 cb(token);
             }
         });
-        let block = block.copy();
 
-        root_command_buffer.add_completed_handler(&block);
+        root_command_buffer.add_completed_handler(&handler);
         root_command_buffer.commit();
 
         if should_capture {
@@ -843,7 +848,8 @@ impl LanguageModelGenerator {
             .context
             .mtl_context
             .command_queue
-            .new_command_buffer()
+            .command_buffer()
+            .expect("Failed to create command buffer")
             .to_owned();
         let root_command_buffer = command_buffer.to_owned();
 

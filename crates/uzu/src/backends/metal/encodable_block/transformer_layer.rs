@@ -166,7 +166,7 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
+                    unsafe { up_projection_weights.mtl_buffer().into() };
 
                 let mut up_projection_scales =
                     up_projection_tree.leaf("scales").map_err(|error| {
@@ -176,7 +176,7 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_scales_buffer =
-                    unsafe { up_projection_scales.mtl_buffer() }.to_owned();
+                    unsafe { up_projection_scales.mtl_buffer().into() };
 
                 // Load zero_points or biases depending on quantization type
                 let (
@@ -184,14 +184,14 @@ pub fn mlp_fused_block(
                     quantization_type,
                 ) = if let Ok(mut biases) = up_projection_tree.leaf("biases") {
                     (
-                        unsafe { biases.mtl_buffer() }.to_owned(),
+                        unsafe { biases.mtl_buffer().into() },
                         QuantizationType::Mlx,
                     )
                 } else if let Ok(mut zero_points) =
                     up_projection_tree.leaf("zero_points")
                 {
                     (
-                        unsafe { zero_points.mtl_buffer() }.to_owned(),
+                        unsafe { zero_points.mtl_buffer().into() },
                         QuantizationType::ZeroPoint,
                     )
                 } else {
@@ -251,7 +251,7 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
+                    unsafe { up_projection_weights.mtl_buffer().into() };
 
                 // Create down projection as separate linear
                 let down_projection = FullPrecisionLinear::new(

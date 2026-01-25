@@ -1,11 +1,8 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 // ---- Finalize Kernel ----
 
@@ -16,17 +13,17 @@ pub enum MoeFinalizeError {
 }
 
 pub struct MoeFinalizeKernel {
-    pipeline_f16: MTLComputePipelineState,
-    pipeline_bf16: MTLComputePipelineState,
-    pipeline_f32: MTLComputePipelineState,
+    pipeline_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
 pub struct MoeFinalizeArguments<'a> {
-    pub tok2row_buffer: &'a MTLBuffer, // [T*K] i32
-    pub probs_buffer: &'a MTLBuffer,   // [T*K] f16/bf16
-    pub y_partial_buffer: &'a MTLBuffer, // [sum_k, d_model] f16
-    pub y_out_buffer: &'a MTLBuffer,   // [T, d_model] f16
+    pub tok2row_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T*K] i32
+    pub probs_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // [T*K] f16/bf16
+    pub y_partial_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [sum_k, d_model] f16
+    pub y_out_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // [T, d_model] f16
     pub t: usize,
     pub d_model: usize,
     pub k: usize,
@@ -49,11 +46,13 @@ impl MoeFinalizeKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeFinalizeArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeFinalizeError> {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float16 => {
                 encoder.set_compute_pipeline_state(&self.pipeline_f16);
@@ -65,28 +64,16 @@ impl MoeFinalizeKernel {
                 encoder.set_compute_pipeline_state(&self.pipeline_f32);
             },
         }
-        encoder.set_buffer(0, Some(args.tok2row_buffer), 0);
-        encoder.set_buffer(1, Some(args.probs_buffer), 0);
-        encoder.set_buffer(2, Some(args.y_partial_buffer), 0);
-        encoder.set_buffer(3, Some(args.y_out_buffer), 0);
+        encoder.set_buffer(Some(args.tok2row_buffer), 0, 0);
+        encoder.set_buffer(Some(args.probs_buffer), 0, 1);
+        encoder.set_buffer(Some(args.y_partial_buffer), 0, 2);
+        encoder.set_buffer(Some(args.y_out_buffer), 0, 3);
         let t_u = args.t as u32;
         let dm_u = args.d_model as u32;
         let k_u = args.k as u32;
-        encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &t_u as *const u32 as *const _,
-        );
-        encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &dm_u as *const u32 as *const _,
-        );
-        encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &k_u as *const u32 as *const _,
-        );
+        encoder.set_value(&t_u, 4);
+        encoder.set_value(&dm_u, 5);
+        encoder.set_value(&k_u, 6);
 
         // Launch tiles over (N tiles, M tiles)
         const BM: usize = 32;
@@ -95,10 +82,9 @@ impl MoeFinalizeKernel {
         let num_tiles_m = (args.t + BM - 1) / BM;
         let threads_per_threadgroup = MTLSize::new(128, 1, 1); // BM * BN * 32 = 1 * 4 * 32
         if num_tiles_m > 0 && num_tiles_n > 0 {
-            let threadgroups =
-                MTLSize::new(num_tiles_n as u64, num_tiles_m as u64, 1);
+            let threadgroups = MTLSize::new(num_tiles_n, num_tiles_m, 1);
             encoder
-                .dispatch_thread_groups(threadgroups, threads_per_threadgroup);
+                .dispatch_threadgroups(threadgroups, threads_per_threadgroup);
         }
         encoder.end_encoding();
         Ok(())

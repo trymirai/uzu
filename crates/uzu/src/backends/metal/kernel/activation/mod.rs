@@ -1,18 +1,14 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    },
     config::Activation,
 };
 
 pub struct ActivationKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ActivationKernel {
@@ -35,8 +31,7 @@ impl ActivationKernel {
         data_type: DataType,
     ) -> Result<Self, MTLError> {
         let fn_name = Self::kernel_name_for_type(data_type)?;
-        let (pipeline, _) =
-            context.compute_pipeline_state_with_reflection(fn_name, None)?;
+        let pipeline = context.compute_pipeline_state(fn_name, None)?;
         Ok(Self {
             pipeline,
         })
@@ -56,10 +51,10 @@ impl ActivationKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         activation: &Activation,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        input_buffer: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer: &ProtocolObject<dyn MTLBuffer>,
         n: usize,
     ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
@@ -67,22 +62,14 @@ impl ActivationKernel {
         let threadgroups = (n as u64 + threads_per_tg - 1) / threads_per_tg;
 
         encoder.set_compute_pipeline_state(&self.pipeline);
-        encoder.set_buffer(0, Some(input_buffer), 0);
-        encoder.set_buffer(1, Some(output_buffer), 0);
-        encoder.set_bytes(
-            2,
-            size_of::<i32>() as u64,
-            &(n as i32) as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            size_of::<u16>() as u64,
-            &act_code as *const u16 as *const _,
-        );
+        encoder.set_buffer(Some(input_buffer), 0, 0);
+        encoder.set_buffer(Some(output_buffer), 0, 1);
+        encoder.set_value(&(n as i32), 2);
+        encoder.set_value(&act_code, 3);
 
-        encoder.dispatch_thread_groups(
-            MTLSize::new(threadgroups, 1, 1),
-            MTLSize::new(threads_per_tg, 1, 1),
+        encoder.dispatch_threadgroups(
+            MTLSize::new(threadgroups as usize, 1, 1),
+            MTLSize::new(threads_per_tg as usize, 1, 1),
         );
         Ok(())
     }

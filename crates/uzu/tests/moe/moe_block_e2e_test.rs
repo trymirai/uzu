@@ -1,4 +1,5 @@
 use half::bf16;
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
@@ -377,7 +378,10 @@ fn run_moe_parity_test_internal(
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
-    let cb = ctx.command_queue.new_command_buffer();
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
     let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
@@ -539,7 +543,7 @@ fn run_moe_parity_test_internal(
     // Read GPU output
     let y_out_bf16 = unsafe {
         std::slice::from_raw_parts(
-            y_out_buf.contents() as *const bf16,
+            y_out_buf.contents().as_ptr() as *const bf16,
             t * d_model,
         )
     };
@@ -570,23 +574,24 @@ fn run_moe_parity_test_internal(
         // Probe tile bookkeeping
         let total_tiles_cpu = unsafe {
             std::slice::from_raw_parts(
-                total_tiles_buf.contents() as *const u32,
+                total_tiles_buf.contents().as_ptr() as *const u32,
                 2,
             )
         };
         let dispatch_args_cpu = unsafe {
             std::slice::from_raw_parts(
-                dispatch_args_buf.contents() as *const u32,
+                dispatch_args_buf.contents().as_ptr() as *const u32,
                 3,
             )
         };
         let tile_offsets_cpu = unsafe {
             std::slice::from_raw_parts(
-                tile_offsets_buf.contents() as *const u32,
+                tile_offsets_buf.contents().as_ptr() as *const u32,
                 (e + 1).min(8),
             )
         };
-        let sumk_val = unsafe { *(sumk_buf.contents() as *const u32) } as usize;
+        let sumk_val =
+            unsafe { *(sumk_buf.contents().as_ptr() as *const u32) } as usize;
         eprintln!("[E2E] Tile bookkeeping:");
         eprintln!(
             "[E2E]   total_tiles={}, dispatch_args=({}, {}, {})",
@@ -606,7 +611,7 @@ fn run_moe_parity_test_internal(
         if t > 1 && d_ff >= 256 {
             let x_perm_cpu = unsafe {
                 std::slice::from_raw_parts(
-                    x_perm_buf.contents() as *const bf16,
+                    x_perm_buf.contents().as_ptr() as *const bf16,
                     sumk_val * d_model,
                 )
             };
@@ -633,7 +638,7 @@ fn run_moe_parity_test_internal(
             // Check tile_map for first few tiles
             let tile_map_cpu = unsafe {
                 std::slice::from_raw_parts(
-                    tile_map_buf.contents() as *const u32,
+                    tile_map_buf.contents().as_ptr() as *const u32,
                     12.min(max_tiles * 3),
                 )
             };
@@ -642,7 +647,7 @@ fn run_moe_parity_test_internal(
             // CRITICAL: Check tok2row mapping for multi-token tests
             let tok2row_cpu = unsafe {
                 std::slice::from_raw_parts(
-                    tok2row_buf.contents() as *const i32,
+                    tok2row_buf.contents().as_ptr() as *const i32,
                     t * k,
                 )
             };
@@ -660,7 +665,7 @@ fn run_moe_parity_test_internal(
             // Check y_partial at specific indices where finalize reads for token 1
             let y_partial_full = unsafe {
                 std::slice::from_raw_parts(
-                    y_partial_buf.contents() as *const bf16,
+                    y_partial_buf.contents().as_ptr() as *const bf16,
                     sumk_val * d_model,
                 )
             };
@@ -761,11 +766,14 @@ fn run_moe_parity_test_internal(
     // Debug: print some sample values from intermediate buffers
     eprintln!("[E2E] === DEBUG: Intermediate values ===");
     let topk_ids_gpu = unsafe {
-        std::slice::from_raw_parts(topk_ids_buf.contents() as *const i32, t * k)
+        std::slice::from_raw_parts(
+            topk_ids_buf.contents().as_ptr() as *const i32,
+            t * k,
+        )
     };
     let topk_probs_gpu = unsafe {
         std::slice::from_raw_parts(
-            topk_probs_buf.contents() as *const bf16,
+            topk_probs_buf.contents().as_ptr() as *const bf16,
             t * k,
         )
     };
@@ -777,11 +785,12 @@ fn run_moe_parity_test_internal(
 
     let y_partial_gpu = unsafe {
         std::slice::from_raw_parts(
-            y_partial_buf.contents() as *const bf16,
+            y_partial_buf.contents().as_ptr() as *const bf16,
             max_sumk * d_model,
         )
     };
-    let sumk_actual = unsafe { *(sumk_buf.contents() as *const u32) } as usize;
+    let sumk_actual =
+        unsafe { *(sumk_buf.contents().as_ptr() as *const u32) } as usize;
     eprintln!("[E2E] sumk={}", sumk_actual);
     let sample_size = 16.min(sumk_actual * d_model);
     eprintln!(

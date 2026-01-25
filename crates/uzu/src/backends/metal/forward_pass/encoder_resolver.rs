@@ -1,17 +1,18 @@
-use metal::{CommandBufferRef, ComputeCommandEncoder};
-
 use super::ForwardPassState;
-use crate::backends::metal::encodable_block::{
-    EncodableBlock, EncodingParameters,
+use crate::backends::metal::{
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
+    encodable_block::{EncodableBlock, EncodingParameters},
 };
 
 pub struct EncoderResolver<'a> {
-    command_buffer: &'a CommandBufferRef,
-    encoder: Option<ComputeCommandEncoder>,
+    command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>,
+    encoder: Option<Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>>,
 }
 
 impl<'a> EncoderResolver<'a> {
-    pub fn new(command_buffer: &'a CommandBufferRef) -> Self {
+    pub fn new(
+        command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>
+    ) -> Self {
         Self {
             command_buffer,
             encoder: None,
@@ -29,7 +30,7 @@ impl<'a> EncoderResolver<'a> {
                 self.encoder = Some(
                     self.command_buffer
                         .new_compute_command_encoder()
-                        .to_owned(),
+                        .expect("Failed to create compute command encoder"),
                 );
             }
             block.encode_with_shared_encoder(

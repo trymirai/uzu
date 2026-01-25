@@ -1,15 +1,13 @@
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    MTLSize,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    },
 };
 
 pub struct SigmoidKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl SigmoidKernel {
@@ -40,22 +38,18 @@ impl SigmoidKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        input_buffer: &MTLBuffer,
-        output_buffer: &MTLBuffer,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        input_buffer: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer: &ProtocolObject<dyn MTLBuffer>,
         total_elements: i32,
     ) -> Result<(), MTLError> {
         encoder.set_compute_pipeline_state(&self.pipeline);
-        encoder.set_buffer(0, Some(input_buffer), 0);
-        encoder.set_buffer(1, Some(output_buffer), 0);
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &total_elements as *const i32 as *const _,
-        );
+        encoder.set_buffer(Some(input_buffer), 0, 0);
+        encoder.set_buffer(Some(output_buffer), 0, 1);
+        encoder.set_value(&total_elements, 2);
 
         let threads_per_tg = MTLSize::new(256, 1, 1);
-        let grid = MTLSize::new(total_elements as u64, 1, 1);
+        let grid = MTLSize::new(total_elements as usize, 1, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
+};
 
 use crate::{
     DataType,
@@ -24,10 +27,10 @@ use crate::{
 pub struct QuantizedLinear {
     kernel: QuantizedMatmulKernel,
     bias_add_kernel: Option<TensorAddBias>,
-    biases_buffer: Option<MTLBuffer>,
-    weights_buffer: MTLBuffer,
-    scales_buffer: MTLBuffer,
-    zero_points_or_biases_buffer: MTLBuffer,
+    biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    zero_points_or_biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     quantization_type: QuantizationType,
     input_dim: usize,
     output_dim: usize,
@@ -111,10 +114,10 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer =
-                        unsafe { scales.mtl_buffer() }.to_owned();
-                    let biases_buf =
-                        unsafe { deq_biases.mtl_buffer() }.to_owned();
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
+                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        unsafe { objc2::rc::Retained::retain(deq_biases.mtl_buffer() as *const _ as *mut _).unwrap() };
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
@@ -149,17 +152,17 @@ impl QuantizedLinear {
                             storage_type
                         )));
                     }
-                    let scales_buffer =
-                        unsafe { scales.mtl_buffer() }.to_owned();
-                    let zps_buf =
-                        unsafe { zero_points.mtl_buffer() }.to_owned();
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
+                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*zero_points.mtl_buffer()) as *mut _).unwrap() };
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }
         };
 
-        let weights_buffer: MTLBuffer =
-            unsafe { weights.mtl_buffer() }.to_owned();
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+            unsafe { weights.mtl_buffer() }.to_owned().into();
 
         // Optional trainable bias support
         let (bias_add_kernel, biases_buffer) =
@@ -183,8 +186,8 @@ impl QuantizedLinear {
                         mtl_context,
                         KernelDataType::from(kernel_data_type),
                     )?);
-                    let biases_buffer: MTLBuffer =
-                        unsafe { biases.mtl_buffer() }.to_owned();
+                    let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        unsafe { biases.mtl_buffer() }.to_owned().into();
                     (bias_add_kernel, Some(biases_buffer))
                 },
                 Err(_) => (None, None),
@@ -210,8 +213,8 @@ impl QuantizedLinear {
             bias_add_kernel,
             biases_buffer,
             weights_buffer,
-            scales_buffer,
-            zero_points_or_biases_buffer,
+            scales_buffer: scales_buffer.into(),
+            zero_points_or_biases_buffer: zero_points_or_biases_buffer.into(),
             quantization_type,
             input_dim,
             output_dim,
@@ -225,7 +228,7 @@ impl EncodableBlock for QuantizedLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -237,7 +240,8 @@ impl EncodableBlock for QuantizedLinear {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -253,7 +257,7 @@ impl EncodableBlock for QuantizedLinear {
         };
 
         self.kernel
-            .encode(encoder, args)
+            .encode(&encoder, args)
             .expect("Failed to encode quantized matmul kernel");
 
         encoder.end_encoding();
@@ -263,13 +267,13 @@ impl EncodableBlock for QuantizedLinear {
         {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_into_command_buffer(
-                &output_buffer,
-                bias_buf,
-                &output_buffer,
+                output_buffer,
+                &bias_buf,
+                output_buffer,
                 self.output_dim,
                 total_len,
                 command_buffer,
-                parameters.predicate,
+                parameters.predicate.map(|v| &**v),
             );
         }
 
@@ -286,7 +290,7 @@ impl EncodableBlock for QuantizedLinear {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -320,13 +324,13 @@ impl EncodableBlock for QuantizedLinear {
         {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_with_encoder(
-                &output_buffer,
-                bias_buf,
-                &output_buffer,
+                output_buffer,
+                &bias_buf,
+                output_buffer,
                 self.output_dim,
                 total_len,
                 encoder,
-                parameters.predicate,
+                parameters.predicate.map(|v| &**v),
             );
         }
     }

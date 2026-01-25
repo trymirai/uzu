@@ -1,4 +1,6 @@
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{ProtocolObject,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+};
 
 use super::{
     super::{
@@ -39,7 +41,7 @@ impl EncodableBlock for Activation {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
@@ -51,10 +53,11 @@ impl EncodableBlock for Activation {
         let input_buffer = unsafe { input_array.mtl_buffer() };
         let output_buffer = unsafe { output_array.mtl_buffer() };
 
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
 
         self.kernel
-            .encode(encoder, &self.config, input_buffer, output_buffer, n)
+            .encode(&encoder, &self.config, input_buffer, output_buffer, n)
             .expect("Failed to encode activation kernel");
 
         encoder.end_encoding();
@@ -67,7 +70,7 @@ impl EncodableBlock for Activation {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

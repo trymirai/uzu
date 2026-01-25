@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 
-#[allow(deprecated)]
-use metal::MTLFeatureSet;
-use metal::{Device, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier};
+use crate::backends::metal::{
+    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier,
+    ProtocolObject,
+};
 
 /// Enum representing various Metal features that may or may not be supported by a device.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +30,7 @@ pub trait DeviceFeatures {
     ) -> bool;
 }
 
-impl DeviceFeatures for Device {
+impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
     fn supports_feature(
         &self,
         feature: Feature,
@@ -45,7 +46,7 @@ impl DeviceFeatures for Device {
                 #[allow(deprecated)]
                 {
                     self.supports_feature_set(
-                        MTLFeatureSet::macOS_GPUFamily1_v3,
+                        MTLFeatureSet::MacosGpuFamily1V3,
                     )
                 }
                 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
@@ -95,7 +96,7 @@ impl DeviceFeatures for Device {
                     MTLReadWriteTextureTier::Tier2 => {
                         tier_two_supported_formats.contains(&pixel_format)
                     },
-                    MTLReadWriteTextureTier::TierNone => false,
+                    MTLReadWriteTextureTier::None => false,
                 }
             },
             Feature::ReadWriteCubeMapTexturesInFunctions => {

@@ -2,11 +2,10 @@
 
 use std::rc::Rc;
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
-
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{
-    KernelDataType, MTLContext,
+use crate::backends::metal::{ProtocolObject,
+    KernelDataType,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
     forward_pass::{ArrayId, ForwardPassState},
     kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
 };
@@ -57,10 +56,12 @@ impl EncodableBlock for Sampling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -77,7 +78,7 @@ impl EncodableBlock for Sampling {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         assert!(
@@ -111,7 +112,7 @@ impl EncodableBlock for Sampling {
 
         let (bitmask_buffer, bitmask_offset) =
             state.token_bitmask().map_or((None, 0usize), |cell| {
-                let mut bitmask = cell.borrow_mut();
+                let bitmask = cell.borrow_mut();
                 let bitmask_row_len = {
                     use crate::Array;
                     bitmask.shape()[1]
@@ -120,13 +121,13 @@ impl EncodableBlock for Sampling {
                     + sampling_start
                         * bitmask_row_len
                         * std::mem::size_of::<u32>();
-                (Some(unsafe { bitmask.mtl_buffer().clone() }), bitmask_offset)
+                (Some(bitmask.mtl_buffer_cloned()), bitmask_offset)
             });
         if let Err(e) = self.kernel.encode_with_encoder(
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             seeds_offset,
-            bitmask_buffer.as_ref(),
+            bitmask_buffer.as_deref(),
             bitmask_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,

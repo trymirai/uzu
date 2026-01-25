@@ -1,12 +1,10 @@
-use std::mem::size_of;
+use std::ptr::NonNull;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
+use crate::backends::metal::{
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues,
+    MTLSize, ProtocolObject, Retained,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShortConvKernelError {
@@ -14,14 +12,15 @@ pub enum ShortConvKernelError {
     MetalError(#[from] MTLError),
 }
 
+
 fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-fn make_function_constants(has_bias: bool) -> FunctionConstantValues {
-    let function_constants = FunctionConstantValues::new();
-    function_constants.set_constant_value_at_index(
-        &has_bias as *const bool as *const std::ffi::c_void,
+fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
+    let function_constants = MTLFunctionConstantValues::new();
+    function_constants.set_constant_value_type_at_index(
+        NonNull::from(&has_bias).cast(),
         MTLDataType::Bool,
         0,
     );
@@ -29,17 +28,17 @@ fn make_function_constants(has_bias: bool) -> FunctionConstantValues {
 }
 
 pub struct ShortConvKernel {
-    pack_pipeline: MTLComputePipelineState,
-    prefill_pipeline_no_bias: MTLComputePipelineState,
-    prefill_pipeline_with_bias: MTLComputePipelineState,
-    decode_pipeline_no_bias: MTLComputePipelineState,
-    decode_pipeline_with_bias: MTLComputePipelineState,
+    pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {
-    pub state_in: &'a MTLBuffer,
-    pub in_proj: &'a MTLBuffer,
-    pub padded: &'a MTLBuffer,
+    pub state_in: &'a ProtocolObject<dyn MTLBuffer>,
+    pub in_proj: &'a ProtocolObject<dyn MTLBuffer>,
+    pub padded: &'a ProtocolObject<dyn MTLBuffer>,
     pub state_stride: usize,
     pub suffix_len: usize,
     pub in_proj_stride: usize,
@@ -47,12 +46,12 @@ pub struct ShortConvPackArguments<'a> {
 }
 
 pub struct ShortConvPrefillArguments<'a> {
-    pub padded: &'a MTLBuffer,
-    pub in_proj: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub out: &'a MTLBuffer,
-    pub state_out: &'a MTLBuffer,
+    pub padded: &'a ProtocolObject<dyn MTLBuffer>,
+    pub in_proj: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub out: &'a ProtocolObject<dyn MTLBuffer>,
+    pub state_out: &'a ProtocolObject<dyn MTLBuffer>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub in_proj_stride: usize,
@@ -61,12 +60,12 @@ pub struct ShortConvPrefillArguments<'a> {
 }
 
 pub struct ShortConvDecodeArguments<'a> {
-    pub in_proj: &'a MTLBuffer,
-    pub w: &'a MTLBuffer,
-    pub b: Option<&'a MTLBuffer>,
-    pub state: &'a MTLBuffer,
-    pub out: &'a MTLBuffer,
-    pub next_state: &'a MTLBuffer,
+    pub in_proj: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub state: &'a ProtocolObject<dyn MTLBuffer>,
+    pub out: &'a ProtocolObject<dyn MTLBuffer>,
+    pub next_state: &'a ProtocolObject<dyn MTLBuffer>,
     pub suffix_len: usize,
     pub kernel_size: i32,
     pub in_proj_stride: usize,
@@ -146,7 +145,7 @@ impl ShortConvKernel {
 
     pub fn encode_pack(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvPackArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -154,29 +153,13 @@ impl ShortConvKernel {
         }
 
         compute_encoder.set_compute_pipeline_state(&self.pack_pipeline);
-        compute_encoder.set_buffer(0, Some(args.state_in), 0);
-        compute_encoder.set_buffer(1, Some(args.in_proj), 0);
-        compute_encoder.set_buffer(2, Some(args.padded), 0);
-        compute_encoder.set_bytes(
-            3,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<usize>() as u64,
-            &args.in_proj_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &(args.model_dim as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.state_in), 0, 0);
+        compute_encoder.set_buffer(Some(args.in_proj), 0, 1);
+        compute_encoder.set_buffer(Some(args.padded), 0, 2);
+        compute_encoder.set_value(&args.state_stride, 3);
+        compute_encoder.set_value(&args.suffix_len, 4);
+        compute_encoder.set_value(&args.in_proj_stride, 5);
+        compute_encoder.set_value(&(args.model_dim as u32), 6);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,
@@ -185,8 +168,8 @@ impl ShortConvKernel {
         };
         let padded_rows = args.state_stride + args.suffix_len;
         let threadgroups = MTLSize {
-            width: args.model_dim as u64,
-            height: padded_rows as u64,
+            width: args.model_dim,
+            height: padded_rows,
             depth: 1,
         };
 
@@ -197,7 +180,7 @@ impl ShortConvKernel {
 
     pub fn encode_prefill(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvPrefillArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -214,39 +197,19 @@ impl ShortConvKernel {
             &self.prefill_pipeline_no_bias
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
-        compute_encoder.set_buffer(0, Some(args.padded), 0);
-        compute_encoder.set_buffer(1, Some(args.in_proj), 0);
-        compute_encoder.set_buffer(2, Some(args.w), 0);
+        compute_encoder.set_buffer(Some(args.padded), 0, 0);
+        compute_encoder.set_buffer(Some(args.in_proj), 0, 1);
+        compute_encoder.set_buffer(Some(args.w), 0, 2);
         if has_bias {
-            compute_encoder.set_buffer(3, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(args.b, 0, 3);
         }
-        compute_encoder.set_buffer(4, Some(args.out), 0);
-        compute_encoder.set_buffer(5, Some(args.state_out), 0);
-        compute_encoder.set_bytes(
-            6,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &args.kernel_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<usize>() as u64,
-            &args.in_proj_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &(args.model_dim as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.out), 0, 4);
+        compute_encoder.set_buffer(Some(args.state_out), 0, 5);
+        compute_encoder.set_value(&args.suffix_len, 6);
+        compute_encoder.set_value(&args.kernel_size, 7);
+        compute_encoder.set_value(&args.in_proj_stride, 8);
+        compute_encoder.set_value(&args.state_stride, 9);
+        compute_encoder.set_value(&(args.model_dim as u32), 10);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,
@@ -254,8 +217,8 @@ impl ShortConvKernel {
             depth: 1,
         };
         let threadgroups = MTLSize {
-            width: work_len as u64,
-            height: args.model_dim as u64,
+            width: work_len,
+            height: args.model_dim,
             depth: 1,
         };
 
@@ -266,7 +229,7 @@ impl ShortConvKernel {
 
     pub fn encode_decode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: ShortConvDecodeArguments,
     ) -> Result<(), ShortConvKernelError> {
         if args.model_dim == 0 || args.suffix_len == 0 {
@@ -280,39 +243,19 @@ impl ShortConvKernel {
             &self.decode_pipeline_no_bias
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
-        compute_encoder.set_buffer(0, Some(args.in_proj), 0);
-        compute_encoder.set_buffer(1, Some(args.w), 0);
+        compute_encoder.set_buffer(Some(args.in_proj), 0, 0);
+        compute_encoder.set_buffer(Some(args.w), 0, 1);
         if has_bias {
-            compute_encoder.set_buffer(2, args.b.map(|v| &**v), 0);
+            compute_encoder.set_buffer(args.b, 0, 2);
         }
-        compute_encoder.set_buffer(3, Some(args.state), 0);
-        compute_encoder.set_buffer(4, Some(args.out), 0);
-        compute_encoder.set_buffer(5, Some(args.next_state), 0);
-        compute_encoder.set_bytes(
-            6,
-            size_of::<usize>() as u64,
-            &args.suffix_len as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            7,
-            size_of::<i32>() as u64,
-            &args.kernel_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<usize>() as u64,
-            &args.in_proj_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<usize>() as u64,
-            &args.state_stride as *const usize as *const _,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &(args.model_dim as u32) as *const u32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.state), 0, 3);
+        compute_encoder.set_buffer(Some(args.out), 0, 4);
+        compute_encoder.set_buffer(Some(args.next_state), 0, 5);
+        compute_encoder.set_value(&args.suffix_len, 6);
+        compute_encoder.set_value(&args.kernel_size, 7);
+        compute_encoder.set_value(&args.in_proj_stride, 8);
+        compute_encoder.set_value(&args.state_stride, 9);
+        compute_encoder.set_value(&(args.model_dim as u32), 10);
 
         let threads_per_threadgroup = MTLSize {
             width: 32,
@@ -320,8 +263,8 @@ impl ShortConvKernel {
             depth: 1,
         };
         let threadgroups = MTLSize {
-            width: args.suffix_len as u64,
-            height: args.model_dim as u64,
+            width: args.suffix_len,
+            height: args.model_dim,
             depth: 1,
         };
 

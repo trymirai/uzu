@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -9,7 +8,8 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::embedding::{
             QuantizedEmbeddingLookupArguments, QuantizedEmbeddingLookupKernel,
@@ -21,9 +21,9 @@ use crate::{
 
 pub struct QuantizedEmbeddingLookup {
     kernel: QuantizedEmbeddingLookupKernel,
-    weights_buffer: MTLBuffer,
-    scales_buffer: MTLBuffer,
-    biases_buffer: MTLBuffer,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
@@ -154,7 +154,7 @@ impl QuantizedEmbeddingLookup {
         }
 
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
-        let biases_buffer: MTLBuffer = match parameter_tree.leaf(biases_name) {
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
             Ok(mut deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
                     return Err(EmbeddingError::MetalError(MTLError::Generic(
@@ -171,7 +171,7 @@ impl QuantizedEmbeddingLookup {
                         deq_biases.data_type(),
                     ));
                 }
-                unsafe { deq_biases.mtl_buffer().to_owned() }
+                unsafe { deq_biases.mtl_buffer().to_owned().into() }
             },
             Err(_) => {
                 let elem_size: usize = match data_type {
@@ -182,13 +182,16 @@ impl QuantizedEmbeddingLookup {
                     },
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context.device.new_buffer(
-                    size_bytes,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
+                let buf = mtl_context
+                    .device
+                    .new_buffer(
+                        size_bytes.try_into().unwrap(),
+                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    )
+                    .expect("Failed to allocate buffer");
                 unsafe {
                     std::ptr::write_bytes(
-                        buf.contents(),
+                        metal::MTLBuffer::contents(&*buf).as_ptr(),
                         0,
                         size_bytes as usize,
                     );
@@ -197,8 +200,8 @@ impl QuantizedEmbeddingLookup {
             },
         };
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
-        let scales_buffer = unsafe { scales.mtl_buffer().to_owned() };
+        let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
+        let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };
 
         Ok(Self {
             kernel,
@@ -217,10 +220,12 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -237,7 +242,7 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);

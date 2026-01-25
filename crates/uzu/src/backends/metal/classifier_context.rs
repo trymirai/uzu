@@ -1,18 +1,14 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
-use metal::CommandBuffer;
-
 use super::{
-    KernelDataType, MTLContext, ModelShape,
+    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, MTLDevice, MTLDeviceExt,
+    ModelShape, ProtocolObject, Retained,
     compilation_parameters::CompilationConfig,
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization,
-        Pooling, Rope,
+        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
-    forward_pass::{
-        ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
-    },
+    forward_pass::{ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers},
     kernel::{PoolingKernel, SigmoidKernel},
 };
 use crate::{
@@ -25,7 +21,7 @@ use crate::{
 
 pub struct ClassifierContext {
     pub mtl_context: Rc<MTLContext>,
-    pub command_buffer: CommandBuffer,
+    pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
     pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
@@ -48,12 +44,15 @@ pub struct ClassifierContext {
 
 impl ClassifierContext {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let mtl_device = metal::Device::system_default()
+        let mtl_device = <dyn MTLDevice>::system_default()
             .ok_or(Error::UnableToCreateMetalContext)?;
-        let mtl_command_queue =
-            mtl_device.new_command_queue_with_max_command_buffer_count(1024);
+        let mtl_command_queue = mtl_device
+            .new_command_queue_with_max_command_buffer_count(1024)
+            .ok_or(Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = mtl_command_queue.new_command_buffer().to_owned();
+        let command_buffer = mtl_command_queue
+            .command_buffer()
+            .ok_or(Error::UnableToCreateMetalContext)?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -433,7 +432,11 @@ impl ClassifierContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.new_command_buffer().to_owned();
+        self.command_buffer = self
+            .mtl_context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer")
+            .to_owned();
     }
 }

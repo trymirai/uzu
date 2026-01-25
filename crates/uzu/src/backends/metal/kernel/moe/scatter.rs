@@ -1,11 +1,8 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
+use crate::backends::metal::{
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
+    metal_extensions::ComputeEncoderSetValue,
 };
-
-use crate::backends::metal::{KernelDataType, MTLContext};
 
 // ---- Scatter Buckets Kernels ----
 
@@ -16,21 +13,21 @@ pub enum MoeScatterError {
 }
 
 pub struct MoeScatterKernels {
-    pipeline_bases: MTLComputePipelineState,
-    pipeline_scatter_f16: MTLComputePipelineState,
-    pipeline_scatter_f32: MTLComputePipelineState,
-    pipeline_scatter_bf16: MTLComputePipelineState,
+    pipeline_bases: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     // map variants
-    pipeline_scatter_map_f16: MTLComputePipelineState,
-    pipeline_scatter_map_f32: MTLComputePipelineState,
-    pipeline_scatter_map_bf16: MTLComputePipelineState,
+    pipeline_scatter_map_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
 pub struct MoeBlockBasesArguments<'a> {
-    pub partials_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
-    pub block_bases_buffer: &'a MTLBuffer, // same shape as partials
-    pub block_alloc_buffer: &'a MTLBuffer, // [num_blocks * num_tiles * 512]
+    pub partials_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [num_blocks * num_tiles * 512]
+    pub block_bases_buffer: &'a ProtocolObject<dyn MTLBuffer>, // same shape as partials
+    pub block_alloc_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [num_blocks * num_tiles * 512]
     pub e: usize,
     pub num_blocks: usize,
     pub num_tiles: usize,
@@ -38,13 +35,13 @@ pub struct MoeBlockBasesArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoeScatterArguments<'a> {
-    pub topk_ids_buffer: &'a MTLBuffer,
-    pub topk_probs_buffer: &'a MTLBuffer,
-    pub offsets_buffer: &'a MTLBuffer,
-    pub block_bases_buffer: &'a MTLBuffer,
-    pub block_alloc_buffer: &'a MTLBuffer,
-    pub out_ids_buffer: &'a MTLBuffer,
-    pub out_probs_buffer: &'a MTLBuffer,
+    pub topk_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub topk_probs_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub block_bases_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub block_alloc_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub out_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub out_probs_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub t: usize,
     pub e: usize,
     pub k: usize,
@@ -55,7 +52,7 @@ pub struct MoeScatterArguments<'a> {
 #[derive(Debug)]
 pub struct MoeScatterWithMapArguments<'a> {
     pub base: MoeScatterArguments<'a>,
-    pub tok2row_buffer: &'a MTLBuffer, // [T*K] int32, initialized to -1
+    pub tok2row_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T*K] int32, initialized to -1
 }
 
 impl MoeScatterKernels {
@@ -88,45 +85,31 @@ impl MoeScatterKernels {
 
     pub fn encode_block_bases(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         compute_encoder.set_compute_pipeline_state(&self.pipeline_bases);
-        compute_encoder.set_buffer(0, Some(args.partials_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.block_bases_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.block_alloc_buffer), 0);
+        compute_encoder.set_buffer(Some(args.partials_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(args.block_bases_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(args.block_alloc_buffer), 0, 2);
 
         let e_u32 = args.e as u32;
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
         let cap_u32: u32 = 0;
-        compute_encoder.set_bytes(
-            3,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<u32>() as u64,
-            &nb_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &nt_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &cap_u32 as *const u32 as *const std::ffi::c_void,
-        );
+        compute_encoder.set_value(&e_u32, 3);
+        compute_encoder.set_value(&nb_u32, 4);
+        compute_encoder.set_value(&nt_u32, 5);
+        compute_encoder.set_value(&cap_u32, 6);
 
         let total_entries = args.num_tiles * 512usize;
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(((total_entries + 255) / 256) as u64, 1, 1);
+        let tg = MTLSize::new((total_entries + 255) / 256, 1, 1);
         if total_entries > 0 {
-            compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
+            compute_encoder.dispatch_threadgroups(tg, threads_per_threadgroup);
         }
         compute_encoder.end_encoding();
         Ok(())
@@ -134,11 +117,13 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         // Select pipeline based on dtype
         match dtype {
             KernelDataType::Float16 => {
@@ -154,48 +139,28 @@ impl MoeScatterKernels {
                     .set_compute_pipeline_state(&self.pipeline_scatter_bf16);
             },
         }
-        compute_encoder.set_buffer(0, Some(args.topk_ids_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.topk_probs_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.offsets_buffer), 0);
-        compute_encoder.set_buffer(3, Some(args.block_bases_buffer), 0);
-        compute_encoder.set_buffer(4, Some(args.block_alloc_buffer), 0);
-        compute_encoder.set_buffer(5, Some(args.out_ids_buffer), 0);
-        compute_encoder.set_buffer(6, Some(args.out_probs_buffer), 0);
+        compute_encoder.set_buffer(Some(args.topk_ids_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(args.topk_probs_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(args.offsets_buffer), 0, 2);
+        compute_encoder.set_buffer(Some(args.block_bases_buffer), 0, 3);
+        compute_encoder.set_buffer(Some(args.block_alloc_buffer), 0, 4);
+        compute_encoder.set_buffer(Some(args.out_ids_buffer), 0, 5);
+        compute_encoder.set_buffer(Some(args.out_probs_buffer), 0, 6);
         let t_u32 = args.t as u32;
         let e_u32 = args.e as u32;
         let k_u32 = args.k as u32;
         let nb_u32 = args.num_blocks as u32;
         let nt_u32 = args.num_tiles as u32;
-        compute_encoder.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &t_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<u32>() as u64,
-            &k_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &nb_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<u32>() as u64,
-            &nt_u32 as *const u32 as *const std::ffi::c_void,
-        );
+        compute_encoder.set_value(&t_u32, 7);
+        compute_encoder.set_value(&e_u32, 8);
+        compute_encoder.set_value(&k_u32, 9);
+        compute_encoder.set_value(&nb_u32, 10);
+        compute_encoder.set_value(&nt_u32, 11);
 
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(args.num_blocks as u64, 1, 1);
+        let tg = MTLSize::new(args.num_blocks, 1, 1);
         if args.num_blocks > 0 {
-            compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
+            compute_encoder.dispatch_threadgroups(tg, threads_per_threadgroup);
         }
         compute_encoder.end_encoding();
         Ok(())
@@ -203,11 +168,13 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter_with_map(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         let pipeline = match dtype {
             KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
             KernelDataType::Float32 => &self.pipeline_scatter_map_f32,
@@ -215,49 +182,29 @@ impl MoeScatterKernels {
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
         let base = &args.base;
-        compute_encoder.set_buffer(0, Some(base.topk_ids_buffer), 0);
-        compute_encoder.set_buffer(1, Some(base.topk_probs_buffer), 0);
-        compute_encoder.set_buffer(2, Some(base.offsets_buffer), 0);
-        compute_encoder.set_buffer(3, Some(base.block_bases_buffer), 0);
-        compute_encoder.set_buffer(4, Some(base.block_alloc_buffer), 0);
-        compute_encoder.set_buffer(5, Some(base.out_ids_buffer), 0);
-        compute_encoder.set_buffer(6, Some(base.out_probs_buffer), 0);
+        compute_encoder.set_buffer(Some(base.topk_ids_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(base.topk_probs_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(base.offsets_buffer), 0, 2);
+        compute_encoder.set_buffer(Some(base.block_bases_buffer), 0, 3);
+        compute_encoder.set_buffer(Some(base.block_alloc_buffer), 0, 4);
+        compute_encoder.set_buffer(Some(base.out_ids_buffer), 0, 5);
+        compute_encoder.set_buffer(Some(base.out_probs_buffer), 0, 6);
         let t_u32 = base.t as u32;
         let e_u32 = base.e as u32;
         let k_u32 = base.k as u32;
         let nb_u32 = base.num_blocks as u32;
         let nt_u32 = base.num_tiles as u32;
-        compute_encoder.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &t_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            8,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            9,
-            size_of::<u32>() as u64,
-            &k_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            10,
-            size_of::<u32>() as u64,
-            &nb_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_bytes(
-            11,
-            size_of::<u32>() as u64,
-            &nt_u32 as *const u32 as *const std::ffi::c_void,
-        );
-        compute_encoder.set_buffer(12, Some(args.tok2row_buffer), 0);
+        compute_encoder.set_value(&t_u32, 7);
+        compute_encoder.set_value(&e_u32, 8);
+        compute_encoder.set_value(&k_u32, 9);
+        compute_encoder.set_value(&nb_u32, 10);
+        compute_encoder.set_value(&nt_u32, 11);
+        compute_encoder.set_buffer(Some(args.tok2row_buffer), 0, 12);
 
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
-        let tg = MTLSize::new(base.num_blocks as u64, 1, 1);
+        let tg = MTLSize::new(base.num_blocks, 1, 1);
         if base.num_blocks > 0 {
-            compute_encoder.dispatch_thread_groups(tg, threads_per_threadgroup);
+            compute_encoder.dispatch_threadgroups(tg, threads_per_threadgroup);
         }
         compute_encoder.end_encoding();
         Ok(())

@@ -1,8 +1,8 @@
 use std::fmt;
 
-use metal::{
-    Device, MTLPixelFormat, MTLStorageMode, MTLTextureUsage, Texture,
-    TextureDescriptor, TextureRef,
+use crate::backends::metal::{
+    MTLDevice, MTLDeviceExt, MTLPixelFormat, MTLResourceExt, MTLStorageMode, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage, ProtocolObject, Retained,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,16 +62,16 @@ impl From<TextureUsage> for MTLTextureUsage {
     fn from(usage: TextureUsage) -> Self {
         let mut result = MTLTextureUsage::empty();
         if usage.shader_read {
-            result = result | MTLTextureUsage::ShaderRead;
+            result = result | MTLTextureUsage::SHADER_READ;
         }
         if usage.shader_write {
-            result = result | MTLTextureUsage::ShaderWrite;
+            result = result | MTLTextureUsage::SHADER_WRITE;
         }
         if usage.render_target {
-            result = result | MTLTextureUsage::RenderTarget;
+            result = result | MTLTextureUsage::RENDER_TARGET;
         }
         if usage.pixel_format_view {
-            result = result | MTLTextureUsage::PixelFormatView;
+            result = result | MTLTextureUsage::PIXEL_FORMAT_VIEW;
         }
         result
     }
@@ -79,7 +79,7 @@ impl From<TextureUsage> for MTLTextureUsage {
 
 #[derive(Debug)]
 pub struct Image {
-    texture: Texture,
+    texture: Retained<ProtocolObject<dyn MTLTexture>>,
     width: u32,
     height: u32,
     pixel_format: PixelFormat,
@@ -87,7 +87,7 @@ pub struct Image {
 
 impl Image {
     pub fn new(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         width: u32,
         height: u32,
         pixel_format: PixelFormat,
@@ -102,21 +102,21 @@ impl Image {
     }
 
     pub fn new_with_usage(
-        device: &Device,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
         width: u32,
         height: u32,
         pixel_format: PixelFormat,
         usage: TextureUsage,
     ) -> Self {
-        let descriptor = TextureDescriptor::new();
+        let descriptor = unsafe { MTLTextureDescriptor::new() };
         descriptor.set_pixel_format(pixel_format.into());
-        descriptor.set_width(width as u64);
-        descriptor.set_height(height as u64);
+        unsafe { descriptor.set_width(width as usize) };
+        unsafe { descriptor.set_height(height as usize) };
         descriptor.set_storage_mode(MTLStorageMode::Private);
         descriptor.set_usage(usage.into());
 
-        let texture = device.new_texture(&descriptor);
-        texture.set_label("Image");
+        let texture = device.new_texture_with_descriptor(&descriptor).expect("Failed to create texture");
+        texture.set_label(Some("Image"));
 
         Self {
             texture,
@@ -127,11 +127,11 @@ impl Image {
     }
 
     pub fn new_with_descriptor(
-        device: &Device,
-        descriptor: &TextureDescriptor,
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
+        descriptor: &MTLTextureDescriptor,
     ) -> Self {
-        let texture = device.new_texture(descriptor);
-        texture.set_label("Image");
+        let texture = device.new_texture_with_descriptor(descriptor).expect("Failed to create texture");
+        texture.set_label(Some("Image"));
 
         let width = descriptor.width() as u32;
         let height = descriptor.height() as u32;
@@ -145,7 +145,7 @@ impl Image {
         }
     }
 
-    pub fn from_texture(texture: Texture) -> Self {
+    pub fn from_texture(texture: Retained<ProtocolObject<dyn MTLTexture>>) -> Self {
         let width = texture.width() as u32;
         let height = texture.height() as u32;
         let pixel_format = texture.pixel_format().into();
@@ -170,25 +170,25 @@ impl Image {
         self.pixel_format
     }
 
-    pub fn texture(&self) -> &Texture {
+    pub fn texture(&self) -> &Retained<ProtocolObject<dyn MTLTexture>> {
         &self.texture
     }
 
-    pub fn texture_ref(&self) -> &TextureRef {
-        self.texture.as_ref()
+    pub fn texture_ref(&self) -> &ProtocolObject<dyn MTLTexture> {
+        &self.texture
     }
 
     pub fn set_label(
         &self,
         label: &str,
     ) {
-        self.texture.set_label(label);
+        self.texture.set_label(Some(label));
     }
 }
 
-impl AsRef<TextureRef> for Image {
-    fn as_ref(&self) -> &TextureRef {
-        self.texture.as_ref()
+impl AsRef<ProtocolObject<dyn MTLTexture>> for Image {
+    fn as_ref(&self) -> &ProtocolObject<dyn MTLTexture> {
+        &self.texture
     }
 }
 

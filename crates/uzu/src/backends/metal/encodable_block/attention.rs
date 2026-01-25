@@ -1,10 +1,9 @@
 //! Attention kernel encodable.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
-
 use super::{EncodableBlock, EncodingParameters};
 use crate::backends::metal::{
-    KernelDataType, MTLContext,
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLContext, ProtocolObject,
     forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
         AttentionError, AttentionGemmArguments, AttentionKernel,
@@ -64,10 +63,12 @@ impl EncodableBlock for Attention {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -84,7 +85,7 @@ impl EncodableBlock for Attention {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let (
@@ -206,12 +207,11 @@ impl EncodableBlock for Attention {
             let value_cache_binding =
                 state.arrays(&[ArrayId::Values(self.layer_index)]);
 
-            let mut key_cache_array = key_cache_binding[0].borrow_mut();
-            let key_cache_buf = unsafe { key_cache_array.mtl_buffer().clone() };
+            let key_cache_array = key_cache_binding[0].borrow_mut();
+            let key_cache_buf = key_cache_array.mtl_buffer_cloned();
 
-            let mut value_cache_array = value_cache_binding[0].borrow_mut();
-            let value_cache_buf =
-                unsafe { value_cache_array.mtl_buffer().clone() };
+            let value_cache_array = value_cache_binding[0].borrow_mut();
+            let value_cache_buf = value_cache_array.mtl_buffer_cloned();
 
             (key_cache_buf, value_cache_buf)
         } else {
@@ -219,10 +219,10 @@ impl EncodableBlock for Attention {
             // Use the KV cache update kernel to extract values from QKV into a dedicated extracted_values buffer.
             let extracted_values_binding =
                 state.arrays(&[ArrayId::ExtractedValues]);
-            let mut extracted_values_array =
+            let extracted_values_array =
                 extracted_values_binding[0].borrow_mut();
             let extracted_values_buf =
-                unsafe { extracted_values_array.mtl_buffer().clone() };
+                extracted_values_array.mtl_buffer_cloned();
 
             // Reuse the KV cache update kernel to write values into extracted_values_buf.
             if let Err(e) = self.kernel.encode_kv_cache_update(
@@ -243,7 +243,15 @@ impl EncodableBlock for Attention {
                 eprintln!("Failed to prepare rotated values buffer: {:?}", e);
             }
 
-            (rotated_keys_buffer.clone(), extracted_values_buf)
+            (
+                unsafe {
+                    objc2::rc::Retained::retain(
+                        rotated_keys_buffer as *const _ as *mut _,
+                    )
+                    .unwrap()
+                },
+                extracted_values_buf,
+            )
         };
 
         let mut queries_array = rotated_queries_binding[0].borrow_mut();
@@ -260,8 +268,8 @@ impl EncodableBlock for Attention {
                 attention_bias_map
                     .get(&window_length)
                     .map(|array| {
-                        let mut array_ref = array.borrow_mut();
-                        unsafe { array_ref.mtl_buffer().clone() }
+                        let array_ref = array.borrow();
+                        array_ref.mtl_buffer_cloned()
                     })
                     .unwrap_or_else(|| {
                         panic!(
@@ -287,9 +295,9 @@ impl EncodableBlock for Attention {
         let mut maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
 
-        let sinks_buffer = sinks_binding.as_ref().map(|binding| unsafe {
-            binding[0].borrow_mut().mtl_buffer().clone()
-        });
+        let sinks_buffer = sinks_binding
+            .as_ref()
+            .map(|binding| binding[0].borrow().mtl_buffer_cloned());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
@@ -330,8 +338,8 @@ impl EncodableBlock for Attention {
                             keys_buffer: &key_cache_buffer,
                             values_buffer: &value_cache_buffer,
                             output_buffer: &attention_output_buffer,
-                            mask_buffer: attention_bias_buffer.as_ref(),
-                            sinks_buffer: sinks_buffer.as_ref(),
+                            mask_buffer: attention_bias_buffer.as_deref(),
+                            sinks_buffer: sinks_buffer.as_deref(),
                             num_heads,
                             num_groups,
                             suffix_length,
@@ -359,11 +367,11 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: attention_bias_buffer.as_ref(),
+                        mask_buffer: attention_bias_buffer.as_deref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
-                        sinks_buffer: sinks_buffer.as_ref(),
+                        sinks_buffer: sinks_buffer.as_deref(),
                         num_heads,
                         suffix_length,
                         head_dim,
@@ -394,11 +402,11 @@ impl EncodableBlock for Attention {
                         v_head_stride,
                         v_seq_stride,
                         scale,
-                        mask_buffer: attention_bias_buffer.as_ref(),
+                        mask_buffer: attention_bias_buffer.as_deref(),
                         mask_kv_seq_stride,
                         mask_q_seq_stride,
                         mask_head_stride,
-                        sinks_buffer: sinks_buffer.as_ref(),
+                        sinks_buffer: sinks_buffer.as_deref(),
                         num_heads,
                         suffix_length,
                         head_dim,

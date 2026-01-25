@@ -1,30 +1,26 @@
 use std::mem::size_of;
 
-use metal::{Buffer, MTLResourceOptions};
-
 use super::LanguageModelGeneratorContext;
-use crate::backends::metal::forward_pass::{
-    EncodableBlock, EncodingParameters, ForwardPassState,
+use crate::backends::metal::{
+    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject, Retained,
+    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
     pub key: String,
-    predicate_buffer: Buffer,
+    predicate_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl LanguageModelGeneratorEncodedTask {
-    pub fn predicate_buffer(&self) -> &Buffer {
+    pub fn predicate_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.predicate_buffer
     }
 
     pub fn disable_execution(&self) {
         unsafe {
-            let ptr = self.predicate_buffer.contents() as *mut u32;
+            let ptr = self.predicate_buffer.contents().as_ptr() as *mut u32;
             *ptr = 1;
-            self.predicate_buffer.did_modify_range(metal::NSRange::new(
-                0,
-                size_of::<u32>() as u64,
-            ));
+            self.predicate_buffer.did_modify_range(0..size_of::<u32>());
         }
     }
 }
@@ -121,10 +117,14 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
         LanguageModelGeneratorEncodedTask {
             key,
-            predicate_buffer: context.mtl_context.device.new_buffer(
-                size_of::<u32>() as u64,
-                MTLResourceOptions::StorageModeShared,
-            ),
+            predicate_buffer: context
+                .mtl_context
+                .device
+                .new_buffer(
+                    size_of::<u32>(),
+                    MTLResourceOptions::STORAGE_MODE_SHARED,
+                )
+                .expect("Failed to create predicate buffer"),
         }
     }
 }

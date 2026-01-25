@@ -1,10 +1,4 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, CommandBufferRef,
-    ComputePipelineState as MTLComputePipelineState, FunctionConstantValues,
-    MTLDataType, MTLSize,
-};
+use std::{mem::size_of, ptr::NonNull};
 
 use super::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
@@ -13,7 +7,11 @@ use super::{
     MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
     MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
 };
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
+use crate::backends::metal::{
+    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
+    MTLFunctionConstantValues, MTLSize, NSRange, ProtocolObject, Retained,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {
@@ -40,18 +38,18 @@ impl From<MoeTileError> for MoeExpertsError {
 
 #[derive(Debug)]
 pub struct MoeExpertsArguments<'a> {
-    pub x_perm_buffer: &'a MTLBuffer, // [sum_k, d_model] - permuted input
-    pub expert_offsets: &'a MTLBuffer, // [E+1] - expert segment offsets
-    pub w13_all: &'a MTLBuffer, // [E, 2*d_ff, d_model] - transposed up projection weights
-    pub w2_all: &'a MTLBuffer, // [E, d_model, d_ff] - transposed down projection weights
-    pub y_partial: &'a MTLBuffer, // [sum_k, d_model] - output buffer
-    pub up_biases: &'a MTLBuffer, // [E, 2*d_ff] - up projection biases
-    pub down_biases: &'a MTLBuffer, // [E, d_model] - down projection biases
-    pub tile_counts: &'a MTLBuffer, // [E]
-    pub tile_row_offsets: &'a MTLBuffer, // [E+1]
-    pub tile_map: &'a MTLBuffer, // [max_tiles * 3]
-    pub total_tiles: &'a MTLBuffer, // [2]
-    pub dispatch_args: &'a MTLBuffer, // [3]
+    pub x_perm_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [sum_k, d_model] - permuted input
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1] - expert segment offsets
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>, // [E, 2*d_ff, d_model] - transposed up projection weights
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model, d_ff] - transposed down projection weights
+    pub y_partial: &'a ProtocolObject<dyn MTLBuffer>, // [sum_k, d_model] - output buffer
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>, // [E, 2*d_ff] - up projection biases
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model] - down projection biases
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>, // [E]
+    pub tile_row_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>, // [max_tiles * 3]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [2]
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_n: usize,
     pub t: usize,
     pub d_model: usize,
@@ -69,32 +67,32 @@ pub struct MoeExpertsArguments<'a> {
 
 pub struct MoeExpertsTwoPassDecodeKernel {
     pass_a_tile: MoePassATileKernel,
-    pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
-    fused_down: Vec<MTLComputePipelineState>,           // [dtype]
+    pass_a_indirect: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    fused_down: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,           // [dtype]
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
     tile_map: MoeTileMapKernel,
-    pass_a_indirect: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
-    pass_b_indirect: Vec<MTLComputePipelineState>,      // [dtype]
+    pass_a_indirect: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    pass_b_indirect: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,      // [dtype]
 }
 
 #[derive(Debug)]
 pub struct MoeExpertsTwoPassArguments<'a> {
-    pub x_perm_buffer: &'a MTLBuffer,
-    pub expert_offsets: &'a MTLBuffer,
-    pub row_expert_map: &'a MTLBuffer,
-    pub hidden_buffer: &'a MTLBuffer,
-    pub output_buffer: &'a MTLBuffer,
-    pub w13_all: &'a MTLBuffer,
-    pub w2_all: &'a MTLBuffer,
-    pub up_biases: &'a MTLBuffer,
-    pub down_biases: &'a MTLBuffer,
-    pub tile_counts: &'a MTLBuffer,
-    pub tile_offsets: &'a MTLBuffer,
-    pub tile_map: &'a MTLBuffer,
-    pub total_tiles: &'a MTLBuffer,
-    pub dispatch_args: &'a MTLBuffer,
+    pub x_perm_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>,
+    pub row_expert_map: &'a ProtocolObject<dyn MTLBuffer>,
+    pub hidden_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>,
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,
+    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>,
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
@@ -120,15 +118,15 @@ impl MoeExpertsTwoPassDecodeKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                let fcv = MTLFunctionConstantValues::new();
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );
                 let tile_h: u32 = 512;
-                fcv.set_constant_value_at_index(
-                    &tile_h as *const u32 as *const std::ffi::c_void,
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&tile_h).cast(),
                     MTLDataType::UInt,
                     32,
                 );
@@ -163,7 +161,7 @@ impl MoeExpertsTwoPassDecodeKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {
@@ -223,55 +221,63 @@ impl MoeExpertsTwoPassDecodeKernel {
         let d_ff_u32 = args.d_ff as u32;
         let e_u32 = args.e as u32;
         let pass_a_pipeline = &self.pass_a_indirect[gate_idx][dtype_idx];
-        let encoder_a = command_buffer.new_compute_command_encoder();
+        let encoder_a = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         encoder_a.set_compute_pipeline_state(pass_a_pipeline);
-        encoder_a.set_buffer(0, Some(args.x_perm_buffer), 0);
-        encoder_a.set_buffer(1, Some(args.expert_offsets), 0);
-        encoder_a.set_buffer(2, Some(args.w13_all), 0);
-        encoder_a.set_buffer(3, Some(args.hidden_buffer), 0);
-        encoder_a.set_buffer(4, Some(args.up_biases), 0);
-        encoder_a.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &d_ff_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            8,
-            size_of::<f32>() as u64,
-            &args.gate_clip_min as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            9,
-            size_of::<f32>() as u64,
-            &args.gate_clip_max as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            10,
-            size_of::<f32>() as u64,
-            &args.up_clip_min as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            11,
-            size_of::<f32>() as u64,
-            &args.up_clip_max as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            12,
-            size_of::<f32>() as u64,
-            &args.silu_alpha as *const f32 as *const _,
-        );
-        encoder_a.set_buffer(13, Some(args.tile_map), 0);
-        encoder_a.dispatch_thread_groups_indirect(
+        encoder_a.set_buffer(Some(args.x_perm_buffer), 0, 0);
+        encoder_a.set_buffer(Some(args.expert_offsets), 0, 1);
+        encoder_a.set_buffer(Some(args.w13_all), 0, 2);
+        encoder_a.set_buffer(Some(args.hidden_buffer), 0, 3);
+        encoder_a.set_buffer(Some(args.up_biases), 0, 4);
+        unsafe {
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                5,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                6,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                7,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(
+                    &args.gate_clip_min as *const _ as *mut _,
+                ),
+                size_of::<f32>(),
+                8,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(
+                    &args.gate_clip_max as *const _ as *mut _,
+                ),
+                size_of::<f32>(),
+                9,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.up_clip_min as *const _ as *mut _),
+                size_of::<f32>(),
+                10,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.up_clip_max as *const _ as *mut _),
+                size_of::<f32>(),
+                11,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.silu_alpha as *const _ as *mut _),
+                size_of::<f32>(),
+                12,
+            );
+        }
+        encoder_a.set_buffer(Some(args.tile_map), 0, 13);
+        encoder_a.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
             MTLSize::new(128, 1, 1),
@@ -279,40 +285,44 @@ impl MoeExpertsTwoPassDecodeKernel {
         encoder_a.end_encoding();
         let total_rows_u32 = args.total_rows as u32;
         let pass_b_pipeline = &self.fused_down[dtype_idx];
-        let encoder_b = command_buffer.new_compute_command_encoder();
+        let encoder_b = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         encoder_b.set_compute_pipeline_state(pass_b_pipeline);
-        encoder_b.set_buffer(0, Some(args.hidden_buffer), 0);
-        encoder_b.set_buffer(1, Some(args.row_expert_map), 0);
-        encoder_b.set_buffer(2, Some(args.w2_all), 0);
-        encoder_b.set_buffer(3, Some(args.down_biases), 0);
-        encoder_b.set_buffer(4, Some(args.output_buffer), 0);
-        encoder_b.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &total_rows_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &d_ff_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_bytes(
-            8,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
+        encoder_b.set_buffer(Some(args.hidden_buffer), 0, 0);
+        encoder_b.set_buffer(Some(args.row_expert_map), 0, 1);
+        encoder_b.set_buffer(Some(args.w2_all), 0, 2);
+        encoder_b.set_buffer(Some(args.down_biases), 0, 3);
+        encoder_b.set_buffer(Some(args.output_buffer), 0, 4);
+        unsafe {
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&total_rows_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                5,
+            );
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                6,
+            );
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                7,
+            );
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                8,
+            );
+        }
         const SIMDGROUPS_PER_TG: u32 = 8;
         const THREADS_PER_TG: u32 = 256;
         let col_blocks =
             (args.d_model as u32 + SIMDGROUPS_PER_TG - 1) / SIMDGROUPS_PER_TG;
-        encoder_b.dispatch_thread_groups(
-            MTLSize::new(col_blocks as u64, args.total_rows as u64, 1),
-            MTLSize::new(THREADS_PER_TG as u64, 1, 1),
+        encoder_b.dispatch_threadgroups(
+            MTLSize::new(col_blocks as usize, args.total_rows, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_b.end_encoding();
         Ok(())
@@ -330,9 +340,9 @@ impl MoeExpertsTwoPassPrefillKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                let fcv = MTLFunctionConstantValues::new();
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );
@@ -369,7 +379,7 @@ impl MoeExpertsTwoPassPrefillKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {
@@ -381,11 +391,13 @@ impl MoeExpertsTwoPassPrefillKernel {
             KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
             KernelDataType::Float32 => 4,
         };
-        let hidden_bytes = (args.total_rows * args.d_ff * dtype_size) as u64;
-        let blit_encoder = command_buffer.new_blit_command_encoder();
-        blit_encoder.fill_buffer(
+        let hidden_bytes = args.total_rows * args.d_ff * dtype_size;
+        let blit_encoder = command_buffer
+            .new_blit_command_encoder()
+            .expect("Failed to create blit command encoder");
+        blit_encoder.fill_buffer_range_value(
             args.hidden_buffer,
-            metal::NSRange::new(0, hidden_bytes),
+            NSRange::new(0, hidden_bytes),
             0,
         );
         blit_encoder.end_encoding();
@@ -440,61 +452,69 @@ impl MoeExpertsTwoPassPrefillKernel {
             },
         )?;
         let pass_a_pipeline = &self.pass_a_indirect[gate_idx][dtype_idx];
-        let encoder_a = command_buffer.new_compute_command_encoder();
+        let encoder_a = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         encoder_a.set_compute_pipeline_state(pass_a_pipeline);
-        encoder_a.set_buffer(0, Some(args.x_perm_buffer), 0);
-        encoder_a.set_buffer(1, Some(args.expert_offsets), 0);
-        encoder_a.set_buffer(2, Some(args.w13_all), 0);
-        encoder_a.set_buffer(3, Some(args.up_biases), 0);
-        encoder_a.set_buffer(4, Some(args.hidden_buffer), 0);
-        encoder_a.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &d_ff_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
-        encoder_a.set_bytes(
-            8,
-            size_of::<f32>() as u64,
-            &args.gate_clip_min as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            9,
-            size_of::<f32>() as u64,
-            &args.gate_clip_max as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            10,
-            size_of::<f32>() as u64,
-            &args.up_clip_min as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            11,
-            size_of::<f32>() as u64,
-            &args.up_clip_max as *const f32 as *const _,
-        );
-        encoder_a.set_bytes(
-            12,
-            size_of::<f32>() as u64,
-            &args.silu_alpha as *const f32 as *const _,
-        );
-        encoder_a.set_buffer(13, Some(args.tile_map), 0);
+        encoder_a.set_buffer(Some(args.x_perm_buffer), 0, 0);
+        encoder_a.set_buffer(Some(args.expert_offsets), 0, 1);
+        encoder_a.set_buffer(Some(args.w13_all), 0, 2);
+        encoder_a.set_buffer(Some(args.up_biases), 0, 3);
+        encoder_a.set_buffer(Some(args.hidden_buffer), 0, 4);
+        unsafe {
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                5,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                6,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                7,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(
+                    &args.gate_clip_min as *const _ as *mut _,
+                ),
+                size_of::<f32>(),
+                8,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(
+                    &args.gate_clip_max as *const _ as *mut _,
+                ),
+                size_of::<f32>(),
+                9,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.up_clip_min as *const _ as *mut _),
+                size_of::<f32>(),
+                10,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.up_clip_max as *const _ as *mut _),
+                size_of::<f32>(),
+                11,
+            );
+            encoder_a.set_bytes(
+                NonNull::new_unchecked(&args.silu_alpha as *const _ as *mut _),
+                size_of::<f32>(),
+                12,
+            );
+        }
+        encoder_a.set_buffer(Some(args.tile_map), 0, 13);
         // Match kernel config: WM=2, WN=2 => 4 SIMDgroups => 128 threads
         const SIMDGROUPS_PER_TG: u32 = 4;
         const THREADS_PER_TG: u32 = SIMDGROUPS_PER_TG * 32;
-        encoder_a.dispatch_thread_groups_indirect(
+        encoder_a.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
-            MTLSize::new(THREADS_PER_TG as u64, 1, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_a.end_encoding();
         self.tile_map.encode_dispatch_args(
@@ -506,33 +526,37 @@ impl MoeExpertsTwoPassPrefillKernel {
             },
         )?;
         let pass_b_pipeline = &self.pass_b_indirect[dtype_idx];
-        let encoder_b = command_buffer.new_compute_command_encoder();
+        let encoder_b = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         encoder_b.set_compute_pipeline_state(pass_b_pipeline);
-        encoder_b.set_buffer(0, Some(args.hidden_buffer), 0);
-        encoder_b.set_buffer(1, Some(args.expert_offsets), 0);
-        encoder_b.set_buffer(2, Some(args.w2_all), 0);
-        encoder_b.set_buffer(3, Some(args.down_biases), 0);
-        encoder_b.set_buffer(4, Some(args.output_buffer), 0);
-        encoder_b.set_bytes(
-            5,
-            size_of::<u32>() as u64,
-            &d_model_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_bytes(
-            6,
-            size_of::<u32>() as u64,
-            &d_ff_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_bytes(
-            7,
-            size_of::<u32>() as u64,
-            &e_u32 as *const u32 as *const _,
-        );
-        encoder_b.set_buffer(8, Some(args.tile_map), 0);
-        encoder_b.dispatch_thread_groups_indirect(
+        encoder_b.set_buffer(Some(args.hidden_buffer), 0, 0);
+        encoder_b.set_buffer(Some(args.expert_offsets), 0, 1);
+        encoder_b.set_buffer(Some(args.w2_all), 0, 2);
+        encoder_b.set_buffer(Some(args.down_biases), 0, 3);
+        encoder_b.set_buffer(Some(args.output_buffer), 0, 4);
+        unsafe {
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                5,
+            );
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                6,
+            );
+            encoder_b.set_bytes(
+                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
+                size_of::<u32>(),
+                7,
+            );
+        }
+        encoder_b.set_buffer(Some(args.tile_map), 0, 8);
+        encoder_b.dispatch_threadgroups_indirect(
             args.dispatch_args,
             0,
-            MTLSize::new(THREADS_PER_TG as u64, 1, 1),
+            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
         );
         encoder_b.end_encoding();
         Ok(())
@@ -543,23 +567,23 @@ impl MoeExpertsTwoPassPrefillKernel {
 #[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a> {
     /// Input activation [d_model]
-    pub x: &'a MTLBuffer,
+    pub x: &'a ProtocolObject<dyn MTLBuffer>,
     /// Top-K expert indices from router [K]
-    pub topk_ids: &'a MTLBuffer,
+    pub topk_ids: &'a ProtocolObject<dyn MTLBuffer>,
     /// Top-K probabilities from router [K]
-    pub topk_probs: &'a MTLBuffer,
+    pub topk_probs: &'a ProtocolObject<dyn MTLBuffer>,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a MTLBuffer,
+    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a MTLBuffer,
+    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a MTLBuffer,
+    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Down biases [E, d_model]
-    pub down_biases: &'a MTLBuffer,
+    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a MTLBuffer,
+    pub hidden: &'a ProtocolObject<dyn MTLBuffer>,
     /// Final output [d_model]
-    pub y: &'a MTLBuffer,
+    pub y: &'a ProtocolObject<dyn MTLBuffer>,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -583,8 +607,8 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
 }
 
 pub struct MoeExpertsSingleDecodeKernel {
-    pass_a: Vec<Vec<MTLComputePipelineState>>, // [gate][dtype]
-    pass_b: Vec<MTLComputePipelineState>,      // [dtype]
+    pass_a: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    pass_b: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,      // [dtype]
 }
 
 impl MoeExpertsSingleDecodeKernel {
@@ -600,9 +624,9 @@ impl MoeExpertsSingleDecodeKernel {
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let suffix = dtype_suffix(*dtype);
-                let fcv = FunctionConstantValues::new();
-                fcv.set_constant_value_at_index(
-                    &gate as *const u32 as *const std::ffi::c_void,
+                let fcv = MTLFunctionConstantValues::new();
+                fcv.set_constant_value_type_at_index(
+                    NonNull::from(&gate).cast(),
                     MTLDataType::UInt,
                     30,
                 );
@@ -639,7 +663,7 @@ impl MoeExpertsSingleDecodeKernel {
     /// 2. Pass B: grid = (d_blocks, 1) - computes final y directly (fused finalize)
     pub fn encode(
         &self,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: MoeExpertsSingleDecodeArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.k == 0 {
@@ -661,56 +685,70 @@ impl MoeExpertsSingleDecodeKernel {
         // Pass A: x @ W13[expert] -> hidden
         {
             let pipeline = &self.pass_a[gate_idx][dtype_idx];
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(args.x), 0);
-            encoder.set_buffer(1, Some(args.topk_ids), 0);
-            encoder.set_buffer(2, Some(args.w13_all), 0);
-            encoder.set_buffer(3, Some(args.up_biases), 0);
-            encoder.set_buffer(4, Some(args.hidden), 0);
-            encoder.set_bytes(
-                5,
-                size_of::<u32>() as u64,
-                &d_model_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                6,
-                size_of::<u32>() as u64,
-                &d_ff_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                7,
-                size_of::<u32>() as u64,
-                &k_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                8,
-                size_of::<f32>() as u64,
-                &args.silu_alpha as *const f32 as *const _,
-            );
-            encoder.set_bytes(
-                9,
-                size_of::<f32>() as u64,
-                &args.gate_clip_min as *const f32 as *const _,
-            );
-            encoder.set_bytes(
-                10,
-                size_of::<f32>() as u64,
-                &args.gate_clip_max as *const f32 as *const _,
-            );
-            encoder.set_bytes(
-                11,
-                size_of::<f32>() as u64,
-                &args.up_clip_min as *const f32 as *const _,
-            );
-            encoder.set_bytes(
-                12,
-                size_of::<f32>() as u64,
-                &args.up_clip_max as *const f32 as *const _,
-            );
-            encoder.dispatch_thread_groups(
-                MTLSize::new(h_blocks as u64, args.k as u64, 1),
-                MTLSize::new(PASSA_THREADS as u64, 1, 1),
+            encoder.set_buffer(Some(args.x), 0, 0);
+            encoder.set_buffer(Some(args.topk_ids), 0, 1);
+            encoder.set_buffer(Some(args.w13_all), 0, 2);
+            encoder.set_buffer(Some(args.up_biases), 0, 3);
+            encoder.set_buffer(Some(args.hidden), 0, 4);
+            unsafe {
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    5,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    6,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&k_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    7,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(
+                        &args.silu_alpha as *const _ as *mut _,
+                    ),
+                    size_of::<f32>(),
+                    8,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(
+                        &args.gate_clip_min as *const _ as *mut _,
+                    ),
+                    size_of::<f32>(),
+                    9,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(
+                        &args.gate_clip_max as *const _ as *mut _,
+                    ),
+                    size_of::<f32>(),
+                    10,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(
+                        &args.up_clip_min as *const _ as *mut _,
+                    ),
+                    size_of::<f32>(),
+                    11,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(
+                        &args.up_clip_max as *const _ as *mut _,
+                    ),
+                    size_of::<f32>(),
+                    12,
+                );
+            }
+            encoder.dispatch_threadgroups(
+                MTLSize::new(h_blocks as usize, args.k, 1),
+                MTLSize::new(PASSA_THREADS as usize, 1, 1),
             );
             encoder.end_encoding();
         }
@@ -723,32 +761,36 @@ impl MoeExpertsSingleDecodeKernel {
         // Pass B: hidden @ W2[expert] -> y (with weighted sum)
         {
             let pipeline = &self.pass_b[dtype_idx];
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(args.hidden), 0);
-            encoder.set_buffer(1, Some(args.topk_ids), 0);
-            encoder.set_buffer(2, Some(args.topk_probs), 0);
-            encoder.set_buffer(3, Some(args.w2_all), 0);
-            encoder.set_buffer(4, Some(args.down_biases), 0);
-            encoder.set_buffer(5, Some(args.y), 0);
-            encoder.set_bytes(
-                6,
-                size_of::<u32>() as u64,
-                &d_model_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                7,
-                size_of::<u32>() as u64,
-                &d_ff_u32 as *const u32 as *const _,
-            );
-            encoder.set_bytes(
-                8,
-                size_of::<u32>() as u64,
-                &k_u32 as *const u32 as *const _,
-            );
-            encoder.dispatch_thread_groups(
-                MTLSize::new(d_blocks as u64, 1, 1),
-                MTLSize::new(PASSB_THREADS as u64, 1, 1),
+            encoder.set_buffer(Some(args.hidden), 0, 0);
+            encoder.set_buffer(Some(args.topk_ids), 0, 1);
+            encoder.set_buffer(Some(args.topk_probs), 0, 2);
+            encoder.set_buffer(Some(args.w2_all), 0, 3);
+            encoder.set_buffer(Some(args.down_biases), 0, 4);
+            encoder.set_buffer(Some(args.y), 0, 5);
+            unsafe {
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    6,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    7,
+                );
+                encoder.set_bytes(
+                    NonNull::new_unchecked(&k_u32 as *const _ as *mut _),
+                    size_of::<u32>(),
+                    8,
+                );
+            }
+            encoder.dispatch_threadgroups(
+                MTLSize::new(d_blocks as usize, 1, 1),
+                MTLSize::new(PASSB_THREADS as usize, 1, 1),
             );
             encoder.end_encoding();
         }

@@ -14,7 +14,10 @@ pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
 
+pub use metal::prelude::*;
+
 pub use array::MetalArray;
+pub use metal_extensions::ComputeEncoderSetValue;
 pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;
 pub use context::{

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use objc2::rc::Retained;
+use objc2::{Encode, rc::Retained};
 use objc2_foundation::{NSHomeDirectory, NSString};
 
 /// `NSSearchPathDirectory` values (Darwin) so they can be passed directly to
@@ -36,6 +36,10 @@ pub enum NSSearchPathDirectory {
     AllLibraries = 101,
 }
 
+unsafe impl Encode for NSSearchPathDirectory {
+    const ENCODING: objc2::Encoding = u64::ENCODING;
+}
+
 /// Directory name used for cached model storage.
 const STORAGE_DIR_NAME: &str = "com.mirai.sdk.storage";
 
@@ -53,7 +57,7 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
                     msg_send![class!(NSFileManager), defaultManager];
 
                 const NS_USER_DOMAIN_MASK: u64 = 1;
-                let urls: Retained<NSArray<NSURL>> = msg_send![&*fm, URLsForDirectory: dir as u64, inDomains: NS_USER_DOMAIN_MASK];
+                let urls: Retained<NSArray<NSURL>> = msg_send![&*fm, URLsForDirectory: dir, inDomains: NS_USER_DOMAIN_MASK];
                 let url_opt: Option<Retained<NSURL>> =
                     msg_send![&*urls, firstObject];
 
@@ -102,7 +106,7 @@ pub fn storage_path() -> PathBuf {
         // `~/Library/Containers/<bundle-id>/Data`. Persist model files inside
         // the app-scoped caches directory to comply with sandbox rules:
         // `~/Library/Containers/<bundle-id>/Data/Library/Caches/…`.
-        let home: String = unsafe {
+        let home: String = {
             let ns_str: Retained<NSString> = NSHomeDirectory();
             ns_str.to_string()
         };

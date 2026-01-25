@@ -1,12 +1,11 @@
-use metal::MTLSize;
-
 use super::pipeline_configuration::{
     PipelineConfiguration, select_configuration,
 };
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, kernel::mlp_fused::common::MlpFusedArguments,
+        MTLContext, MTLError, MTLSize,
+        kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -50,8 +49,11 @@ impl DispatchDescriptor {
                 / output_elements_per_threadgroup) as u64;
         let threadgroup_count_z = arguments.batch_count.max(1) as u64;
 
-        let threadgroups =
-            MTLSize::new(threadgroup_count_x, 1, threadgroup_count_z);
+        let threadgroups = MTLSize::new(
+            threadgroup_count_x as usize,
+            1,
+            threadgroup_count_z as usize,
+        );
         let threads_per_threadgroup =
             pipeline_configuration.threads_per_threadgroup();
 

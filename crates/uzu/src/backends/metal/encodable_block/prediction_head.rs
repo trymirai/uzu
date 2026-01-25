@@ -1,13 +1,13 @@
 //! Prediction head encodable for classification output.
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
-
 use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
 use crate::Array;
 #[cfg(feature = "tracing")]
 use crate::backends::metal::forward_pass::ArrayId;
-use crate::backends::metal::forward_pass::ForwardPassState;
+use crate::backends::metal::{ProtocolObject,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, forward_pass::ForwardPassState,
+};
 
 pub struct ClassifierPredictionHead {
     dense: Box<dyn EncodableBlock>,
@@ -40,11 +40,13 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, parameters);
             encoder.end_encoding();
         } else {
@@ -59,28 +61,25 @@ impl EncodableBlock for ClassifierPredictionHead {
             let traces_rc = state.traces().clone();
             let logits_arrays =
                 state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
-            let mut logits_array_ref = logits_arrays[0].borrow_mut();
-            let linear_output_buffer =
-                unsafe { logits_array_ref.mtl_buffer().to_owned() };
+            let logits_array_ref = logits_arrays[0].borrow();
+            let linear_output_buffer = logits_array_ref.backend_buffer();
             let data_type = Array::data_type(&*logits_array_ref);
             let batch_size = Array::shape(&*logits_array_ref)[0];
-            drop(logits_array_ref);
 
             let traces_ref = traces_rc.borrow();
-            let mut trace_logits = traces_ref.logits.borrow_mut();
-            let dst_trace_buf = unsafe { trace_logits.mtl_buffer().to_owned() };
-            drop(trace_logits);
-            drop(traces_ref);
+            let trace_logits = traces_ref.logits.borrow();
+            let dst_trace_buf = trace_logits.backend_buffer();
 
             let copy_size_bytes =
-                (batch_size * self.num_labels * data_type.size_in_bytes())
-                    as u64;
+                batch_size * self.num_labels * data_type.size_in_bytes();
 
-            let blit = command_buffer.new_blit_command_encoder();
-            blit.copy_from_buffer(
-                &linear_output_buffer,
+            let blit = command_buffer
+                .new_blit_command_encoder()
+                .expect("Failed to create blit command encoder");
+            blit.copy_buffer_to_buffer(
+                linear_output_buffer,
                 0,
-                &dst_trace_buf,
+                dst_trace_buf,
                 0,
                 copy_size_bytes,
             );
@@ -103,7 +102,7 @@ impl EncodableBlock for ClassifierPredictionHead {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         self.dense.encode_with_shared_encoder(state, encoder, parameters);

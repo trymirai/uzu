@@ -1,31 +1,38 @@
-use metal::{Buffer, Device, Heap, MTLResourceOptions};
+use super::{
+    MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLResourceOptions, ProtocolObject, Retained,
+};
+
+/// Type alias for owned MTLBuffer
+pub type MTLBufferObj = Retained<ProtocolObject<dyn MTLBuffer>>;
 
 pub trait BufferAllocator {
     fn allocate_buffer(
         &self,
         size_in_bytes: usize,
         options: MTLResourceOptions,
-    ) -> Buffer;
+    ) -> MTLBufferObj;
 }
 
-impl BufferAllocator for Device {
+impl BufferAllocator for ProtocolObject<dyn MTLDevice> {
     #[inline]
     fn allocate_buffer(
         &self,
         size_in_bytes: usize,
         options: MTLResourceOptions,
-    ) -> Buffer {
-        self.new_buffer(size_in_bytes as u64, options)
+    ) -> MTLBufferObj {
+        self.new_buffer(size_in_bytes, options)
+            .expect("Failed to allocate buffer")
     }
 }
 
-impl BufferAllocator for Heap {
+impl BufferAllocator for ProtocolObject<dyn MTLHeap> {
     #[inline]
     fn allocate_buffer(
         &self,
         size_in_bytes: usize,
         options: MTLResourceOptions,
-    ) -> Buffer {
-        self.new_buffer(size_in_bytes as u64, options).unwrap()
+    ) -> MTLBufferObj {
+        self.new_buffer(size_in_bytes, options)
+            .expect("Failed to allocate buffer from heap")
     }
 }

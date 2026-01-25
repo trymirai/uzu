@@ -1,11 +1,12 @@
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef, ComputePipelineState,
-    FunctionConstantValues, MTLDataType, MTLSize,
-};
+use std::ptr::NonNull;
 
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
+        Retained,
+    },
     config::Activation,
 };
 
@@ -56,43 +57,43 @@ impl MlpFusedConfig {
     }
 
     /// Create function constants for MLP fused matmul
-    pub fn make_function_constants(&self) -> FunctionConstantValues {
-        let fcv = FunctionConstantValues::new();
+    pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
+        let fcv = MTLFunctionConstantValues::new();
         let fused = true;
-        fcv.set_constant_value_at_index(
-            &fused as *const bool as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&fused).cast(),
             MTLDataType::Bool,
-            MLP_FUSED_FC_INDEX,
+            MLP_FUSED_FC_INDEX as usize,
         );
-        fcv.set_constant_value_at_index(
-            &self.hidden_dim as *const u32 as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&self.hidden_dim).cast(),
             MTLDataType::UInt,
-            MLP_HIDDEN_DIM_FC_INDEX,
+            MLP_HIDDEN_DIM_FC_INDEX as usize,
         );
         let act_val = self.activation as u32;
-        fcv.set_constant_value_at_index(
-            &act_val as *const u32 as *const std::ffi::c_void,
+        fcv.set_constant_value_type_at_index(
+            NonNull::from(&act_val).cast(),
             MTLDataType::UInt,
-            MLP_ACTIVATION_FC_INDEX,
+            MLP_ACTIVATION_FC_INDEX as usize,
         );
         fcv
     }
 }
 
 /// Create function constants for non-fused (standard) matmul
-pub fn make_non_fused_function_constants() -> FunctionConstantValues {
-    let fcv = FunctionConstantValues::new();
+pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
+    let fcv = MTLFunctionConstantValues::new();
     let fused = false;
-    fcv.set_constant_value_at_index(
-        &fused as *const bool as *const std::ffi::c_void,
+    fcv.set_constant_value_type_at_index(
+        NonNull::from(&fused).cast(),
         MTLDataType::Bool,
-        MLP_FUSED_FC_INDEX,
+        MLP_FUSED_FC_INDEX as usize,
     );
     fcv
 }
 
 pub struct MlpGateActMulKernel {
-    pipeline: ComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct MlpGateActMulEncodable {
@@ -118,9 +119,9 @@ impl MlpGateActMulEncodable {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
-        fused_up: &MTLBuffer,
-        hidden: &MTLBuffer,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        fused_up: &ProtocolObject<dyn MTLBuffer>,
+        hidden: &ProtocolObject<dyn MTLBuffer>,
         m: i32,
     ) -> Result<(), MTLError> {
         self.kernel.encode(
@@ -174,35 +175,23 @@ impl MlpGateActMulKernel {
 
     pub fn encode(
         &self,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         activation: &Activation,
-        fused_up_buffer: &MTLBuffer,
-        hidden_buffer: &MTLBuffer,
+        fused_up_buffer: &ProtocolObject<dyn MTLBuffer>,
+        hidden_buffer: &ProtocolObject<dyn MTLBuffer>,
         m: i32,
         h: i32,
     ) -> Result<(), MTLError> {
         let act_code = Self::act_code(activation);
         let threads_per_tg = MTLSize::new(64, 1, 1);
         encoder.set_compute_pipeline_state(&self.pipeline);
-        encoder.set_buffer(0, Some(fused_up_buffer), 0);
-        encoder.set_buffer(1, Some(hidden_buffer), 0);
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &h as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &m as *const i32 as *const _,
-        );
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<u16>() as u64,
-            &act_code as *const u16 as *const _,
-        );
+        encoder.set_buffer(Some(fused_up_buffer), 0, 0);
+        encoder.set_buffer(Some(hidden_buffer), 0, 1);
+        encoder.set_value(&h, 2);
+        encoder.set_value(&m, 3);
+        encoder.set_value(&act_code, 4);
 
-        let grid = MTLSize::new(h as u64, m as u64, 1);
+        let grid = MTLSize::new(h as usize, m as usize, 1);
         encoder.dispatch_threads(grid, threads_per_tg);
         Ok(())
     }

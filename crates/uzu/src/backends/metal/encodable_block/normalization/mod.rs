@@ -7,7 +7,6 @@ mod rms_norm;
 use std::rc::Rc;
 
 pub use layer_norm::LayerNorm;
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
@@ -15,7 +14,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{LayerNormError, RMSNormError},
     },
@@ -77,7 +76,7 @@ impl EncodableBlock for Normalization {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         match self {
@@ -104,7 +103,7 @@ impl EncodableBlock for Normalization {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         match self {

@@ -1,13 +1,10 @@
-use std::{cell::RefCell, ffi::c_void, mem, rc::Rc};
-
-use metal::{
-    CommandBuffer as MTLCommandBuffer, Device as MTLDevice, MTLResourceOptions,
-};
+use std::{cell::RefCell, mem, rc::Rc};
 
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MetalArray,
+        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt, MTLResourceOptions, MetalArray,
+        ProtocolObject, Retained,
         error::MTLError,
         image::{Image, PixelFormat, TextureUsage},
         kernel::media_kernels::{
@@ -132,7 +129,7 @@ pub fn calculate_image_preprocessing_requirements(
 }
 
 pub struct MetalImagePreprocessor {
-    device: MTLDevice,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
     scale_pad_normalize_kernel: ScalePadNormalizeImage,
     extract_patches_kernel: ExtractImagePatches,
 }
@@ -150,7 +147,7 @@ impl MetalImagePreprocessor {
 
     pub unsafe fn encode_preprocessing(
         &self,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         input_image: &Image,
         params: &ImagePreprocessingParams,
         requirements: &ImagePreprocessingRequirements,
@@ -266,16 +263,16 @@ impl MetalImagePreprocessor {
 }
 
 fn data_to_mtl_tensor<T: Copy>(
-    device: &MTLDevice,
+    device: &Retained<ProtocolObject<dyn MTLDevice>>,
     data: &T,
     shape: Vec<usize>,
     data_type: DataType,
 ) -> Result<MetalArray, MTLError> {
-    let size = mem::size_of::<T>() as u64;
+    let size = mem::size_of::<T>();
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const T as *const u8, size) };
     let buffer = device.new_buffer_with_data(
-        data as *const _ as *const c_void,
-        size,
-        MTLResourceOptions::StorageModeShared,
-    );
+        bytes,
+        MTLResourceOptions::STORAGE_MODE_SHARED,
+    ).expect("Failed to create buffer");
     unsafe { Ok(MetalArray::new(buffer, &shape, data_type)) }
 }

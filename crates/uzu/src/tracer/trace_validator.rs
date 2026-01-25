@@ -18,7 +18,8 @@ use num_traits::NumCast;
 use crate::{
     Array, ArrayElement, DataType,
     backends::metal::{
-        CacheLayers, KVCacheUpdate, KernelDataType, MTLContext, MetalArray,
+        CacheLayers, KVCacheUpdate, KernelDataType, MTLCommandBuffer,
+        MTLCommandQueue, MTLContext, MetalArray,
         encodable_block::Sampling,
         forward_pass::{
             ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
@@ -296,8 +297,11 @@ impl TraceValidator {
             None,
         );
 
-        let command_buffer =
-            ctx.mtl_context.command_queue.new_command_buffer().to_owned();
+        let command_buffer = ctx
+            .mtl_context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
 
         ctx.executables.encode(
             &mut state,

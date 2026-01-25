@@ -1,3 +1,4 @@
+use metal::{MTLCommandBuffer, MTLCommandQueue};
 use std::time::Instant;
 
 use half::bf16;
@@ -142,7 +143,7 @@ fn run_decode_case(
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel
             .encode(&cb, make_two_pass_args())
             .expect("two-pass encode");
@@ -153,7 +154,7 @@ fn run_decode_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel
             .encode(&cb, make_two_pass_args())
             .expect("two-pass encode");
@@ -300,7 +301,7 @@ fn run_two_pass_prefill_case(
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel
             .encode(&cb, make_two_pass_args())
             .expect("two-pass prefill encode");
@@ -311,7 +312,7 @@ fn run_two_pass_prefill_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel
             .encode(&cb, make_two_pass_args())
             .expect("two-pass prefill encode");
@@ -436,7 +437,7 @@ fn run_fused_single_token_case(
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         fused_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();
@@ -445,7 +446,7 @@ fn run_fused_single_token_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         fused_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();
@@ -621,7 +622,7 @@ fn run_indirect_decode_timed(
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();
@@ -630,7 +631,7 @@ fn run_indirect_decode_timed(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();
@@ -713,7 +714,7 @@ fn run_fused_decode_timed(
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         fused_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();
@@ -722,7 +723,7 @@ fn run_fused_decode_timed(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         fused_kernel.encode(&cb, make_args()).expect("encode");
         cb.commit();
         cb.wait_until_completed();

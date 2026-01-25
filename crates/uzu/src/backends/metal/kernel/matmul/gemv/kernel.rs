@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use metal::{ComputeCommandEncoderRef, ComputePipelineState};
-
 use super::{
     dispatch_descriptor::{AxpbySource, DispatchDescriptor},
     pipeline_configuration::PipelineConfiguration,
@@ -9,7 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, kernel::matmul::common::MatmulArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, ProtocolObject, Retained, kernel::matmul::common::MatmulArguments,
     },
 };
 
@@ -50,7 +49,7 @@ fn gemv_kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, ComputePipelineState>,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -103,7 +102,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&ComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(config) {
             let kernel_name = gemv_kernel_name(self.data_type, config)?;
             let pipeline =
@@ -116,7 +115,7 @@ impl Kernel {
     pub(crate) fn encode_descriptor(
         &mut self,
         context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
@@ -127,16 +126,16 @@ impl Kernel {
         let (buf0, off0) = if descriptor.matrix_is_rhs {
             (arguments.b, 0)
         } else {
-            (arguments.a, arguments.a_offset)
+            (arguments.a, arguments.a_offset as usize)
         };
-        encoder.set_buffer(0, Some(buf0), off0);
+        encoder.set_buffer(Some(buf0), off0, 0);
 
         let (buf1, off1) = if descriptor.matrix_is_rhs {
-            (arguments.a, arguments.a_offset)
+            (arguments.a, arguments.a_offset as usize)
         } else {
             (arguments.b, 0)
         };
-        encoder.set_buffer(1, Some(buf1), off1);
+        encoder.set_buffer(Some(buf1), off1, 1);
 
         if descriptor.pipeline_configuration.do_axpby {
             match descriptor.axpby_source {
@@ -152,7 +151,7 @@ impl Kernel {
                             "GEMV descriptor requires bias buffer".to_owned(),
                         )
                     })?;
-                    encoder.set_buffer(2, Some(bias), 0);
+                    encoder.set_buffer(Some(bias), 0, 2);
                 },
                 AxpbySource::C => {
                     let c_buffer = arguments.c.ok_or_else(|| {
@@ -160,78 +159,26 @@ impl Kernel {
                             "GEMV descriptor requires C buffer".to_owned(),
                         )
                     })?;
-                    encoder.set_buffer(2, Some(c_buffer), 0);
+                    encoder.set_buffer(Some(c_buffer), 0, 2);
                 },
             }
         }
 
-        encoder.set_buffer(3, Some(arguments.d), 0);
+        encoder.set_buffer(Some(arguments.d), 0, 3);
 
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.input_dimension as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            5,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.output_dimension as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            6,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.matrix_leading_dim as *const i32
-                as *const std::ffi::c_void,
-        );
+        encoder.set_value(&descriptor.input_dimension, 4);
+        encoder.set_value(&descriptor.output_dimension, 5);
+        encoder.set_value(&descriptor.matrix_leading_dim, 6);
+        encoder.set_value(&descriptor.alpha, 7);
+        encoder.set_value(&descriptor.beta, 8);
+        encoder.set_value(&descriptor.batch_ndim, 9);
+        encoder.set_slice(&descriptor.batch_shape, 10);
+        encoder.set_slice(&descriptor.vector_batch_stride, 11);
+        encoder.set_slice(&descriptor.matrix_batch_stride, 12);
+        encoder.set_slice(&descriptor.bias_batch_stride, 13);
+        encoder.set_value(&descriptor.bias_stride, 14);
 
-        encoder.set_bytes(
-            7,
-            std::mem::size_of::<f32>() as u64,
-            &descriptor.alpha as *const f32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            8,
-            std::mem::size_of::<f32>() as u64,
-            &descriptor.beta as *const f32 as *const std::ffi::c_void,
-        );
-
-        encoder.set_bytes(
-            9,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.batch_ndim as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            10,
-            (std::mem::size_of::<i32>() * descriptor.batch_shape.len()) as u64,
-            descriptor.batch_shape.as_ptr() as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            11,
-            (std::mem::size_of::<i64>() * descriptor.vector_batch_stride.len())
-                as u64,
-            descriptor.vector_batch_stride.as_ptr() as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            12,
-            (std::mem::size_of::<i64>() * descriptor.matrix_batch_stride.len())
-                as u64,
-            descriptor.matrix_batch_stride.as_ptr() as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            13,
-            (std::mem::size_of::<i64>() * descriptor.bias_batch_stride.len())
-                as u64,
-            descriptor.bias_batch_stride.as_ptr() as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            14,
-            std::mem::size_of::<i32>() as u64,
-            &descriptor.bias_stride as *const i32 as *const std::ffi::c_void,
-        );
-
-        encoder.dispatch_thread_groups(
+        encoder.dispatch_threadgroups(
             descriptor.threadgroups,
             descriptor.threads_per_threadgroup,
         );

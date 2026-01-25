@@ -2,7 +2,9 @@
 
 use std::{env, rc::Rc};
 
-use metal::{CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{ProtocolObject,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+};
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
@@ -145,7 +147,7 @@ impl MambaMixer {
     fn encode_pipeline_with_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -171,7 +173,7 @@ impl MambaMixer {
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -219,7 +221,7 @@ impl MambaMixer {
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -236,16 +238,16 @@ impl MambaMixer {
         let mut c_arr = arrays[4].borrow_mut();
 
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
-        let state_buf = unsafe { conv_state.mtl_buffer().to_owned() };
+        let state_buf = unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*conv_state.mtl_buffer()) as *mut _).unwrap() };
         let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
         let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
         let c_buf = unsafe { c_arr.mtl_buffer().to_owned() };
 
-        let mut weight_storage = self.conv_weight.clone();
-        let weight_buf = unsafe { weight_storage.mtl_buffer().to_owned() };
+        let weight_storage = self.conv_weight.clone();
+        let weight_buf = weight_storage.mtl_buffer_cloned();
         let bias_buf = self.conv_bias.as_ref().map(|arr| {
-            let mut storage = arr.clone();
-            unsafe { storage.mtl_buffer().to_owned() }
+            let storage = arr.clone();
+            storage.mtl_buffer_cloned()
         });
 
         let conv_dim = self.config.conv_dim();
@@ -261,7 +263,7 @@ impl MambaMixer {
                     Conv1dDecodeArguments {
                         x: &input_buf,
                         w: &weight_buf,
-                        b: bias_buf.as_ref(),
+                        b: bias_buf.as_deref(),
                         state: &state_buf,
                         x_out: &x_buf,
                         b_out: &b_buf,
@@ -283,7 +285,7 @@ impl MambaMixer {
                     .conv_padded_buffer()
                     .expect("Missing conv padded buffer");
                 let mut borrow = array.borrow_mut();
-                let buf = unsafe { borrow.mtl_buffer().to_owned() };
+                let buf = unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*borrow.mtl_buffer()) as *mut _).unwrap() };
                 drop(borrow);
 
                 self.conv_scan
@@ -306,7 +308,7 @@ impl MambaMixer {
                 None
             };
 
-            let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
+            let conv_source = padded_buf.as_deref().unwrap_or(&input_buf);
 
             self.conv_scan
                 .encode(
@@ -314,7 +316,7 @@ impl MambaMixer {
                     Conv1dScanArguments {
                         padded: conv_source,
                         w: &weight_buf,
-                        b: bias_buf.as_ref(),
+                        b: bias_buf.as_deref(),
                         x_out: &x_buf,
                         b_out: &b_buf,
                         c_out: &c_buf,
@@ -335,7 +337,7 @@ impl MambaMixer {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -347,30 +349,30 @@ impl MambaMixer {
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
-        let mut x = base_arrays[0].borrow_mut();
-        let x_buf = unsafe { x.mtl_buffer().to_owned() };
+        let x = base_arrays[0].borrow();
+        let x_buf = x.mtl_buffer_cloned();
         drop(x);
-        let mut b = base_arrays[1].borrow_mut();
-        let b_buf = unsafe { b.mtl_buffer().to_owned() };
+        let b = base_arrays[1].borrow();
+        let b_buf = b.mtl_buffer_cloned();
         drop(b);
-        let mut c = base_arrays[2].borrow_mut();
-        let c_buf = unsafe { c.mtl_buffer().to_owned() };
+        let c = base_arrays[2].borrow();
+        let c_buf = c.mtl_buffer_cloned();
         drop(c);
-        let mut dt = base_arrays[3].borrow_mut();
-        let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
+        let dt = base_arrays[3].borrow();
+        let dt_buf = dt.mtl_buffer_cloned();
         drop(dt);
-        let mut z = base_arrays[4].borrow_mut();
-        let z_buf = unsafe { z.mtl_buffer().to_owned() };
+        let z = base_arrays[4].borrow();
+        let z_buf = z.mtl_buffer_cloned();
         drop(z);
-        let mut state_buf = base_arrays[5].borrow_mut();
-        let state_raw = unsafe { state_buf.mtl_buffer().to_owned() };
+        let state_buf = base_arrays[5].borrow();
+        let state_raw = state_buf.mtl_buffer_cloned();
         drop(state_buf);
-        let mut out = base_arrays[6].borrow_mut();
-        let out_buf = unsafe { out.mtl_buffer().to_owned() };
+        let out = base_arrays[6].borrow();
+        let out_buf = out.mtl_buffer_cloned();
         drop(out);
 
-        let mut skip_weights = self.skip_connection_weight.clone();
-        let skip = unsafe { skip_weights.mtl_buffer().to_owned() };
+        let skip_weights = self.skip_connection_weight.clone();
+        let skip = skip_weights.mtl_buffer_cloned();
 
         self.ssm_prefill
             .encode(
@@ -415,7 +417,7 @@ impl MambaMixer {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -427,28 +429,28 @@ impl MambaMixer {
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
-        let mut x = arrays[0].borrow_mut();
-        let x_buf = unsafe { x.mtl_buffer().to_owned() };
+        let x = arrays[0].borrow();
+        let x_buf = x.mtl_buffer_cloned();
         drop(x);
-        let mut b = arrays[1].borrow_mut();
-        let b_buf = unsafe { b.mtl_buffer().to_owned() };
+        let b = arrays[1].borrow();
+        let b_buf = b.mtl_buffer_cloned();
         drop(b);
-        let mut c = arrays[2].borrow_mut();
-        let c_buf = unsafe { c.mtl_buffer().to_owned() };
+        let c = arrays[2].borrow();
+        let c_buf = c.mtl_buffer_cloned();
         drop(c);
-        let mut dt = arrays[3].borrow_mut();
-        let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
+        let dt = arrays[3].borrow();
+        let dt_buf = dt.mtl_buffer_cloned();
         drop(dt);
-        let mut z = arrays[4].borrow_mut();
-        let z_buf = unsafe { z.mtl_buffer().to_owned() };
+        let z = arrays[4].borrow();
+        let z_buf = z.mtl_buffer_cloned();
         drop(z);
-        let mut state_arr = arrays[5].borrow_mut();
-        let state_buf = unsafe { state_arr.mtl_buffer().to_owned() };
+        let state_arr = arrays[5].borrow();
+        let state_buf = state_arr.mtl_buffer_cloned();
         drop(state_arr);
-        let mut y = arrays[6].borrow_mut();
-        let y_buf = unsafe { y.mtl_buffer().to_owned() };
-        let mut skip_weights = self.skip_connection_weight.clone();
-        let skip_buf = unsafe { skip_weights.mtl_buffer().to_owned() };
+        let y = arrays[6].borrow();
+        let y_buf = y.mtl_buffer_cloned();
+        let skip_weights = self.skip_connection_weight.clone();
+        let skip_buf = skip_weights.mtl_buffer_cloned();
 
         let h = self.config.num_heads;
         let g = self.config.num_groups;
@@ -507,11 +509,12 @@ impl EncodableBlock for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder();
+            let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
             self.encode_pipeline_with_encoder(state, &encoder, parameters);
             encoder.end_encoding();
 
@@ -529,7 +532,8 @@ impl EncodableBlock for MambaMixer {
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.run_split_inproj(state, &encoder, active_suffix_length);
         self.run_conv_scan(state, &encoder, active_suffix_length);
         if active_suffix_length == 1 {
@@ -555,7 +559,7 @@ impl EncodableBlock for MambaMixer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);

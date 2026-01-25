@@ -1,18 +1,14 @@
 use std::mem::size_of;
 
-use metal::{
-    Buffer as MTLBuffer, CommandBuffer as MTLCommandBuffer,
-    ComputeCommandEncoderRef, MTLResourceOptions,
-};
 use thiserror::Error;
 
 use crate::{
     backends::metal::{
-        KernelDataType, MTLContext, MTLError,
+        KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         kernel::dsl::{
-            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-            BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-            TopKKernel, TopPKernel,
+            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel,
+            MinPKernel, TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
     session::parameter::SamplingMethod,
@@ -47,7 +43,7 @@ enum ArgmaxImplementation {
     TwoPass {
         main_kernel: ArgmaxMainKernel,
         final_kernel: ArgmaxFinalKernel,
-        partial_results_buffer: MTLBuffer,
+        partial_results_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     },
 }
 
@@ -129,10 +125,13 @@ impl SamplingKernel {
                 let max_partial_results =
                     max_batch_size * max_vocab_groups_per_batch;
 
-                let partial_results_buffer = context.device.new_buffer(
-                    (max_partial_results * size_of::<ArgmaxPair>()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                );
+                let partial_results_buffer = context
+                    .device
+                    .new_buffer(
+                        max_partial_results * size_of::<ArgmaxPair>(),
+                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    )
+                    .expect("Failed to create partial results buffer");
 
                 ArgmaxImplementation::TwoPass {
                     main_kernel,
@@ -157,18 +156,20 @@ impl SamplingKernel {
 
     pub fn encode(
         &self,
-        logits_buffer: &MTLBuffer,
-        seeds_buffer: Option<&MTLBuffer>,
+        logits_buffer: &ProtocolObject<dyn MTLBuffer>,
+        seeds_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
         seeds_offset: usize,
-        bitmask_buffer: Option<&MTLBuffer>,
+        bitmask_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &MTLBuffer,
+        sampled_tokens_buffer: &ProtocolObject<dyn MTLBuffer>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        command_buffer: &MTLCommandBuffer,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) -> Result<(), SamplingError> {
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_encoder(
             logits_buffer,
             seeds_buffer,
@@ -187,16 +188,16 @@ impl SamplingKernel {
 
     pub fn encode_with_encoder(
         &self,
-        logits_buffer: &MTLBuffer,
-        seeds_buffer: Option<&MTLBuffer>,
+        logits_buffer: &ProtocolObject<dyn MTLBuffer>,
+        seeds_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
         seeds_offset: usize,
-        bitmask_buffer: Option<&MTLBuffer>,
+        bitmask_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &MTLBuffer,
+        sampled_tokens_buffer: &ProtocolObject<dyn MTLBuffer>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) -> Result<(), SamplingError> {
         if batch_size > self.max_batch_size {
             return Err(SamplingError::BatchSizeExceeded(

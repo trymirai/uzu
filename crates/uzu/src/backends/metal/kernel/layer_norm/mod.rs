@@ -1,20 +1,16 @@
-use std::mem::size_of;
-
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState, MTLSize,
-};
-
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    },
 };
 
 #[derive(Debug)]
 pub struct LayerNormArguments<'a> {
-    pub input_buffer: &'a MTLBuffer,
-    pub scales_buffer: &'a MTLBuffer,
-    pub output_buffer: &'a MTLBuffer,
+    pub input_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub scales_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
     pub batch_size: i32,
     pub model_dim: i32,
     pub epsilon: f32,
@@ -37,7 +33,7 @@ pub enum LayerNormError {
 }
 
 pub struct LayerNormKernel {
-    pipeline: MTLComputePipelineState,
+    pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl LayerNormKernel {
@@ -107,36 +103,20 @@ impl LayerNormKernel {
 
     pub fn encode(
         &self,
-        compute_encoder: &ComputeCommandEncoderRef,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: LayerNormArguments,
     ) -> Result<(), LayerNormError> {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
-        compute_encoder.set_buffer(0, Some(args.input_buffer), 0);
-        compute_encoder.set_buffer(1, Some(args.scales_buffer), 0);
-        compute_encoder.set_buffer(2, Some(args.output_buffer), 0);
-        compute_encoder.set_bytes(
-            3,
-            size_of::<i32>() as u64,
-            &args.batch_size as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            4,
-            size_of::<i32>() as u64,
-            &args.model_dim as *const i32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            5,
-            size_of::<f32>() as u64,
-            &args.epsilon as *const f32 as *const _,
-        );
-        compute_encoder.set_bytes(
-            6,
-            size_of::<f32>() as u64,
-            &args.scale_offset as *const f32 as *const _,
-        );
+        compute_encoder.set_buffer(Some(args.input_buffer), 0, 0);
+        compute_encoder.set_buffer(Some(args.scales_buffer), 0, 1);
+        compute_encoder.set_buffer(Some(args.output_buffer), 0, 2);
+        compute_encoder.set_value(&args.batch_size, 3);
+        compute_encoder.set_value(&args.model_dim, 4);
+        compute_encoder.set_value(&args.epsilon, 5);
+        compute_encoder.set_value(&args.scale_offset, 6);
 
         let threadgroups_per_grid = MTLSize {
-            width: args.batch_size as u64,
+            width: args.batch_size as usize,
             height: 1,
             depth: 1,
         };
@@ -147,7 +127,7 @@ impl LayerNormKernel {
             depth: 1,
         };
 
-        compute_encoder.dispatch_thread_groups(
+        compute_encoder.dispatch_threadgroups(
             threadgroups_per_grid,
             threads_per_threadgroup,
         );

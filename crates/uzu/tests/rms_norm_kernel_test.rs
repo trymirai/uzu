@@ -1,8 +1,12 @@
 #![cfg(any(target_os = "macos"))]
 #![allow(dead_code)]
 
+use bytemuck;
 use half::{bf16, f16};
-use metal::{Device, MTLResourceOptions};
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLResourceOptions,
+};
 use uzu::{
     DataType,
     backends::metal::{
@@ -11,19 +15,23 @@ use uzu::{
             QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel,
             RMSNormKernelType,
         },
-        metal_extensions::command_buffer_extensions::CommandBufferTimingAccess,
+        metal_extensions::CommandBufferTimingExt,
     },
 };
 
 fn create_test_context() -> Result<MTLContext, String> {
-    let device = Device::system_default().ok_or("No Metal device available")?;
-    let command_queue = device.new_command_queue();
+    let device =
+        <dyn MTLDevice>::system_default().ok_or("No Metal device available")?;
+    let command_queue =
+        device.new_command_queue().ok_or("Failed to create command queue")?;
     MTLContext::new(device, command_queue)
         .map_err(|e| format!("Failed to create MTLContext: {:?}", e))
 }
 
 // Helper trait to unify different float types for testing
-trait TestFloat: Copy + Clone + std::fmt::Debug + PartialEq {
+trait TestFloat:
+    Copy + Clone + std::fmt::Debug + PartialEq + bytemuck::NoUninit
+{
     fn from_f32(val: f32) -> Self;
     fn to_f32(self) -> f32;
     fn size_of() -> usize;
@@ -350,22 +358,29 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     );
 
     // Create Metal buffers
-    let input_buffer = mtl_context.device.new_buffer_with_data(
-        input_data.as_ptr() as *const _,
-        (input_data.len() * InputT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&input_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let scale_buffer = mtl_context.device.new_buffer_with_data(
-        scale_data.as_ptr() as *const _,
-        (scale_data.len() * ScaleT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let scale_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&scale_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context.device.new_buffer(
-        (model_dim as usize * OutputT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = mtl_context
+        .device
+        .new_buffer(
+            model_dim as usize * OutputT::size_of(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // Create RMS norm kernel
     let kernel = RMSNormKernel::new(
@@ -379,9 +394,14 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     .expect("Failed to create RMS norm kernel");
 
     // Create command buffer and encode
-    let command_buffer_ref = mtl_context.command_queue.new_command_buffer();
+    let command_buffer_ref = mtl_context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -403,7 +423,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     command_buffer_ref.wait_until_completed();
 
     // Read results
-    let output_ptr = output_buffer.contents() as *const OutputT;
+    let output_ptr = output_buffer.contents().as_ptr() as *const OutputT;
     let output_data =
         unsafe { std::slice::from_raw_parts(output_ptr, model_dim as usize) };
     let output_data_f32: Vec<f32> =
@@ -485,22 +505,29 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     let scale_data: Vec<ScaleT> =
         scale_data_f32.iter().map(|&x| ScaleT::from_f32(x)).collect();
 
-    let input_buffer = mtl_context.device.new_buffer_with_data(
-        input_data.as_ptr() as *const _,
-        (input_data.len() * InputT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&input_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let scale_buffer = mtl_context.device.new_buffer_with_data(
-        scale_data.as_ptr() as *const _,
-        (scale_data.len() * ScaleT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let scale_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&scale_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context.device.new_buffer(
-        (4 * OutputT::size_of()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = mtl_context
+        .device
+        .new_buffer(
+            4 * OutputT::size_of(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let kernel = RMSNormKernel::new(
         &mtl_context,
@@ -512,9 +539,14 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     )
     .expect("Failed to create RMS norm kernel");
 
-    let command_buffer_ref = mtl_context.command_queue.new_command_buffer();
+    let command_buffer_ref = mtl_context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -535,7 +567,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
 
-    let output_ptr = output_buffer.contents() as *const OutputT;
+    let output_ptr = output_buffer.contents().as_ptr() as *const OutputT;
     let output_data = unsafe { std::slice::from_raw_parts(output_ptr, 4) };
 
     // Check that all values are finite (no NaN or infinity)
@@ -835,27 +867,39 @@ fn perf_rms_norm_with_size(
     }
 
     // ---- Create Metal buffers ----
-    let input_buffer = mtl_context.device.new_buffer_with_data(
-        input_data.as_ptr() as *const _,
-        (input_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&input_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let scale_buffer = mtl_context.device.new_buffer_with_data(
-        scale_data.as_ptr() as *const _,
-        (scale_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let scale_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&scale_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context.device.new_buffer(
-        ((batch_size * model_dim) as usize * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let output_buffer = mtl_context
+        .device
+        .new_buffer(
+            (batch_size * model_dim) as usize * std::mem::size_of::<f32>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // ---- Launch and time ----
-    let command_buffer_ref = mtl_context.command_queue.new_command_buffer();
+    let command_buffer_ref = mtl_context
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder();
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -899,7 +943,7 @@ fn perf_rms_norm_with_size(
     }
 
     // ---- Sanity check results ----
-    let output_ptr = output_buffer.contents() as *const f32;
+    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_data = unsafe {
         std::slice::from_raw_parts(
             output_ptr,
@@ -1006,23 +1050,29 @@ fn qk_norm_test() {
     let scale_data = vec![1.0f32; head_dim as usize];
 
     // Create buffers
-    let qkv_buffer = mtl_context.device.new_buffer_with_data(
-        qkv_data.as_ptr() as *const _,
-        (qkv_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let qkv_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&qkv_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let q_scales_buffer = mtl_context.device.new_buffer_with_data(
-        scale_data.as_ptr() as *const _,
-        (scale_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let q_scales_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&scale_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let k_scales_buffer = mtl_context.device.new_buffer_with_data(
-        scale_data.as_ptr() as *const _,
-        (scale_data.len() * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let k_scales_buffer = mtl_context
+        .device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(&scale_data),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     // Create QK norm kernels
     let q_kernel = RMSNormKernel::new_with_mode(
@@ -1049,8 +1099,13 @@ fn qk_norm_test() {
 
     // Test Q head normalization
     {
-        let command_buffer = mtl_context.command_queue.new_command_buffer();
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let command_buffer = mtl_context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
 
         let _ = q_kernel.encode_qk_norm(
             &compute_encoder,
@@ -1076,7 +1131,7 @@ fn qk_norm_test() {
     // Verify Q heads were normalized (should have different values now)
     let output_data = unsafe {
         std::slice::from_raw_parts(
-            qkv_buffer.contents() as *const f32,
+            qkv_buffer.contents().as_ptr() as *const f32,
             qkv_data.len(),
         )
     };
@@ -1115,8 +1170,13 @@ fn qk_norm_test() {
 
     // Test K head normalization
     {
-        let command_buffer = mtl_context.command_queue.new_command_buffer();
-        let compute_encoder = command_buffer.new_compute_command_encoder();
+        let command_buffer = mtl_context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
 
         let _ = k_kernel.encode_qk_norm(
             &compute_encoder,
@@ -1142,7 +1202,7 @@ fn qk_norm_test() {
     // Verify K heads were normalized
     let final_data = unsafe {
         std::slice::from_raw_parts(
-            qkv_buffer.contents() as *const f32,
+            qkv_buffer.contents().as_ptr() as *const f32,
             qkv_data.len(),
         )
     };

@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use metal::{Buffer as MTLBuffer, CommandBufferRef, ComputeCommandEncoderRef};
+use crate::backends::metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, Retained,
+};
 
 use super::{
     super::{EncodableBlock, EncodingParameters},
@@ -21,7 +24,7 @@ use crate::{
 
 pub struct FullPrecisionEmbeddingLookup {
     kernel: FullPrecisionEmbeddingLookupKernel,
-    weights_buffer: MTLBuffer,
+    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     vocab_size: u32,
     model_dim: u32,
     input_scale: f32,
@@ -75,7 +78,7 @@ impl FullPrecisionEmbeddingLookup {
 
         Ok(Self {
             kernel,
-            weights_buffer,
+            weights_buffer: weights_buffer.into(),
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             input_scale: input_scale.unwrap_or(1.0),
@@ -87,10 +90,11 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder();
+        let encoder = command_buffer.new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -107,7 +111,7 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
-        encoder: &ComputeCommandEncoderRef,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
