@@ -4,6 +4,7 @@ mod classifier_context;
 mod command_buffer;
 pub mod compilation_parameters;
 mod context;
+mod device;
 pub mod encodable_block;
 pub mod error;
 pub mod forward_pass;
@@ -23,6 +24,7 @@ pub use classifier_context::ClassifierContext;
 pub use context::{
     DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext,
 };
+pub use device::MetalDevice;
 pub use encodable_block::Decoder;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
