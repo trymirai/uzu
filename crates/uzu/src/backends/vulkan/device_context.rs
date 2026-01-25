@@ -19,9 +19,9 @@ impl DeviceContext for VkDeviceContext {
     type DeviceArray = VkArray;
 
     unsafe fn array_uninitialized(
-        &self, 
-        shape: &[usize], 
-        data_type: DataType, 
+        &self,
+        shape: &[usize],
+        data_type: DataType,
         label: String
     ) -> Self::DeviceArray {
         let size = array_size_in_bytes(&shape, data_type) as vk::DeviceSize;
@@ -29,6 +29,6 @@ impl DeviceContext for VkDeviceContext {
         let mut buffer = VkBuffer::new_with_info(self.context.clone(), &buffer_info)
             .expect("Failed to create VkBuffer");
         buffer.set_name(label.as_str());
-        VkArray::new(buffer, shape, data_type)
+        VkArray::new_with_offset_and_label(buffer, shape, data_type, 0usize, label)
     }
 }

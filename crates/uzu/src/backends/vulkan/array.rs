@@ -11,14 +11,6 @@ pub struct VkArray {
 }
 
 impl VkArray {
-    pub fn new(
-        buffer: VkBuffer,
-        shape: &[usize],
-        data_type: DataType
-    ) -> Self {
-        Self::new_with_offset_and_label(buffer, shape, data_type, 0, "".to_string())
-    }
-
     pub fn new_with_offset_and_label(
         buffer: VkBuffer,
         shape: &[usize],

@@ -18,10 +18,24 @@ pub struct VkContext {
 
 impl VkContext {
     pub fn new(create_info: VkContextCreateInfo) -> Result<Self, VkContextError> {
+        let api_version = vk::API_VERSION_1_2;
+        let required_extensions = vec![
+            khr::shader_float_controls::NAME.to_str().unwrap(),
+            khr::shader_float16_int8::NAME.to_str().unwrap(),
+            khr::shader_subgroup_extended_types::NAME.to_str().unwrap(),
+        ];
+        let required_features = VkPhysicalDeviceFeatures {
+            shader_int16: true,
+            shader_float16: true,
+            shader_subgroup_extended_types: true,
+            storage_buffer16_bit_access: true,
+            storage_push_constant16: true,
+        };
+
         let entry = get_entry()?;
-        let instance = create_instance(&entry, create_info.with_validation, create_info.logger)?;
-        let physical_device = get_physical_device(&instance, &create_info.required_extensions, &create_info.required_features)?;
-        let (device, queue_family_index) = get_logical_device(&instance, &physical_device, &create_info.required_extensions, &create_info.required_features)?;
+        let instance = create_instance(&entry, api_version, create_info.with_validation, create_info.logger)?;
+        let physical_device = get_physical_device(&instance, &required_extensions, &required_features)?;
+        let (device, queue_family_index) = get_logical_device(&instance, &physical_device, &required_extensions, &required_features)?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
         let memory_allocator = create_memory_allocator(&instance, &device, physical_device.device)?;
 
@@ -65,31 +79,15 @@ impl Drop for VkContext {
 }
 
 pub struct VkContextCreateInfo {
-    pub api_version: u32,
     pub with_validation: bool,
     pub logger: Box<dyn VkLogger>,
-    pub required_extensions: Vec<&'static str>,
-    pub required_features: VkPhysicalDeviceFeatures,
 }
 
 impl Default for VkContextCreateInfo {
     fn default() -> Self {
         Self {
-            api_version: vk::API_VERSION_1_2,
             with_validation: true,
             logger: Box::new(VkPrintlnLogger::new()),
-            required_extensions: vec![
-                khr::shader_float_controls::NAME.to_str().unwrap(),
-                khr::shader_float16_int8::NAME.to_str().unwrap(),
-                khr::shader_subgroup_extended_types::NAME.to_str().unwrap(),
-            ],
-            required_features: VkPhysicalDeviceFeatures {
-                shader_int16: true,
-                shader_float16: true,
-                shader_subgroup_extended_types: true,
-                storage_buffer16_bit_access: true,
-                storage_push_constant16: true,
-            }
         }
     }
 }
@@ -137,6 +135,7 @@ fn get_entry() -> Result<ash::Entry, VkContextError> {
 
 fn create_instance(
     entry: &ash::Entry,
+    api_version: u32,
     with_validation: bool,
     logger: Box<dyn VkLogger>
 ) -> Result<ash::Instance, VkContextError> {
@@ -169,7 +168,7 @@ fn create_instance(
     }
 
     let app_info = vk::ApplicationInfo::default()
-        .api_version(vk::make_api_version(0, 1, 3, 0));
+        .api_version(api_version);
 
     let mut instance_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
