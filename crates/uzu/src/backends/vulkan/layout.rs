@@ -96,7 +96,7 @@ impl Drop for VkComputeShaderLayoutSet {
     }
 }
 
-pub struct VkComputeShaderLayoutBuffer<'a> {
-    pub buffer: &'a VkBuffer,
+pub struct VkComputeShaderLayoutBuffer {
+    pub buffer: VkBuffer,
     pub binding: u32,
 }
