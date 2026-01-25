@@ -1,5 +1,5 @@
 pub mod buffer;
-pub mod command;
+pub mod command_buffers;
 pub mod context;
 pub mod layout;
 pub mod logger;

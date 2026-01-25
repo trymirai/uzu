@@ -10,6 +10,7 @@ const VK_LAYER_KHRONOS_VALIDATION: &str = "VK_LAYER_KHRONOS_validation";
 /// https://docs.vulkan.org/refpages/latest/refpages/index.html
 pub struct VkContext {
     physical_device: VkPhysicalDevice,
+    command_pool: vk::CommandPool,
     device: Arc<ash::Device>,
     memory_allocator: Option<vk_mem::Allocator>,
     queue: vk::Queue,
@@ -37,15 +38,21 @@ impl VkContext {
         let physical_device = get_physical_device(&instance, &required_extensions, &required_features)?;
         let (device, queue_family_index) = get_logical_device(&instance, &physical_device, &required_extensions, &required_features)?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+        let command_pool = create_command_pool(&device, queue_family_index)?;
         let memory_allocator = create_memory_allocator(&instance, &device, physical_device.device)?;
 
         Ok(Self {
             physical_device,
+            command_pool,
             device: Arc::new(device),
             memory_allocator: Some(memory_allocator),
             queue,
             queue_family_index
         })
+    }
+    
+    pub fn command_pool(&self) -> vk::CommandPool {
+        self.command_pool
     }
 
     pub fn device(&self) -> Arc<ash::Device> {
@@ -73,6 +80,7 @@ impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
             self.memory_allocator = None;
+            self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
         }
     }
@@ -94,6 +102,9 @@ impl Default for VkContextCreateInfo {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VkContextError {
+    #[error("Command pool creation error: {0}")]
+    CommandPoolCreate(vk::Result),
+    
     #[error("Vulkan device creation error: {0}")]
     DeviceCreateError(vk::Result),
 
@@ -130,6 +141,19 @@ fn get_entry() -> Result<ash::Entry, VkContextError> {
     match entry_result {
         Ok(entry) => Ok(entry),
         Err(err) => Err(VkContextError::EntryLoadingError(err))
+    }
+}
+
+fn create_command_pool(
+    device: &ash::Device,
+    queue_family_index: u32
+) -> Result<vk::CommandPool, VkContextError> {
+    let info = vk::CommandPoolCreateInfo::default()
+        .queue_family_index(queue_family_index)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+    match unsafe { device.create_command_pool(&info, None) } {
+        Ok(pool) => Ok(pool),
+        Err(result) => Err(VkContextError::CommandPoolCreate(result))
     }
 }
 
