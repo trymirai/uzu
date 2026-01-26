@@ -7,8 +7,9 @@ use std::{
 };
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLResourceOptions, ProtocolObject, Retained,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
+    kernel::dsl::MaskUpdateKernel,
 };
 
 use super::{
@@ -17,7 +18,7 @@ use super::{
     compilation_parameters::CompilationConfig,
     encodable_block::Sampling,
     forward_pass::{ScratchBuffers, SharedBuffers},
-    kernel::{MaskUpdateKernel, TokenCopyKernel},
+    kernel::TokenCopyKernel,
 };
 use crate::{
     DataType,
@@ -59,18 +60,24 @@ impl AsyncBuffers {
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions = device.new_buffer(
-            max_tokens * std::mem::size_of::<i32>() ,
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        ).expect("Failed to create positions buffer");
-        let seeds = device.new_buffer(
-            max_tokens * std::mem::size_of::<u64>() ,
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        ).expect("Failed to create seeds buffer");
-        let results = device.new_buffer(
-            batch_size * std::mem::size_of::<u32>() ,
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        ).expect("Failed to create results buffer");
+        let positions = device
+            .new_buffer(
+                max_tokens * std::mem::size_of::<i32>(),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create positions buffer");
+        let seeds = device
+            .new_buffer(
+                max_tokens * std::mem::size_of::<u64>(),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create seeds buffer");
+        let results = device
+            .new_buffer(
+                batch_size * std::mem::size_of::<u32>(),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create results buffer");
         let event = device.new_event().expect("Failed to create event");
 
         Self {
@@ -159,11 +166,17 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let mtl_device: Retained<ProtocolObject<dyn MTLDevice>> = <dyn metal::MTLDevice>::system_default().ok_or(Error::UnableToCreateMetalContext)?;
-        let mtl_command_queue =
-            mtl_device.new_command_queue_with_max_command_buffer_count(1024).ok_or(Error::UnableToCreateMetalContext)?;
+        let mtl_device: Retained<ProtocolObject<dyn MTLDevice>> =
+            <dyn metal::MTLDevice>::system_default()
+                .ok_or(Error::UnableToCreateMetalContext)?;
+        let mtl_command_queue = mtl_device
+            .new_command_queue_with_max_command_buffer_count(1024)
+            .ok_or(Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = mtl_command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let command_buffer = mtl_command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer")
+            .to_owned();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -307,7 +320,11 @@ impl LanguageModelGeneratorContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        self.command_buffer = self
+            .mtl_context
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer")
+            .to_owned();
     }
 }
