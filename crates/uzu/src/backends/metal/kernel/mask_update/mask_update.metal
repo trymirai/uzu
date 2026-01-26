@@ -4,15 +4,12 @@
 SPECIALIZE(T, float, half, bfloat) KERNEL(MaskUpdate) (
     device T* mask,
     constant int& unmask_col,
-    constant int& mask_col,
-    uint tid AXIS(1, 1)
+    constant int& mask_col
 ) {
-  if (tid == 0) {
-    if (unmask_col >= 0) {
-      mask[unmask_col] = T(0);
-    }
-    if (mask_col >= 0) {
-      mask[mask_col] = -numeric_limits<T>::infinity();
-    }
+  if (unmask_col >= 0) {
+    mask[unmask_col] = T(0);
+  }
+  if (mask_col >= 0) {
+    mask[mask_col] = -numeric_limits<T>::infinity();
   }
 }

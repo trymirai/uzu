@@ -64,8 +64,14 @@ fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
                 | Ok(MetalArgumentType::Threads(l)) => Some(format!("({l})")),
                 _ => None,
             })
-            .collect::<Vec<_>>()
-            .join(" * ");
+            .collect::<Vec<_>>();
+
+        let max_total_threads_per_threadgroup =
+            if !max_total_threads_per_threadgroup.is_empty() {
+                max_total_threads_per_threadgroup.join(" * ")
+            } else {
+                "1".to_string()
+            };
 
         let mut wrapper_arguments = kernel
             .arguments

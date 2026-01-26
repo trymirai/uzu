@@ -12,10 +12,6 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(MlpGateActMul) (
     uint j AXIS(h, 64),
     uint row AXIS(m, 1)
 ) {
-  if (row >= m || j >= h) {
-    return;
-  }
-
   int base = row * (2 * h);
   T up = fused_up[base + j];
   T gate = fused_up[base + h + j];
