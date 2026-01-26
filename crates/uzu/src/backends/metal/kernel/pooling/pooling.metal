@@ -1,31 +1,34 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-enum PoolingType : uint {
-  POOL_CLS = 0,
-  POOL_MEAN = 1,
-};
-
-SPECIALIZE(T, float, half, bfloat) KERNEL(Pooling) (
+// CLS pooling: Extract first token [batch, seq_len, hidden_dim] → [batch,
+// hidden_dim]
+SPECIALIZE(T, float, half, bfloat) KERNEL(PoolingCls) (
     const device T* input,
     device T* output,
-    constant int& seq_len,
-    constant int& hidden_dim,
-    constant int& batch_size,
-    constant uint& pooling_type,
+    constant uint& seq_len,
+    constant uint& hidden_dim,
+    constant uint& batch_size,
     uint dim_idx AXIS(hidden_dim, 16),
     uint batch_idx AXIS(batch_size, 16)
 ) {
-  if (dim_idx >= hidden_dim)
-    return;
+  output[batch_idx * hidden_dim + dim_idx] =
+      input[batch_idx * seq_len * hidden_dim + dim_idx];
+}
 
-  if (pooling_type == POOL_CLS) {
-    output[batch_idx * hidden_dim + dim_idx] = input[batch_idx * seq_len * hidden_dim + dim_idx];
-    return;
-  }
-
+// Mean pooling: Average across sequence [batch, seq_len, hidden_dim] → [batch,
+// hidden_dim]
+SPECIALIZE(T, float, half, bfloat) KERNEL(PoolingMean) (
+    const device T* input,
+    device T* output,
+    constant uint& seq_len,
+    constant uint& hidden_dim,
+    constant uint& batch_size,
+    uint dim_idx AXIS(hidden_dim, 16),
+    uint batch_idx AXIS(batch_size, 16)
+) {
   float sum = 0.0f;
-  for (int seq_idx = 0; seq_idx < seq_len; seq_idx++) {
+  for (uint seq_idx = 0; seq_idx < seq_len; seq_idx++) {
     sum += float(
         input[batch_idx * seq_len * hidden_dim + seq_idx * hidden_dim + dim_idx]
     );

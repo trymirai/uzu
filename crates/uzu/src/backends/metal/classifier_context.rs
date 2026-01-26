@@ -1,15 +1,18 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, MTLDevice, MTLDeviceExt,
-    ModelShape, ProtocolObject, Retained,
+    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, MTLDevice,
+    MTLDeviceExt, ModelShape, ProtocolObject, Retained,
     compilation_parameters::CompilationConfig,
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
+        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization,
+        Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
-    forward_pass::{ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers},
-    kernel::dsl::{PoolingKernel, SigmoidKernel}
+    forward_pass::{
+        ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
+    },
+    kernel::dsl::SigmoidKernel,
 };
 use crate::{
     DataType,
@@ -363,22 +366,24 @@ impl ClassifierContext {
             )))
         })?;
 
-        let pooling_kernel = PoolingKernel::new(&mtl_context, data_type.into())
-            .map_err(|e| {
-                eprintln!("Failed to create pooling kernel: {:?}", e);
-                Error::UnableToCreateMetalContext
-            })?;
         let sigmoid_kernel = SigmoidKernel::new(&mtl_context, data_type.into())
             .map_err(|e| {
                 eprintln!("Failed to create sigmoid kernel: {:?}", e);
                 Error::UnableToCreateMetalContext
             })?;
 
-        let pooling = Box::new(Pooling::new(
-            pooling_kernel,
-            classifier_model_config.model_config.classifier_pooling.clone(),
-            model_dim,
-        ));
+        let pooling = Box::new(
+            Pooling::new(
+                &mtl_context,
+                data_type.into(),
+                classifier_model_config.model_config.classifier_pooling.clone(),
+                model_dim,
+            )
+            .map_err(|e| {
+                eprintln!("Failed to create pooling: {:?}", e);
+                Error::UnableToCreateMetalContext
+            })?,
+        );
 
         let prediction_head = Box::new(ClassifierPredictionHead::new(
             prediction_head_dense.map_err(|e| {

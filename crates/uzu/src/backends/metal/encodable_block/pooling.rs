@@ -5,31 +5,64 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::Array;
 use crate::{
     backends::metal::{
-        MTLCommandBuffer,
-        MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject,
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::PoolingKernel,
+        kernel::dsl::{PoolingClsKernel, PoolingMeanKernel},
     },
     config::PoolingType,
 };
 
+enum PoolingKernel {
+    Cls(PoolingClsKernel),
+    Mean(PoolingMeanKernel),
+}
+
+impl PoolingKernel {
+    fn encode(
+        &self,
+        input: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
+        output: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
+        seq_len: u32,
+        hidden_dim: u32,
+        batch_size: u32,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+    ) {
+        match self {
+            Self::Cls(k) => k.encode(
+                input, output, seq_len, hidden_dim, batch_size, encoder,
+            ),
+            Self::Mean(k) => k.encode(
+                input, output, seq_len, hidden_dim, batch_size, encoder,
+            ),
+        }
+    }
+}
+
 pub struct Pooling {
     pooling_kernel: PoolingKernel,
-    pooling_type: PoolingType,
     model_dim: usize,
 }
 
 impl Pooling {
     pub fn new(
-        pooling_kernel: PoolingKernel,
+        context: &MTLContext,
+        data_type: KernelDataType,
         pooling_type: PoolingType,
         model_dim: usize,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, MTLError> {
+        let pooling_kernel = match pooling_type {
+            PoolingType::Cls => {
+                PoolingKernel::Cls(PoolingClsKernel::new(context, data_type)?)
+            },
+            PoolingType::Mean => {
+                PoolingKernel::Mean(PoolingMeanKernel::new(context, data_type)?)
+            },
+        };
+        Ok(Self {
             pooling_kernel,
-            pooling_type,
             model_dim,
-        }
+        })
     }
 }
 
@@ -101,18 +134,13 @@ impl EncodableBlock for Pooling {
         let mut pooling_array = arrays[1].borrow_mut();
         let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
 
-        let pooling_type = match self.pooling_type {
-            PoolingType::Cls => 0u32,
-            PoolingType::Mean => 1u32,
-        };
         self.pooling_kernel.encode(
             input_buffer,
             &output_buffer,
-            seq_len as i32,
-            self.model_dim as i32,
+            seq_len as u32,
+            self.model_dim as u32,
             batch_size,
-            pooling_type,
-            encoder
+            encoder,
         );
     }
 }
