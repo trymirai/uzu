@@ -1,7 +1,7 @@
 #include <metal_stdlib>
-using namespace metal;
+#include "../definitions.metal"
 
-enum ActivationType : ushort {
+enum ActivationType : uint {
   ACT_SILU = 0,
   ACT_GELU = 1,
 };
@@ -23,47 +23,18 @@ inline T gelu_approx(T x) {
 }
 
 template <typename T>
-inline T activate(T x, ushort act) {
+inline T activate(T x, uint act) {
   if (act == ACT_SILU)
     return silu(x);
   return gelu_approx(x);
 }
 
-template <typename T>
-[[kernel, max_total_threads_per_threadgroup(256)]]
-void activation(
-    const device T* input [[buffer(0)]],
-    device T* output [[buffer(1)]],
-    const constant int& N [[buffer(2)]],
-    const constant ushort& act_type [[buffer(3)]],
-    uint tid [[thread_position_in_grid]]
+SPECIALIZE(T, half, float, bfloat) KERNEL(Activation) (
+    const device T* input,
+    device T* output,
+    const constant uint& n,
+    const constant uint& act_type,
+    uint tid AXIS(n, 256)
 ) {
-  if (int(tid) >= N)
-    return;
   output[tid] = activate(input[tid], act_type);
 }
-
-// Explicit instantiations
-template [[host_name("activation_f16")]] [[kernel]] void activation<half>(
-    const device half* input [[buffer(0)]],
-    device half* output [[buffer(1)]],
-    const constant int& N [[buffer(2)]],
-    const constant ushort& act_type [[buffer(3)]],
-    uint tid [[thread_position_in_grid]]
-);
-
-template [[host_name("activation_f32")]] [[kernel]] void activation<float>(
-    const device float* input [[buffer(0)]],
-    device float* output [[buffer(1)]],
-    const constant int& N [[buffer(2)]],
-    const constant ushort& act_type [[buffer(3)]],
-    uint tid [[thread_position_in_grid]]
-);
-
-template [[host_name("activation_bf16")]] [[kernel]] void activation<bfloat>(
-    const device bfloat* input [[buffer(0)]],
-    device bfloat* output [[buffer(1)]],
-    const constant int& N [[buffer(2)]],
-    const constant ushort& act_type [[buffer(3)]],
-    uint tid [[thread_position_in_grid]]
-);
