@@ -11,20 +11,17 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(FullPrecisionEmbeddingLookup) (
     constant uint32_t& vocab_size,
     constant uint32_t& model_dim,
     constant float& input_scale,
-    uint batch_idx GROUPS((batch_size * model_dim + BLOCK_SIZE - 1).div_ceil(BLOCK_SIZE)), // TODO: should not be done like this!!!
-    uint dim_idx THREADS(BLOCK_SIZE)
+    uint dim_idx AXIS(model_dim, BLOCK_SIZE),
+    uint batch_idx AXIS(batch_size, 1)
 ) {
-  if (batch_idx >= batch_size) {
-    return;
-  }
-
   const uint64_t token_id = token_ids[batch_idx];
-  const uint thread_position_in_grid = batch_idx * batch_size + dim_idx;
+  const uint output_idx = batch_idx * model_dim + dim_idx;
+
   if (token_id >= vocab_size) {
-    output[thread_position_in_grid] = T(0);
+    output[output_idx] = T(0);
     return;
   }
 
   T value = weights[token_id * model_dim + dim_idx];
-  output[thread_position_in_grid] = value * T(input_scale);
+  output[output_idx] = value * T(input_scale);
 }
