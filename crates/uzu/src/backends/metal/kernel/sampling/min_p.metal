@@ -4,7 +4,9 @@
 #define BLOCK_SIZE 1024
 #define BLOCK_SIZE_IN_SIMDS (BLOCK_SIZE / 32)
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(MinP) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MinP) (
     device const T* logits,
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],

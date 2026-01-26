@@ -6,7 +6,9 @@
 
 #define MAX_ITERS 16
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(TopP) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(TopP) (
     device const T* logits,
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],

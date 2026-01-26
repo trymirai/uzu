@@ -1,7 +1,9 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(MaskUpdate) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MaskUpdate) (
     device T* mask,
     constant int& unmask_col,
     constant int& mask_col

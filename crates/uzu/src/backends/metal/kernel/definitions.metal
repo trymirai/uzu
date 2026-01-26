@@ -471,9 +471,7 @@ static T threadgroup_cooperative_reduce_min(
 #define DSL_STR(X) #X
 #define DSL_XSTR(X) DSL_STR(X)
 
-#define SPECIALIZE(TYPENAME, ...)                                              \
-  template <typename TYPENAME>                                                 \
-  DSL_META("dsl.specialize", #TYPENAME, #__VA_ARGS__)
+#define VARIANTS(TYPENAME, ...) DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))

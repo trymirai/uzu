@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +15,9 @@ pub struct ParmVarDeclType {
 pub enum MetalAstKind {
     TranslationUnitDecl,
     FunctionTemplateDecl,
-    TemplateTypeParmDecl,
+    TemplateTypeParmDecl {
+        name: Option<Box<str>>,
+    },
     FunctionDecl {
         name: Box<str>,
     },
@@ -253,10 +253,16 @@ impl MetalArgument {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct MetalTypeParameter {
+    pub name: Box<str>,
+    pub variants: Box<[Box<str>]>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetalKernelInfo {
     pub name: Box<str>,
     pub arguments: Box<[MetalArgument]>,
-    pub specializations: Option<(Box<str>, Box<[Box<str>]>)>,
+    pub variants: Option<Box<[MetalTypeParameter]>>,
 }
 
 impl MetalKernelInfo {
@@ -284,26 +290,36 @@ impl MetalKernelInfo {
         node: MetalAstNode,
         source: &str,
     ) -> anyhow::Result<Option<Self>> {
-        let (is_template, node) =
+        let (is_template, template_parameters, node) =
             if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
-                let node = node
-                .inner
-                .into_iter()
-                .find(|c| {
-                    matches!(
-                        c.kind,
+                let mut template_parameters = Vec::new();
+                let mut function_node = None;
+
+                for child in node.inner {
+                    match child.kind {
+                        MetalAstKind::TemplateTypeParmDecl {
+                            name,
+                        } => {
+                            let name = name
+                                .context("template parameter missing name")?;
+                            template_parameters.push(name);
+                        },
                         MetalAstKind::FunctionDecl {
-                            name: _
-                        }
-                    )
-                })
-                .context(
+                            name: _,
+                        } => {
+                            function_node = Some(child);
+                        },
+                        _ => (),
+                    }
+                }
+
+                let node = function_node.context(
                     "unexpected kind of root node: template without function",
                 )?;
 
-                (true, node)
+                (true, template_parameters, node)
             } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
-                (false, node)
+                (false, Vec::new(), node)
             } else {
                 return Ok(None);
             };
@@ -345,34 +361,58 @@ impl MetalKernelInfo {
                     bail!("zero length annotation");
                 }
             })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
-        if !annotations.contains_key("dsl.kernel") {
+        if !annotations.iter().any(|(k, _)| k.as_ref() == "dsl.kernel") {
             return Ok(None);
         }
 
-        if annotations.contains_key("dsl.specialize") != is_template {
-            bail!("mismatch between AST nodes and specialization annotation");
+        let variants: Box<[MetalTypeParameter]> = annotations
+            .iter()
+            .filter(|(k, _)| k.as_ref() == "dsl.variants")
+            .map(|(_, v)| {
+                let [typename, variant_values] = v.as_ref() else {
+                    bail!("malformed dsl.variants annotation");
+                };
+
+                let variants = variant_values
+                    .split(',')
+                    .map(|v| v.trim().into())
+                    .collect::<Box<[Box<str>]>>();
+
+                Ok(MetalTypeParameter {
+                    name: typename.clone(),
+                    variants,
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        if variants.is_empty() != !is_template {
+            bail!("mismatch between AST nodes and variants annotation");
         }
 
-        let specializations = if is_template {
-            let specialize = annotations
-                .get("dsl.specialize")
-                .context("missing dsl.specialize annotation")?;
-            let [specialization_typename, specialization_variants] =
-                specialize.as_ref()
-            else {
-                bail!("malformed dsl.specialize annotation");
-            };
+        if is_template {
+            let template_names = template_parameters
+                .iter()
+                .map(|name| name.as_ref())
+                .collect::<Vec<_>>();
+            let variant_names = variants
+                .iter()
+                .map(|variant| variant.name.as_ref())
+                .collect::<Vec<_>>();
+            if template_names != variant_names {
+                bail!(
+                    "template parameters {:?} do not match dsl.variants order {:?}",
+                    template_names,
+                    variant_names
+                );
+            }
+        }
 
-            let specialization_variants = specialization_variants
-                .split(',')
-                .map(|v| v.trim().into())
-                .collect::<Box<[Box<str>]>>();
-
-            Some((specialization_typename.clone(), specialization_variants))
-        } else {
+        let variants = if variants.is_empty() {
             None
+        } else {
+            Some(variants)
         };
 
         let arguments = arg_nodes
@@ -383,7 +423,7 @@ impl MetalKernelInfo {
         Ok(Some(MetalKernelInfo {
             name,
             arguments,
-            specializations,
+            variants,
         }))
     }
 }

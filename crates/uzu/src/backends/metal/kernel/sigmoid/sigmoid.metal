@@ -1,7 +1,9 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(Sigmoid) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Sigmoid) (
     const device T* input,
     device T* output,
     const constant uint& total_elements,

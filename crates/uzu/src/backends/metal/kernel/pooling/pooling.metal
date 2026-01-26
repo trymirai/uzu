@@ -3,7 +3,9 @@
 
 // CLS pooling: Extract first token [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]
-SPECIALIZE(T, float, half, bfloat) KERNEL(PoolingCls) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(PoolingCls) (
     const device T* input,
     device T* output,
     constant uint& seq_len,
@@ -18,7 +20,9 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(PoolingCls) (
 
 // Mean pooling: Average across sequence [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]
-SPECIALIZE(T, float, half, bfloat) KERNEL(PoolingMean) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(PoolingMean) (
     const device T* input,
     device T* output,
     constant uint& seq_len,

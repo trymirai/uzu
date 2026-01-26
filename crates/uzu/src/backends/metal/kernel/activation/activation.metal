@@ -3,7 +3,9 @@
 
 #include "activation.h"
 
-SPECIALIZE(T, half, float, bfloat) KERNEL(Activation) (
+template <typename T>
+VARIANTS(T, half, float, bfloat)
+KERNEL(Activation) (
     const device T* input,
     device T* output,
     const constant uint& n,
