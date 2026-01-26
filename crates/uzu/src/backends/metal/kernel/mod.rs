@@ -1,4 +1,3 @@
-pub mod activation;
 pub mod attention;
 mod data_type;
 pub mod dsl {
@@ -30,7 +29,6 @@ mod tensor_add_swap;
 mod tensor_copy;
 pub mod token_copy;
 
-pub use activation::ActivationKernel;
 pub use attention::{
     AttentionError, AttentionKernel, AttentionKernelVariant,
     AttentionSinglePassArguments, AttentionTwoPassArguments,
@@ -72,7 +70,6 @@ pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwapKernel;
 pub use tensor_copy::TensorCopyKernel;
 pub use token_copy::TokenCopyKernel;
-
 
 use super::{MTLContext, metal_extensions};
 
