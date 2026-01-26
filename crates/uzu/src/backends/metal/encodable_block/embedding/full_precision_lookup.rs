@@ -1,10 +1,4 @@
 use std::rc::Rc;
-
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
-};
-
 use super::{
     super::{EncodableBlock, EncodingParameters},
     EmbeddingError,
@@ -12,12 +6,11 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
         MTLContext, MTLError,
+        ProtocolObject, Retained,
+        kernel::dsl::FullPrecisionEmbeddingLookupKernel,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::embedding::{
-            FullPrecisionEmbeddingLookupArguments,
-            FullPrecisionEmbeddingLookupKernel,
-        },
     },
     parameters::ParameterTree,
 };
@@ -40,7 +33,7 @@ impl FullPrecisionEmbeddingLookup {
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, EmbeddingError> {
         let kernel =
-            FullPrecisionEmbeddingLookupKernel::new(mtl_context, data_type)?;
+            FullPrecisionEmbeddingLookupKernel::new(mtl_context, data_type.into())?;
 
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
@@ -122,18 +115,15 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
         let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let args = FullPrecisionEmbeddingLookupArguments {
+        self.kernel.encode(
             token_ids_buffer,
-            weights_buffer: &self.weights_buffer,
+            &self.weights_buffer,
             output_buffer,
-            batch_size: batch_size as u32,
-            vocab_size: self.vocab_size,
-            model_dim: self.model_dim,
-            input_scale: self.input_scale,
-        };
-
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode full precision embedding lookup kernel");
+            batch_size as u32,
+            self.vocab_size,
+            self.model_dim,
+            self.input_scale,
+            encoder
+        )
     }
 }

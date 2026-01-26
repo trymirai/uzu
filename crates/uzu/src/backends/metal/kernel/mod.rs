@@ -22,7 +22,6 @@ pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
 pub mod short_conv;
-pub mod sigmoid;
 pub mod ssm;
 mod tensor_add_bias;
 mod tensor_add_swap;
@@ -60,7 +59,6 @@ pub use short_conv::{
     ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelError,
     ShortConvPrefillArguments,
 };
-pub use sigmoid::SigmoidKernel;
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
