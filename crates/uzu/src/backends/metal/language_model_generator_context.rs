@@ -9,6 +9,7 @@ use std::{
 use crate::backends::metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLEvent,
     MTLResourceOptions, ProtocolObject, Retained,
+    kernel::dsl::MaskUpdateKernel
 };
 
 use super::{
@@ -17,7 +18,7 @@ use super::{
     compilation_parameters::CompilationConfig,
     encodable_block::Sampling,
     forward_pass::{ScratchBuffers, SharedBuffers},
-    kernel::{MaskUpdateKernel, TokenCopyKernel},
+    kernel::{TokenCopyKernel},
 };
 use crate::{
     DataType,

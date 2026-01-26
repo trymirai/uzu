@@ -632,10 +632,10 @@ impl LanguageModelGenerator {
                 {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
-                            &encoder,
                             mask_buffer.borrow().backend_buffer(),
                             update.unmask_col,
                             update.mask_col,
+                            &encoder,
                         );
                     }
                 }
