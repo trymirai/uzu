@@ -20,16 +20,29 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         })
     };
 
-    let (specialize_extra_argument, specialize_kernel_format) = if kernel
-        .specializations
-        .is_some()
+    let (variants_extra_arguments, variants_kernel_format) = if let Some(
+        variants,
+    ) =
+        &kernel.variants
     {
+        let variant_names = variants
+            .iter()
+            .map(|type_parameter| format_ident!("{}", type_parameter.name.as_ref()))
+            .collect::<Vec<_>>();
+
+        let kernel_format = repeat_n("{}", variant_names.len() + 1).join("_");
+
         (
-            quote! { , data_type: crate::backends::metal::KernelDataType },
-            quote! { &format!("{}_{}", #kernel_name, data_type.function_name_suffix()) },
+            variant_names
+                .iter()
+                .map(|name| 
+                    quote! { #[allow(non_snake_case)] #name: crate::backends::metal::KernelDataType }
+                )
+                .collect(),
+            quote! { &format!(#kernel_format, #kernel_name #(, #variant_names.function_name_suffix())*) },
         )
     } else {
-        (quote! {}, quote! { #kernel_name })
+        (Vec::new(), quote! { #kernel_name })
     };
 
     let (encode_args_defs, encode_args_sets, encode_args_names): (
@@ -149,13 +162,13 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         }
 
         impl #struct_name {
-            pub fn new(context: &crate::backends::metal::MTLContext #specialize_extra_argument) -> Result<Self, crate::backends::metal::MTLError> {
+            pub fn new(context: &crate::backends::metal::MTLContext #(, #variants_extra_arguments)*) -> Result<Self, crate::backends::metal::MTLError> {
                 use crate::backends::metal::metal_extensions::LibraryPipelineExtensions;
-                let pipeline = context.library.compute_pipeline_state(#specialize_kernel_format, None)?;
+                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, None)?;
                 Ok(Self { pipeline })
             }
 
-            pub fn encode(&self, #(#encode_args_defs, )*compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
+            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
                 use metal::MTLComputeCommandEncoder;
                 use crate::backends::metal::ComputeEncoderSetValue;
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
@@ -163,12 +176,12 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
                 #dispatch
             }
 
-            pub fn encode_if(&self, #(#encode_args_defs, )*compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
+            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
                 use crate::backends::metal::metal_extensions::ComputeEncoderConditional;
                 compute_encoder.condition(
                     predicate,
                     || {
-                        self.encode(#(#encode_args_names, )*compute_encoder);
+                        self.encode(#(#encode_args_names, )* compute_encoder);
                     },
                     None::<fn()>,
                 );

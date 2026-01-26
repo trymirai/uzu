@@ -3,7 +3,9 @@
 
 #include "../activation/activation.h"
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(MlpGateActMul) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MlpGateActMul) (
     const device T* fused_up,
     device T* hidden,
     const constant int& h,

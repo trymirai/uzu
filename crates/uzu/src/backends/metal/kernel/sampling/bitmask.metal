@@ -5,7 +5,9 @@
 #define GRAIN_SIZE 64
 #define BITS_IN_U32 32
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(Bitmask) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Bitmask) (
     device const T* logits,
     device const uint32_t* bitmask,
     constant uint& bitmask_offset,

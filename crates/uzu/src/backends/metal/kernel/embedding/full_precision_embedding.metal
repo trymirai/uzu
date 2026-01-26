@@ -3,7 +3,9 @@
 
 #define BLOCK_SIZE 256
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(FullPrecisionEmbeddingLookup) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(FullPrecisionEmbeddingLookup) (
     const device uint64_t* token_ids, // [batch_size]
     const device T* weights,          // [vocab_size, model_dim]
     device T* output,                 // [batch_size, model_dim]

@@ -155,7 +155,9 @@ static ArgmaxPair threadgroup_raking_argmax(
 
 // Single-pass argmax
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxSingle)(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(ArgmaxSingle)(
   const device T* logits_data,
   device uint* final_tokens,
   constant uint& batch_size,
@@ -195,7 +197,9 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxSingle)(
 
 // Two-pass argmax
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxMain)(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(ArgmaxMain)(
     const device T* logits_data,
     device ArgmaxPair* partial_results,
     constant uint& batch_size,

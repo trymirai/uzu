@@ -6,7 +6,9 @@
 #define GRAIN_SIZE 64
 #define WORDS_PER_OFFSET 4
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(Gumbel) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Gumbel) (
     device const T* logits,
     device const uint64_t* batch_seeds,
     device T* processed_logits,
