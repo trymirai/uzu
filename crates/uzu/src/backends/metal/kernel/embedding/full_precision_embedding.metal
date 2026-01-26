@@ -11,7 +11,7 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(FullPrecisionEmbeddingLookup) (
     constant uint32_t& vocab_size,
     constant uint32_t& model_dim,
     constant float& input_scale,
-    uint batch_idx GROUPS(batch_size),
+    uint batch_idx GROUPS((batch_size * model_dim + BLOCK_SIZE - 1).div_ceil(BLOCK_SIZE)),
     uint dim_idx THREADS(BLOCK_SIZE)
 ) {
   if (batch_idx >= batch_size) {
