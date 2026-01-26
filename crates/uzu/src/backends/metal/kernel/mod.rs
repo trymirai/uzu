@@ -15,7 +15,6 @@ pub use mlp::{
 };
 pub mod mlp_fused;
 pub mod moe;
-pub mod pooling;
 pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
@@ -46,7 +45,6 @@ pub use moe::{
     MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError,
     MoeScatterKernels, MoeScatterWithMapArguments,
 };
-pub use pooling::PoolingKernel;
 pub use rms_norm::{
     QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormError,
     RMSNormKernel, RMSNormKernelType,

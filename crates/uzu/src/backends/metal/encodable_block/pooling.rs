@@ -8,7 +8,7 @@ use crate::{
         MTLCommandBuffer,
         MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::PoolingKernel,
+        kernel::dsl::PoolingKernel,
     },
     config::PoolingType,
 };
@@ -101,27 +101,18 @@ impl EncodableBlock for Pooling {
         let mut pooling_array = arrays[1].borrow_mut();
         let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
 
-        let result = match self.pooling_type {
-            PoolingType::Cls => self.pooling_kernel.encode_cls(
-                encoder,
-                input_buffer,
-                &output_buffer,
-                batch_size as i32,
-                seq_len as i32,
-                self.model_dim as i32,
-            ),
-            PoolingType::Mean => self.pooling_kernel.encode_mean(
-                encoder,
-                input_buffer,
-                &output_buffer,
-                batch_size as i32,
-                seq_len as i32,
-                self.model_dim as i32,
-            ),
+        let pooling_type = match self.pooling_type {
+            PoolingType::Cls => 0u32,
+            PoolingType::Mean => 1u32,
         };
-
-        if result.is_err() {
-            panic!("Failed to encode pooling kernel");
-        }
+        self.pooling_kernel.encode(
+            input_buffer,
+            &output_buffer,
+            seq_len as i32,
+            self.model_dim as i32,
+            batch_size,
+            pooling_type,
+            encoder
+        );
     }
 }
