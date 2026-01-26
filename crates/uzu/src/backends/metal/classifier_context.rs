@@ -9,7 +9,8 @@ use super::{
         transformer_layer::{embed_block, linear_block},
     },
     forward_pass::{ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers},
-    kernel::{PoolingKernel, SigmoidKernel},
+    kernel::{PoolingKernel},
+    kernel::dsl::SigmoidKernel
 };
 use crate::{
     DataType,
@@ -368,7 +369,7 @@ impl ClassifierContext {
                 eprintln!("Failed to create pooling kernel: {:?}", e);
                 Error::UnableToCreateMetalContext
             })?;
-        let sigmoid_kernel = SigmoidKernel::new(&mtl_context, data_type)
+        let sigmoid_kernel = SigmoidKernel::new(&mtl_context, data_type.into())
             .map_err(|e| {
                 eprintln!("Failed to create sigmoid kernel: {:?}", e);
                 Error::UnableToCreateMetalContext
