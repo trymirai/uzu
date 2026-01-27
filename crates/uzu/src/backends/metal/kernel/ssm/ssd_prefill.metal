@@ -1,29 +1,11 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
 #include "../definitions.metal"
+#include "ssm_common.h"
 
 using namespace metal;
 
 constant ushort SSM_PREFILL_MAX_STATE = 256;
-
-struct SILU {
-  template <typename T>
-  T operator()(T x) const {
-    float xf = float(x);
-    float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
-    float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
-    return static_cast<T>(out);
-  }
-};
-
-template <typename T>
-inline T softplus(T x) {
-  float xf = float(x);
-  if (xf > 20.0f) {
-    return x;
-  }
-  return static_cast<T>(log(1.0f + fast::exp(xf)));
-}
 
 template <typename T>
 [[kernel, max_total_threads_per_threadgroup(32)]]
@@ -107,7 +89,7 @@ void ssd_prefill_kernel_64(
 
     const float x_val = float(x[x_idx]);
     const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
-    const float gate = float(SILU{}(z[x_idx]));
+    const float gate = float(apply_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
 
@@ -243,7 +225,7 @@ void ssd_prefill_kernel(
 
     const float x_val = float(x[x_idx]);
     const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
-    const float gate = float(SILU{}(z[x_idx]));
+    const float gate = float(apply_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
 
@@ -347,7 +329,7 @@ void ssd_prefill_kernel_sequential(
     const T this_dt = softplus(dt_raw_val);
     const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
     const T this_D = D[h_idx];
-    const T this_z = SILU{}(z[x_idx]);
+    const T this_z = apply_silu(z[x_idx]);
     const T dt_scaled_input = this_x;
 
     T acc = T(0);

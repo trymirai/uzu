@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
+#include "ssm_common.h"
 
 using namespace metal;
 
@@ -11,14 +12,6 @@ constant int ACTIVATION_SILU = 1;
 constant int ACTIVATION_GELU = 2;
 
 constant uint CONV_SCAN_THREADS = 32u;
-
-template <typename T>
-inline T apply_silu(T x) {
-  float xf = float(x);
-  float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
-  float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
-  return static_cast<T>(out);
-}
 
 template <typename T>
 inline T apply_gelu(T x) {
