@@ -6,8 +6,12 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
+use super::wrapper::SpecializeBaseIndices;
 
-pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
+pub fn bindgen(
+    kernel: &MetalKernelInfo,
+    specialize_indices: &SpecializeBaseIndices,
+) -> anyhow::Result<TokenStream> {
     let kernel_name = kernel.name.as_ref();
     let struct_name = format_ident!("{kernel_name}Kernel");
 
@@ -35,7 +39,7 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         (
             variant_names
                 .iter()
-                .map(|name| 
+                .map(|name|
                     quote! { #[allow(non_snake_case)] #name: crate::backends::metal::KernelDataType }
                 )
                 .collect(),
@@ -43,6 +47,56 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         )
     } else {
         (Vec::new(), quote! { #kernel_name })
+    };
+
+    let base_index = specialize_indices.get(&kernel.name).copied();
+    let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+        .arguments
+        .iter()
+        .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+        .enumerate()
+        .map(|(i, a)| {
+            let arg_name = format_ident!("{}", a.name.as_ref());
+            let rust_type = match a.argument_type().unwrap() {
+                MetalArgumentType::Specialize(t) => format_ident!("{t}"),
+                _ => unreachable!(),
+            };
+            let mtl_type = match a.argument_type().unwrap() {
+                MetalArgumentType::Specialize(ref t) => match t.as_ref() {
+                    "bool" => quote! { Bool },
+                    "u32" => quote! { UInt },
+                    "i32" => quote! { Int },
+                    "f32" => quote! { Float },
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            };
+            let idx = base_index.unwrap_or(0) + i;
+            let arg_def = quote! { #arg_name: #rust_type };
+            let setup = quote! {
+                function_constants.set_constant_value_type_at_index(
+                    std::ptr::NonNull::from(&#arg_name).cast(),
+                    crate::backends::metal::MTLDataType::#mtl_type,
+                    #idx,
+                );
+            };
+            (arg_def, setup)
+        })
+        .unzip();
+
+    let has_specialize = !specialize_args.is_empty();
+    let function_constants_init = if has_specialize {
+        quote! {
+            let function_constants = crate::backends::metal::MTLFunctionConstantValues::new();
+            #(#specialize_setup)*
+        }
+    } else {
+        quote! {}
+    };
+    let function_constants_arg = if has_specialize {
+        quote! { Some(&function_constants) }
+    } else {
+        quote! { None }
     };
 
     let (encode_args_defs, encode_args_sets, encode_args_names): (
@@ -162,9 +216,10 @@ pub fn bindgen(kernel: &MetalKernelInfo) -> anyhow::Result<TokenStream> {
         }
 
         impl #struct_name {
-            pub fn new(context: &crate::backends::metal::MTLContext #(, #variants_extra_arguments)*) -> Result<Self, crate::backends::metal::MTLError> {
+            pub fn new(context: &crate::backends::metal::MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, crate::backends::metal::MTLError> {
                 use crate::backends::metal::metal_extensions::LibraryPipelineExtensions;
-                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, None)?;
+                #function_constants_init
+                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
                 Ok(Self { pipeline })
             }
 

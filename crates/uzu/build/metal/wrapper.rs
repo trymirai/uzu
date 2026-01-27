@@ -5,8 +5,64 @@ use itertools::Itertools;
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
 
-pub fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
+pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
+
+pub fn wrappers(
+    kernels: &[MetalKernelInfo]
+) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
+    let mut all_wrappers = Vec::new();
+    let mut base_indices = SpecializeBaseIndices::new();
+    let mut next_index = 0usize;
+
+    for kernel in kernels {
+        let specialize_count = kernel
+            .arguments
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a.argument_type(),
+                    Ok(MetalArgumentType::Specialize(_))
+                )
+            })
+            .count();
+
+        if specialize_count > 0 {
+            base_indices.insert(kernel.name.clone(), next_index);
+            next_index += specialize_count;
+        }
+
+        let kernel_wrappers =
+            kernel_wrappers(kernel, base_indices.get(&kernel.name))?;
+        all_wrappers.extend(kernel_wrappers.into_vec());
+    }
+
+    Ok((all_wrappers.into_boxed_slice(), base_indices))
+}
+
+fn kernel_wrappers(
+    kernel: &MetalKernelInfo,
+    base_index: Option<&usize>,
+) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
+
+    let specialize_constants = if let Some(&base) = base_index {
+        kernel
+            .arguments
+            .iter()
+            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+            .enumerate()
+            .map(|(i, a)| {
+                let c_type = a.c_type.trim_start_matches("const ");
+                let idx = base + i;
+                format!(
+                    "constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n",
+                    kernel.name, a.name
+                )
+            })
+            .collect::<String>()
+    } else {
+        String::new()
+    };
 
     for type_variant in if let Some(variants) = &kernel.variants {
         variants
@@ -142,6 +198,9 @@ pub fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
                     MetalArgumentType::Buffer
                     | MetalArgumentType::Constant(_)
                     | MetalArgumentType::Shared(_) => a.name.to_string(),
+                    MetalArgumentType::Specialize(_) => {
+                        format!("__dsl_specialize_{}_{}", kernel.name, a.name)
+                    },
                     MetalArgumentType::Axis(..) => {
                         format!(
                             "__dsl_axis_idx.{}",
@@ -180,6 +239,10 @@ pub fn wrappers(kernel: &MetalKernelInfo) -> anyhow::Result<Box<[Box<str>]>> {
             )
             .into(),
         );
+    }
+
+    if !specialize_constants.is_empty() {
+        kernel_wrappers.insert(0, specialize_constants.into());
     }
 
     Ok(kernel_wrappers.into())
