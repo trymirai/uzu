@@ -16,17 +16,18 @@ use crate::{
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::{LayerNormError, RMSNormError},
+        kernel::{RMSNormError},
     },
     config::NormalizationConfig,
     parameters::ParameterTree,
 };
+use crate::backends::metal::MTLError;
 
 /// Unified error type for normalization operations.
 #[derive(Debug, thiserror::Error)]
 pub enum NormalizationError {
     #[error("LayerNorm error: {0}")]
-    LayerNorm(#[from] LayerNormError),
+    LayerNorm(#[from] MTLError),
     #[error("RMSNorm error: {0}")]
     RMSNorm(#[from] RMSNormError),
 }

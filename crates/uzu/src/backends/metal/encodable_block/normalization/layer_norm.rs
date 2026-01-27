@@ -9,9 +9,7 @@ use crate::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
         MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::layer_norm::{
-            LayerNormArguments, LayerNormError, LayerNormKernel,
-        },
+        kernel::dsl::LayerNormKernel
     },
     config::{NormalizationConfig, UpcastMode},
     parameters::ParameterTree,
@@ -33,15 +31,14 @@ impl LayerNorm {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
-    ) -> Result<Self, LayerNormError> {
+    ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            LayerNormError::MetalError(MTLError::Library(
-                crate::backends::metal::error::LibraryError::Custom(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )),
-            ))
+            MTLError::Library(
+                crate::backends::metal::error::LibraryError::Custom(
+                    format!("Failed to load scales: {:?}", e)
+                ),
+            )
         })?;
 
         let scales_data = scales_param.buffer();
@@ -53,8 +50,7 @@ impl LayerNorm {
             )
             .expect("Failed to create scales buffer");
 
-        let accumulation_data_type: DataType =
-            config.accumulation_precision.into();
+        let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
         let (input_type, scales_type, output_type) = match config.upcast_mode {
@@ -68,13 +64,10 @@ impl LayerNorm {
 
         let kernel = LayerNormKernel::new(
             context,
-            input_type,
-            scales_type,
-            output_type,
-            accumulation_data_type,
-            config.upcast_mode == UpcastMode::FullLayer,
+            input_type.into(),
+            scales_type.into(),
+            output_type.into(),
         )?;
-
         Ok(Self {
             kernel,
             config,
@@ -128,22 +121,20 @@ impl EncodableBlock for LayerNorm {
         let input_buffer = unsafe { input_array.mtl_buffer() };
         let output_buffer = unsafe { output_array.mtl_buffer() };
 
-        let batch_size = input_shape[0] as i32;
-        let model_dim = input_shape[1] as i32;
+        let batch_size = input_shape[0] as u32;
+        let model_dim = input_shape[1] as u32;
+        let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer { 1u32 } else { 0u32 };
 
-        if let Err(e) = self.kernel.encode(
-            compute_encoder,
-            LayerNormArguments {
-                input_buffer: &input_buffer,
-                scales_buffer: &self.scales_buffer,
-                output_buffer: &output_buffer,
-                batch_size,
-                model_dim,
-                epsilon: self.config.epsilon,
-                scale_offset: self.config.scale_offset.unwrap_or(0.0),
-            },
-        ) {
-            eprintln!("Failed to encode LayerNorm kernel: {:?}", e);
-        }
+        self.kernel.encode(
+            &input_buffer,
+            &self.scales_buffer,
+            &output_buffer,
+            batch_size,
+            model_dim,
+            self.config.epsilon,
+            self.config.scale_offset.unwrap_or(0.0),
+            full_layer,
+            compute_encoder
+        )
     }
 }
