@@ -42,9 +42,7 @@ pub fn bindgen(
         (
             variant_names
                 .iter()
-                .map(|name|
-                    quote! { #[allow(non_snake_case)] #name: crate::backends::metal::KernelDataType }
-                )
+                .map(|name| quote! { #[allow(non_snake_case)] #name: KernelDataType })
                 .collect(),
             quote! { &format!(#kernel_format, #kernel_name #(, #variant_names.function_name_suffix())*) },
         )
@@ -127,7 +125,7 @@ pub fn bindgen(
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
-                    let def = quote! { #arg_name: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer> };
+                    let def = quote! { #arg_name: &ProtocolObject<dyn MTLBuffer> };
                     let set = quote! {
                         compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
                     };
@@ -181,15 +179,12 @@ pub fn bindgen(
         let (threads, threads_per_group): (Vec<TokenStream>, Vec<TokenStream>) =
             axis.into_iter().unzip();
 
-        (
-            quote! {
-                compute_encoder.dispatch_threads(
-                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
-                    crate::backends::metal::MTLSize::new(#((#threads_per_group) as usize, )*),
-                );
-            },
-            threads.into_iter().chain(threads_per_group.into_iter()),
-        )
+        quote! {
+            compute_encoder.dispatch_threads(
+                MTLSize::new(#((#threads) as usize, )*),
+                MTLSize::new(#((#threads_per_group) as usize, )*),
+            );
+        }
     } else {
         let mut groups = kernel
             .arguments
@@ -220,67 +215,32 @@ pub fn bindgen(
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
         threads.extend(repeat_n(quote! {1}, 3 - threads.len()));
 
-        (
-            quote! {
-                compute_encoder.dispatch_threadgroups(
-                    crate::backends::metal::MTLSize::new(#((#groups) as usize, )*),
-                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
-                );
-            },
-            groups.into_iter().chain(threads.into_iter()),
-        )
-    };
-
-    let guards = elements
-        .flat_map(|e| {
-            if let Ok(lit_int) = syn::parse2::<LitInt>(e.clone())
-                && let Ok(int) = lit_int.base10_parse::<u32>()
-                && int != 0
-            {
-                None
-            } else {
-                Some(quote! { (#e) == 0 })
-            }
-        })
-        .fold(quote! {}, |a, b| {
-            if !a.is_empty() && !b.is_empty() {
-                quote! {#a || #b}
-            } else {
-                quote! {#a #b}
-            }
-        });
-
-    let empty_dispatch_guards = if !guards.is_empty() {
-        quote! { if #guards { return; }; }
-    } else {
-        quote! {}
+        quote! {
+            compute_encoder.dispatch_threadgroups(
+                MTLSize::new(#((#groups) as usize, )*),
+                MTLSize::new(#((#threads) as usize, )*),
+            );
+        }
     };
 
     Ok(quote! {
         pub struct #struct_name {
-            pipeline: crate::backends::metal::Retained<crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputePipelineState>>,
+            pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         }
 
         impl #struct_name {
-            pub fn new(context: &crate::backends::metal::MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, crate::backends::metal::MTLError> {
-                use crate::backends::metal::metal_extensions::LibraryPipelineExtensions;
-                #function_constants_init
-                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
+            pub fn new(context: &MTLContext #(, #variants_extra_arguments)*) -> Result<Self, MTLError> {
+                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, None)?;
                 Ok(Self { pipeline })
             }
 
-            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
-                use metal::MTLComputeCommandEncoder;
-                use crate::backends::metal::ComputeEncoderSetValue;
-                #empty_dispatch_guards
+            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>) {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
             }
 
-            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
-                use crate::backends::metal::metal_extensions::ComputeEncoderConditional;
-                #empty_dispatch_guards
+            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
                 compute_encoder.condition(
                     predicate,
                     || {
