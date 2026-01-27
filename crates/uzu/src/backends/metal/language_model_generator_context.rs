@@ -6,10 +6,13 @@ use std::{
     rc::Rc,
 };
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
-    MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
-    kernel::dsl::MaskUpdateKernel,
+use crate::backends::{
+    common::Context,
+    metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+        MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
+        kernel::dsl::MaskUpdateKernel,
+    },
 };
 
 use super::{
@@ -166,15 +169,11 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let mtl_device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default()
-                .ok_or(Error::UnableToCreateMetalContext)?;
-        let mtl_command_queue = mtl_device
-            .new_command_queue_with_max_command_buffer_count(1024)
-            .ok_or(Error::UnableToCreateMetalContext)?;
+        let context =
+            MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = mtl_command_queue
-            .command_buffer()
+        let command_buffer = context
+            .allocate_command_buffer()
             .expect("Failed to create command buffer")
             .to_owned();
 
@@ -209,11 +208,6 @@ impl LanguageModelGeneratorContext {
         let max_suffix_length: usize =
             std::cmp::max(prefill_step_size, generate_suffix_length);
 
-        let mtl_context = Rc::new(
-            MTLContext::new(mtl_device, mtl_command_queue)
-                .map_err(|_| Error::UnableToCreateMetalContext)?,
-        );
-
         let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
@@ -221,19 +215,19 @@ impl LanguageModelGeneratorContext {
         }
         let weights_file = File::open(&weights_path)
             .map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, &mtl_context)
+        let loader = ParameterLoader::new(&weights_file, &context)
             .map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
-            &mtl_context,
+            &context,
             &decoder_config,
             &model_shape,
         )));
         shared_buffers.borrow_mut().update_data(&root_loader_view);
 
         let scratch_buffers = ScratchBuffers::new(
-            &mtl_context,
+            &context,
             &decoder_config,
             &model_shape,
             max_prefix_length,
@@ -241,14 +235,14 @@ impl LanguageModelGeneratorContext {
         );
 
         let executables = Decoder::new(
-            mtl_context.clone(),
+            context.clone(),
             decoder_config.clone(),
             &root_loader_view,
             compilation_config.clone(),
         );
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
-            &mtl_context,
+            &context,
             &model_shape,
             max_prefix_length,
             max_suffix_length,
@@ -258,29 +252,25 @@ impl LanguageModelGeneratorContext {
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
         let kv_cache_update = Box::new(
-            KVCacheUpdate::new(
-                &mtl_context,
-                kernel_data_type,
-                max_prefix_length,
-            )
-            .map_err(|_| Error::UnableToCreateMetalContext)?,
+            KVCacheUpdate::new(&context, kernel_data_type, max_prefix_length)
+                .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let gpu_sampler = Sampling::new(
-            &mtl_context,
+            &context,
             kernel_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
         )
         .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let token_copy = TokenCopyKernel::new(&mtl_context)
+        let token_copy = TokenCopyKernel::new(&context)
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateKernel::new(&mtl_context, kernel_data_type)
+                MaskUpdateKernel::new(&context, kernel_data_type)
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {
@@ -290,7 +280,7 @@ impl LanguageModelGeneratorContext {
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
-            &mtl_context.device,
+            &context.device,
             max_prefix_length,
             async_batch_size,
         );
@@ -299,7 +289,7 @@ impl LanguageModelGeneratorContext {
         let next_seed = DerivableSeed::new(base_seed);
 
         let context = Self {
-            mtl_context,
+            mtl_context: context,
             command_buffer,
             cache_layers,
             shared_buffers,
