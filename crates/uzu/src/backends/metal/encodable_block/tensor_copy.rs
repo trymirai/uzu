@@ -10,7 +10,7 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::TensorCopyKernel,
+        kernel::dsl::TensorCopyKernel,
     },
 };
 
@@ -71,10 +71,10 @@ impl EncodableBlock for TensorCopy {
         let source_mtl_buffer = unsafe { source_array.mtl_buffer() };
         let destination_mtl_buffer = unsafe { destination_array.mtl_buffer() };
 
-        self.kernel.encode_with_encoder(
+        self.kernel.encode(
             &source_mtl_buffer,
             &destination_mtl_buffer,
-            length,
+            length as u32,
             encoder,
         );
     }
