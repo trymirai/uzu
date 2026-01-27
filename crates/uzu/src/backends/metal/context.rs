@@ -244,7 +244,9 @@ impl Context for MTLContext {
         <Self::Backend as crate::backends::common::Backend>::CommandBuffer,
         <Self::Backend as crate::backends::common::Backend>::Error,
     > {
-        todo!()
+        self.command_queue.command_buffer().ok_or(MTLError::Generic(
+            "cannot to allocate command buffer".into(),
+        ))
     }
 }
 
