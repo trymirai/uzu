@@ -342,9 +342,8 @@ impl MetalCompiler {
             #(#bindings)*
         };
 
-        let mut parsed: syn::File =
+        let parsed: syn::File =
             syn::parse2(tokens).context("cannot parse generated bindings")?;
-        parsed.attrs.push(syn::parse_quote!(#![allow(non_snake_case)]));
         fs::write(&out_path, prettyplease::unparse(&parsed)).with_context(
             || format!("cannot write bindings file {}", out_path.display()),
         )?;

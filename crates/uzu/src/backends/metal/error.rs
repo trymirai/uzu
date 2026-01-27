@@ -52,6 +52,8 @@ pub enum ContextError {
 // Device errors
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    #[error("No default Metal device found")]
+    NoDefaultDevice,
     #[error("Failed to create argument encoder")]
     ArgumentEncoderCreationFailed,
     #[error("Failed to create buffer")]

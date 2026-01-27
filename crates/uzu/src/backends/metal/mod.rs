@@ -6,6 +6,7 @@ pub mod compilation_parameters;
 mod context;
 mod device;
 pub mod encodable_block;
+mod kernels;
 pub mod error;
 pub mod forward_pass;
 pub mod image;
@@ -26,6 +27,7 @@ pub use context::{
 };
 pub use device::MetalDevice;
 pub use encodable_block::Decoder;
+pub use kernels::MetalKernels;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
 pub use kernel::{KVCacheUpdate, KernelDataType, MetalKernels, RopeKernel};
