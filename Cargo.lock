@@ -1456,6 +1456,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5971ac85611da7067dbfcabef3c70ebb5606018acd9e2a3903a0da507521e0d5"
 
 [[package]]
+name = "heap_bench"
+version = "0.1.7"
+dependencies = [
+ "mtl-rs",
+ "objc2",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2290,9 +2298,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "254387a6d3fc828eb42370c798c43c6687df4c63ee2c6062bcf65a9c8abf5a22"
+checksum = "5c73b3f8f23f2972336d57325aae73ec89da1a3fd740df9886ddef73405d2988"
 dependencies = [
  "bitflags 2.10.0",
  "block2",
