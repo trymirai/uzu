@@ -13,13 +13,11 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
 }
 
 pub mod conv1d_scan;
-pub mod split_inproj;
 pub mod ssd_prefill;
 pub mod ssd_update;
 
 pub use conv1d_scan::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
 };
-pub use split_inproj::{SplitInProjArguments, SplitInProjKernel};
 pub use ssd_prefill::{SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode};
 pub use ssd_update::{SSDUpdateArguments, SSDUpdateKernel};

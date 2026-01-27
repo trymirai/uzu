@@ -13,11 +13,11 @@ use crate::{
         KernelDataType, MTLContext, MetalArray,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::SplitInProjKernel,
         kernel::ssm::{
             Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
             SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
-            SSDUpdateArguments, SSDUpdateKernel, SplitInProjArguments,
-            SplitInProjKernel, conv1d_scan::Conv1dDecodeArguments,
+            SSDUpdateArguments, SSDUpdateKernel, conv1d_scan::Conv1dDecodeArguments,
         },
     },
     config::{DecoderLayerType, Mamba2Config},
@@ -199,23 +199,19 @@ impl MambaMixer {
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
 
-        self.split_inproj
-            .encode(
-                encoder,
-                SplitInProjArguments {
-                    input: &input_buf,
-                    conv_out: &conv_buf,
-                    z_out: &gate_buf,
-                    dt_out: &dt_buf,
-                    z_bias: &bias_buf,
-                    total_dim,
-                    conv_dim,
-                    inner_dim,
-                    num_heads,
-                    suffix_length,
-                },
-            )
-            .expect("Failed to encode split in-projection kernel");
+        self.split_inproj.encode(
+            &input_buf,
+            &conv_buf,
+            &gate_buf,
+            &dt_buf,
+            &bias_buf,
+            suffix_length as u32,
+            total_dim as u32,
+            conv_dim as u32,
+            inner_dim as u32,
+            num_heads as u32,
+            encoder
+        )
     }
 
     fn run_conv_scan(
