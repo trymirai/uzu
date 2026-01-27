@@ -11,9 +11,7 @@ use crate::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
         MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::embedding::{
-            QuantizedEmbeddingLookupArguments, QuantizedEmbeddingLookupKernel,
-        },
+        kernel::dsl::QuantizedEmbeddingLookupKernel
     },
     config::QuantizationMode,
     parameters::ParameterTree,
@@ -24,6 +22,7 @@ pub struct QuantizedEmbeddingLookup {
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    mode: QuantizationMode,
     input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
@@ -96,8 +95,7 @@ impl QuantizedEmbeddingLookup {
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
-        let kernel =
-            QuantizedEmbeddingLookupKernel::new(mtl_context, data_type, mode)?;
+        let kernel = QuantizedEmbeddingLookupKernel::new(mtl_context, data_type.into())?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
@@ -208,6 +206,7 @@ impl QuantizedEmbeddingLookup {
             weights_buffer,
             scales_buffer,
             biases_buffer,
+            mode,
             input_scale,
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
@@ -250,24 +249,24 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
         let mut token_ids_array_mut = arrays[0].borrow_mut();
         let mut output_array_mut = arrays[1].borrow_mut();
 
-        let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let args = QuantizedEmbeddingLookupArguments {
-            token_ids_buffer,
-            weights_buffer: &self.weights_buffer,
-            scales_buffer: &self.scales_buffer,
-            biases_buffer: &self.biases_buffer,
-            output_buffer,
-            batch_size: batch_size as u32,
-            vocab_size: self.vocab_size,
-            model_dim: self.model_dim,
-            group_size: self.group_size,
-            input_scale: self.input_scale,
+        let quant_mode = match self.mode {
+            QuantizationMode::UInt4 => 0,
+            QuantizationMode::Int8 => 1,
+            QuantizationMode::UInt8 => 2
         };
-
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized embedding lookup kernel");
+        self.kernel.encode(
+            unsafe { token_ids_array_mut.mtl_buffer() },
+            &self.weights_buffer,
+            &self.scales_buffer,
+            &self.biases_buffer,
+            unsafe { output_array_mut.mtl_buffer() },
+            batch_size as u32,
+            self.vocab_size,
+            self.model_dim,
+            self.group_size,
+            self.input_scale,
+            quant_mode,
+            encoder
+        )
     }
 }
