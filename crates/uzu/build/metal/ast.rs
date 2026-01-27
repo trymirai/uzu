@@ -103,6 +103,7 @@ pub enum MetalArgumentType {
     Buffer,
     Constant(Box<str>),
     Shared(Box<str>),
+    Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
     Groups(Box<str>),
     Threads(Box<str>),
@@ -117,6 +118,25 @@ pub struct MetalArgument {
 }
 
 impl MetalArgument {
+    fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<&'static str> {
+        let tokens: Vec<_> = c_type.split_whitespace().collect();
+        if tokens.contains(&"&") {
+            bail!("dsl.specialize does not support reference types: {c_type}");
+        }
+        let c_type_scalar = match tokens.as_slice() {
+            ["const", scalar] => *scalar,
+            [scalar] => *scalar,
+            _ => bail!("cannot parse scalar type from: {c_type}"),
+        };
+        match c_type_scalar {
+            "bool" => Ok("bool"),
+            "uint" | "uint32_t" => Ok("u32"),
+            "int" | "int32_t" => Ok("i32"),
+            "float" => Ok("f32"),
+            _ => bail!("unknown scalar type: {c_type_scalar}"),
+        }
+    }
+
     fn from_ast_node_and_source(
         argument_node: MetalAstNode,
         source: &str,
@@ -182,6 +202,16 @@ impl MetalArgument {
             let annotation_key = annotation.remove(0);
 
             match &*annotation_key {
+                "dsl.specialize" => {
+                    if !annotation.is_empty() {
+                        bail!(
+                            "dsl.specialize takes no arguments, got {}",
+                            annotation.len()
+                        );
+                    }
+                    let rust_type = Self::scalar_type_to_rust(&self.c_type)?;
+                    Ok(MetalArgumentType::Specialize(rust_type.into()))
+                },
                 "dsl.axis" => {
                     if annotation.len() != 2 {
                         bail!(

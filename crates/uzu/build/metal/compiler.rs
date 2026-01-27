@@ -22,10 +22,13 @@ use super::ast::MetalKernelInfo;
 use super::toolchain::MetalToolchain;
 use super::wrapper::wrappers;
 
+use super::wrapper::SpecializeBaseIndices;
+
 #[derive(Serialize, Deserialize, Debug)]
 struct ObjectInfo {
     object_path: PathBuf,
     kernels: Box<[MetalKernelInfo]>,
+    specialize_indices: SpecializeBaseIndices,
     buildsystem_hash: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
 }
@@ -186,17 +189,12 @@ impl MetalCompiler {
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
-        // Generate footer with kernel wrappers
+        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos)
+            .context("cannot generate kernel wrappers")?;
+
         let mut footer = String::new();
-        for kernel_info in &kernel_infos {
-            for wrapper in wrappers(kernel_info)
-                .with_context(|| {
-                    format!("cannot generate wrappers for {}", kernel_info.name)
-                })?
-                .iter()
-            {
-                footer.push_str(wrapper);
-            }
+        for wrapper in wrapper_strs.iter() {
+            footer.push_str(wrapper);
         }
 
         // Compile
@@ -224,6 +222,7 @@ impl MetalCompiler {
         let object_info = ObjectInfo {
             object_path,
             kernels: kernel_infos.into_boxed_slice(),
+            specialize_indices,
             buildsystem_hash,
             dependency_hashes,
         };
@@ -316,9 +315,9 @@ impl MetalCompiler {
 
         let bindings = objects
             .into_iter()
-            .flat_map(|o| &o.kernels)
-            .map(|k| {
-                super::bindgen::bindgen(k).with_context(|| {
+            .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
+            .map(|(k, specialize_indices)| {
+                super::bindgen::bindgen(k, specialize_indices).with_context(|| {
                     format!("cannot generate bindings for {}", k.name)
                 })
             })
