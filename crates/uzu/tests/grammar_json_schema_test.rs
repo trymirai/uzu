@@ -113,7 +113,6 @@ fn test_grammar_json_schema() {
 }
 
 #[test]
-#[ignore = "still broken (?)"]
 fn test_grammar_json_schema_with_speculator() {
     test_grammar(SpeculatorConfig {
         number_of_speculated_tokens: 16,
