@@ -3,7 +3,6 @@ mod data_type;
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
-pub mod embedding;
 pub mod kv_cache_update;
 pub mod layer_norm;
 pub mod matmul;
