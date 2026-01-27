@@ -21,7 +21,6 @@ pub mod rope;
 pub mod sampling;
 pub mod short_conv;
 pub mod ssm;
-mod tensor_add_swap;
 pub mod token_copy;
 
 pub use attention::{
@@ -56,9 +55,8 @@ pub use short_conv::{
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
-    SSDUpdateKernel, SSMKernelError
+    SSDUpdateKernel, SSMKernelError,
 };
-pub use tensor_add_swap::TensorAddSwapKernel;
 pub use token_copy::TokenCopyKernel;
 
 use super::{MTLContext, metal_extensions};
