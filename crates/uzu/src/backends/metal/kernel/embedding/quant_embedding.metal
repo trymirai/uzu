@@ -39,21 +39,23 @@ KERNEL(QuantizedEmbeddingLookup) (
 
   const uint packing_divisor = quant_mode == QUANT_UINT4 ? 2 : 1;
   const uint weights_stride = model_dim / packing_divisor;
-  const device uint8_t* weights_u8 = weights;
-  const device int8_t* weights_i8 = reinterpret_cast<const device int8_t*>(weights);
 
   int quantized_value = 0;
-  if (packing_divisor == 2) {
+  if (quant_mode == QUANT_UINT4) {
     const uint byte_idx = token_id * weights_stride + (dim_idx / 2);
-    const uint8_t packed = weights_u8[byte_idx];
+    const uint8_t packed = weights[byte_idx];
     if ((dim_idx & 1) == 0) {
       quantized_value = int(packed & 0x0F);
     } else {
       quantized_value = int((packed >> 4) & 0x0F);
     }
+  } else if (quant_mode == QUANT_INT8) {
+    const uint elem_idx = token_id * weights_stride + dim_idx;
+    const device int8_t* weights_i8 = reinterpret_cast<const device int8_t*>(weights);
+    quantized_value = int(weights_i8[elem_idx]);
   } else {
     const uint elem_idx = token_id * weights_stride + dim_idx;
-    quantized_value = int(weights_i8[elem_idx]);
+    quantized_value = int(weights[elem_idx]);
   }
 
   float out_f = float(scale) * float(quantized_value) + float(bias);
