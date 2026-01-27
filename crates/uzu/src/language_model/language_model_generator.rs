@@ -1,4 +1,6 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -13,11 +15,11 @@ use super::{
 use crate::{
     Array,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-        MTLCommandEncoder, MTLCommandQueue,
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
         forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
-            INVALID_POSITION,
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+            ForwardPassState, INVALID_POSITION,
         },
     },
     session::{
@@ -409,7 +411,7 @@ impl LanguageModelGenerator {
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
-        self.update_cache_layers(&accepted_token_indices[1..], None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -575,13 +577,10 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
-        let token_ids_buffer = self
-            .context
-            .scratch_buffers
-            .token_ids
-            .borrow()
-            .mtl_buffer_cloned();
+        let sampling_output_buffer =
+            sampling_output.borrow().mtl_buffer_cloned();
+        let token_ids_buffer =
+            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
