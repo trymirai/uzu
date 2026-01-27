@@ -1,17 +1,8 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
+#include "ssm_common.h"
 
 using namespace metal;
-
-struct SILU {
-  template <typename T>
-  T operator()(T x) {
-    float xf = float(x);
-    float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
-    float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
-    return static_cast<T>(out);
-  }
-};
 
 template <typename T>
 inline T softplus(T x) {
@@ -71,7 +62,7 @@ void ssd_update_kernel(
   T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
   T this_D = D[h_idx];
   T this_z = z[x_idx];
-  this_z = SILU{}(this_z);
+  this_z = apply_silu(this_z);
   T dt_scaled_input = this_x;
 
   T temp = T(0);
