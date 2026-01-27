@@ -2,26 +2,12 @@
 #include "../definitions.metal"
 
 template <typename T>
-void tensorCopy(
-    const device T* sourceBuffer,
-    device T* destinationBuffer,
-    constant int& length,
-    const uint position
+VARIANTS(T, float, half, bfloat)
+KERNEL(TensorCopy)(
+    const device T* src_buffer,
+    device T* dst_buffer,
+    constant uint& length,
+    const uint position AXIS(length, 32)
 ) {
-  if (position < length) {
-    destinationBuffer[position] = sourceBuffer[position];
-  }
+  dst_buffer[position] = src_buffer[position];
 }
-
-#define outerArguments(T)                                                      \
-  (const device T* sourceBuffer [[buffer(0)]],                                 \
-   device T* destinationBuffer [[buffer(1)]],                                  \
-   constant int& length [[buffer(2)]],                                         \
-   const uint position [[thread_position_in_grid]])
-
-#define innerArguments (sourceBuffer, destinationBuffer, length, position)
-
-generateKernels(32, tensorCopy)
-
-#undef outerArguments
-#undef innerArguments

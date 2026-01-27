@@ -23,7 +23,6 @@ pub mod short_conv;
 pub mod ssm;
 mod tensor_add_bias;
 mod tensor_add_swap;
-mod tensor_copy;
 pub mod token_copy;
 
 pub use attention::{
@@ -62,7 +61,6 @@ pub use ssm::{
 };
 pub use tensor_add_bias::TensorAddBias;
 pub use tensor_add_swap::TensorAddSwapKernel;
-pub use tensor_copy::TensorCopyKernel;
 pub use token_copy::TokenCopyKernel;
 
 use super::{MTLContext, metal_extensions};
