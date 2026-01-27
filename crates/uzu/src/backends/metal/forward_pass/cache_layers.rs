@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::{Cell, RefCell}, collections::HashMap};
 
 use super::{
     super::{MTLContext, MetalArray},
@@ -41,6 +41,8 @@ const ARRAY_STATE_SPACE_SSM_STATE_LABEL: &str =
     "cache_layers_state_space_ssm_state";
 const ARRAY_SHORT_CONV_CONV_STATE_LABEL: &str =
     "cache_layers_short_conv_conv_state";
+const ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL: &str =
+    "cache_layers_short_conv_suffix_state";
 
 impl CacheLayer {
     pub fn as_transformer(&self) -> Option<&KVCacheLayer> {
@@ -200,6 +202,11 @@ impl CacheLayers {
                         model_shape.model_dim(),
                         kernel_size.saturating_sub(1),
                     ];
+                    let suffix_state_shape = [
+                        max_suffix_length,
+                        model_shape.model_dim(),
+                        kernel_size.saturating_sub(1),
+                    ];
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
@@ -210,6 +217,15 @@ impl CacheLayers {
                                 "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
                             ),
                         )),
+                        suffix_state: RefCell::new(context.array(
+                            &suffix_state_shape,
+                            dtype,
+                            format!(
+                                "{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"
+                            ),
+                        )),
+                        suffix_state_valid_start: Cell::new(0),
+                        suffix_state_valid_len: Cell::new(0),
                     })
                 },
             })
@@ -296,6 +312,8 @@ impl CacheLayers {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
+        let short_conv_commit_index =
+            accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
                 layer.update_after_acceptance(
@@ -304,6 +322,8 @@ impl CacheLayers {
                     command_buffer,
                     kv_cache_update,
                 );
+            } else if let Some(layer) = layer.as_short_conv() {
+                layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
             }
         }
     }
@@ -488,8 +508,26 @@ impl CacheLayers {
                         new_conv.copy_from_array(&conv_src);
                     }
 
+                    let suffix_shape =
+                        layer.suffix_state.borrow().shape().to_vec();
+                    let suffix_dtype = layer.suffix_state.borrow().data_type();
+                    let mut new_suffix = context.array(
+                        &suffix_shape,
+                        suffix_dtype,
+                        format!(
+                            "{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"
+                        ),
+                    );
+                    // `suffix_state` is transient; no need to preserve contents.
+                    {
+                        new_suffix.buffer_mut().fill(0);
+                    }
+
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: RefCell::new(new_conv),
+                        suffix_state: RefCell::new(new_suffix),
+                        suffix_state_valid_start: Cell::new(0),
+                        suffix_state_valid_len: Cell::new(0),
                     })
                 },
             })

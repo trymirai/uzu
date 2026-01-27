@@ -10,7 +10,7 @@ use crate::{
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
             ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments,
-            ShortConvPrefillArguments,
+            ShortConvPrefillArguments, ShortConvTrieArguments,
         },
     },
     config::{DecoderLayerType, ShortConvConfig},
@@ -130,11 +130,7 @@ impl ShortConvMixer {
         let encoder = command_buffer
             .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
-        if active_suffix_length == 1 {
-            self.run_decode_conv(state, &encoder, active_suffix_length);
-        } else {
-            self.run_prefill_conv(state, &encoder, active_suffix_length);
-        }
+        self.run_conv(state, &encoder, active_suffix_length);
         encoder.end_encoding();
 
         self.out_projection.encode(state, command_buffer, parameters);
@@ -159,14 +155,84 @@ impl ShortConvMixer {
         self.in_projection
             .encode_with_shared_encoder(state, encoder, parameters);
 
-        if active_suffix_length == 1 {
-            self.run_decode_conv(state, encoder, active_suffix_length);
-        } else {
-            self.run_prefill_conv(state, encoder, active_suffix_length);
-        }
+        self.run_conv(state, encoder, active_suffix_length);
 
         self.out_projection
             .encode_with_shared_encoder(state, encoder, parameters);
+    }
+
+    fn clear_suffix_state_valid_range(&self, state: &ForwardPassState) {
+        let Some(cache_layers) = state.cache_layers() else {
+            return;
+        };
+        let cache = cache_layers.borrow();
+        let layer = cache.data[self.layer_index]
+            .as_short_conv()
+            .expect("Expected ShortConv layer");
+        layer.clear_suffix_state_valid_range();
+    }
+
+    fn set_suffix_state_valid_range(
+        &self,
+        state: &ForwardPassState,
+        start: usize,
+        len: usize,
+    ) {
+        let Some(cache_layers) = state.cache_layers() else {
+            return;
+        };
+        let cache = cache_layers.borrow();
+        let layer = cache.data[self.layer_index]
+            .as_short_conv()
+            .expect("Expected ShortConv layer");
+        layer.set_suffix_state_valid_range(start, len);
+    }
+
+    fn run_conv(
+        &self,
+        state: &mut ForwardPassState,
+        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        active_suffix_length: usize,
+    ) {
+        self.clear_suffix_state_valid_range(state);
+
+        // Suffix length 1 must update state in-place (async decode relies on it).
+        if active_suffix_length == 1 {
+            self.run_decode_conv(state, compute, 1);
+            return;
+        }
+
+        let sampling_len = state.sampling_length();
+        if sampling_len == 0 {
+            // No sampling -> no speculative acceptance. Keep the fast in-place path.
+            self.run_prefill_conv(state, compute, active_suffix_length);
+            return;
+        }
+
+        let sampling_start = state.sampling_start();
+        let trie_len = sampling_len;
+
+        // If the sampled segment is just the root token, there are no speculative
+        // inputs to roll back. The in-place prefill path is correct and cheaper.
+        if trie_len <= 1 {
+            self.run_prefill_conv(state, compute, active_suffix_length);
+            return;
+        }
+
+        // Process the non-sampling prefix segment (prompt tokens within this batch),
+        // updating conv_state in-place since those tokens are always accepted.
+        if sampling_start > 0 {
+            if sampling_start == 1 {
+                self.run_decode_conv(state, compute, 1);
+            } else {
+                self.run_prefill_conv(state, compute, sampling_start);
+            }
+        }
+
+        // Process the trie segment (from sampling_start), writing per-token post-states
+        // into `suffix_state` without mutating `conv_state`.
+        self.run_trie_conv(state, compute, sampling_start, trie_len);
+        self.set_suffix_state_valid_range(state, sampling_start, trie_len);
     }
 
     fn run_prefill_conv(
@@ -241,6 +307,88 @@ impl ShortConvMixer {
                 },
             )
             .expect("Failed to encode short conv prefill kernel");
+    }
+
+    fn run_trie_conv(
+        &self,
+        state: &mut ForwardPassState,
+        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        sampling_start: usize,
+        trie_len: usize,
+    ) {
+        if trie_len == 0 {
+            return;
+        }
+
+        let arrays = state.arrays(&[
+            ArrayId::SsmInProj,
+            ArrayId::TokenParents,
+            ArrayId::ShortConvState(self.layer_index),
+            ArrayId::ShortConvSuffixState(self.layer_index),
+            ArrayId::AttentionOutput,
+        ]);
+
+        let in_proj = arrays[0].borrow_mut();
+        let parents = arrays[1].borrow_mut();
+        let conv_state = arrays[2].borrow_mut();
+        let suffix_state = arrays[3].borrow_mut();
+        let out = arrays[4].borrow_mut();
+
+        let in_proj_buf = in_proj.mtl_buffer_cloned();
+        let parents_buf = parents.mtl_buffer_cloned();
+        let base_state_buf = conv_state.mtl_buffer_cloned();
+        let suffix_state_buf = suffix_state.mtl_buffer_cloned();
+        let out_buf = out.mtl_buffer_cloned();
+
+        let data_type: DataType =
+            self.config.in_projection_config.activation_precision().into();
+        let elem_bytes = data_type.size_in_bytes();
+
+        let kernel_size = self.config.kernel_size;
+        let state_stride = kernel_size.saturating_sub(1);
+        let in_proj_stride = self.model_dim * 3;
+
+        let in_proj_offset =
+            in_proj.buffer_offset() + sampling_start * in_proj_stride * elem_bytes;
+        let out_offset =
+            out.buffer_offset() + sampling_start * self.model_dim * elem_bytes;
+        let suffix_state_offset = suffix_state.buffer_offset()
+            + sampling_start * self.model_dim * state_stride * elem_bytes;
+        let base_state_offset = conv_state.buffer_offset();
+        let parents_offset =
+            parents.buffer_offset() + sampling_start * std::mem::size_of::<i32>();
+
+        let conv_weight = self.conv_weight.clone();
+        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let bias_buf = self.conv_bias.as_ref().map(|b| {
+            let b = b.clone();
+            b.mtl_buffer_cloned()
+        });
+
+        self.short_conv_kernel
+            .encode_trie(
+                compute,
+                ShortConvTrieArguments {
+                    in_proj: &in_proj_buf,
+                    in_proj_offset,
+                    w: &weight_buf,
+                    b: bias_buf.as_deref(),
+                    base_state: &base_state_buf,
+                    base_state_offset,
+                    parents: &parents_buf,
+                    parents_offset,
+                    out: &out_buf,
+                    out_offset,
+                    suffix_state: &suffix_state_buf,
+                    suffix_state_offset,
+                    suffix_len: trie_len,
+                    kernel_size: kernel_size as i32,
+                    in_proj_stride,
+                    state_stride,
+                    model_dim: self.model_dim,
+                },
+            )
+            .expect("Failed to encode short conv trie kernel");
     }
 
     fn run_decode_conv(
