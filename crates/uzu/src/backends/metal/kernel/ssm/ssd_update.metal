@@ -5,15 +5,6 @@
 using namespace metal;
 
 template <typename T>
-inline T softplus(T x) {
-  float xf = float(x);
-  if (xf > 20.0f) {
-    return x;
-  }
-  return static_cast<T>(log(1.0f + fast::exp(xf)));
-}
-
-template <typename T>
 [[kernel, max_total_threads_per_threadgroup(1024)]]
 void ssd_update_kernel(
     // Input
