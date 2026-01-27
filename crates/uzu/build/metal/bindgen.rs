@@ -42,7 +42,7 @@ pub fn bindgen(
         (
             variant_names
                 .iter()
-                .map(|name| quote! { #[allow(non_snake_case)] #name: KernelDataType })
+                .map(|name| quote! { #name: KernelDataType })
                 .collect(),
             quote! { &format!(#kernel_format, #kernel_name #(, #variant_names.function_name_suffix())*) },
         )

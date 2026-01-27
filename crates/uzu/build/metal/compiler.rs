@@ -324,6 +324,8 @@ impl MetalCompiler {
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
 
         let imports = quote! {
+            #![allow(non_snake_case)]
+
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
                 KernelDataType,
