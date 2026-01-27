@@ -1,5 +1,6 @@
 pub mod attention;
 mod data_type;
+#[allow(non_snake_case)]
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
