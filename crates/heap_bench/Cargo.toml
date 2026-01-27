@@ -1,0 +1,8 @@
+[package]
+name = "heap_bench"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+metal.workspace = true
+objc2.workspace = true
