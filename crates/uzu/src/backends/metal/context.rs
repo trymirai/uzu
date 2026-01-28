@@ -291,6 +291,3 @@ impl DeviceContext for Rc<MTLContext> {
     }
 }
 
-impl crate::backends::common::Context for MTLContext {
-    type Backend = super::MetalBackend;
-}

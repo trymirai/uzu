@@ -1,3 +1,4 @@
+pub mod allocator;
 mod array;
 mod backend;
 mod classifier_context;
@@ -30,7 +31,7 @@ pub use encodable_block::Decoder;
 pub use kernels::MetalKernels;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
-pub use kernel::{KVCacheUpdate, KernelDataType, MetalKernels, RopeKernel};
+pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
 pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,

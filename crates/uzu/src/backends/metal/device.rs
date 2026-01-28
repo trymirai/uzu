@@ -3,14 +3,14 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::common::{Backend, Device};
 
-use super::{MetalBackend, error::DeviceError};
+use super::{Metal, error::DeviceError};
 
 pub struct MetalDevice {
     pub(super) mtl_device: Retained<ProtocolObject<dyn MTLDevice>>,
 }
 
 impl Device for MetalDevice {
-    type Backend = MetalBackend;
+    type Backend = Metal;
 
     fn open() -> Result<Self, <Self::Backend as Backend>::Error> {
         let mtl_device = <dyn metal::MTLDevice>::system_default()
