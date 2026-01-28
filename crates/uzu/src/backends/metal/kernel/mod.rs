@@ -37,7 +37,6 @@ pub use moe::{
     MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
     MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel,
     MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
     MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError,
     MoeScatterKernels, MoeScatterWithMapArguments,
