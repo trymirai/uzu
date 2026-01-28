@@ -50,7 +50,7 @@ impl LayerNorm {
             )
             .expect("Failed to create scales buffer");
 
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
+        let _accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
         let (input_type, scales_type, output_type) = match config.upcast_mode {

@@ -290,3 +290,4 @@ impl DeviceContext for Rc<MTLContext> {
         unsafe { (**self).array_uninitialized(shape, data_type, label) }
     }
 }
+
