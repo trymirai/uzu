@@ -109,10 +109,10 @@ impl Image {
         pixel_format: PixelFormat,
         usage: TextureUsage,
     ) -> Self {
-        let descriptor = unsafe { MTLTextureDescriptor::new() };
+        let descriptor = MTLTextureDescriptor::new();
         descriptor.set_pixel_format(pixel_format.into());
-        unsafe { descriptor.set_width(width as usize) };
-        unsafe { descriptor.set_height(height as usize) };
+        descriptor.set_width(width as usize);
+        descriptor.set_height(height as usize);
         descriptor.set_storage_mode(MTLStorageMode::Private);
         descriptor.set_usage(usage.into());
 

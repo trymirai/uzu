@@ -18,7 +18,7 @@ pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
 
-pub use allocator::{MetalAllocator, new_allocator};
+pub use allocator::new_allocator;
 pub use array::MetalArray;
 pub use backend::Metal;
 pub use classifier_context::ClassifierContext;
