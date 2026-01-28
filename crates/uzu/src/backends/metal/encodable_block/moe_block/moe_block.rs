@@ -2,11 +2,6 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, NSRange, ProtocolObject, Retained,
-};
-
 use super::{
     super::{EncodableBlock, EncodingParameters},
     SharedMoeWeights,
@@ -15,15 +10,20 @@ use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
     backends::metal::{
-        KernelDataType, MTLContext, MetalArray,
+        KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
+        MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
+        NSRange, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::MoeFinalizeKernel,
-        kernel::moe::{
-            MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-            MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
-            MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-            MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+        kernel::{
+            dsl::MoeFinalizeKernel,
+            moe::{
+                MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
+                MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
+                MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
+                MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
+                MoeRouterTopKKernel, MoeScatterArguments, MoeScatterKernels,
+                MoeScatterWithMapArguments,
+            },
         },
     },
     parameters::ParameterTree,
@@ -169,12 +169,13 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let finalize_kernel = MoeFinalizeKernel::new(context, data_type).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "Finalize kernel error: {:?}",
-                e
-            ))
-        })?;
+        let finalize_kernel = MoeFinalizeKernel::new(context, data_type)
+            .map_err(|e| {
+                crate::backends::metal::MTLError::Generic(format!(
+                    "Finalize kernel error: {:?}",
+                    e
+                ))
+            })?;
 
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
@@ -624,8 +625,9 @@ impl EncodableBlock for MoeBlock {
             suffix_length as u32,
             self.model_dim as u32,
             k as u32,
-            &encoder
+            &encoder,
         );
+        encoder.end_encoding();
 
         if parameters.wait_until_completed {
             command_buffer.commit();
