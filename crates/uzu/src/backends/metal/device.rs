@@ -1,30 +1,22 @@
-use metal::MTLDevice;
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::common::{Backend, Device};
+use crate::backends::common::{AllocError, Device};
 
-use super::{Metal, error::DeviceError};
+impl Device for Retained<ProtocolObject<dyn MTLDevice>> {
+    type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+    type ResourceOptions = MTLResourceOptions;
 
-pub struct MetalDevice {
-    pub(super) mtl_device: Retained<ProtocolObject<dyn MTLDevice>>,
-}
-
-impl Device for MetalDevice {
-    type Backend = Metal;
-
-    fn open() -> Result<Self, <Self::Backend as Backend>::Error> {
-        let mtl_device = <dyn metal::MTLDevice>::system_default()
-            .ok_or(DeviceError::NoDefaultDevice)?;
-
-        Ok(MetalDevice { mtl_device })
-    }
-
-    fn create_context(
+    fn create_buffer(
         &self,
-    ) -> Result<
-        <Self::Backend as Backend>::Context,
-        <Self::Backend as Backend>::Error,
-    > {
-        todo!()
+        size: usize,
+        options: MTLResourceOptions,
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, AllocError> {
+        self.new_buffer(size, options).ok_or_else(|| {
+            AllocError::AllocationFailed {
+                size,
+                reason: "device.newBuffer returned nil".to_string(),
+            }
+        })
     }
 }
