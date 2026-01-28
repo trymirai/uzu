@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     language_model::{
-        grammar::CompiledGrammar, gumbel::speculator_sample, rng::DerivableSeed,
+        grammar::CompiledGrammar, gumbel::speculator_sample, rng::PRng,
     },
     speculators::speculator::Speculator,
 };
@@ -88,7 +88,7 @@ impl TrieNode {
 
     pub fn from_speculator(
         prefix: &[u64],
-        next_seed: &mut DerivableSeed,
+        seed: &PRng,
         mut compiled_grammar: Option<&mut CompiledGrammar>,
         speculator: &dyn Speculator,
         creation_config: &TrieCreationConfig,
@@ -97,15 +97,19 @@ impl TrieNode {
         assert!(max_length >= 1, "can't have zero sized trie");
         assert!(prefix.len() >= 1, "need seed node");
 
+        let prefix_length = prefix.len();
         let mut speculated_suffix = prefix.to_vec();
 
         let mut length = 1;
-        let mut grammar_accept_count = 0;
+        let mut height = 0;
         let mask = compiled_grammar
             .as_deref_mut()
             .and_then(|g| g.next_bitmask().unwrap());
-        let mut root =
-            Self::new(*prefix.last().unwrap(), mask, next_seed.next());
+        let mut root = Self::new(
+            *prefix.last().unwrap(),
+            mask,
+            seed.derive((prefix_length - 1) as u64),
+        );
 
         let mut cur_node = &mut root;
         let mut cur_node_width = 0;
@@ -139,8 +143,11 @@ impl TrieNode {
                     None
                 };
 
-                let leaf_node =
-                    Self::new(next_speculated_token, mask, next_seed.next());
+                let leaf_node = Self::new(
+                    next_speculated_token,
+                    mask,
+                    seed.derive((prefix_length + height) as u64),
+                );
                 cur_node.add(leaf_node).unwrap();
 
                 // If this is the first node we sampled (most likely to be selected after gumbel noise application) - set it as the next one
@@ -164,8 +171,8 @@ impl TrieNode {
                     if compiled_grammar.accept_token(next_node_token).is_err() {
                         break;
                     }
-                    grammar_accept_count += 1;
                 }
+                height += 1;
                 cur_node = cur_node.get_mut(next_node_token).unwrap();
                 cur_node_width = 0;
                 cur_node_speculator_weights =
@@ -178,7 +185,7 @@ impl TrieNode {
         }
 
         if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-            compiled_grammar.rollback(grammar_accept_count);
+            compiled_grammar.rollback(height);
         }
 
         root

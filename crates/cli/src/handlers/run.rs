@@ -37,8 +37,9 @@ pub fn handle_run(
     model_path: String,
     tokens_limit: usize,
     prefill_step_size: Option<usize>,
+    seed: Option<u64>,
 ) {
-    let mut session = load_session(model_path, prefill_step_size);
+    let mut session = load_session(model_path, prefill_step_size, seed);
 
     let is_model_running = Arc::new(AtomicBool::new(false));
     let is_model_running_for_ctrlc = is_model_running.clone();
