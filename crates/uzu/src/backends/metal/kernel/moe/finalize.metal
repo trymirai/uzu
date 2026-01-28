@@ -1,8 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
-using namespace metal;
 
-// Defaults must match Rust launcher
 #define BM 32
 #define BN 64
 
@@ -17,15 +15,11 @@ KERNEL(MoeFinalize)(
     constant uint& d_model,
     constant uint& k_input,
     const uint lid THREADS(128),
-    const uint tgpig_x GROUPS((d_model + BN - 1) / BN),
-    const uint tgpig_y GROUPS((t_count + BM - 1) / BM)
+    const uint tg_n GROUPS(d_model.div_ceil(BN)),
+    const uint tg_m GROUPS(t_count.div_ceil(BM))
 ) {
-  if (t_count == 0u || d_model == 0u)
-    return;
-  const uint tile_m0 = tgpig_x * BM;
-  const uint tile_n0 = tgpig_y * BN;
-  if (tile_m0 >= t_count || tile_n0 >= d_model)
-    return;
+  const uint tile_n0 = tg_n * BN;
+  const uint tile_m0 = tg_m * BM;
   const uint m_rows = min((uint)BM, t_count - tile_m0);
   const uint n_cols = min((uint)BN, d_model - tile_n0);
 

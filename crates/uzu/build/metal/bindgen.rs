@@ -4,6 +4,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use syn::LitInt;
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
 use super::wrapper::SpecializeBaseIndices;
@@ -31,7 +32,9 @@ pub fn bindgen(
     {
         let variant_names = variants
             .iter()
-            .map(|type_parameter| format_ident!("{}", type_parameter.name.as_ref()))
+            .map(|type_parameter| {
+                format_ident!("{}", type_parameter.name.as_ref())
+            })
             .collect::<Vec<_>>();
 
         let kernel_format = repeat_n("{}", variant_names.len() + 1).join("_");
@@ -50,10 +53,15 @@ pub fn bindgen(
     };
 
     let base_index = specialize_indices.get(&kernel.name).copied();
-    let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+    let (specialize_args, specialize_setup): (
+        Vec<TokenStream>,
+        Vec<TokenStream>,
+    ) = kernel
         .arguments
         .iter()
-        .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+        .filter(|a| {
+            matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_)))
+        })
         .enumerate()
         .map(|(i, a)| {
             let arg_name = format_ident!("{}", a.name.as_ref());
@@ -140,7 +148,7 @@ pub fn bindgen(
         })
         .multiunzip();
 
-    let dispatch = if kernel.has_axis() {
+    let (dispatch, elements) = if kernel.has_axis() {
         if kernel.has_groups() || kernel.has_threads() {
             anyhow::bail!("mixing groups/threads and axis is not supported");
         }
@@ -166,12 +174,15 @@ pub fn bindgen(
         let (threads, threads_per_group): (Vec<TokenStream>, Vec<TokenStream>) =
             axis.into_iter().unzip();
 
-        quote! {
-            compute_encoder.dispatch_threads(
-                crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
-                crate::backends::metal::MTLSize::new(#((#threads_per_group) as usize, )*),
-            );
-        }
+        (
+            quote! {
+                compute_encoder.dispatch_threads(
+                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
+                    crate::backends::metal::MTLSize::new(#((#threads_per_group) as usize, )*),
+                );
+            },
+            threads.into_iter().chain(threads_per_group.into_iter()),
+        )
     } else {
         let mut groups = kernel
             .arguments
@@ -202,12 +213,40 @@ pub fn bindgen(
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
         threads.extend(repeat_n(quote! {1}, 3 - threads.len()));
 
-        quote! {
-            compute_encoder.dispatch_threadgroups(
-                crate::backends::metal::MTLSize::new(#((#groups) as usize, )*),
-                crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
-            );
-        }
+        (
+            quote! {
+                compute_encoder.dispatch_threadgroups(
+                    crate::backends::metal::MTLSize::new(#((#groups) as usize, )*),
+                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
+                );
+            },
+            groups.into_iter().chain(threads.into_iter()),
+        )
+    };
+
+    let guards = elements
+        .flat_map(|e| {
+            if let Ok(lit_int) = syn::parse2::<LitInt>(e.clone())
+                && let Ok(int) = lit_int.base10_parse::<u32>()
+                && int != 0
+            {
+                None
+            } else {
+                Some(quote! { (#e) == 0 })
+            }
+        })
+        .fold(quote! {}, |a, b| {
+            if !a.is_empty() && !b.is_empty() {
+                quote! {#a || #b}
+            } else {
+                quote! {#a #b}
+            }
+        });
+
+    let empty_dispatch_guards = if !guards.is_empty() {
+        quote! { if #guards { return; }; }
+    } else {
+        quote! {}
     };
 
     Ok(quote! {
@@ -226,6 +265,7 @@ pub fn bindgen(
             pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
                 use metal::MTLComputeCommandEncoder;
                 use crate::backends::metal::ComputeEncoderSetValue;
+                #empty_dispatch_guards
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
@@ -233,6 +273,7 @@ pub fn bindgen(
 
             pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
                 use crate::backends::metal::metal_extensions::ComputeEncoderConditional;
+                #empty_dispatch_guards
                 compute_encoder.condition(
                     predicate,
                     || {
