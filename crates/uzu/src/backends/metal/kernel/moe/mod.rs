@@ -3,7 +3,6 @@ use crate::backends::metal::KernelDataType;
 // Submodules
 mod counts_offsets_fused;
 mod experts;
-mod finalize;
 mod gather;
 mod router_topk;
 mod scatter;
@@ -20,7 +19,6 @@ pub use experts::{
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };
-pub use finalize::{MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel};
 pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,

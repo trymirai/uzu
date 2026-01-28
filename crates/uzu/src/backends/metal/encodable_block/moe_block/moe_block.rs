@@ -17,12 +17,12 @@ use crate::{
     backends::metal::{
         KernelDataType, MTLContext, MetalArray,
         forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::MoeFinalizeKernel,
         kernel::moe::{
             MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
             MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
             MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-            MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-            MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
+            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
             MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
         },
     },
@@ -169,7 +169,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
+        let finalize_kernel = MoeFinalizeKernel::new(context, data_type).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Finalize kernel error: {:?}",
                 e
@@ -613,21 +613,19 @@ impl EncodableBlock for MoeBlock {
                 .expect("MoE experts two-pass prefill failed");
         }
 
-        self.finalize_kernel
-            .encode(
-                &root,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &main_buf,
-                    t: suffix_length,
-                    d_model: self.model_dim,
-                    k,
-                },
-                self.data_type,
-            )
-            .expect("MoE finalize failed");
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+        self.finalize_kernel.encode(
+            &tok2row_buf,
+            &topk_probs_buf,
+            &y_partial_buf,
+            &main_buf,
+            suffix_length as u32,
+            self.model_dim as u32,
+            k as u32,
+            &encoder
+        );
 
         if parameters.wait_until_completed {
             command_buffer.commit();
