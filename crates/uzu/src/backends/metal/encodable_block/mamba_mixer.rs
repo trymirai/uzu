@@ -2,27 +2,20 @@
 
 use std::{env, rc::Rc};
 
-use crate::backends::metal::{ProtocolObject,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-};
-
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
-use crate::{
-    DataType,
-    backends::metal::{
-        KernelDataType, MTLContext, MetalArray,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::SplitInProjKernel,
-        kernel::ssm::{
-            Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-            SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
-            SSDUpdateArguments, SSDUpdateKernel, conv1d_scan::Conv1dDecodeArguments,
-        },
+use crate::{DataType, backends::metal::{
+    KernelDataType, MTLContext, MetalArray, ProtocolObject,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    compilation_parameters::CompilationConfig,
+    forward_pass::{ArrayId, ForwardPassState},
+    kernel::dsl::{
+        Conv1dDecodeKernel, Conv1dPackPrefixKernel, Conv1dScanKernel, SplitInProjKernel
     },
-    config::{DecoderLayerType, Mamba2Config},
-    parameters::ParameterTree,
-};
+    kernel::ssm::{
+        SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
+        SSDUpdateArguments, SSDUpdateKernel,
+    },
+}, config::{DecoderLayerType, Mamba2Config}, parameters::ParameterTree, Activation, DeviceContext};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
@@ -30,6 +23,8 @@ pub(crate) struct MambaMixer {
     in_projection: Box<dyn EncodableBlock>,
     out_projection: Box<dyn EncodableBlock>,
     split_inproj: SplitInProjKernel,
+    conv_decode: Conv1dDecodeKernel,
+    conv_pack: Conv1dPackPrefixKernel,
     conv_scan: Conv1dScanKernel,
     ssm_prefill: SSDPrefillKernel,
     ssd_update: SSDUpdateKernel,
@@ -38,6 +33,7 @@ pub(crate) struct MambaMixer {
     gate_bias: MetalArray,
     skip_connection_weight: MetalArray,
     prefill_mode: SSDPrefillMode,
+    empty_array: MetalArray,
 }
 
 impl MambaMixer {
@@ -112,20 +108,37 @@ impl MambaMixer {
         let skip_connection_weight =
             split_tree.leaf("skip_connection_weight").unwrap().clone();
 
+        let activation = match mamba_config.activation {
+            Activation::SiLU { .. } => 1,
+            Activation::Gelu => 2,
+            Activation::Identity => 0
+        };
+
         let split_inproj =
             SplitInProjKernel::new(mtl_context, kernel_data_type)
                 .expect("Failed to create split in-projection kernel");
+        let conv_decode = Conv1dDecodeKernel::new(
+            mtl_context,
+            kernel_data_type,
+            activation,
+            mamba_config.conv_config.has_biases
+        ).expect("Failed to create conv decode kernel");
+        let conv_pack = Conv1dPackPrefixKernel::new(mtl_context, kernel_data_type)
+            .expect("Failed to create conv pack kernel");
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
             kernel_data_type,
-            &mamba_config.activation,
-        )
-        .expect("Failed to create conv scan kernel");
+            activation,
+            mamba_config.conv_config.has_biases
+        ).expect("Failed to create conv scan kernel");
         let ssm_prefill = SSDPrefillKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
+        let empty_array = unsafe {
+            mtl_context.array_uninitialized(&[0, 0, 0], data_type, "Empty".to_string())
+        };
 
         Self {
             layer_index,
@@ -133,6 +146,8 @@ impl MambaMixer {
             in_projection,
             out_projection,
             split_inproj,
+            conv_decode,
+            conv_pack,
             conv_scan,
             ssm_prefill,
             ssd_update,
@@ -141,6 +156,7 @@ impl MambaMixer {
             gate_bias,
             skip_connection_weight,
             prefill_mode,
+            empty_array
         }
     }
 
@@ -241,10 +257,10 @@ impl MambaMixer {
 
         let weight_storage = self.conv_weight.clone();
         let weight_buf = weight_storage.mtl_buffer_cloned();
-        let bias_buf = self.conv_bias.as_ref().map(|arr| {
-            let storage = arr.clone();
-            storage.mtl_buffer_cloned()
-        });
+        let bias_buf = match &self.conv_bias {
+            Some(buf) => buf.clone().mtl_buffer_cloned(),
+            None => self.empty_array.clone().mtl_buffer_cloned(),
+        };
 
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
@@ -253,28 +269,24 @@ impl MambaMixer {
         drop(conv_state);
 
         if suffix_length == 1 {
-            self.conv_scan
-                .encode_decode(
-                    encoder,
-                    Conv1dDecodeArguments {
-                        x: &input_buf,
-                        w: &weight_buf,
-                        b: bias_buf.as_deref(),
-                        state: &state_buf,
-                        x_out: &x_buf,
-                        b_out: &b_buf,
-                        c_out: &c_buf,
-                        next_state: &state_buf,
-                        suffix_len: suffix_length,
-                        kernel_size: self.config.kernel_size as i32,
-                        row_stride: conv_dim,
-                        state_stride,
-                        channels: conv_dim,
-                        inner_dim,
-                        proj_dim,
-                    },
-                )
-                .expect("Failed to encode conv decode kernel");
+            self.conv_decode.encode(
+                &input_buf,
+                &weight_buf,
+                &bias_buf,
+                &state_buf,
+                &x_buf,
+                &b_buf,
+                &c_buf,
+                &state_buf,
+                self.config.kernel_size as u32,
+                conv_dim as u32,
+                state_stride as u32,
+                conv_dim as u32,
+                suffix_length as u32,
+                inner_dim as u32,
+                proj_dim as u32,
+                encoder
+            );
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state
@@ -284,20 +296,16 @@ impl MambaMixer {
                 let buf = unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*borrow.mtl_buffer()) as *mut _).unwrap() };
                 drop(borrow);
 
-                self.conv_scan
-                    .encode_pack(
-                        encoder,
-                        Conv1dPackArguments {
-                            state_in: &state_buf,
-                            x: &input_buf,
-                            padded: &buf,
-                            state_stride,
-                            row_stride: conv_dim,
-                            suffix_len: suffix_length,
-                            channels: conv_dim,
-                        },
-                    )
-                    .expect("Failed to encode conv pack kernel");
+                self.conv_pack.encode(
+                    &state_buf,
+                    &input_buf,
+                    &buf,
+                    state_stride as u32,
+                    conv_dim as u32,
+                    suffix_length as u32,
+                    conv_dim as u32,
+                    encoder
+                );
 
                 Some(buf)
             } else {
@@ -305,28 +313,23 @@ impl MambaMixer {
             };
 
             let conv_source = padded_buf.as_deref().unwrap_or(&input_buf);
-
-            self.conv_scan
-                .encode(
-                    encoder,
-                    Conv1dScanArguments {
-                        padded: conv_source,
-                        w: &weight_buf,
-                        b: bias_buf.as_deref(),
-                        x_out: &x_buf,
-                        b_out: &b_buf,
-                        c_out: &c_buf,
-                        state_out: &state_buf,
-                        suffix_len: suffix_length,
-                        kernel_size: self.config.kernel_size as i32,
-                        row_stride: conv_dim,
-                        state_stride,
-                        channels: conv_dim,
-                        inner_dim,
-                        proj_dim,
-                    },
-                )
-                .expect("Failed to encode conv scan kernel");
+            self.conv_scan.encode(
+                conv_source,
+                &weight_buf,
+                &bias_buf,
+                &x_buf,
+                &b_buf,
+                &c_buf,
+                &state_buf,
+                suffix_length as u32,
+                self.config.kernel_size as u32,
+                conv_dim as u32,
+                state_stride as u32,
+                conv_dim as u32,
+                inner_dim as u32,
+                proj_dim as u32,
+                encoder
+            );
         }
     }
 

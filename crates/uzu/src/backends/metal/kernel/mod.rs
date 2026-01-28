@@ -52,7 +52,6 @@ pub use short_conv::{
     ShortConvPrefillArguments,
 };
 pub use ssm::{
-    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
     SSDUpdateKernel, SSMKernelError,
 };
