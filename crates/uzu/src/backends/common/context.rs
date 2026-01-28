@@ -3,7 +3,7 @@ use std::rc::Rc;
 use super::Backend;
 
 pub trait Context: Sized {
-    type Backend: Backend;
+    type Backend: Backend<Context = Self>;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
