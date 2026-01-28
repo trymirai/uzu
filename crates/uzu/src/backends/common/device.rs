@@ -1,14 +1,12 @@
-use super::Backend;
+use super::{AllocError, Buffer};
 
-pub trait Device: Sized {
-    type Backend: Backend;
+pub trait Device: Sized + Send + Sync {
+    type Buffer: Buffer;
+    type ResourceOptions: Copy + Send + Sync;
 
-    fn open() -> Result<Self, <Self::Backend as Backend>::Error>;
-
-    fn create_context(
-        &self
-    ) -> Result<
-        <Self::Backend as Backend>::Context,
-        <Self::Backend as Backend>::Error,
-    >;
+    fn create_buffer(
+        &self,
+        size: usize,
+        options: Self::ResourceOptions,
+    ) -> Result<Self::Buffer, AllocError>;
 }
