@@ -1,43 +1,29 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-using namespace metal;
-
-constant bool has_bias [[function_constant(0)]];
-
 template <typename T>
-[[kernel, max_total_threads_per_threadgroup(32)]]
-void short_conv_pack_kernel(
-    device const T* state_in [[buffer(0)]],
-    device const T* in_proj [[buffer(1)]],
-    device T* padded [[buffer(2)]],
-    constant const size_t& state_stride [[buffer(3)]],
-    constant const size_t& suffix_len [[buffer(4)]],
-    constant const size_t& in_proj_stride [[buffer(5)]],
-    constant const uint& model_dim [[buffer(6)]],
-    uint2 grid_idx [[thread_position_in_grid]]
+VARIANTS(T, float, half, bfloat)
+KERNEL(ShortConvPack)(
+    device const T* state_in,
+    device const T* in_proj,
+    device T* padded,
+    constant const uint& state_stride,
+    constant const uint& suffix_len,
+    constant const uint& in_proj_stride,
+    constant const uint& model_dim,
+    const uint channel_idx AXIS(model_dim, 32),
+    const uint row_idx AXIS(state_stride + suffix_len, 1)
 ) {
-  const uint channel_idx = grid_idx.x;
-  const uint row_idx = grid_idx.y;
-  const size_t padded_rows = state_stride + suffix_len;
-
-  if (channel_idx >= model_dim || row_idx >= padded_rows) {
-    return;
-  }
-
-  const size_t padded_offset =
-      size_t(row_idx) * model_dim + size_t(channel_idx);
+  const size_t padded_offset = size_t(row_idx) * model_dim + size_t(channel_idx);
 
   if (row_idx < state_stride) {
     // Copy from state
-    const size_t state_idx =
-        size_t(channel_idx) * state_stride + size_t(row_idx);
+    const size_t state_idx = size_t(channel_idx) * state_stride + size_t(row_idx);
     padded[padded_offset] = state_in[state_idx];
   } else {
     // Compute gated input from in_proj
     const size_t token = row_idx - state_stride;
-    const size_t in_proj_idx =
-        size_t(token) * in_proj_stride + size_t(channel_idx);
+    const size_t in_proj_idx = size_t(token) * in_proj_stride + size_t(channel_idx);
 
     float pre_gate = float(in_proj[in_proj_idx]);
     float x_in = float(in_proj[in_proj_idx + 2 * model_dim]);
@@ -48,32 +34,25 @@ void short_conv_pack_kernel(
 }
 
 template <typename T>
-[[kernel, max_total_threads_per_threadgroup(32)]]
-void short_conv_prefill_kernel(
-    device const T* padded [[buffer(0)]],
-    device const T* in_proj [[buffer(1)]],
-    device const T* w [[buffer(2)]],
-    device const T* b [[buffer(3), function_constant(has_bias)]],
-    device T* out [[buffer(4)]],
-    device T* state_out [[buffer(5)]],
-    constant const size_t& suffix_len [[buffer(6)]],
-    constant const int& kernel_size [[buffer(7)]],
-    constant const size_t& in_proj_stride [[buffer(8)]],
-    constant const size_t& state_stride [[buffer(9)]],
-    constant const uint& model_dim [[buffer(10)]],
-    uint2 grid_idx [[thread_position_in_grid]]
+VARIANTS(T, float, half, bfloat)
+KERNEL(ShortConvPrefill)(
+    device const T* padded,
+    device const T* in_proj,
+    device const T* w,
+    device const T* b,
+    device T* out,
+    device T* state_out,
+    const bool has_bias SPECIALIZE,
+    constant const uint& suffix_len,
+    constant const uint& kernel_size,
+    constant const uint& in_proj_stride,
+    constant const uint& state_stride,
+    constant const uint& model_dim,
+    const uint token_idx AXIS(suffix_len + std::cmp::max(kernel_size - 1, 0), 32),
+    const uint channel_idx AXIS(model_dim, 1)
 ) {
-  const int tap_count = max(kernel_size - 1, 0);
-  const size_t work_len = suffix_len + size_t(tap_count);
-
-  const uint token_idx = grid_idx.x;
-  const uint channel_idx = grid_idx.y;
-
-  if (channel_idx >= model_dim || token_idx >= work_len) {
-    return;
-  }
-
   const device T* w_row = w + size_t(channel_idx) * size_t(kernel_size);
+  const int tap_count = max(static_cast<int>(kernel_size) - 1, 0);
 
   // Threads [0..suffix_len-1]: Compute outputs
   if (token_idx < suffix_len) {
@@ -91,8 +70,7 @@ void short_conv_prefill_kernel(
     }
 
     // Apply post-gate from in_proj
-    const size_t in_proj_idx =
-        size_t(token_idx) * in_proj_stride + size_t(channel_idx);
+    const size_t in_proj_idx = size_t(token_idx) * in_proj_stride + size_t(channel_idx);
     float post_conv_gate = float(in_proj[in_proj_idx + model_dim]);
     float gated_output = acc * post_conv_gate;
 
@@ -116,30 +94,25 @@ void short_conv_prefill_kernel(
   }
 }
 
-template <typename T>
-[[kernel, max_total_threads_per_threadgroup(32)]]
-void short_conv_decode_kernel(
-    device const T* in_proj [[buffer(0)]],
-    device const T* w [[buffer(1)]],
-    device const T* b [[buffer(2), function_constant(has_bias)]],
-    device const T* state [[buffer(3)]],
-    device T* out [[buffer(4)]],
-    device T* next_state [[buffer(5)]],
-    constant const size_t& suffix_len [[buffer(6)]],
-    constant const int& kernel_size [[buffer(7)]],
-    constant const size_t& in_proj_stride [[buffer(8)]],
-    constant const size_t& state_stride [[buffer(9)]],
-    constant const uint& model_dim [[buffer(10)]],
-    uint2 grid_idx [[thread_position_in_grid]]
+template<typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(ShortConvDecode)(
+    device const T* in_proj,
+    device const T* w,
+    device const T* b,
+    device const T* state,
+    device T* out,
+    device T* next_state,
+    const bool has_bias SPECIALIZE,
+    constant const uint& suffix_len,
+    constant const uint& kernel_size,
+    constant const uint& in_proj_stride,
+    constant const uint& state_stride,
+    constant const uint& model_dim,
+    const uint token_idx AXIS(suffix_len, 32),
+    const uint channel_idx AXIS(model_dim, 1)
 ) {
-  const uint token_idx = grid_idx.x;
-  const uint channel_idx = grid_idx.y;
-
-  if (channel_idx >= model_dim || token_idx >= suffix_len) {
-    return;
-  }
-
-  const int tap_count = max(kernel_size - 1, 0);
+  const int tap_count = max(static_cast<int>(kernel_size) - 1, 0);
   const size_t state_offset = size_t(channel_idx) * state_stride;
   const device T* w_row = w + size_t(channel_idx) * size_t(kernel_size);
 
@@ -175,69 +148,3 @@ void short_conv_decode_kernel(
     next_state[state_offset + size_t(tap_count - 1)] = static_cast<T>(x);
   }
 }
-
-// ============================================================================
-// Template instantiations
-// ============================================================================
-#define instantiate_short_conv_pack_kernel(type_name, type)                    \
-  template [[host_name("short_conv_pack_kernel_" #type_name)]]                 \
-  kernel void short_conv_pack_kernel<type>(                                    \
-      device const type* state_in [[buffer(0)]],                               \
-      device const type* in_proj [[buffer(1)]],                                \
-      device type* padded [[buffer(2)]],                                       \
-      constant const size_t& state_stride [[buffer(3)]],                       \
-      constant const size_t& suffix_len [[buffer(4)]],                         \
-      constant const size_t& in_proj_stride [[buffer(5)]],                     \
-      constant const uint& model_dim [[buffer(6)]],                            \
-      uint2 grid_idx [[thread_position_in_grid]]                               \
-  );
-
-#define instantiate_short_conv_prefill_kernel(type_name, type)                 \
-  template [[host_name("short_conv_prefill_kernel_" #type_name)]]              \
-  kernel void short_conv_prefill_kernel<type>(                                 \
-      device const type* padded [[buffer(0)]],                                 \
-      device const type* in_proj [[buffer(1)]],                                \
-      device const type* w [[buffer(2)]],                                      \
-      device const type* b [[buffer(3), function_constant(has_bias)]],         \
-      device type* out [[buffer(4)]],                                          \
-      device type* state_out [[buffer(5)]],                                    \
-      constant const size_t& suffix_len [[buffer(6)]],                         \
-      constant const int& kernel_size [[buffer(7)]],                           \
-      constant const size_t& in_proj_stride [[buffer(8)]],                     \
-      constant const size_t& state_stride [[buffer(9)]],                       \
-      constant const uint& model_dim [[buffer(10)]],                           \
-      uint2 grid_idx [[thread_position_in_grid]]                               \
-  );
-
-#define instantiate_short_conv_decode_kernel(type_name, type)                  \
-  template [[host_name("short_conv_decode_kernel_" #type_name)]]               \
-  kernel void short_conv_decode_kernel<type>(                                  \
-      device const type* x [[buffer(0)]],                                      \
-      device const type* w [[buffer(1)]],                                      \
-      device const type* b [[buffer(2), function_constant(has_bias)]],         \
-      device const type* state [[buffer(3)]],                                  \
-      device type* out [[buffer(4)]],                                          \
-      device type* next_state [[buffer(5)]],                                   \
-      constant const size_t& suffix_len [[buffer(6)]],                         \
-      constant const int& kernel_size [[buffer(7)]],                           \
-      constant const size_t& row_stride [[buffer(8)]],                         \
-      constant const size_t& state_stride [[buffer(9)]],                       \
-      constant const uint& num_channels [[buffer(10)]],                        \
-      uint2 grid_idx [[thread_position_in_grid]]                               \
-  );
-
-instantiate_short_conv_pack_kernel(float, float);
-instantiate_short_conv_pack_kernel(bfloat, bfloat);
-instantiate_short_conv_pack_kernel(half, half);
-
-instantiate_short_conv_prefill_kernel(float, float);
-instantiate_short_conv_prefill_kernel(bfloat, bfloat);
-instantiate_short_conv_prefill_kernel(half, half);
-
-instantiate_short_conv_decode_kernel(float, float);
-instantiate_short_conv_decode_kernel(bfloat, bfloat);
-instantiate_short_conv_decode_kernel(half, half);
-
-#undef instantiate_short_conv_pack_kernel
-#undef instantiate_short_conv_prefill_kernel
-#undef instantiate_short_conv_decode_kernel
