@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use super::pipeline_configuration::{
     PipelineConfiguration, select_configuration,
 };
@@ -7,6 +9,21 @@ use crate::{
         MTLContext, MTLError, MTLSize, kernel::matmul::common::MatmulArguments,
     },
 };
+
+/// Default max batch size for GEMV kernel.
+/// Can be overridden via UZU_GEMV_MAX_BATCH environment variable.
+const DEFAULT_GEMV_MAX_BATCH: i32 = 4;
+
+static GEMV_MAX_BATCH: OnceLock<i32> = OnceLock::new();
+
+fn max_gemv_batch_threshold() -> i32 {
+    *GEMV_MAX_BATCH.get_or_init(|| {
+        std::env::var("UZU_GEMV_MAX_BATCH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_GEMV_MAX_BATCH)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AxpbySource {
@@ -31,6 +48,12 @@ pub(crate) struct DispatchDescriptor {
     pub(crate) matrix_batch_stride: [i64; 1],
     pub(crate) bias_batch_stride: [i64; 1],
     pub(crate) bias_stride: i32,
+    /// Number of batch rows (M dimension) - used for batched GEMV
+    pub(crate) batch_rows: i32,
+    /// Leading dimension of output (ldd)
+    pub(crate) output_ld: i32,
+    /// Leading dimension of input vector (lda)
+    pub(crate) vector_ld: i32,
     pub(crate) threadgroups: MTLSize,
     pub(crate) threads_per_threadgroup: MTLSize,
 }
@@ -54,7 +77,17 @@ impl DispatchDescriptor {
 
         let m = arguments.batch;
         let n = arguments.output_dim;
-        if m != 1 && n != 1 {
+
+        // Max batch size for GEMV - can be overridden via UZU_GEMV_MAX_BATCH env var
+        let max_gemv_batch = max_gemv_batch_threshold();
+
+        if n == 1 {
+            // Column vector output - only support m=1 for now
+            if m != 1 {
+                return Ok(None);
+            }
+        } else if m > max_gemv_batch {
+            // Batch too large for GEMV
             return Ok(None);
         }
 
@@ -144,13 +177,20 @@ impl DispatchDescriptor {
                 / output_elements_per_threadgroup) as u64;
         let threadgroup_count_z = batch_groups.max(1) as u64;
 
+        // For batched GEMV, use y-dimension for batch rows
+        let batch_rows = arguments.batch;
+        let threadgroup_count_y = batch_rows.max(1) as u64;
+
         let threadgroups = MTLSize::new(
             threadgroup_count_x as usize,
-            1,
+            threadgroup_count_y as usize,
             threadgroup_count_z as usize,
         );
         let threads_per_threadgroup =
             pipeline_configuration.threads_per_threadgroup();
+
+        let output_ld = arguments.ldd;
+        let vector_ld = arguments.lda;
 
         Ok(Some(Self {
             pipeline_configuration,
@@ -167,6 +207,9 @@ impl DispatchDescriptor {
             matrix_batch_stride,
             bias_batch_stride,
             bias_stride,
+            batch_rows,
+            output_ld,
+            vector_ld,
             threadgroups,
             threads_per_threadgroup,
         }))

@@ -466,6 +466,9 @@ template <
     const constant int64_t* matrix_batch_stride [[buffer(12)]],
     const constant int64_t* bias_batch_stride [[buffer(13)]],
     const constant int& bias_stride [[buffer(14)]],
+    const constant int& batch_rows [[buffer(15)]],
+    const constant int& output_ld [[buffer(16)]],
+    const constant int& vector_ld [[buffer(17)]],
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
@@ -474,6 +477,12 @@ template <
   using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
+
+  // Batched GEMV: tid.y is the batch row index
+  const int batch_row = tid.y;
+  if (batch_row >= batch_rows) {
+    return;
+  }
 
   // Update batch offsets
   if (kDoNCBatch) {
@@ -493,7 +502,9 @@ template <
     }
   }
 
-  out_vec += tid.z * out_vec_size;
+  // Offset by batch row (tid.y)
+  in_vec += batch_row * vector_ld;
+  out_vec += tid.z * batch_rows * output_ld + batch_row * output_ld;
 
   gemv_kernel::run(
       mat,
@@ -715,6 +726,9 @@ template <
     const constant int64_t* matrix_batch_stride [[buffer(12)]],
     const constant int64_t* bias_batch_stride [[buffer(13)]],
     const constant int& bias_stride [[buffer(14)]],
+    const constant int& batch_rows [[buffer(15)]],
+    const constant int& output_ld [[buffer(16)]],
+    const constant int& vector_ld [[buffer(17)]],
     uint3 tid [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
@@ -723,6 +737,12 @@ template <
   using gemv_kernel = GEMVTKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby>;
   threadgroup typename gemv_kernel::acc_type tgp_memory
       [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
+
+  // Batched GEMV: tid.y is the batch row index
+  const int batch_row = tid.y;
+  if (batch_row >= batch_rows) {
+    return;
+  }
 
   // Update batch offsets
   if (kDoNCBatch) {
@@ -742,7 +762,9 @@ template <
     }
   }
 
-  out_vec += tid.z * out_vec_size;
+  // Offset by batch row (tid.y)
+  in_vec += batch_row * vector_ld;
+  out_vec += tid.z * batch_rows * output_ld + batch_row * output_ld;
 
   gemv_kernel::run(
       mat,

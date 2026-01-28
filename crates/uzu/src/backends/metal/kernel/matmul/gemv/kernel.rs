@@ -177,6 +177,9 @@ impl Kernel {
         encoder.set_slice(&descriptor.matrix_batch_stride, 12);
         encoder.set_slice(&descriptor.bias_batch_stride, 13);
         encoder.set_value(&descriptor.bias_stride, 14);
+        encoder.set_value(&descriptor.batch_rows, 15);
+        encoder.set_value(&descriptor.output_ld, 16);
+        encoder.set_value(&descriptor.vector_ld, 17);
 
         encoder.dispatch_threadgroups(
             descriptor.threadgroups,
