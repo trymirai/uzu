@@ -1,9 +1,9 @@
 use crate::backends::common::Kernels;
 
-use super::MetalBackend;
+use super::Metal;
 
 pub struct MetalKernels;
 
 impl Kernels for MetalKernels {
-    type Backend = MetalBackend;
+    type Backend = Metal;
 }
