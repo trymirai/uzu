@@ -5,7 +5,8 @@ use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+        MoeCountsOffsetsFusedKernel, MoeScatterKernels,
+        MoeScatterWithMapArguments,
         dsl::MoeFinalizeKernel,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,

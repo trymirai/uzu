@@ -6,8 +6,8 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDeviceExt, MTLResourceOptions,
 };
 use ndarray::{Array3, Array4, s};
 use uzu::backends::{
@@ -44,7 +44,8 @@ fn reference_attention(
                 for repeat in 0..n_repeats {
                     let q_head = kv_head * n_repeats + repeat;
 
-                    let q = scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
+                    let q =
+                        scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
                     let k = keys.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
                     let v = values.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
 
@@ -52,8 +53,13 @@ fn reference_attention(
                     let mut scores = q.dot(&k.t());
 
                     if let Some(mask_data) = mask {
-                        let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                        scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                        let mask_slice = mask_data.slice(s![
+                            b,
+                            ..,
+                            ..kv_seq_len.min(seq_len)
+                        ]);
+                        scores
+                            .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
                             .zip_mut_with(&mask_slice, |s, &m| *s += m);
                     }
 
@@ -78,7 +84,9 @@ fn reference_attention(
 
                     // Efficient matrix multiplication: output = scores @ V
                     let head_output = scores.dot(&v);
-                    output.slice_mut(s![b, q_head, .., ..]).assign(&head_output);
+                    output
+                        .slice_mut(s![b, q_head, .., ..])
+                        .assign(&head_output);
                 }
             }
         } else {
@@ -91,8 +99,10 @@ fn reference_attention(
                 let mut scores = q.dot(&k.t());
 
                 if let Some(mask_data) = mask {
-                    let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                    scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                    let mask_slice =
+                        mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                    scores
+                        .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
                         .zip_mut_with(&mask_slice, |s, &m| *s += m);
                 }
 

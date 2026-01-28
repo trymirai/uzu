@@ -3,8 +3,8 @@
 use bytemuck;
 use half::bf16;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDeviceExt, MTLResourceOptions,
 };
 use uzu::backends::{
     common::Context,
@@ -177,7 +177,6 @@ fn ssd_update_ref_bf16(
     }
     (y, next_state)
 }
-
 
 #[test]
 fn ssd_update_with_z_bf16() {

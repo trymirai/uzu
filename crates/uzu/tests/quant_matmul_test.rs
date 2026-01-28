@@ -3,8 +3,8 @@ use std::time::Instant;
 use bytemuck;
 use half::{bf16, f16};
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDeviceExt, MTLResourceOptions,
 };
 use uzu::{
     DataType,
@@ -13,7 +13,8 @@ use uzu::{
         metal::{
             MTLContext, ProtocolObject, Retained,
             kernel::quant_matmul::{
-                QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+                QuantizationType, QuantizedMatmulArguments,
+                QuantizedMatmulKernel,
             },
         },
     },
@@ -523,7 +524,9 @@ fn execute_quantized_matmul(
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx
-        .allocate_buffer((batch * output_dim * data_type.size_in_bytes()) as u64)
+        .allocate_buffer(
+            (batch * output_dim * data_type.size_in_bytes()) as u64,
+        )
         .expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernel::new(

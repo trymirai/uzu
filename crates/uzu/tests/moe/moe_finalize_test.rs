@@ -4,10 +4,7 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType,
-    kernel::dsl::MoeFinalizeKernel,
-};
+use uzu::backends::metal::{KernelDataType, kernel::dsl::MoeFinalizeKernel};
 
 use super::test_utils::{
     alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx,
@@ -98,7 +95,10 @@ fn test_finalize_correctness() {
         // Execute finalize kernel
         let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
             .expect("finalize kernel");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let encoder = cb.new_compute_command_encoder().expect("encoder");
         finalize.encode(
             &tok2row_buf,

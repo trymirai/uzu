@@ -3,8 +3,8 @@ use std::{cell::RefCell, mem, rc::Rc};
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt, MTLResourceOptions, MetalArray,
-        ProtocolObject, Retained,
+        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt,
+        MTLResourceOptions, MetalArray, ProtocolObject, Retained,
         error::MTLError,
         image::{Image, PixelFormat, TextureUsage},
         kernel::media_kernels::{
@@ -269,10 +269,11 @@ fn data_to_mtl_tensor<T: Copy>(
     data_type: DataType,
 ) -> Result<MetalArray, MTLError> {
     let size = mem::size_of::<T>();
-    let bytes = unsafe { std::slice::from_raw_parts(data as *const T as *const u8, size) };
-    let buffer = device.new_buffer_with_data(
-        bytes,
-        MTLResourceOptions::STORAGE_MODE_SHARED,
-    ).expect("Failed to create buffer");
+    let bytes = unsafe {
+        std::slice::from_raw_parts(data as *const T as *const u8, size)
+    };
+    let buffer = device
+        .new_buffer_with_data(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
     unsafe { Ok(MetalArray::new(buffer, &shape, data_type)) }
 }

@@ -1,8 +1,8 @@
 mod common;
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDeviceExt, MTLResourceOptions,
 };
 use rand::{Rng, seq::SliceRandom};
 // for Vec::shuffle
@@ -547,7 +547,7 @@ fn perf_topp_128k_vocab() {
     let output_buf = context
         .device
         .new_buffer(
-            BATCH * std::mem::size_of::<u32>() ,
+            BATCH * std::mem::size_of::<u32>(),
             metal::MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -667,7 +667,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let output_buf = context
         .device
         .new_buffer(
-            BATCH * std::mem::size_of::<u32>() ,
+            BATCH * std::mem::size_of::<u32>(),
             metal::MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -780,7 +780,7 @@ fn test_categorical_sampling() {
     let output_buffer = context
         .device
         .new_buffer(
-            batch_size * std::mem::size_of::<u32>() ,
+            batch_size * std::mem::size_of::<u32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -940,7 +940,7 @@ fn test_categorical_sampling_statistical() {
     let output_buffer = context
         .device
         .new_buffer(
-            BATCH * std::mem::size_of::<u32>() ,
+            BATCH * std::mem::size_of::<u32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1082,7 +1082,7 @@ fn perf_categorical_128k_vocab() {
     let output_buf = context
         .device
         .new_buffer(
-            BATCH * std::mem::size_of::<u32>() ,
+            BATCH * std::mem::size_of::<u32>(),
             metal::MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1180,7 +1180,7 @@ fn test_temperature_gpu_cpu_match() {
     let processed_buffer = context
         .device
         .new_buffer(
-            logits.len() * std::mem::size_of::<f32>() ,
+            logits.len() * std::mem::size_of::<f32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1270,7 +1270,7 @@ fn test_topk_gpu_cpu_match() {
     let processed_buffer = context
         .device
         .new_buffer(
-            logits.len() * std::mem::size_of::<f32>() ,
+            logits.len() * std::mem::size_of::<f32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1356,7 +1356,7 @@ fn test_topp_gpu_cpu_match() {
     let processed_buffer = context
         .device
         .new_buffer(
-            logits.len() * std::mem::size_of::<f32>() ,
+            logits.len() * std::mem::size_of::<f32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1446,7 +1446,7 @@ fn test_minp_gpu_cpu_match() {
     let processed_buffer = context
         .device
         .new_buffer(
-            logits.len() * std::mem::size_of::<f32>() ,
+            logits.len() * std::mem::size_of::<f32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1543,7 +1543,7 @@ fn test_minp_sampling_exact_match(
     let output_buf = context
         .device
         .new_buffer(
-            batch_size * std::mem::size_of::<u32>() ,
+            batch_size * std::mem::size_of::<u32>(),
             metal::MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -1681,7 +1681,7 @@ fn test_gumbel_gpu_cpu_match() {
     let gumbel_logits_buffer = context
         .device
         .new_buffer(
-            BATCH * VOCAB * std::mem::size_of::<f32>() ,
+            BATCH * VOCAB * std::mem::size_of::<f32>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");

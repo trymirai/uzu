@@ -269,11 +269,8 @@ impl LanguageModelGeneratorContext {
 
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
-        let async_buffers = AsyncBuffers::new(
-            &context,
-            max_prefix_length,
-            async_batch_size,
-        );
+        let async_buffers =
+            AsyncBuffers::new(&context, max_prefix_length, async_batch_size);
 
         let base_seed = decoding_config.sampling_seed.resolve();
         let next_seed = DerivableSeed::new(base_seed);

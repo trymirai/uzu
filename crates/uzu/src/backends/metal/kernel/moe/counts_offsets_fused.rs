@@ -1,7 +1,7 @@
 use crate::backends::metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
-    metal_extensions::ComputeEncoderSetValue,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject,
+    Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Fused Counts + Offsets Kernel ----

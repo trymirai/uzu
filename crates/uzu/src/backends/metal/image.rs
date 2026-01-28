@@ -1,8 +1,9 @@
 use std::fmt;
 
 use crate::backends::metal::{
-    MTLDevice, MTLDeviceExt, MTLPixelFormat, MTLResourceExt, MTLStorageMode, MTLTexture,
-    MTLTextureDescriptor, MTLTextureUsage, ProtocolObject, Retained,
+    MTLDevice, MTLDeviceExt, MTLPixelFormat, MTLResourceExt, MTLStorageMode,
+    MTLTexture, MTLTextureDescriptor, MTLTextureUsage, ProtocolObject,
+    Retained,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +116,9 @@ impl Image {
         descriptor.set_storage_mode(MTLStorageMode::Private);
         descriptor.set_usage(usage.into());
 
-        let texture = device.new_texture_with_descriptor(&descriptor).expect("Failed to create texture");
+        let texture = device
+            .new_texture_with_descriptor(&descriptor)
+            .expect("Failed to create texture");
         texture.set_label(Some("Image"));
 
         Self {
@@ -130,7 +133,9 @@ impl Image {
         device: &Retained<ProtocolObject<dyn MTLDevice>>,
         descriptor: &MTLTextureDescriptor,
     ) -> Self {
-        let texture = device.new_texture_with_descriptor(descriptor).expect("Failed to create texture");
+        let texture = device
+            .new_texture_with_descriptor(descriptor)
+            .expect("Failed to create texture");
         texture.set_label(Some("Image"));
 
         let width = descriptor.width() as u32;
@@ -145,7 +150,9 @@ impl Image {
         }
     }
 
-    pub fn from_texture(texture: Retained<ProtocolObject<dyn MTLTexture>>) -> Self {
+    pub fn from_texture(
+        texture: Retained<ProtocolObject<dyn MTLTexture>>
+    ) -> Self {
         let width = texture.width() as u32;
         let height = texture.height() as u32;
         let pixel_format = texture.pixel_format().into();

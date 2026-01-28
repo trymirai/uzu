@@ -1,23 +1,33 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
+use super::{
+    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
+};
 use crate::{
     DataType,
     backends::{
         common::Context,
         metal::{
             ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
-            MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-            ProtocolObject, Retained,
-            kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
+            MTLComputePipelineState, MTLContext, MTLError,
+            MTLFunctionConstantValues, ProtocolObject, Retained,
+            kernel::{
+                mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments,
+            },
         },
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    accum_pipelines: HashMap<MlpActivationType, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    partial_pipelines: HashMap<
+        PipelineConfiguration,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
+    accum_pipelines: HashMap<
+        MlpActivationType,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
     up_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     gate_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
@@ -88,7 +98,8 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.partial_pipelines.contains_key(configuration) {
             let kernel_name = self.partial_kernel_name(configuration)?;
             let pipeline_state =
@@ -103,7 +114,8 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         activation: MlpActivationType,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.accum_pipelines.contains_key(&activation) {
             let kernel_name = self.accum_kernel_name()?;
             let function_constants = MTLFunctionConstantValues::new();
@@ -133,12 +145,10 @@ impl Kernel {
         {
             return;
         }
-        self.up_accumulator_buffer = context
-            .allocate_buffer(required_bytes as u64)
-            .ok();
-        self.gate_accumulator_buffer = context
-            .allocate_buffer(required_bytes as u64)
-            .ok();
+        self.up_accumulator_buffer =
+            context.allocate_buffer(required_bytes as u64).ok();
+        self.gate_accumulator_buffer =
+            context.allocate_buffer(required_bytes as u64).ok();
         self.accumulator_buffer_bytes = required_bytes;
     }
 

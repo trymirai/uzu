@@ -82,7 +82,10 @@ fn test_gather_correctness() {
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         gather
             .encode(
                 &cb,

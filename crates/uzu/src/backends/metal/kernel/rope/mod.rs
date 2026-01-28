@@ -1,8 +1,9 @@
 use thiserror::Error;
 
 use crate::backends::metal::{
-    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+    MTLSize, ProtocolObject, Retained,
 };
 
 pub struct RopeKernel {

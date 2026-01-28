@@ -6,13 +6,13 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-            MTLContext, MetalArray, ProtocolObject,
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
             compilation_parameters::CompilationConfig,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::short_conv::{
-                ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments,
-                ShortConvPrefillArguments,
+                ShortConvDecodeArguments, ShortConvKernel,
+                ShortConvPackArguments, ShortConvPrefillArguments,
             },
         },
     },

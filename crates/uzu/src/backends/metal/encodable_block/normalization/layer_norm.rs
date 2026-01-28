@@ -6,10 +6,11 @@ use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::LayerNormKernel
+        kernel::dsl::LayerNormKernel,
     },
     config::{NormalizationConfig, UpcastMode},
     parameters::ParameterTree,
@@ -35,9 +36,10 @@ impl LayerNorm {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
             MTLError::Library(
-                crate::backends::metal::error::LibraryError::Custom(
-                    format!("Failed to load scales: {:?}", e)
-                ),
+                crate::backends::metal::error::LibraryError::Custom(format!(
+                    "Failed to load scales: {:?}",
+                    e
+                )),
             )
         })?;
 
@@ -50,7 +52,8 @@ impl LayerNorm {
             )
             .expect("Failed to create scales buffer");
 
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
+        let accumulation_data_type: DataType =
+            config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
         let (input_type, scales_type, output_type) = match config.upcast_mode {
@@ -123,7 +126,11 @@ impl EncodableBlock for LayerNorm {
 
         let batch_size = input_shape[0] as u32;
         let model_dim = input_shape[1] as u32;
-        let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer { 1u32 } else { 0u32 };
+        let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer {
+            1u32
+        } else {
+            0u32
+        };
 
         self.kernel.encode(
             &input_buffer,
@@ -134,7 +141,7 @@ impl EncodableBlock for LayerNorm {
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             full_layer,
-            compute_encoder
+            compute_encoder,
         )
     }
 }

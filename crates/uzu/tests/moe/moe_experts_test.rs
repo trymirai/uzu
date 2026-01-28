@@ -448,7 +448,10 @@ fn test_two_pass_decode_correctness() {
     // Execute 2-pass decode kernel
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("MoeExpertsTwoPassDecodeKernel::new");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
 
     const K_TILE: usize = 64;
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
@@ -605,7 +608,10 @@ fn test_two_pass_decode_multi_token() {
 
     let experts_kernel =
         MoeExpertsTwoPassDecodeKernel::new(&ctx).expect("kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     experts_kernel
         .encode(
             &cb,
@@ -725,7 +731,10 @@ fn test_two_pass_prefill_correctness() {
 
     let experts_kernel =
         MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     experts_kernel
         .encode(
             &cb,
@@ -883,7 +892,10 @@ fn test_fused_single_token_decode() {
     // Run fused decode kernel
     let fused_kernel = MoeExpertsSingleDecodeKernel::new(&ctx)
         .expect("MoeExpertsSingleDecodeKernel::new");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
 
     fused_kernel
         .encode(
@@ -917,7 +929,10 @@ fn test_fused_single_token_decode() {
 
     // Read GPU output
     let y_gpu = unsafe {
-        std::slice::from_raw_parts(y_buf.contents().as_ptr() as *const bf16, d_model)
+        std::slice::from_raw_parts(
+            y_buf.contents().as_ptr() as *const bf16,
+            d_model,
+        )
     };
 
     // Compute error metrics
@@ -1032,7 +1047,10 @@ fn test_fused_single_token_k4() {
 
     let fused_kernel =
         MoeExpertsSingleDecodeKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     fused_kernel
         .encode(
             &cb,
@@ -1063,7 +1081,10 @@ fn test_fused_single_token_k4() {
     cb.wait_until_completed();
 
     let y_gpu = unsafe {
-        std::slice::from_raw_parts(y_buf.contents().as_ptr() as *const bf16, d_model)
+        std::slice::from_raw_parts(
+            y_buf.contents().as_ptr() as *const bf16,
+            d_model,
+        )
     };
 
     // Compute error metrics

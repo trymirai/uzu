@@ -8,9 +8,10 @@ use super::{
     MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
 };
 use crate::backends::metal::{
-    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
-    MTLFunctionConstantValues, MTLSize, NSRange, ProtocolObject, Retained,
+    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize,
+    NSRange, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -47,7 +48,7 @@ pub struct MoeExpertsArguments<'a> {
     pub down_biases: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model] - down projection biases
     pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>, // [E]
     pub tile_row_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>, // [max_tiles * 3]
+    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,    // [max_tiles * 3]
     pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [2]
     pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_n: usize,
@@ -67,14 +68,16 @@ pub struct MoeExpertsArguments<'a> {
 
 pub struct MoeExpertsTwoPassDecodeKernel {
     pass_a_tile: MoePassATileKernel,
-    pass_a_indirect: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
-    fused_down: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,           // [dtype]
+    pass_a_indirect:
+        Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    fused_down: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
     tile_map: MoeTileMapKernel,
-    pass_a_indirect: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
-    pass_b_indirect: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,      // [dtype]
+    pass_a_indirect:
+        Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    pass_b_indirect: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
 }
 
 #[derive(Debug)]
@@ -608,7 +611,7 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
 
 pub struct MoeExpertsSingleDecodeKernel {
     pass_a: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
-    pass_b: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,      // [dtype]
+    pass_b: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
 }
 
 impl MoeExpertsSingleDecodeKernel {

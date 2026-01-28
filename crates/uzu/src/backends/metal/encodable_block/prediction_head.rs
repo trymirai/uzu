@@ -5,8 +5,9 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::Array;
 #[cfg(feature = "tracing")]
 use crate::backends::metal::forward_pass::ArrayId;
-use crate::backends::metal::{ProtocolObject,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, forward_pass::ForwardPassState,
+use crate::backends::metal::{
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject, forward_pass::ForwardPassState,
 };
 
 pub struct ClassifierPredictionHead {

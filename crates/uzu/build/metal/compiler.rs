@@ -317,9 +317,9 @@ impl MetalCompiler {
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
-                super::bindgen::bindgen(k, specialize_indices).with_context(|| {
-                    format!("cannot generate bindings for {}", k.name)
-                })
+                super::bindgen::bindgen(k, specialize_indices).with_context(
+                    || format!("cannot generate bindings for {}", k.name),
+                )
             })
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
 

@@ -7,15 +7,19 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    pipelines: HashMap<
+        PipelineConfiguration,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
 }
 
 impl Kernel {
@@ -131,7 +135,8 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = MTLFunctionConstantValues::new();

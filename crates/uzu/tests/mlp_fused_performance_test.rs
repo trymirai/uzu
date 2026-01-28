@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use half::f16;
 use metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use objc2::rc::autoreleasepool;
 use uzu::{
@@ -73,9 +74,7 @@ fn benchmark_gemv_fused(
     let weights_buffer = context
         .device
         .new_buffer(
-            2 * hidden_dimension
-                * input_dimension
-                * std::mem::size_of::<f16>(),
+            2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -237,9 +236,7 @@ fn benchmark_gemm_fused(
     let weights_buffer = context
         .device
         .new_buffer(
-            2 * hidden_dimension
-                * input_dimension
-                * std::mem::size_of::<f16>(),
+            2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");

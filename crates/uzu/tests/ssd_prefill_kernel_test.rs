@@ -4,8 +4,8 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{
-    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
 use uzu::backends::{
     common::Context,
@@ -19,7 +19,8 @@ use uzu::backends::{
 };
 use uzu::config::Activation;
 
-const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::STORAGE_MODE_SHARED;
+const STORAGE_MODE: MTLResourceOptions =
+    MTLResourceOptions::STORAGE_MODE_SHARED;
 
 fn silu_scalar(x: f32) -> f32 {
     let y = 1.0 / (1.0 + (-x).exp());

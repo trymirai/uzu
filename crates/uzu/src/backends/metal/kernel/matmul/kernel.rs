@@ -1,5 +1,5 @@
 use super::{
-    super::{KernelDataType},
+    super::KernelDataType,
     common::MatmulArguments,
     dispatch_descriptor::{
         MatmulDispatchDescriptor, choose_dispatch_descriptor,
@@ -12,8 +12,7 @@ use crate::{
     DataType,
     backends::metal::{
         MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-        ProtocolObject,
-        kernel::dsl::TensorAddBiasKernel
+        ProtocolObject, kernel::dsl::TensorAddBiasKernel,
     },
 };
 

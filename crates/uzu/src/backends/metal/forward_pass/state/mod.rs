@@ -13,7 +13,9 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
-pub use mode::{ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState};
+pub use mode::{
+    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
+};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -26,8 +28,9 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLContext, MetalArray, ProtocolObject, Retained,
+            MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
+            MTLCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
         },
     },
     session::parameter::SamplingMethod,
@@ -114,7 +117,10 @@ impl ForwardPassState {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         skip_attention_bias_fill: bool,
-        async_positions: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        async_positions: Option<(
+            &Retained<ProtocolObject<dyn MTLBuffer>>,
+            usize,
+        )>,
         async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();

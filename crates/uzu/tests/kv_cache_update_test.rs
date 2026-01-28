@@ -1,7 +1,8 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use ndarray::{Array, Array3, s};
 use uzu::backends::{
