@@ -1,13 +1,19 @@
 use std::rc::Rc;
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
-use crate::{DataType, backends::metal::{
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
-    MTLDeviceExt, MTLResource, MTLResourceOptions, MetalArray, ProtocolObject,
-    compilation_parameters::CompilationConfig,
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::dsl::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel}
-}, config::{DecoderLayerType, ShortConvConfig}, parameters::ParameterTree, DeviceContext};
+use crate::{
+    DataType,
+    DeviceContext,
+    backends::metal::{
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
+        MTLDeviceExt, MTLResource, MTLResourceOptions, MetalArray, ProtocolObject,
+        compilation_parameters::CompilationConfig,
+        forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel}
+    },
+    config::{DecoderLayerType, ShortConvConfig},
+    parameters::ParameterTree,
+};
 
 pub(crate) struct ShortConvMixer {
     layer_index: usize,
