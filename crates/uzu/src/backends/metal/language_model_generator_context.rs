@@ -9,9 +9,8 @@ use std::{
 use crate::backends::{
     common::Context,
     metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
-        MTLEvent, MTLResourceOptions, ProtocolObject, Retained,
-        kernel::dsl::MaskUpdateKernel,
+        MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent,
+        ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
     },
 };
 
@@ -59,29 +58,20 @@ pub struct AsyncBuffers {
 
 impl AsyncBuffers {
     pub fn new(
-        device: &Retained<ProtocolObject<dyn MTLDevice>>,
+        context: &MTLContext,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions = device
-            .new_buffer(
-                max_tokens * std::mem::size_of::<i32>(),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+        let positions = context
+            .allocate_buffer((max_tokens * std::mem::size_of::<i32>()) as u64)
             .expect("Failed to create positions buffer");
-        let seeds = device
-            .new_buffer(
-                max_tokens * std::mem::size_of::<u64>(),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+        let seeds = context
+            .allocate_buffer((max_tokens * std::mem::size_of::<u64>()) as u64)
             .expect("Failed to create seeds buffer");
-        let results = device
-            .new_buffer(
-                batch_size * std::mem::size_of::<u32>(),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+        let results = context
+            .allocate_buffer((batch_size * std::mem::size_of::<u32>()) as u64)
             .expect("Failed to create results buffer");
-        let event = device.new_event().expect("Failed to create event");
+        let event = context.device.new_event().expect("Failed to create event");
 
         Self {
             positions,
@@ -280,7 +270,7 @@ impl LanguageModelGeneratorContext {
         let async_batch_size =
             decoding_config.async_batch_size.resolve(model_path);
         let async_buffers = AsyncBuffers::new(
-            &context.device,
+            &context,
             max_prefix_length,
             async_batch_size,
         );

@@ -7,6 +7,14 @@ pub trait Context: Sized {
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
+    fn allocate_buffer(
+        &self,
+        size: u64,
+    ) -> Result<
+        <Self::Backend as Backend>::Buffer,
+        <Self::Backend as Backend>::Error,
+    >;
+
     fn allocate_command_buffer(
         &self
     ) -> Result<

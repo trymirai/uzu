@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
-    backends::metal::{
-        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
-        kernel::matmul::common::{MatmulArguments, transpose_configuration},
+    backends::{
+        common::Context,
+        metal::{
+            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLContext, MTLError, ProtocolObject, Retained,
+            kernel::matmul::common::{MatmulArguments, transpose_configuration},
+        },
     },
 };
 
@@ -257,11 +260,7 @@ impl Kernel {
             return;
         }
         self.accumulator_buffer = Some(
-            mtl.device
-                .new_buffer(
-                    required_bytes as usize,
-                    MTLResourceOptions::STORAGE_MODE_PRIVATE,
-                )
+            mtl.allocate_buffer(required_bytes as u64)
                 .expect("Failed to create accumulator buffer"),
         );
         self.accumulator_buffer_bytes = required_bytes;

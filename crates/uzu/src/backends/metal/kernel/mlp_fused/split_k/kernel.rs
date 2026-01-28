@@ -3,11 +3,14 @@ use std::{collections::HashMap, ptr::NonNull};
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
-    backends::metal::{
-        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLDeviceExt, MTLError, MTLFunctionConstantValues, MTLResourceOptions,
-        ProtocolObject, Retained,
-        kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
+    backends::{
+        common::Context,
+        metal::{
+            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
+            ProtocolObject, Retained,
+            kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
+        },
     },
 };
 
@@ -130,14 +133,12 @@ impl Kernel {
         {
             return;
         }
-        self.up_accumulator_buffer = context.device.new_buffer(
-            required_bytes,
-            MTLResourceOptions::STORAGE_MODE_PRIVATE,
-        );
-        self.gate_accumulator_buffer = context.device.new_buffer(
-            required_bytes,
-            MTLResourceOptions::STORAGE_MODE_PRIVATE,
-        );
+        self.up_accumulator_buffer = context
+            .allocate_buffer(required_bytes as u64)
+            .ok();
+        self.gate_accumulator_buffer = context
+            .allocate_buffer(required_bytes as u64)
+            .ok();
         self.accumulator_buffer_bytes = required_bytes;
     }
 

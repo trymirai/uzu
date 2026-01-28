@@ -4,29 +4,23 @@
 use bytemuck;
 use half::{bf16, f16};
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
     MTLResourceOptions,
 };
 use uzu::{
     DataType,
-    backends::metal::{
-        MTLContext,
-        kernel::rms_norm::{
-            QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel,
-            RMSNormKernelType,
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext,
+            kernel::rms_norm::{
+                QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel,
+                RMSNormKernelType,
+            },
+            metal_extensions::CommandBufferTimingExt,
         },
-        metal_extensions::CommandBufferTimingExt,
     },
 };
-
-fn create_test_context() -> Result<MTLContext, String> {
-    let device =
-        <dyn MTLDevice>::system_default().ok_or("No Metal device available")?;
-    let command_queue =
-        device.new_command_queue().ok_or("Failed to create command queue")?;
-    MTLContext::new(device, command_queue)
-        .map_err(|e| format!("Failed to create MTLContext: {:?}", e))
-}
 
 // Helper trait to unify different float types for testing
 trait TestFloat:
@@ -315,7 +309,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     OutputT: TestFloat,
 {
     // Create Metal context
-    let mtl_context = match create_test_context() {
+    let mtl_context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm test: {}", e);
@@ -484,7 +478,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     ScaleT: TestFloat,
     OutputT: TestFloat,
 {
-    let mtl_context = match create_test_context() {
+    let mtl_context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm edge case test: {}", e);
@@ -833,7 +827,7 @@ fn perf_rms_norm_with_size(
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let mtl_context = match create_test_context() {
+    let mtl_context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm perf test: {}", e);
@@ -996,7 +990,7 @@ fn perf_rms_norm_16k() {
 #[test]
 fn qk_norm_test() {
     // Test to verify that the QK norm kernel now accesses the correct data ranges
-    let mtl_context = match create_test_context() {
+    let mtl_context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping QK norm buffer addressing test: {}", e);

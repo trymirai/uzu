@@ -1,16 +1,18 @@
-use metal::{MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use std::time::Instant;
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
-    kernel::moe::{
-        MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-        MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-        MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments,
+    kernel::{
+        dsl::MoeFinalizeKernel,
+        moe::{
+            MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
+            MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
+            MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+        },
     },
 };
 
@@ -343,7 +345,8 @@ fn test_moe_pipeline_breakdown_decode() {
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
-    let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
+    let finalize_kernel = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
+        .expect("finalize");
     let router_topk_fused_kernel =
         MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
 
@@ -499,21 +502,18 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let finalize_perf = time_kernel("Finalize", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        finalize_kernel
-            .encode(
-                &cb,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &y_out_buf,
-                    t,
-                    d_model,
-                    k,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("finalize");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        finalize_kernel.encode(
+            &tok2row_buf,
+            &topk_probs_buf,
+            &y_partial_buf,
+            &y_out_buf,
+            t as u32,
+            d_model as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
     });

@@ -1,6 +1,5 @@
 mod array;
 mod backend;
-mod buffer_allocator;
 mod classifier_context;
 mod command_buffer;
 pub mod compilation_parameters;
@@ -20,7 +19,6 @@ pub use metal::prelude::*;
 
 pub use array::MetalArray;
 pub use backend::Metal;
-pub use buffer_allocator::BufferAllocator;
 pub use classifier_context::ClassifierContext;
 pub use context::{
     DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext,

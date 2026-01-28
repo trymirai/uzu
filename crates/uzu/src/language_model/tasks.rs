@@ -1,9 +1,12 @@
 use std::mem::size_of;
 
 use super::LanguageModelGeneratorContext;
-use crate::backends::metal::{
-    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject, Retained,
-    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
+use crate::backends::{
+    common::Context,
+    metal::{
+        BufferExt, MTLBuffer, ProtocolObject, Retained,
+        forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
+    },
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
@@ -119,11 +122,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             key,
             predicate_buffer: context
                 .mtl_context
-                .device
-                .new_buffer(
-                    size_of::<u32>(),
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .allocate_buffer(size_of::<u32>() as u64)
                 .expect("Failed to create predicate buffer"),
         }
     }

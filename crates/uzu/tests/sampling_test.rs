@@ -1,23 +1,26 @@
 mod common;
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
     MTLResourceOptions,
 };
 use rand::{Rng, seq::SliceRandom};
 // for Vec::shuffle
 use uzu::{
-    backends::metal::{
-        KernelDataType, MTLContext,
-        kernel::{
-            SamplingKernel,
-            dsl::{
-                GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
-                TopPKernel,
+    backends::{
+        common::Context,
+        metal::{
+            KernelDataType, MTLContext,
+            kernel::{
+                SamplingKernel,
+                dsl::{
+                    GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
+                    TopPKernel,
+                },
+                sampling::ArgmaxStrategy,
             },
-            sampling::ArgmaxStrategy,
+            metal_extensions::CommandBufferTimingExt,
         },
-        metal_extensions::CommandBufferTimingExt,
     },
     language_model::gumbel::{gumbel_float, revidx},
     session::parameter::SamplingMethod,
@@ -25,15 +28,6 @@ use uzu::{
 
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
-
-fn create_test_context() -> Result<MTLContext, String> {
-    let device =
-        <dyn MTLDevice>::system_default().ok_or("No Metal device available")?;
-    let command_queue =
-        device.new_command_queue().ok_or("Failed to create command queue")?;
-    MTLContext::new(device, command_queue)
-        .map_err(|e| format!("Failed to create MTLContext: {:?}", e))
-}
 
 fn cpu_reference_top_p(
     row_logits: &[f32],
@@ -93,7 +87,7 @@ fn cpu_reference_min_p(
 }
 
 fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping argmax test: {}", e);
@@ -206,7 +200,7 @@ fn test_topp_sampling_from_prob_exact_match(
 
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Skipping topP exact match test: {}", e);
@@ -370,7 +364,7 @@ fn test_topp_sampling_statistical_large() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     // ===== 1. Create Metal context =====
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping large statistical test: {}", e);
@@ -508,7 +502,7 @@ fn perf_topp_128k_vocab() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping perf test: {}", e);
@@ -624,7 +618,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping argmax perf test: {}", e);
@@ -756,7 +750,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
 #[test]
 fn test_categorical_sampling() {
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical test: {}", e);
@@ -899,7 +893,7 @@ fn test_categorical_sampling() {
 fn test_categorical_sampling_statistical() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical statistical test: {}", e);
@@ -1046,7 +1040,7 @@ fn perf_categorical_128k_vocab() {
 
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical perf test: {}", e);
@@ -1154,7 +1148,7 @@ fn perf_categorical_128k_vocab() {
 
 #[test]
 fn test_temperature_gpu_cpu_match() {
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping temperature gpu cpu match test: {}", e);
@@ -1244,7 +1238,7 @@ fn test_temperature_gpu_cpu_match() {
 fn test_topk_gpu_cpu_match() {
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping topk gpu cpu match test: {}", e);
@@ -1330,7 +1324,7 @@ fn test_topk_gpu_cpu_match() {
 fn test_topp_gpu_cpu_match() {
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping topp gpu cpu match test: {}", e);
@@ -1420,7 +1414,7 @@ fn test_topp_gpu_cpu_match() {
 fn test_minp_gpu_cpu_match() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping minp gpu cpu match test: {}", e);
@@ -1505,7 +1499,7 @@ fn test_minp_sampling_exact_match(
 
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Skipping minp exact match test: {}", e);
@@ -1649,7 +1643,7 @@ fn test_minp_sampling_match_large() {
 
 #[test]
 fn test_gumbel_gpu_cpu_match() {
-    let context = match create_test_context() {
+    let context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping gumbel gpu cpu match test: {}", e);

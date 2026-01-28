@@ -3,12 +3,15 @@
 use bytemuck;
 use half::bf16;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDeviceExt, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
+    MTLResourceOptions,
 };
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
+use uzu::backends::{
+    common::Context,
+    metal::{
+        KernelDataType, MTLContext,
+        kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
+    },
 };
 
 #[allow(dead_code)]
@@ -175,15 +178,10 @@ fn ssd_update_ref_bf16(
     (y, next_state)
 }
 
-fn create_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
-}
 
 #[test]
 fn ssd_update_with_z_bf16() {
-    let Some(ctx) = create_context() else {
+    let Some(ctx) = MTLContext::new().ok() else {
         eprintln!("Skipping: no Metal device");
         return;
     };

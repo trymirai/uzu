@@ -23,9 +23,12 @@ use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
-    backends::metal::{
-        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
-        MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+    backends::{
+        common::Context,
+        metal::{
+            MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLContext, MetalArray, ProtocolObject, Retained,
+        },
     },
     session::parameter::SamplingMethod,
 };
@@ -461,11 +464,7 @@ impl ForwardPassState {
         let create_buffer = |size: usize| -> ArrayCell {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context
-                .device
-                .new_buffer(
-                    buffer_size,
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .allocate_buffer(buffer_size as u64)
                 .expect("Failed to create buffer");
             RefCell::new(unsafe {
                 MetalArray::new(
@@ -484,11 +483,7 @@ impl ForwardPassState {
                 let buffer_size =
                     batch_size * num_labels * data_type.size_in_bytes();
                 let buffer = context
-                    .device
-                    .new_buffer(
-                        buffer_size,
-                        MTLResourceOptions::STORAGE_MODE_SHARED,
-                    )
+                    .allocate_buffer(buffer_size as u64)
                     .expect("Failed to create buffer");
                 RefCell::new(unsafe {
                     MetalArray::new(
@@ -522,11 +517,7 @@ impl ForwardPassState {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context
-                .device
-                .new_buffer(
-                    buffer_size,
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .allocate_buffer(buffer_size as u64)
                 .expect("Failed to create buffer");
             RefCell::new(unsafe { MetalArray::new(buffer, dims, data_type) })
         };

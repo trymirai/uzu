@@ -7,12 +7,15 @@ use super::{
 };
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::quant_matmul::{
-            QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+    backends::{
+        common::Context,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+            MTLContext, MTLError, ProtocolObject, Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::quant_matmul::{
+                QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+            },
         },
     },
     config::QuantizationMode,
@@ -167,11 +170,7 @@ impl QuantizedEmbeddingReadout {
                 };
                 let size_bytes = (vocab_size * num_groups * elem_size) as u64;
                 let buf = mtl_context
-                    .device
-                    .new_buffer(
-                        size_bytes.try_into().unwrap(),
-                        MTLResourceOptions::STORAGE_MODE_SHARED,
-                    )
+                    .allocate_buffer(size_bytes)
                     .expect("Failed to allocate buffer");
                 unsafe {
                     std::ptr::write_bytes(

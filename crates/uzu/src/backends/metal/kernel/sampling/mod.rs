@@ -3,14 +3,17 @@ use std::mem::size_of;
 use thiserror::Error;
 
 use crate::{
-    backends::metal::{
-        KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
-        kernel::dsl::{
-            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-            BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-            TopKKernel, TopPKernel,
+    backends::{
+        common::Context,
+        metal::{
+            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            kernel::dsl::{
+                ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
+                BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
+                TopKKernel, TopPKernel,
+            },
         },
     },
     session::parameter::SamplingMethod,
@@ -128,10 +131,8 @@ impl SamplingKernel {
                     max_batch_size * max_vocab_groups_per_batch;
 
                 let partial_results_buffer = context
-                    .device
-                    .new_buffer(
-                        max_partial_results * size_of::<ArgmaxPair>(),
-                        MTLResourceOptions::STORAGE_MODE_SHARED,
+                    .allocate_buffer(
+                        (max_partial_results * size_of::<ArgmaxPair>()) as u64,
                     )
                     .expect("Failed to create partial results buffer");
 
