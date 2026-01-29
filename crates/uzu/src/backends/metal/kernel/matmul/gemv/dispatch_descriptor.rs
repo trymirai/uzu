@@ -12,7 +12,7 @@ use crate::{
 
 /// Default max batch size for GEMV kernel.
 /// Can be overridden via UZU_GEMV_MAX_BATCH environment variable.
-const DEFAULT_GEMV_MAX_BATCH: i32 = 4;
+const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
 
 static GEMV_MAX_BATCH: OnceLock<i32> = OnceLock::new();
 
@@ -119,10 +119,26 @@ impl DispatchDescriptor {
         } else {
             arguments.batch
         };
+        let mut batch_pack = 1;
+        let mut vector_loads = false;
+        let mut ilp2 = false;
+        if m <= 8 {
+            batch_pack = 4.min(m);
+            vector_loads = batch_pack > 1;
+            ilp2 = batch_pack > 1;
+        }
+
+        if batch_pack > m {
+            batch_pack = 1;
+        }
+
         let pipeline_configuration = select_configuration(
             arguments.transpose_a,
             arguments.transpose_b,
             transpose_matrix,
+            batch_pack as u32,
+            vector_loads,
+            ilp2,
             arguments.input_dim,
             output_dimension,
             false,
@@ -179,7 +195,9 @@ impl DispatchDescriptor {
 
         // For batched GEMV, use y-dimension for batch rows
         let batch_rows = arguments.batch;
-        let threadgroup_count_y = batch_rows.max(1) as u64;
+        let threadgroup_count_y = ((batch_rows + batch_pack - 1)
+            / batch_pack)
+            .max(1) as u64;
 
         let threadgroups = MTLSize::new(
             threadgroup_count_x as usize,

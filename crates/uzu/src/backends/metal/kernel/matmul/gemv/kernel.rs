@@ -30,11 +30,13 @@ fn gemv_kernel_name(
 
     let prefix = if config.transpose_matrix {
         "gemv_t"
+    } else if config.batch_pack > 1 {
+        "gemv_bp_vec_ilp2"
     } else {
         "gemv"
     };
 
-    Ok(format!(
+    let suffix = format!(
         "{prefix}_{dtype_name}_bm{}_bn{}_sm{}_sn{}_tm{}_tn{}_nc{}_axpby{}",
         config.threadgroup_rows,
         config.threadgroup_cols,
@@ -44,7 +46,13 @@ fn gemv_kernel_name(
         config.elements_per_thread_col,
         config.non_contiguous_batch as u8,
         config.do_axpby as u8,
-    ))
+    );
+
+    if config.batch_pack > 1 && !config.transpose_matrix {
+        Ok(format!("{suffix}_bp{}", config.batch_pack))
+    } else {
+        Ok(suffix)
+    }
 }
 
 pub struct Kernel {
@@ -83,6 +91,9 @@ impl Kernel {
                 transpose_a: false,
                 transpose_b: true,
                 transpose_matrix: false,
+                batch_pack: 1,
+                vector_loads: false,
+                ilp2: false,
                 threadgroup_rows,
                 threadgroup_cols: 1,
                 threads_per_simdgroup_row: 1,

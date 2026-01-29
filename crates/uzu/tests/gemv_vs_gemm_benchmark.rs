@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use half::bf16;
 use metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
     MTLDeviceExt, MTLResourceOptions,
 };
 use objc2::rc::autoreleasepool;
@@ -42,6 +42,12 @@ fn benchmark_matmul(
     iteration_count: usize,
     warmup_count: usize,
 ) -> BenchmarkResult {
+    let use_transposed_b = std::env::var("UZU_GEMV_USE_TRANSPOSED_B")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0)
+        != 0;
+
     let a_buffer = context
         .device
         .new_buffer(
@@ -64,7 +70,38 @@ fn benchmark_matmul(
         )
         .expect("Failed to create buffer");
 
+    if use_transposed_b {
+        let a_len = batch_size * input_dim;
+        let b_len = output_dim * input_dim;
+        let mut a_host = vec![bf16::from_f32(0.0); a_len];
+        let mut b_host = vec![bf16::from_f32(0.0); b_len];
+        for i in 0..a_len {
+            a_host[i] = bf16::from_f32((i % 256) as f32);
+        }
+        for i in 0..b_len {
+            b_host[i] = bf16::from_f32((i % 127) as f32);
+        }
+
+        let mut bt_host = vec![bf16::from_f32(0.0); b_len];
+        for n in 0..output_dim {
+            let row_offset = n * input_dim;
+            for k in 0..input_dim {
+                bt_host[k * output_dim + n] = b_host[row_offset + k];
+            }
+        }
+
+        unsafe {
+            let a_ptr = a_buffer.contents().as_ptr() as *mut bf16;
+            std::ptr::copy_nonoverlapping(a_host.as_ptr(), a_ptr, a_len);
+            let b_ptr = b_buffer.contents().as_ptr() as *mut bf16;
+            std::ptr::copy_nonoverlapping(bt_host.as_ptr(), b_ptr, b_len);
+        }
+    }
+
     let mut kernel = MatmulKernel::new(DataType::BF16).expect("kernel");
+
+    let transpose_b = if use_transposed_b { false } else { true };
+    let ldb = if transpose_b { input_dim } else { output_dim };
 
     let args = MatmulArguments {
         a: &a_buffer,
@@ -77,13 +114,13 @@ fn benchmark_matmul(
         input_dim: input_dim as i32,
         output_dim: output_dim as i32,
         lda: input_dim as i32,
-        ldb: input_dim as i32,
+        ldb: ldb as i32,
         ldd: output_dim as i32,
         batch_count: 1,
         alpha: 1.0,
         beta: 0.0,
         transpose_a: false,
-        transpose_b: true,
+        transpose_b,
     };
 
     let kernel_variant = determine_kernel_variant(context, DataType::BF16, &args)

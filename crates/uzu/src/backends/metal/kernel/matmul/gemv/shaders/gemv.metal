@@ -248,6 +248,257 @@ struct GEMVKernel {
   }
 };
 
+template <typename T>
+struct Vec4Loader;
+
+template <>
+struct Vec4Loader<float> {
+  static METAL_FUNC float4 load(const device float* src) {
+    const device packed_float4* ptr =
+        reinterpret_cast<const device packed_float4*>(src);
+    packed_float4 v = *ptr;
+    return float4(v);
+  }
+};
+
+template <>
+struct Vec4Loader<half> {
+  static METAL_FUNC float4 load(const device half* src) {
+    const device packed_half4* ptr =
+        reinterpret_cast<const device packed_half4*>(src);
+    packed_half4 v = *ptr;
+    return float4(v);
+  }
+};
+
+template <>
+struct Vec4Loader<bfloat16_t> {
+  static METAL_FUNC float4 load(const device bfloat16_t* src) {
+    const device packed_ushort4* ptr =
+        reinterpret_cast<const device packed_ushort4*>(src);
+    packed_ushort4 v = *ptr;
+    return float4(
+        float(uint16_to_bfloat16(v.x)),
+        float(uint16_to_bfloat16(v.y)),
+        float(uint16_to_bfloat16(v.z)),
+        float(uint16_to_bfloat16(v.w))
+    );
+  }
+};
+
+///////////////////////////////////////////////////////////////////////////////
+/// Batched matrix vector multiplication (batch pack, vector loads)
+///////////////////////////////////////////////////////////////////////////////
+
+template <
+    typename T,
+    const int BM,        /* Threadgroup rows (in simdgroups) */
+    const int BN,        /* Threadgroup cols (in simdgroups) */
+    const int SM,        /* Simdgroup rows (in threads) */
+    const int SN,        /* Simdgroup cols (in threads) */
+    const int TM,        /* Thread rows (in elements) */
+    const bool kDoAxpby, /* Do out = alpha * out + beta * bias */
+    const int BP,        /* Batch rows per threadgroup */
+    const bool kILP2>
+struct GEMVBatchKernelVec {
+  using acc_type = float;
+
+  MTL_CONST int threadsM = BM * SM;
+  MTL_CONST int threadsN = BN * SN;
+
+  MTL_CONST int blockM = threadsM * TM;
+  MTL_CONST int blockN = threadsN * 4;
+
+  static_assert(SM * SN == 32, "simdgroup can only have 32 threads");
+
+  MTL_CONST short tgp_mem_size = BN > 1 ? BN * (blockM + TM) * BP : 0;
+  MTL_CONST bool needs_tgp_reduction = BN > 1;
+
+  static METAL_FUNC void run(
+      const device T* mat,
+      const device T* in_vec,
+      const device T* bias,
+      device T* out_vec,
+      const constant int& in_vec_size,
+      const constant int& out_vec_size,
+      const constant int& matrix_ld,
+      const constant float& alpha,
+      const constant float& beta,
+      const constant int& bias_stride,
+      const int batch_row_base,
+      const int batch_rows,
+      const constant int& output_ld,
+      const constant int& vector_ld,
+      threadgroup acc_type* tgp_memory,
+      uint3 tid,
+      uint3 lid,
+      uint simd_gid,
+      uint simd_lid
+  ) {
+    (void)lid;
+
+    thread acc_type result[BP][TM] = {{0}};
+
+    const int thrM = SN != 32 ? simd_lid / SN : 0;
+    const int thrN = SN != 32 ? simd_lid % SN : int(simd_lid);
+
+    const int sgN = BN != 1 ? (simd_gid % BN) : 0;
+
+    const int simdM = BN != 1 ? SM * (simd_gid / BN) : int(SM * simd_gid);
+    const int simdN = BN != 1 ? SN * (simd_gid % BN) : 0;
+
+    int bm = (simdM + thrM) * TM;
+    int bn = (simdN + thrN) * 4;
+
+    int out_row = tid.x * blockM + bm;
+    if (out_row >= out_vec_size)
+      return;
+
+    out_row = out_row + TM <= out_vec_size ? out_row : out_vec_size - TM;
+
+    mat += out_row * matrix_ld;
+
+    constexpr const uniform<int> loop_stride = make_uniform(blockN);
+    const uniform<int> in_size = make_uniform(in_vec_size);
+    const uniform<int> n_iter = in_size / loop_stride;
+    const uniform<int> last_iter = loop_stride * n_iter;
+    const uniform<int> leftover = in_size - last_iter;
+
+    int i = 0;
+    if (kILP2) {
+      for (; i + 1 < n_iter; i += 2) {
+        const int bn0 = bn;
+        const int bn1 = bn + blockN;
+        MTL_PRAGMA_UNROLL
+        for (int bp = 0; bp < BP; bp++) {
+          const int batch_row = batch_row_base + bp;
+          if (batch_row < batch_rows) {
+            const device T* vec_ptr =
+                in_vec + batch_row * vector_ld;
+            float4 v0 = Vec4Loader<T>::load(vec_ptr + bn0);
+            float4 v1 = Vec4Loader<T>::load(vec_ptr + bn1);
+            MTL_PRAGMA_UNROLL
+            for (int tm = 0; tm < TM; tm++) {
+              const device T* mat_ptr =
+                  mat + tm * matrix_ld;
+              float4 m0 = Vec4Loader<T>::load(mat_ptr + bn0);
+              float4 m1 = Vec4Loader<T>::load(mat_ptr + bn1);
+              result[bp][tm] += dot(m0, v0) + dot(m1, v1);
+            }
+          }
+        }
+        bn += 2 * blockN;
+      }
+    }
+
+    for (; i < n_iter; ++i) {
+      MTL_PRAGMA_UNROLL
+      for (int bp = 0; bp < BP; bp++) {
+        const int batch_row = batch_row_base + bp;
+        if (batch_row < batch_rows) {
+          const device T* vec_ptr =
+              in_vec + batch_row * vector_ld;
+          float4 v0 = Vec4Loader<T>::load(vec_ptr + bn);
+          MTL_PRAGMA_UNROLL
+          for (int tm = 0; tm < TM; tm++) {
+            const device T* mat_ptr =
+                mat + tm * matrix_ld;
+            float4 m0 = Vec4Loader<T>::load(mat_ptr + bn);
+            result[bp][tm] += dot(m0, v0);
+          }
+        }
+      }
+      bn += blockN;
+    }
+
+    if (leftover > 0) {
+      // Fallback to scalar loads for tail
+      MTL_PRAGMA_UNROLL
+      for (int bp = 0; bp < BP; bp++) {
+        const int batch_row = batch_row_base + bp;
+        if (batch_row < batch_rows) {
+          for (int tm = 0; tm < TM; tm++) {
+            acc_type acc = 0;
+            int mat_offset = tm * matrix_ld + bn;
+            int vec_offset = batch_row * vector_ld + bn;
+            for (int tn = 0; tn < 4; tn++) {
+              if (bn + tn < in_size) {
+                acc += float(mat[mat_offset + tn]) *
+                       float(in_vec[vec_offset + tn]);
+              }
+            }
+            result[bp][tm] += acc;
+          }
+        }
+      }
+    }
+
+    MTL_PRAGMA_UNROLL
+    for (int bp = 0; bp < BP; bp++) {
+      MTL_PRAGMA_UNROLL
+      for (int tm = 0; tm < TM; tm++) {
+        MTL_PRAGMA_UNROLL
+        for (ushort sn = (SN / 2); sn >= 1; sn >>= 1) {
+          result[bp][tm] += simd_shuffle_down(result[bp][tm], sn);
+        }
+      }
+    }
+
+    if (needs_tgp_reduction) {
+      const int tgp_stride = BN * (blockM + TM);
+      if (thrN == 0) {
+        MTL_PRAGMA_UNROLL
+        for (int bp = 0; bp < BP; bp++) {
+          threadgroup acc_type* tgp_results =
+              tgp_memory + bp * tgp_stride + sgN * (blockM + TM) + bm;
+          MTL_PRAGMA_UNROLL
+          for (int tm = 0; tm < TM; tm++) {
+            tgp_results[tm] = result[bp][tm];
+          }
+        }
+
+        threadgroup_barrier(mem_flags::mem_none);
+
+        if (sgN == 0) {
+          MTL_PRAGMA_UNROLL
+          for (int bp = 0; bp < BP; bp++) {
+            threadgroup acc_type* tgp_results =
+                tgp_memory + bp * tgp_stride + bm;
+            MTL_PRAGMA_UNROLL
+            for (int sgn = 1; sgn < BN; sgn++) {
+              MTL_PRAGMA_UNROLL
+              for (int tm = 0; tm < TM; tm++) {
+                result[bp][tm] += tgp_results[sgn * (blockM + TM) + tm];
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (simdN == 0 && thrN == 0) {
+      MTL_PRAGMA_UNROLL
+      for (int bp = 0; bp < BP; bp++) {
+        const int batch_row = batch_row_base + bp;
+        if (batch_row >= batch_rows)
+          continue;
+        device T* out_row_ptr = out_vec + batch_row * output_ld;
+        MTL_PRAGMA_UNROLL
+        for (int tm = 0; tm < TM; tm++) {
+          if (kDoAxpby) {
+            out_row_ptr[out_row + tm] =
+                static_cast<T>(alpha) * static_cast<T>(result[bp][tm]) +
+                static_cast<T>(beta) * bias[(out_row + tm) * bias_stride];
+          } else {
+            out_row_ptr[out_row + tm] =
+                static_cast<T>(result[bp][tm]);
+          }
+        }
+      }
+    }
+  }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 /// Vector matrix multiplication
 ///////////////////////////////////////////////////////////////////////////////
@@ -525,6 +776,119 @@ template <
   );
 }
 
+#define instantiate_gemv_bp_vec_ilp2_helper(                                   \
+    name,                                                                      \
+    itype,                                                                     \
+    bm,                                                                        \
+    bn,                                                                        \
+    sm,                                                                        \
+    sn,                                                                        \
+    tm,                                                                        \
+    nc,                                                                        \
+    axpby,                                                                     \
+    bp                                                                         \
+)                                                                              \
+  instantiate_kernel(                                                          \
+      "gemv_bp_vec_ilp2_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn        \
+      "_tm" #tm "_tn4_nc" #nc "_axpby" #axpby "_bp" #bp,                       \
+      gemv_bp_vec_ilp2,                                                        \
+      itype,                                                                   \
+      bm,                                                                      \
+      bn,                                                                      \
+      sm,                                                                      \
+      sn,                                                                      \
+      tm,                                                                      \
+      nc,                                                                      \
+      axpby,                                                                   \
+      bp                                                                       \
+  )
+
+template <
+    typename T,
+    const int BM,          /* Threadgroup rows (in simdgroups) */
+    const int BN,          /* Threadgroup cols (in simdgroups) */
+    const int SM,          /* Simdgroup rows (in threads) */
+    const int SN,          /* Simdgroup cols (in threads) */
+    const int TM,          /* Thread rows (in elements) */
+    const bool kDoNCBatch, /* Batch ndim > 1 */
+    const bool kDoAxpby,   /* Do out = alpha * out + beta * bias */
+    const int BP>          /* Batch rows per threadgroup */
+[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_bp_vec_ilp2(
+    const device T* mat [[buffer(0)]],
+    const device T* in_vec [[buffer(1)]],
+    const device T* bias [[buffer(2)]],
+    device T* out_vec [[buffer(3)]],
+    const constant int& in_vec_size [[buffer(4)]],
+    const constant int& out_vec_size [[buffer(5)]],
+    const constant int& marix_ld [[buffer(6)]],
+    const constant float& alpha [[buffer(7)]],
+    const constant float& beta [[buffer(8)]],
+    const constant int& batch_ndim [[buffer(9)]],
+    const constant int* batch_shape [[buffer(10)]],
+    const constant int64_t* vector_batch_stride [[buffer(11)]],
+    const constant int64_t* matrix_batch_stride [[buffer(12)]],
+    const constant int64_t* bias_batch_stride [[buffer(13)]],
+    const constant int& bias_stride [[buffer(14)]],
+    const constant int& batch_rows [[buffer(15)]],
+    const constant int& output_ld [[buffer(16)]],
+    const constant int& vector_ld [[buffer(17)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint3 lid [[thread_position_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  using gemv_kernel =
+      GEMVBatchKernelVec<T, BM, BN, SM, SN, TM, kDoAxpby, BP, true>;
+  threadgroup typename gemv_kernel::acc_type tgp_memory
+      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
+
+  const int batch_row_base = int(tid.y) * BP;
+  if (batch_row_base >= batch_rows) {
+    return;
+  }
+
+  if (kDoNCBatch) {
+    in_vec += elem_to_loc(tid.z, batch_shape, vector_batch_stride, batch_ndim);
+    mat += elem_to_loc(tid.z, batch_shape, matrix_batch_stride, batch_ndim);
+
+    if (kDoAxpby) {
+      bias += elem_to_loc(tid.z, batch_shape, bias_batch_stride, batch_ndim);
+    }
+
+  } else {
+    in_vec += tid.z * vector_batch_stride[0];
+    mat += tid.z * matrix_batch_stride[0];
+
+    if (kDoAxpby) {
+      bias += tid.z * bias_batch_stride[0];
+    }
+  }
+
+  out_vec += tid.z * batch_rows * output_ld;
+
+  gemv_kernel::run(
+      mat,
+      in_vec,
+      bias,
+      out_vec,
+      in_vec_size,
+      out_vec_size,
+      marix_ld,
+      alpha,
+      beta,
+      bias_stride,
+      batch_row_base,
+      batch_rows,
+      output_ld,
+      vector_ld,
+      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
+      tid,
+      lid,
+      simd_gid,
+      simd_lid
+  );
+}
+
 #define instantiate_gemv_helper(                                               \
     name,                                                                      \
     itype,                                                                     \
@@ -559,6 +923,12 @@ template <
   instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 0) \
   instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 1) // clang-format on
 
+#define instantiate_gemv_bp_vec_ilp2(name, itype, bm, bn, sm, sn, tm, bp)        \
+  instantiate_gemv_bp_vec_ilp2_helper(name, itype, bm, bn, sm, sn, tm, 0, 0, bp) \
+  instantiate_gemv_bp_vec_ilp2_helper(name, itype, bm, bn, sm, sn, tm, 0, 1, bp) \
+  instantiate_gemv_bp_vec_ilp2_helper(name, itype, bm, bn, sm, sn, tm, 1, 0, bp) \
+  instantiate_gemv_bp_vec_ilp2_helper(name, itype, bm, bn, sm, sn, tm, 1, 1, bp) // clang-format on
+
 // clang-format off
 #define instantiate_gemv_blocks(name, itype) \
   instantiate_gemv(name, itype, 1,  8, 1, 32, 4, 4) \
@@ -569,10 +939,26 @@ template <
   instantiate_gemv(name, itype, 4,  1, 1, 32, 4, 4) \
   instantiate_gemv(name, itype, 8,  1, 1, 32, 4, 4) // clang-format on
 
+#define instantiate_gemv_bp_vec_ilp2_blocks(name, itype, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 1,  8, 1, 32, 4, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 1,  8, 1, 32, 1, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 1,  1, 8,  4, 4, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 1,  1, 8,  4, 1, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 4,  1, 1, 32, 1, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 4,  1, 1, 32, 4, bp) \
+  instantiate_gemv_bp_vec_ilp2(name, itype, 8,  1, 1, 32, 4, bp) // clang-format on
+
 instantiate_gemv_blocks(float32, float);
 instantiate_gemv_blocks(float16, half);
 instantiate_gemv_blocks(bfloat16, bfloat16_t);
 instantiate_gemv_blocks(complex64, complex64_t);
+instantiate_gemv_bp_vec_ilp2_blocks(float32, float, 2);
+instantiate_gemv_bp_vec_ilp2_blocks(float16, half, 2);
+instantiate_gemv_bp_vec_ilp2_blocks(bfloat16, bfloat16_t, 2);
+instantiate_gemv_bp_vec_ilp2_blocks(float32, float, 4);
+instantiate_gemv_bp_vec_ilp2_blocks(float16, half, 4);
+instantiate_gemv_bp_vec_ilp2_blocks(bfloat16, bfloat16_t, 4);
+
 
 template <
     typename T,
