@@ -1,28 +1,27 @@
-use std::collections::HashMap;
-use std::path::Path;
-use std::{env, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
-use futures::future::try_join_all;
-use futures::{StreamExt, TryStreamExt, stream};
+use async_trait::async_trait;
+use futures::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use proc_macro2::TokenStream;
 use quote::quote;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
-use tokio::task::spawn_blocking;
+use tokio::{io::AsyncReadExt, task::spawn_blocking};
 use walkdir::WalkDir;
 
-use async_trait::async_trait;
-
-use crate::common::compiler::Compiler;
-use crate::common::{caching, envs};
-use crate::debug_log;
-
-use super::ast::MetalKernelInfo;
-use super::toolchain::MetalToolchain;
-use super::wrapper::wrappers;
-
-use super::wrapper::SpecializeBaseIndices;
+use super::{
+    ast::MetalKernelInfo,
+    toolchain::MetalToolchain,
+    wrapper::{SpecializeBaseIndices, wrappers},
+};
+use crate::{
+    common::{caching, compiler::Compiler, envs},
+    debug_log,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ObjectInfo {

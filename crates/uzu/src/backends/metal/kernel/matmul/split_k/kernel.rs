@@ -271,7 +271,7 @@ impl Kernel {
             return;
         }
         self.accumulator_buffer = Some(
-            mtl.allocate_buffer(required_bytes as u64)
+            mtl.create_buffer(required_bytes)
                 .expect("Failed to create accumulator buffer"),
         );
         self.accumulator_buffer_bytes = required_bytes;

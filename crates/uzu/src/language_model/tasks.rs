@@ -122,7 +122,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             key,
             predicate_buffer: context
                 .mtl_context
-                .allocate_buffer(size_of::<u32>() as u64)
+                .create_buffer(size_of::<u32>())
                 .expect("Failed to create predicate buffer"),
         }
     }

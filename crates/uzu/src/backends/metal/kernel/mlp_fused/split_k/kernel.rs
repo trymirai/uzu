@@ -145,10 +145,9 @@ impl Kernel {
         {
             return;
         }
-        self.up_accumulator_buffer =
-            context.allocate_buffer(required_bytes as u64).ok();
+        self.up_accumulator_buffer = context.create_buffer(required_bytes).ok();
         self.gate_accumulator_buffer =
-            context.allocate_buffer(required_bytes as u64).ok();
+            context.create_buffer(required_bytes).ok();
         self.accumulator_buffer_bytes = required_bytes;
     }
 
