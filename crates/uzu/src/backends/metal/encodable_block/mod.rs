@@ -31,6 +31,7 @@ mod short_conv_mixer;
 mod tensor_add_swap;
 mod tensor_copy;
 pub mod transformer_layer;
+pub mod ssd_prefill;
 
 pub use activation::Activation;
 pub use attention::Attention;
