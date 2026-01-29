@@ -100,6 +100,7 @@ fn annotation_from_ast_node(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
+    Array(Box<str>, usize),
     Buffer,
     Constant(Box<str>),
     Shared(Box<str>),
@@ -200,8 +201,29 @@ impl MetalArgument {
                 bail!("empty annotation");
             }
             let annotation_key = annotation.remove(0);
+            let annotation_len = annotation.len();
 
             match &*annotation_key {
+                "dsl.array" => {
+                    if annotation_len != 1 {
+                        bail!(
+                           "dsl.array requires 1 argument, got {annotation_len}"
+                        )
+                    }
+
+                    let mut type_keywords =
+                        self.c_type.split_whitespace().collect::<Vec<_>>();
+                    let asterisk_index = type_keywords.iter()
+                        .position(|&s| s == "*")
+                        .context("dsl.array requires argument to be pointer")?;
+                    type_keywords.remove(asterisk_index);
+                    let last_type_keyword = type_keywords.last().unwrap().as_ref();
+
+                    let rust_type =
+                        Self::scalar_type_to_rust(last_type_keyword)?;
+                    let size = annotation.remove(0).parse::<usize>()?;
+                    Ok(MetalArgumentType::Array(rust_type.into(), size))
+                },
                 "dsl.specialize" => {
                     if !annotation.is_empty() {
                         bail!(

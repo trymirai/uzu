@@ -6,8 +6,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitInt;
 
-use super::ast::{MetalArgumentType, MetalKernelInfo};
-use super::wrapper::SpecializeBaseIndices;
+use super::{
+    ast::{MetalArgumentType, MetalKernelInfo},
+    wrapper::SpecializeBaseIndices,
+};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
@@ -117,7 +119,7 @@ pub fn bindgen(
         .filter(|k| {
             matches!(
                 k.argument_type(),
-                Ok(MetalArgumentType::Buffer | MetalArgumentType::Constant(_))
+                Ok(MetalArgumentType::Array(..) | MetalArgumentType::Buffer | MetalArgumentType::Constant(_))
             )
         })
         .enumerate()
@@ -126,6 +128,18 @@ pub fn bindgen(
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
+                MetalArgumentType::Array(r_type, size) => {
+                    let arg_type = format_ident!("{r_type}");
+                    let arg_size = quote! { #size };
+                    let set = quote! {
+                        compute_encoder.set_value(&#arg_name, #arg_index);
+                    };
+                    let def = quote! {
+                        #arg_name: &[#arg_type; #arg_size]
+                    };
+
+                    (def, set, quote! { #arg_name })
+                },
                 MetalArgumentType::Buffer => {
                     let def = quote! { #arg_name: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer> };
                     let set = quote! {

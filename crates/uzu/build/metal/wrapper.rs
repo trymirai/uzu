@@ -142,7 +142,8 @@ fn kernel_wrappers(
             .arguments
             .iter()
             .filter_map(|a| match a.argument_type() {
-                Ok(MetalArgumentType::Buffer)
+                Ok(MetalArgumentType::Array(..))
+                | Ok(MetalArgumentType::Buffer)
                 | Ok(MetalArgumentType::Constant(_)) => {
                     Some(format!("{} {}", apply_replace(&a.c_type), a.name))
                 },
@@ -196,7 +197,8 @@ fn kernel_wrappers(
                 .arguments
                 .iter()
                 .map(|a| match a.argument_type().unwrap() {
-                    MetalArgumentType::Buffer
+                    MetalArgumentType::Array(..)
+                    | MetalArgumentType::Buffer
                     | MetalArgumentType::Constant(_)
                     | MetalArgumentType::Shared(_) => a.name.to_string(),
                     MetalArgumentType::Specialize(_) => {
