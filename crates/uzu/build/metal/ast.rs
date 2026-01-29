@@ -99,9 +99,15 @@ fn annotation_from_ast_node(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum MetalConstantType {
+    Scalar,
+    Array,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer,
-    Constant(Box<str>),
+    Constant((Box<str>, MetalConstantType)),
     Shared(Box<str>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
@@ -244,8 +250,7 @@ impl MetalArgument {
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
-        } else if (self.c_type.contains("device")
-            || self.c_type.contains("constant"))
+        } else if self.c_type.contains("device")
             && self.c_type.contains('*')
             && !self.c_type.contains('&')
         {
@@ -253,15 +258,17 @@ impl MetalArgument {
         } else if let ["const", "constant", c_type_scalar, "&"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
         {
-            let rust_type = match *c_type_scalar {
-                "uint" | "uint32_t" => "u32",
-                "int" | "int32_t" => "i32",
-                "float" => "f32",
-                _ => {
-                    bail!("unknown scalar type: {c_type_scalar}")
-                },
-            };
-            Ok(MetalArgumentType::Constant(rust_type.into()))
+            Ok(MetalArgumentType::Constant((
+                Self::scalar_type_to_rust(c_type_scalar)?.into(),
+                MetalConstantType::Scalar,
+            )))
+        } else if let ["const", "constant", c_type_scalar, "*"] =
+            self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
+        {
+            Ok(MetalArgumentType::Constant((
+                Self::scalar_type_to_rust(c_type_scalar)?.into(),
+                MetalConstantType::Array,
+            )))
         } else if self.c_type.contains("threadgroup")
             && self.c_type.contains('*')
         {

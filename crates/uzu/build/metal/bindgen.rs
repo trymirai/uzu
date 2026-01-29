@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitInt;
 
-use super::ast::{MetalArgumentType, MetalKernelInfo};
+use super::ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo};
 use super::wrapper::SpecializeBaseIndices;
 
 pub fn bindgen(
@@ -134,11 +134,18 @@ pub fn bindgen(
 
                     (def, set, quote! { #arg_name })
                 },
-                MetalArgumentType::Constant(r_type) => {
+                MetalArgumentType::Constant((r_type, constant_type)) => {
                     let arg_dtype = format_ident!("{r_type}");
-                    let def = quote! { #arg_name: #arg_dtype };
-                    let set = quote! {
-                        compute_encoder.set_value(&#arg_name, #arg_index);
+
+                    let (def, set) = match constant_type {
+                        MetalConstantType::Scalar => (
+                            quote! { #arg_name: #arg_dtype },
+                            quote! { compute_encoder.set_value(&#arg_name, #arg_index); },
+                        ),
+                        MetalConstantType::Array => (
+                            quote! { #arg_name: &[#arg_dtype] },
+                            quote! { compute_encoder.set_slice(#arg_name, #arg_index); },
+                        ),
                     };
 
                     (def, set, quote! { #arg_name })
