@@ -209,7 +209,7 @@ impl ShortConvMixer {
         let padded_size = padded_rows * self.model_dim * element_size;
         let padded_buf = state
             .mtl_context()
-            .allocate_buffer(padded_size as u64)
+            .create_buffer(padded_size)
             .expect("Failed to create padded buffer");
         self.short_conv_kernel
             .encode_pack(

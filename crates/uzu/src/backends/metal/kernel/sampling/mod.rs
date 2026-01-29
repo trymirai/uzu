@@ -131,8 +131,8 @@ impl SamplingKernel {
                     max_batch_size * max_vocab_groups_per_batch;
 
                 let partial_results_buffer = context
-                    .allocate_buffer(
-                        (max_partial_results * size_of::<ArgmaxPair>()) as u64,
+                    .create_buffer(
+                        max_partial_results * size_of::<ArgmaxPair>(),
                     )
                     .expect("Failed to create partial results buffer");
 

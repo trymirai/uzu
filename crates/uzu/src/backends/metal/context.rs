@@ -10,11 +10,13 @@ use super::{
 use crate::{
     DataType, DeviceContext,
     array::array_size_in_bytes,
-    backends::common::Context,
-    backends::metal::{
-        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-        MTLFunctionConstantValues, MTLLibrary, MTLResourceExt,
-        MTLResourceOptions,
+    backends::{
+        common::{Allocator, Context},
+        metal::{
+            MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+            MTLFunctionConstantValues, MTLLibrary, MTLResourceExt,
+            MTLResourceOptions,
+        },
     },
 };
 
@@ -140,6 +142,7 @@ pub struct MTLContext {
     pipeline_cache: RefCell<
         HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     >,
+    allocator: Allocator<Metal>,
 }
 
 impl MTLContext {
@@ -230,30 +233,35 @@ impl Context for MTLContext {
 
         let architecture = DeviceArchitecture::from_device(&device);
 
-        Ok(Rc::new(Self {
+        Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
             architecture,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            allocator: Allocator::new(weak_self.clone()),
         }))
     }
 
-    fn allocate_buffer(
-        &self,
-        size: u64,
-    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MTLError> {
-        self.device
-            .new_buffer(size as usize, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .ok_or(MTLError::Generic("cannot allocate buffer".into()))
+    fn allocator(&self) -> &Allocator<Metal> {
+        &self.allocator
     }
 
-    fn allocate_command_buffer(
+    fn create_buffer(
+        &self,
+        size: usize,
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MTLError> {
+        self.device
+            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MTLError::Generic("cannot create buffer".into()))
+    }
+
+    fn create_command_buffer(
         &self
     ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
-        self.command_queue.command_buffer().ok_or(MTLError::Generic(
-            "cannot to allocate command buffer".into(),
-        ))
+        self.command_queue
+            .command_buffer()
+            .ok_or(MTLError::Generic("cannot create command buffer".into()))
     }
 }
 
@@ -270,7 +278,7 @@ impl DeviceContext for MTLContext {
             let buffer_size_bytes = array_size_in_bytes(shape, data_type);
 
             let buffer = self
-                .allocate_buffer(buffer_size_bytes as u64)
+                .create_buffer(buffer_size_bytes)
                 .expect("Failed to create buffer");
             buffer.set_label(Some(&label));
             MetalArray::new(buffer, shape, data_type)
@@ -290,4 +298,3 @@ impl DeviceContext for Rc<MTLContext> {
         unsafe { (**self).array_uninitialized(shape, data_type, label) }
     }
 }
-

@@ -1,12 +1,11 @@
 use std::ops::Deref;
 
-use metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
+use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::Metal;
-use crate::backends::common::{Allocator, Buffer};
+use crate::backends::common::NativeBuffer;
 
-impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
+impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     fn length(&self) -> usize {
         self.deref().length()
     }
@@ -14,11 +13,4 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     fn id(&self) -> usize {
         Retained::as_ptr(self) as usize
     }
-}
-
-pub fn new_allocator(
-    device: Retained<ProtocolObject<dyn MTLDevice>>,
-    options: MTLResourceOptions,
-) -> Allocator<Metal> {
-    Allocator::new(device, options)
 }

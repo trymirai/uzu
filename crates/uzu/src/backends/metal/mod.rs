@@ -5,7 +5,6 @@ mod classifier_context;
 mod command_buffer;
 pub mod compilation_parameters;
 mod context;
-mod device;
 pub mod encodable_block;
 pub mod error;
 pub mod forward_pass;
@@ -17,8 +16,6 @@ pub mod media_utils;
 pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
-
-pub use allocator::new_allocator;
 pub use array::MetalArray;
 pub use backend::Metal;
 pub use classifier_context::ClassifierContext;

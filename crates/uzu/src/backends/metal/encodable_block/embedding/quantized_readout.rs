@@ -172,10 +172,9 @@ impl QuantizedEmbeddingReadout {
                             ));
                         },
                     };
-                    let size_bytes =
-                        (vocab_size * num_groups * elem_size) as u64;
+                    let size_bytes = vocab_size * num_groups * elem_size;
                     let buf = mtl_context
-                        .allocate_buffer(size_bytes)
+                        .create_buffer(size_bytes)
                         .expect("Failed to allocate buffer");
                     unsafe {
                         std::ptr::write_bytes(

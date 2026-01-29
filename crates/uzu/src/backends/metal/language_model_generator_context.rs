@@ -6,14 +6,6 @@ use std::{
     rc::Rc,
 };
 
-use crate::backends::{
-    common::Context,
-    metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent,
-        ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
-    },
-};
-
 use super::{
     CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
     ModelShape,
@@ -24,6 +16,13 @@ use super::{
 };
 use crate::{
     DataType,
+    backends::{
+        common::Context,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
+            MTLEvent, ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
+        },
+    },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     language_model::rng::PRng,
     parameters::ParameterLoader,
@@ -63,13 +62,13 @@ impl AsyncBuffers {
         batch_size: usize,
     ) -> Self {
         let positions = context
-            .allocate_buffer((max_tokens * std::mem::size_of::<i32>()) as u64)
+            .create_buffer(max_tokens * std::mem::size_of::<i32>())
             .expect("Failed to create positions buffer");
         let seeds = context
-            .allocate_buffer((max_tokens * std::mem::size_of::<u64>()) as u64)
+            .create_buffer(max_tokens * std::mem::size_of::<u64>())
             .expect("Failed to create seeds buffer");
         let results = context
-            .allocate_buffer((batch_size * std::mem::size_of::<u32>()) as u64)
+            .create_buffer(batch_size * std::mem::size_of::<u32>())
             .expect("Failed to create results buffer");
         let event = context.device.new_event().expect("Failed to create event");
 
@@ -164,7 +163,7 @@ impl LanguageModelGeneratorContext {
             MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context
-            .allocate_command_buffer()
+            .create_command_buffer()
             .expect("Failed to create command buffer")
             .to_owned();
 

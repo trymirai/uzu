@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    rc::Weak,
     sync::{
         Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -7,15 +8,16 @@ use std::{
 };
 
 use super::{
-    AllocError, BufferLifetime,
+    AllocError,
     scratch_pool::{PAGE_SIZE, ScratchPool, next_power_of_two},
 };
-use crate::backends::common::Backend;
+use crate::backends::common::{
+    Backend, Buffer, BufferLifetime, Context, NativeBuffer,
+};
 
 pub struct Allocator<B: Backend> {
-    device: B::Device,
-    resource_options: B::ResourceOptions,
-    scratch_pool: Mutex<ScratchPool<B::Buffer>>,
+    context: Weak<B::Context>,
+    scratch_pool: Mutex<ScratchPool<B::NativeBuffer>>,
     scratch_buffers: Mutex<HashSet<usize>>,
     active_memory: AtomicUsize,
     peak_memory: AtomicUsize,
@@ -24,13 +26,9 @@ pub struct Allocator<B: Backend> {
 }
 
 impl<B: Backend> Allocator<B> {
-    pub fn new(
-        device: B::Device,
-        resource_options: B::ResourceOptions,
-    ) -> Self {
+    pub fn new(context: Weak<B::Context>) -> Self {
         Self {
-            device,
-            resource_options,
+            context,
             scratch_pool: Mutex::new(ScratchPool::new()),
             scratch_buffers: Mutex::new(HashSet::new()),
             active_memory: AtomicUsize::new(0),
@@ -38,6 +36,29 @@ impl<B: Backend> Allocator<B> {
             allocation_count: AtomicU64::new(0),
             eviction_threshold: AtomicU64::new(1000),
         }
+    }
+
+    fn create_native_buffer(
+        &self,
+        size: usize,
+    ) -> Result<B::NativeBuffer, AllocError> {
+        let context = self.context.upgrade().ok_or_else(|| {
+            AllocError::AllocationFailed {
+                size,
+                reason: "context has been dropped".to_string(),
+            }
+        })?;
+        context.create_buffer(size).map_err(|e| AllocError::AllocationFailed {
+            size,
+            reason: e.to_string(),
+        })
+    }
+
+    fn wrap_buffer(
+        &self,
+        native: B::NativeBuffer,
+    ) -> Buffer<B> {
+        Buffer::new(native, self.context.clone())
     }
 
     pub fn set_eviction_threshold(
@@ -79,9 +100,8 @@ impl<B: Backend> Allocator<B> {
 
     fn track_scratch_buffer(
         &self,
-        buffer: &B::Buffer,
+        buffer: &B::NativeBuffer,
     ) {
-        use super::Buffer;
         let id = buffer.id();
         if let Ok(mut set) = self.scratch_buffers.lock() {
             set.insert(id);
@@ -91,13 +111,11 @@ impl<B: Backend> Allocator<B> {
     fn alloc_scratch_internal(
         &self,
         aligned_size: usize,
-    ) -> Result<B::Buffer, AllocError> {
-        use crate::backends::common::Device;
-
+    ) -> Result<B::NativeBuffer, AllocError> {
         if let Ok(mut pool) = self.scratch_pool.lock() {
             pool.tick();
 
-            if ScratchPool::<B::Buffer>::is_small(aligned_size) {
+            if ScratchPool::<B::NativeBuffer>::is_small(aligned_size) {
                 let bucket_size = next_power_of_two(aligned_size);
 
                 if let Some(buffer) = pool.find_small_buffer(aligned_size) {
@@ -108,9 +126,7 @@ impl<B: Backend> Allocator<B> {
 
                 drop(pool);
 
-                let buffer = self
-                    .device
-                    .create_buffer(bucket_size, self.resource_options)?;
+                let buffer = self.create_native_buffer(bucket_size)?;
                 self.track_allocation(bucket_size);
                 self.track_scratch_buffer(&buffer);
 
@@ -130,9 +146,7 @@ impl<B: Backend> Allocator<B> {
 
                 drop(pool);
 
-                let buffer = self
-                    .device
-                    .create_buffer(aligned_size, self.resource_options)?;
+                let buffer = self.create_native_buffer(aligned_size)?;
                 self.track_allocation(aligned_size);
                 self.track_scratch_buffer(&buffer);
 
@@ -144,14 +158,14 @@ impl<B: Backend> Allocator<B> {
             }
         }
 
-        let alloc_size = if ScratchPool::<B::Buffer>::is_small(aligned_size) {
-            next_power_of_two(aligned_size)
-        } else {
-            aligned_size
-        };
+        let alloc_size =
+            if ScratchPool::<B::NativeBuffer>::is_small(aligned_size) {
+                next_power_of_two(aligned_size)
+            } else {
+                aligned_size
+            };
 
-        let buffer =
-            self.device.create_buffer(alloc_size, self.resource_options)?;
+        let buffer = self.create_native_buffer(alloc_size)?;
         self.track_allocation(alloc_size);
         self.track_scratch_buffer(&buffer);
 
@@ -162,31 +176,27 @@ impl<B: Backend> Allocator<B> {
         &self,
         lifetime: BufferLifetime,
         size: usize,
-    ) -> Result<B::Buffer, AllocError> {
-        use crate::backends::common::Device;
-
+    ) -> Result<Buffer<B>, AllocError> {
         let aligned_size = Self::align_to_page(size);
 
-        match lifetime {
+        let native = match lifetime {
             BufferLifetime::Permanent => {
-                let buffer = self
-                    .device
-                    .create_buffer(aligned_size, self.resource_options)?;
+                let buffer = self.create_native_buffer(aligned_size)?;
                 self.track_allocation(aligned_size);
-                Ok(buffer)
+                buffer
             },
             BufferLifetime::Scratch => {
-                self.alloc_scratch_internal(aligned_size)
+                self.alloc_scratch_internal(aligned_size)?
             },
-        }
+        };
+
+        Ok(self.wrap_buffer(native))
     }
 
-    pub fn free(
+    pub fn handle_buffer_drop(
         &self,
-        buffer: B::Buffer,
+        buffer: B::NativeBuffer,
     ) {
-        use super::Buffer;
-
         let id = buffer.id();
         let size = buffer.length();
 
@@ -200,13 +210,14 @@ impl<B: Backend> Allocator<B> {
 
         if is_scratch {
             if let Ok(mut pool) = self.scratch_pool.lock() {
-                if ScratchPool::<B::Buffer>::is_small(size) {
+                if ScratchPool::<B::NativeBuffer>::is_small(size) {
                     pool.return_small_buffer(buffer, size);
                 } else {
                     pool.return_large_buffer(buffer, size);
                 }
             }
         }
+        // If not scratch (permanent), buffer drops here naturally
     }
 
     pub fn active_memory(&self) -> usize {
