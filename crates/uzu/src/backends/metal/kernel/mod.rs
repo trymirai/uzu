@@ -20,7 +20,6 @@ pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
-pub mod short_conv;
 pub mod ssm;
 pub mod token_copy;
 
@@ -47,10 +46,6 @@ pub use rms_norm::{
 };
 pub use rope::{RopeError, RopeKernel, RopeKernelArguments};
 pub use sampling::{ArgmaxStrategy, SamplingError, SamplingKernel};
-pub use short_conv::{
-    ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelError,
-    ShortConvPrefillArguments,
-};
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
     SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
