@@ -53,8 +53,7 @@ pub use short_conv::{
 };
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSDUpdateArguments,
-    SSDUpdateKernel, SSMKernelError,
+    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSMKernelError,
 };
 pub use token_copy::TokenCopyKernel;
 
@@ -71,10 +70,9 @@ pub use media_kernels::{
     ScalePadNormalizeImage,
 };
 
+use super::Metal;
 // This should be autogened, only with hand-written snippets for legacy non-dsl kernels.
 use crate::backends::common::Kernels;
-
-use super::Metal;
 
 pub struct MetalKernels;
 

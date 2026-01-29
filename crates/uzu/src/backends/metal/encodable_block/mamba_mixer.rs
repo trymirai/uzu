@@ -14,11 +14,10 @@ use crate::{
         KernelDataType, MTLContext, MetalArray,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::SplitInProjKernel,
+        kernel::dsl::{SplitInProjKernel, SSDUpdateKernel},
         kernel::ssm::{
             Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
             SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
-            SSDUpdateArguments, SSDUpdateKernel,
             conv1d_scan::Conv1dDecodeArguments,
         },
     },
@@ -460,43 +459,39 @@ impl MambaMixer {
         let skip_weights = self.skip_connection_weight.clone();
         let skip_buf = skip_weights.mtl_buffer_cloned();
 
-        let h = self.config.num_heads;
-        let g = self.config.num_groups;
-        let dh = self.config.head_dim;
-        let n = self.config.state_dim;
+        let h = self.config.num_heads as u32;
+        let g = self.config.num_groups as u32;
+        let dh = self.config.head_dim as u32;
+        let n = self.config.state_dim as u32;
 
-        let x_strides = [h * dh, dh, 1usize];
-        let dt_strides = [h, 1usize];
-        let cb_strides = [g * n, n, 1usize];
-        let state_strides = [h * dh * n, dh * n, n, 1usize];
+        let x_strides = [h * dh, dh, 1u32];
+        let dt_strides = [h, 1u32];
+        let cb_strides = [g * n, n, 1u32];
+        let state_strides = [h * dh * n, dh * n, n, 1u32];
         let group_size = (h / g) as i32;
         let state_size = n as i32;
 
-        self.ssd_update
-            .encode(
-                encoder,
-                SSDUpdateArguments {
-                    x: &x_buf,
-                    dt: &dt_buf,
-                    b: &b_buf,
-                    c: &c_buf,
-                    d: &skip_buf,
-                    z: &z_buf,
-                    state: &state_buf,
-                    y: &y_buf,
-                    next_state: &state_buf,
-                    group_size,
-                    state_size,
-                    x_strides,
-                    dt_strides,
-                    cb_strides,
-                    state_strides,
-                    b_size: suffix_length,
-                    h_size: h,
-                    dh_size: dh,
-                },
-            )
-            .expect("Failed to encode SSD decode kernel");
+        self.ssd_update.encode(
+            &x_buf,
+            &dt_buf,
+            &b_buf,
+            &c_buf,
+            &skip_buf,
+            &z_buf,
+            &state_buf,
+            &y_buf,
+            &state_buf,
+            group_size as u32,
+            state_size as u32,
+            &x_strides,
+            &dt_strides,
+            &cb_strides,
+            &state_strides,
+            suffix_length as u32,
+            h,
+            dh,
+            encoder
+        );
     }
 }
 
