@@ -1,14 +1,26 @@
 use std::time::Instant;
 
-use super::{AllocationStats, AllocatorTrait, ModelConfig};
+use super::{
+    allocation_stats::AllocationStats, allocator_trait::AllocatorTrait,
+    model_config::ModelConfig,
+};
 
 const F16_SIZE: usize = 2;
+
+#[derive(Clone, Copy, Debug)]
+pub struct MemorySnapshot {
+    pub step: usize,
+    pub active_memory: usize,
+    pub cache_memory: usize,
+    pub peak_memory: usize,
+}
 
 pub struct InferenceSimulation<'a, A: AllocatorTrait> {
     allocator: &'a A,
     config: ModelConfig,
     pub stats: AllocationStats,
     pub current_prefix_len: usize,
+    step_counter: usize,
 }
 
 impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
@@ -21,6 +33,16 @@ impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
             config,
             stats: AllocationStats::default(),
             current_prefix_len: 0,
+            step_counter: 0,
+        }
+    }
+
+    pub fn capture_snapshot(&self) -> MemorySnapshot {
+        MemorySnapshot {
+            step: self.step_counter,
+            active_memory: self.allocator.active_memory(),
+            cache_memory: self.allocator.cache_memory(),
+            peak_memory: self.allocator.peak_memory(),
         }
     }
 
@@ -112,6 +134,8 @@ impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
         &mut self,
         batch_size: usize,
     ) {
+        self.step_counter += 1;
+
         let main = self.simulate_embedding_kernel(batch_size);
 
         for _layer in 0..self.config.num_layers {
@@ -135,7 +159,8 @@ impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
         &mut self,
         prompt_length: usize,
         step_size: usize,
-    ) {
+    ) -> Vec<MemorySnapshot> {
+        let mut snapshots = Vec::new();
         let mut remaining = prompt_length;
 
         while remaining > 0 {
@@ -143,16 +168,43 @@ impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
             self.simulate_forward_pass(batch_size);
             self.current_prefix_len += batch_size;
             remaining = remaining.saturating_sub(step_size);
+            snapshots.push(self.capture_snapshot());
         }
+
+        snapshots
     }
 
     pub fn run_generation(
         &mut self,
         num_tokens: usize,
-    ) {
+    ) -> Vec<MemorySnapshot> {
+        let mut snapshots = Vec::new();
+
         for _ in 0..num_tokens {
             self.simulate_forward_pass(1);
             self.current_prefix_len += 1;
+            snapshots.push(self.capture_snapshot());
         }
+
+        snapshots
+    }
+
+    pub fn run_generation_with_sampling(
+        &mut self,
+        num_tokens: usize,
+        snapshot_interval: usize,
+    ) -> Vec<MemorySnapshot> {
+        let mut snapshots = Vec::new();
+
+        for i in 0..num_tokens {
+            self.simulate_forward_pass(1);
+            self.current_prefix_len += 1;
+
+            if i % snapshot_interval == 0 || i == num_tokens - 1 {
+                snapshots.push(self.capture_snapshot());
+            }
+        }
+
+        snapshots
     }
 }

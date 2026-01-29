@@ -1,173 +1,257 @@
 use std::collections::BTreeMap;
 
 pub(super) const PAGE_SIZE: usize = 16384;
-const SMALL_BUFFER_THRESHOLD: usize = 64 * 1024;
-const SIZE_TOLERANCE: f64 = 0.1;
 
-pub(super) fn next_power_of_two(size: usize) -> usize {
-    if size <= 4096 {
-        return 4096;
+pub(super) fn align_size(size: usize) -> usize {
+    if size > PAGE_SIZE {
+        (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+    } else {
+        size
     }
-    1usize << (usize::BITS - (size - 1).leading_zeros())
 }
 
-struct CachedBuffer<B> {
+struct BufferNode<B> {
     buffer: B,
-    last_used_tick: u64,
+    size: usize,
+    bucket_idx: usize,
+    prev: Option<usize>,
+    next: Option<usize>,
 }
 
 pub(super) struct ScratchPool<B> {
-    small_buckets: BTreeMap<usize, Vec<CachedBuffer<B>>>,
-    large_exact: BTreeMap<usize, Vec<CachedBuffer<B>>>,
+    nodes: Vec<Option<BufferNode<B>>>,
+    free_slots: Vec<usize>,
+    size_index: BTreeMap<usize, Vec<usize>>,
+    lru_head: Option<usize>,
+    lru_tail: Option<usize>,
+    pool_size: usize,
     pub(super) total_allocated: usize,
-    current_tick: u64,
 }
 
 impl<B> ScratchPool<B> {
     pub(super) fn new() -> Self {
         Self {
-            small_buckets: BTreeMap::new(),
-            large_exact: BTreeMap::new(),
+            nodes: Vec::new(),
+            free_slots: Vec::new(),
+            size_index: BTreeMap::new(),
+            lru_head: None,
+            lru_tail: None,
+            pool_size: 0,
             total_allocated: 0,
-            current_tick: 0,
         }
     }
 
-    pub(super) fn is_small(size: usize) -> bool {
-        size < SMALL_BUFFER_THRESHOLD
+    #[inline]
+    fn allocate_slot(&mut self) -> usize {
+        self.free_slots.pop().unwrap_or_else(|| {
+            let slot = self.nodes.len();
+            self.nodes.push(None);
+            slot
+        })
     }
 
-    pub(super) fn tick(&mut self) -> u64 {
-        self.current_tick += 1;
-        self.current_tick
+    #[inline]
+    fn add_to_lru_head(
+        &mut self,
+        slot: usize,
+    ) {
+        if let Some(old_head) = self.lru_head {
+            if let Some(node) = self.nodes[old_head].as_mut() {
+                node.prev = Some(slot);
+            }
+            if let Some(node) = self.nodes[slot].as_mut() {
+                node.next = Some(old_head);
+            }
+        }
+
+        self.lru_head = Some(slot);
+
+        if self.lru_tail.is_none() {
+            self.lru_tail = Some(slot);
+        }
     }
 
-    pub(super) fn find_small_buffer(
+    #[inline]
+    fn remove_from_lru(
+        &mut self,
+        slot: usize,
+    ) {
+        let (prev, next) = match self.nodes[slot].as_ref() {
+            Some(node) => (node.prev, node.next),
+            None => return,
+        };
+
+        match (prev, next) {
+            (Some(p), Some(n)) => {
+                if let Some(prev_node) = self.nodes[p].as_mut() {
+                    prev_node.next = Some(n);
+                }
+                if let Some(next_node) = self.nodes[n].as_mut() {
+                    next_node.prev = Some(p);
+                }
+            },
+            (Some(p), None) => {
+                if let Some(prev_node) = self.nodes[p].as_mut() {
+                    prev_node.next = None;
+                }
+                self.lru_tail = Some(p);
+            },
+            (None, Some(n)) => {
+                if let Some(next_node) = self.nodes[n].as_mut() {
+                    next_node.prev = None;
+                }
+                self.lru_head = Some(n);
+            },
+            (None, None) => {
+                self.lru_head = None;
+                self.lru_tail = None;
+            },
+        }
+
+        if let Some(node) = self.nodes[slot].as_mut() {
+            node.prev = None;
+            node.next = None;
+        }
+    }
+
+    #[inline]
+    fn remove_slot_from_bucket(
         &mut self,
         size: usize,
-    ) -> Option<B> {
-        let bucket_size = next_power_of_two(size);
-
-        let buffers = self.small_buckets.get_mut(&bucket_size)?;
-        let cached = buffers.pop()?;
-
-        if buffers.is_empty() {
-            self.small_buckets.remove(&bucket_size);
+        _slot: usize,
+        bucket_idx: usize,
+    ) {
+        if let Some(slots) = self.size_index.get_mut(&size) {
+            let last_idx = slots.len() - 1;
+            if bucket_idx != last_idx {
+                let swapped_slot = slots[last_idx];
+                slots[bucket_idx] = swapped_slot;
+                if let Some(swapped_node) = self.nodes[swapped_slot].as_mut() {
+                    swapped_node.bucket_idx = bucket_idx;
+                }
+            }
+            slots.pop();
+            if slots.is_empty() {
+                self.size_index.remove(&size);
+            }
         }
-
-        Some(cached.buffer)
     }
 
-    pub(super) fn find_large_buffer(
+    #[inline]
+    pub(super) fn find_buffer(
         &mut self,
         size: usize,
     ) -> Option<(B, usize)> {
-        let max_size = ((size as f64) * (1.0 + SIZE_TOLERANCE)).ceil() as usize;
+        let max_size = (2 * size).min(size + 2 * PAGE_SIZE);
 
         let mut found_key = None;
-        for (&key, buffers) in self.large_exact.range(size..=max_size) {
-            if !buffers.is_empty() {
+        let mut found_slot = None;
+        let mut found_bucket_idx = None;
+
+        for (&key, slots) in self.size_index.range(size..=max_size) {
+            if let Some(&slot) = slots.last() {
                 found_key = Some(key);
+                found_slot = Some(slot);
+                found_bucket_idx = Some(slots.len() - 1);
                 break;
             }
         }
 
-        let key = found_key?;
-        let buffers = self.large_exact.get_mut(&key)?;
-        let cached = buffers.pop()?;
+        let (key, slot, bucket_idx) =
+            match (found_key, found_slot, found_bucket_idx) {
+                (Some(k), Some(s), Some(i)) => (k, s, i),
+                _ => return None,
+            };
 
-        if buffers.is_empty() {
-            self.large_exact.remove(&key);
-        }
+        self.remove_slot_from_bucket(key, slot, bucket_idx);
+        self.remove_from_lru(slot);
 
-        Some((cached.buffer, key))
+        let node = self.nodes[slot].take()?;
+        self.free_slots.push(slot);
+        self.pool_size = self.pool_size.saturating_sub(key);
+
+        Some((node.buffer, key))
     }
 
-    pub(super) fn return_small_buffer(
-        &mut self,
-        buffer: B,
-        bucket_size: usize,
-    ) {
-        let tick = self.current_tick;
-        self.small_buckets.entry(bucket_size).or_default().push(CachedBuffer {
-            buffer,
-            last_used_tick: tick,
-        });
-    }
-
-    pub(super) fn return_large_buffer(
+    #[inline]
+    pub(super) fn return_buffer(
         &mut self,
         buffer: B,
         size: usize,
     ) {
-        let tick = self.current_tick;
-        self.large_exact.entry(size).or_default().push(CachedBuffer {
+        let slot = self.allocate_slot();
+        let bucket_idx = self.size_index.get(&size).map_or(0, |v| v.len());
+
+        self.nodes[slot] = Some(BufferNode {
             buffer,
-            last_used_tick: tick,
+            size,
+            bucket_idx,
+            prev: None,
+            next: None,
         });
+
+        self.add_to_lru_head(slot);
+        self.size_index.entry(size).or_default().push(slot);
+        self.pool_size += size;
     }
 
-    pub(super) fn evict_stale(
+    pub(super) fn release_cached_buffers(
         &mut self,
-        max_age: u64,
+        min_bytes_to_free: usize,
     ) -> usize {
-        let current = self.current_tick;
-        let threshold = current.saturating_sub(max_age);
-
-        let mut evicted = 0;
-
-        let keys_to_check: Vec<_> = self.small_buckets.keys().copied().collect();
-        for key in keys_to_check {
-            if let Some(buffers) = self.small_buckets.get_mut(&key) {
-                let before = buffers.len();
-                buffers.retain(|b| b.last_used_tick >= threshold);
-                evicted += before - buffers.len();
-                if buffers.is_empty() {
-                    self.small_buckets.remove(&key);
-                }
-            }
+        if min_bytes_to_free == 0 {
+            return 0;
         }
 
-        let keys_to_check: Vec<_> = self.large_exact.keys().copied().collect();
-        for key in keys_to_check {
-            if let Some(buffers) = self.large_exact.get_mut(&key) {
-                let before = buffers.len();
-                buffers.retain(|b| b.last_used_tick >= threshold);
-                evicted += before - buffers.len();
-                if buffers.is_empty() {
-                    self.large_exact.remove(&key);
-                }
-            }
+        if min_bytes_to_free >= (self.pool_size * 9) / 10 {
+            return self.clear();
         }
 
-        evicted
+        let mut total_freed = 0usize;
+        let mut buffers_released = 0usize;
+
+        while total_freed < min_bytes_to_free {
+            let tail_slot = match self.lru_tail {
+                Some(s) => s,
+                None => break,
+            };
+
+            let (size, bucket_idx) = match self.nodes[tail_slot].as_ref() {
+                Some(n) => (n.size, n.bucket_idx),
+                None => break,
+            };
+
+            self.remove_slot_from_bucket(size, tail_slot, bucket_idx);
+            self.remove_from_lru(tail_slot);
+            self.nodes[tail_slot] = None;
+            self.free_slots.push(tail_slot);
+
+            total_freed += size;
+            buffers_released += 1;
+            self.pool_size = self.pool_size.saturating_sub(size);
+            self.total_allocated = self.total_allocated.saturating_sub(size);
+        }
+
+        buffers_released
     }
 
+    #[inline]
     pub(super) fn available_size(&self) -> usize {
-        let small: usize = self
-            .small_buckets
-            .iter()
-            .map(|(size, buffers)| size * buffers.len())
-            .sum();
-
-        let large: usize = self
-            .large_exact
-            .iter()
-            .map(|(size, buffers)| size * buffers.len())
-            .sum();
-
-        small + large
+        self.pool_size
     }
 
     pub(super) fn clear(&mut self) -> usize {
-        let small_count: usize = self.small_buckets.values().map(|v| v.len()).sum();
-        let large_count: usize = self.large_exact.values().map(|v| v.len()).sum();
-        let freed = self.available_size();
+        let count = self.nodes.iter().filter(|n| n.is_some()).count();
 
-        self.small_buckets.clear();
-        self.large_exact.clear();
-        self.total_allocated -= freed;
+        self.nodes.clear();
+        self.free_slots.clear();
+        self.size_index.clear();
+        self.lru_head = None;
+        self.lru_tail = None;
+        self.total_allocated =
+            self.total_allocated.saturating_sub(self.pool_size);
+        self.pool_size = 0;
 
-        small_count + large_count
+        count
     }
 }

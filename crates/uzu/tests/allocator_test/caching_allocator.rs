@@ -5,10 +5,10 @@ use uzu::backends::{
     metal::{MTLContext, Metal},
 };
 
-use super::AllocatorTrait;
+use super::allocator_trait::AllocatorTrait;
 
 pub struct CachingAllocator {
-    context: Rc<MTLContext>,
+    pub context: Rc<MTLContext>,
 }
 
 impl CachingAllocator {
@@ -38,5 +38,9 @@ impl AllocatorTrait for CachingAllocator {
 
     fn cache_memory(&self) -> usize {
         self.context.allocator().cache_memory()
+    }
+
+    fn active_memory(&self) -> usize {
+        self.context.allocator().active_memory()
     }
 }

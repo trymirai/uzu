@@ -1,41 +1,30 @@
 use std::cell::Cell;
 
-use metal::{
-    MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
-    MTLResourceOptions, MTLStorageMode,
-};
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::allocator_trait::AllocatorTrait;
 
-pub struct MTLHeapAllocator {
-    heap: Retained<ProtocolObject<dyn MTLHeap>>,
-    peak_used: Cell<usize>,
+pub struct DeviceAllocator {
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
     active_memory: Cell<usize>,
+    peak_memory: Cell<usize>,
 }
 
-impl MTLHeapAllocator {
-    pub fn new(heap_size: usize) -> Self {
+impl DeviceAllocator {
+    pub fn new() -> Self {
         let device =
             <dyn MTLDevice>::system_default().expect("No Metal device");
 
-        let descriptor = MTLHeapDescriptor::new();
-        descriptor.set_size(heap_size);
-        descriptor.set_storage_mode(MTLStorageMode::Shared);
-
-        let heap = device
-            .new_heap_with_descriptor(&descriptor)
-            .expect("Failed to create heap");
-
         Self {
-            heap,
-            peak_used: Cell::new(0),
+            device,
             active_memory: Cell::new(0),
+            peak_memory: Cell::new(0),
         }
     }
 }
 
-impl AllocatorTrait for MTLHeapAllocator {
+impl AllocatorTrait for DeviceAllocator {
     type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 
     fn alloc(
@@ -43,17 +32,16 @@ impl AllocatorTrait for MTLHeapAllocator {
         size: usize,
     ) -> Self::Buffer {
         let buffer = self
-            .heap
+            .device
             .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer from heap");
+            .expect("Failed to create buffer");
 
         let buf_size = buffer.length();
         let new_active = self.active_memory.get() + buf_size;
         self.active_memory.set(new_active);
 
-        let used = self.heap.used_size();
-        if used > self.peak_used.get() {
-            self.peak_used.set(used);
+        if new_active > self.peak_memory.get() {
+            self.peak_memory.set(new_active);
         }
 
         buffer
@@ -70,7 +58,7 @@ impl AllocatorTrait for MTLHeapAllocator {
     }
 
     fn peak_memory(&self) -> usize {
-        self.peak_used.get()
+        self.peak_memory.get()
     }
 
     fn cache_memory(&self) -> usize {

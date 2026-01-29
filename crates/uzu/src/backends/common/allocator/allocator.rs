@@ -1,15 +1,11 @@
 use std::{
-    collections::HashSet,
+    cell::{Cell, RefCell},
     rc::Weak,
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-    },
 };
 
 use super::{
     AllocError,
-    scratch_pool::{PAGE_SIZE, ScratchPool, next_power_of_two},
+    scratch_pool::{ScratchPool, align_size},
 };
 use crate::backends::common::{
     Backend, Buffer, BufferLifetime, Context, NativeBuffer,
@@ -17,24 +13,22 @@ use crate::backends::common::{
 
 pub struct Allocator<B: Backend> {
     context: Weak<B::Context>,
-    scratch_pool: Mutex<ScratchPool<B::NativeBuffer>>,
-    scratch_buffers: Mutex<HashSet<usize>>,
-    active_memory: AtomicUsize,
-    peak_memory: AtomicUsize,
-    allocation_count: AtomicU64,
-    eviction_threshold: AtomicU64,
+    scratch_pool: RefCell<ScratchPool<B::NativeBuffer>>,
+    active_memory: Cell<usize>,
+    peak_memory: Cell<usize>,
+    gc_limit: Cell<usize>,
+    max_pool_size: Cell<usize>,
 }
 
 impl<B: Backend> Allocator<B> {
     pub fn new(context: Weak<B::Context>) -> Self {
         Self {
             context,
-            scratch_pool: Mutex::new(ScratchPool::new()),
-            scratch_buffers: Mutex::new(HashSet::new()),
-            active_memory: AtomicUsize::new(0),
-            peak_memory: AtomicUsize::new(0),
-            allocation_count: AtomicU64::new(0),
-            eviction_threshold: AtomicU64::new(1000),
+            scratch_pool: RefCell::new(ScratchPool::new()),
+            active_memory: Cell::new(0),
+            peak_memory: Cell::new(0),
+            gc_limit: Cell::new(usize::MAX),
+            max_pool_size: Cell::new(usize::MAX),
         }
     }
 
@@ -57,117 +51,79 @@ impl<B: Backend> Allocator<B> {
     fn wrap_buffer(
         &self,
         native: B::NativeBuffer,
+        is_scratch: bool,
     ) -> Buffer<B> {
-        Buffer::new(native, self.context.clone())
+        Buffer::new(native, self.context.clone(), is_scratch)
     }
 
-    pub fn set_eviction_threshold(
+    pub fn set_gc_limit(
         &self,
-        max_age: u64,
+        limit: usize,
     ) {
-        self.eviction_threshold.store(max_age, Ordering::Relaxed);
+        self.gc_limit.set(limit);
     }
 
-    pub fn evict_stale_buffers(&self) -> usize {
-        let threshold = self.eviction_threshold.load(Ordering::Relaxed);
-        if let Ok(mut pool) = self.scratch_pool.lock() {
-            pool.evict_stale(threshold)
-        } else {
-            0
-        }
+    pub fn set_max_pool_size(
+        &self,
+        limit: usize,
+    ) {
+        self.max_pool_size.set(limit);
     }
 
-    fn align_to_page(size: usize) -> usize {
-        (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+    pub fn gc_limit(&self) -> usize {
+        self.gc_limit.get()
     }
 
+    pub fn max_pool_size(&self) -> usize {
+        self.max_pool_size.get()
+    }
+
+    #[inline]
     fn track_allocation(
         &self,
         size: usize,
     ) {
-        let new_active =
-            self.active_memory.fetch_add(size, Ordering::Relaxed) + size;
-        self.peak_memory.fetch_max(new_active, Ordering::Relaxed);
-        self.allocation_count.fetch_add(1, Ordering::Relaxed);
+        let new_active = self.active_memory.get() + size;
+        self.active_memory.set(new_active);
+        if new_active > self.peak_memory.get() {
+            self.peak_memory.set(new_active);
+        }
     }
 
+    #[inline]
     fn track_deallocation(
         &self,
         size: usize,
     ) {
-        self.active_memory.fetch_sub(size, Ordering::Relaxed);
-    }
-
-    fn track_scratch_buffer(
-        &self,
-        buffer: &B::NativeBuffer,
-    ) {
-        let id = buffer.id();
-        if let Ok(mut set) = self.scratch_buffers.lock() {
-            set.insert(id);
-        }
+        self.active_memory.set(self.active_memory.get().saturating_sub(size));
     }
 
     fn alloc_scratch_internal(
         &self,
         aligned_size: usize,
     ) -> Result<B::NativeBuffer, AllocError> {
-        if let Ok(mut pool) = self.scratch_pool.lock() {
-            pool.tick();
+        let mut pool = self.scratch_pool.borrow_mut();
 
-            if ScratchPool::<B::NativeBuffer>::is_small(aligned_size) {
-                let bucket_size = next_power_of_two(aligned_size);
-
-                if let Some(buffer) = pool.find_small_buffer(aligned_size) {
-                    self.track_allocation(bucket_size);
-                    self.track_scratch_buffer(&buffer);
-                    return Ok(buffer);
-                }
-
-                drop(pool);
-
-                let buffer = self.create_native_buffer(bucket_size)?;
-                self.track_allocation(bucket_size);
-                self.track_scratch_buffer(&buffer);
-
-                if let Ok(mut pool) = self.scratch_pool.lock() {
-                    pool.total_allocated += bucket_size;
-                }
-
-                return Ok(buffer);
-            } else {
-                if let Some((buffer, actual_size)) =
-                    pool.find_large_buffer(aligned_size)
-                {
-                    self.track_allocation(actual_size);
-                    self.track_scratch_buffer(&buffer);
-                    return Ok(buffer);
-                }
-
-                drop(pool);
-
-                let buffer = self.create_native_buffer(aligned_size)?;
-                self.track_allocation(aligned_size);
-                self.track_scratch_buffer(&buffer);
-
-                if let Ok(mut pool) = self.scratch_pool.lock() {
-                    pool.total_allocated += aligned_size;
-                }
-
-                return Ok(buffer);
-            }
+        if let Some((buffer, actual_size)) = pool.find_buffer(aligned_size) {
+            self.track_allocation(actual_size);
+            return Ok(buffer);
         }
 
-        let alloc_size =
-            if ScratchPool::<B::NativeBuffer>::is_small(aligned_size) {
-                next_power_of_two(aligned_size)
-            } else {
-                aligned_size
-            };
+        let gc_limit = self.gc_limit.get();
+        let active = self.active_memory.get();
+        let cache = pool.available_size();
+        let mem_required = active + cache + aligned_size;
 
-        let buffer = self.create_native_buffer(alloc_size)?;
-        self.track_allocation(alloc_size);
-        self.track_scratch_buffer(&buffer);
+        if mem_required >= gc_limit {
+            let to_free = mem_required.saturating_sub(gc_limit);
+            pool.release_cached_buffers(to_free);
+        }
+
+        pool.total_allocated += aligned_size;
+        drop(pool);
+
+        let buffer = self.create_native_buffer(aligned_size)?;
+        self.track_allocation(aligned_size);
 
         Ok(buffer)
     }
@@ -177,74 +133,60 @@ impl<B: Backend> Allocator<B> {
         lifetime: BufferLifetime,
         size: usize,
     ) -> Result<Buffer<B>, AllocError> {
-        let aligned_size = Self::align_to_page(size);
+        let aligned_size = align_size(size);
 
-        let native = match lifetime {
+        let (native, is_scratch) = match lifetime {
             BufferLifetime::Permanent => {
                 let buffer = self.create_native_buffer(aligned_size)?;
                 self.track_allocation(aligned_size);
-                buffer
+                (buffer, false)
             },
             BufferLifetime::Scratch => {
-                self.alloc_scratch_internal(aligned_size)?
+                (self.alloc_scratch_internal(aligned_size)?, true)
             },
         };
 
-        Ok(self.wrap_buffer(native))
+        Ok(self.wrap_buffer(native, is_scratch))
     }
 
     pub fn handle_buffer_drop(
         &self,
         buffer: B::NativeBuffer,
+        is_scratch: bool,
     ) {
-        let id = buffer.id();
         let size = buffer.length();
-
         self.track_deallocation(size);
 
-        let is_scratch = self
-            .scratch_buffers
-            .lock()
-            .map(|mut set| set.remove(&id))
-            .unwrap_or(false);
-
         if is_scratch {
-            if let Ok(mut pool) = self.scratch_pool.lock() {
-                if ScratchPool::<B::NativeBuffer>::is_small(size) {
-                    pool.return_small_buffer(buffer, size);
-                } else {
-                    pool.return_large_buffer(buffer, size);
-                }
+            let mut pool = self.scratch_pool.borrow_mut();
+            pool.return_buffer(buffer, size);
+
+            let max_pool_size = self.max_pool_size.get();
+            let current_size = pool.available_size();
+            if current_size > max_pool_size {
+                let to_free = current_size - max_pool_size;
+                pool.release_cached_buffers(to_free);
             }
         }
-        // If not scratch (permanent), buffer drops here naturally
     }
 
     pub fn active_memory(&self) -> usize {
-        self.active_memory.load(Ordering::Relaxed)
+        self.active_memory.get()
     }
 
     pub fn peak_memory(&self) -> usize {
-        self.peak_memory.load(Ordering::Relaxed)
+        self.peak_memory.get()
     }
 
     pub fn reset_peak_memory(&self) {
-        self.peak_memory.store(
-            self.active_memory.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+        self.peak_memory.set(self.active_memory.get());
     }
 
     pub fn cache_memory(&self) -> usize {
-        self.scratch_pool.lock().map(|p| p.available_size()).unwrap_or(0)
+        self.scratch_pool.borrow().available_size()
     }
 
     pub fn clear_cache(&self) {
-        if let Ok(mut pool) = self.scratch_pool.lock() {
-            pool.clear();
-        }
-        if let Ok(mut set) = self.scratch_buffers.lock() {
-            set.clear();
-        }
+        self.scratch_pool.borrow_mut().clear();
     }
 }

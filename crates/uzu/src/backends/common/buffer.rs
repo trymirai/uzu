@@ -5,16 +5,19 @@ use super::{Backend, Context};
 pub struct Buffer<B: Backend> {
     inner: ManuallyDrop<B::NativeBuffer>,
     context: Weak<B::Context>,
+    is_scratch: bool,
 }
 
 impl<B: Backend> Buffer<B> {
     pub fn new(
         inner: B::NativeBuffer,
         context: Weak<B::Context>,
+        is_scratch: bool,
     ) -> Self {
         Self {
             inner: ManuallyDrop::new(inner),
             context,
+            is_scratch,
         }
     }
 
@@ -28,7 +31,7 @@ impl<B: Backend> Drop for Buffer<B> {
         // Safety: drop is only called once, inner is valid
         let inner = unsafe { ManuallyDrop::take(&mut self.inner) };
         if let Some(ctx) = self.context.upgrade() {
-            ctx.allocator().handle_buffer_drop(inner);
+            ctx.allocator().handle_buffer_drop(inner, self.is_scratch);
         }
         // If context is gone, inner drops naturally here
     }
