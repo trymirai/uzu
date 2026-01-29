@@ -121,30 +121,31 @@ fn kernel_wrappers(
             .as_ref()
             .map(|tv| tv.iter().cloned().collect::<HashMap<_, _>>());
 
+        let apply_replace = |s: &str| {
+            s.split_whitespace()
+                .map(|token| {
+                    if let Some(wrapper_argument_replace) =
+                        &wrapper_argument_replace
+                        && let Some(replacement) =
+                            wrapper_argument_replace.get(token)
+                    {
+                        replacement
+                    } else {
+                        token
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
             .filter_map(|a| match a.argument_type() {
                 Ok(MetalArgumentType::Buffer)
-                | Ok(MetalArgumentType::Constant(_)) => Some(format!(
-                    "{} {}",
-                    a.c_type
-                        .split_whitespace()
-                        .map(|token| {
-                            if let Some(wrapper_argument_replace) =
-                                &wrapper_argument_replace
-                                && let Some(replacement) =
-                                    wrapper_argument_replace.get(token)
-                            {
-                                replacement
-                            } else {
-                                token
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    a.name
-                )),
+                | Ok(MetalArgumentType::Constant(_)) => {
+                    Some(format!("{} {}", apply_replace(&a.c_type), a.name))
+                },
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -178,7 +179,7 @@ fn kernel_wrappers(
             if let Ok(MetalArgumentType::Shared(len)) = a.argument_type() {
                 Some(format!(
                     "{} {}[{}]",
-                    a.c_type.replace('*', ""),
+                    apply_replace(&a.c_type.replace('*', "")),
                     a.name,
                     len.as_ref(),
                 ))
