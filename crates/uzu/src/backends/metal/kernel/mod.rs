@@ -1,6 +1,5 @@
 pub mod attention;
 mod data_type;
-#[allow(non_snake_case)]
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
@@ -71,3 +70,15 @@ pub use media_kernels::{
     ExtractImagePatches, ImageParameters, PatchParameters,
     ScalePadNormalizeImage,
 };
+
+use super::Metal;
+// This should be autogened, only with hand-written snippets for legacy non-dsl kernels.
+use crate::backends::common::Kernels;
+
+pub struct MetalKernels;
+
+impl Kernels for MetalKernels {
+    type Backend = Metal;
+
+    // Every kernel should have a trait here
+}
