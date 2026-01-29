@@ -8,9 +8,9 @@ use crate::{
         KernelDataType, MTLContext, MetalArray,
         MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject,
         compilation_parameters::CompilationConfig,
-        encodable_block::ssd_prefill::{SSDPrefillKernels, SSDPrefillMode},
+        encodable_block::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::{SplitInProjKernel},
+        kernel::dsl::SplitInProjKernel,
         kernel::ssm::{
             Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
             SSDUpdateArguments, SSDUpdateKernel,
@@ -20,7 +20,6 @@ use crate::{
     config::{DecoderLayerType, Mamba2Config},
     parameters::ParameterTree,
 };
-use crate::backends::metal::encodable_block::ssd_prefill::SSDPrefillArguments;
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
@@ -408,7 +407,7 @@ impl MambaMixer {
             channels: self.config.num_heads as u32,
             head_dim: self.config.head_dim as u32,
         };
-        
+
         self.ssd_prefill.encode(
             self.prefill_mode,
             &args,
