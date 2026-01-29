@@ -1,7 +1,7 @@
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
-    metal_extensions::ComputeEncoderSetValue,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -16,11 +16,15 @@ pub struct MoeScatterKernels {
     pipeline_bases: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_bf16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     // map variants
-    pipeline_scatter_map_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f32:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_bf16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]

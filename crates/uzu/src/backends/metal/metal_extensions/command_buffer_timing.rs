@@ -1,4 +1,6 @@
-use crate::backends::metal::{MTLCommandBuffer, MTLCommandBufferExt, ProtocolObject};
+use crate::backends::metal::{
+    MTLCommandBuffer, MTLCommandBufferExt, ProtocolObject,
+};
 
 /// Extension trait providing convenience timing methods for command buffers.
 pub trait CommandBufferTimingExt {

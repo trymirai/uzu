@@ -1,16 +1,18 @@
-use metal::{MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use std::time::Instant;
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
-    kernel::moe::{
-        MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-        MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-        MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments,
+    kernel::{
+        dsl::MoeFinalizeKernel,
+        moe::{
+            MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
+            MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
+            MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+        },
     },
 };
 
@@ -135,7 +137,10 @@ fn test_moe_e2e_decode_perf() {
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk
                 .encode(
                     &cb,
@@ -208,7 +213,10 @@ fn test_moe_e2e_prefill_perf() {
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk
                 .encode(
                     &cb,
@@ -343,14 +351,19 @@ fn test_moe_pipeline_breakdown_decode() {
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
-    let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
+    let finalize_kernel =
+        MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
+            .expect("finalize");
     let router_topk_fused_kernel =
         MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf =
         time_kernel("Router+TopK (FUSED)", 2, 5, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk_fused_kernel
                 .encode(
                     &cb,
@@ -375,7 +388,10 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let counts_offsets_perf =
         time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             counts_offsets_kernel
                 .encode(
                     &cb,
@@ -395,7 +411,10 @@ fn test_moe_pipeline_breakdown_decode() {
         });
 
     let scatter_perf = time_kernel("Scatter", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         scatter_kernel
             .encode_block_bases(
                 &cb,
@@ -438,7 +457,10 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let gather_perf = time_kernel("Gather", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         gather_kernel
             .encode(
                 &cb,
@@ -459,7 +481,10 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let experts_perf = time_kernel("Experts (MAIN COMPUTE)", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         experts_kernel
             .encode(
                 &cb,
@@ -498,22 +523,22 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let finalize_perf = time_kernel("Finalize", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        finalize_kernel
-            .encode(
-                &cb,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &y_out_buf,
-                    t,
-                    d_model,
-                    k,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("finalize");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        finalize_kernel.encode(
+            &tok2row_buf,
+            &topk_probs_buf,
+            &y_partial_buf,
+            &y_out_buf,
+            t as u32,
+            d_model as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
     });

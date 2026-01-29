@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
+use metal::{MTLBuffer, MTLCommandBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
@@ -238,12 +239,18 @@ impl Context for MTLContext {
         }))
     }
 
+    fn allocate_buffer(
+        &self,
+        size: u64,
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MTLError> {
+        self.device
+            .new_buffer(size as usize, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MTLError::Generic("cannot allocate buffer".into()))
+    }
+
     fn allocate_command_buffer(
         &self
-    ) -> Result<
-        <Self::Backend as crate::backends::common::Backend>::CommandBuffer,
-        <Self::Backend as crate::backends::common::Backend>::Error,
-    > {
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
         self.command_queue.command_buffer().ok_or(MTLError::Generic(
             "cannot to allocate command buffer".into(),
         ))
@@ -263,11 +270,7 @@ impl DeviceContext for MTLContext {
             let buffer_size_bytes = array_size_in_bytes(shape, data_type);
 
             let buffer = self
-                .device
-                .new_buffer(
-                    buffer_size_bytes,
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .allocate_buffer(buffer_size_bytes as u64)
                 .expect("Failed to create buffer");
             buffer.set_label(Some(&label));
             MetalArray::new(buffer, shape, data_type)

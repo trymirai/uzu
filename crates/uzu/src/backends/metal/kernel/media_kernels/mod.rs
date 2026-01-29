@@ -3,8 +3,8 @@ use std::{mem, ptr::NonNull};
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoderExt,
-    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
     ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
@@ -38,7 +38,8 @@ pub struct ScalePadNormalizeImage {
 impl ScalePadNormalizeImage {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "scalePadNormalizeImage";
-        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state =
+            context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -112,7 +113,8 @@ pub struct ExtractImagePatches {
 impl ExtractImagePatches {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "extractImagePatches";
-        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state =
+            context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })

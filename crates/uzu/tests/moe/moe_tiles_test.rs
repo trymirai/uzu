@@ -39,7 +39,10 @@ fn test_tile_counts_correctness() {
         // Execute kernel using kernel struct
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,
@@ -97,7 +100,10 @@ fn test_tile_scan_correctness() {
         // Execute kernel using kernel struct
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         tile_kernel
             .encode_scan(
                 &cb,
@@ -154,7 +160,10 @@ fn test_tile_edge_cases() {
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,
@@ -192,7 +201,10 @@ fn test_tile_edge_cases() {
 
         let tile_kernel =
             MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         tile_kernel
             .encode_counts(
                 &cb,

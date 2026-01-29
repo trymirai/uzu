@@ -3,9 +3,9 @@
 use std::rc::Rc;
 
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{ProtocolObject,
-    KernelDataType,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
+use crate::backends::metal::{
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLContext, ProtocolObject,
     forward_pass::{ArrayId, ForwardPassState},
     kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
 };

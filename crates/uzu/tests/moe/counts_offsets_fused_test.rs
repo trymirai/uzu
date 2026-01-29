@@ -1,9 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext, ProtocolObject, Retained,

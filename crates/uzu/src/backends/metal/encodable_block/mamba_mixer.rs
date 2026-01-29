@@ -3,19 +3,25 @@
 use std::{env, rc::Rc};
 
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
-use crate::{DataType, backends::metal::{
-    KernelDataType, MTLContext, MetalArray, ProtocolObject,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    compilation_parameters::CompilationConfig,
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::dsl::{
-        Conv1dDecodeKernel, Conv1dPackPrefixKernel, Conv1dScanKernel, SplitInProjKernel
+use crate::{
+    Activation, DataType, DeviceContext,
+    backends::metal::{
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+        compilation_parameters::CompilationConfig,
+        forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::{
+            Conv1dDecodeKernel, Conv1dPackPrefixKernel, Conv1dScanKernel,
+            SplitInProjKernel,
+        },
+        kernel::ssm::{
+            SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
+            SSDUpdateArguments, SSDUpdateKernel,
+        },
     },
-    kernel::ssm::{
-        SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
-        SSDUpdateArguments, SSDUpdateKernel,
-    },
-}, config::{DecoderLayerType, Mamba2Config}, parameters::ParameterTree, Activation, DeviceContext};
+    config::{DecoderLayerType, Mamba2Config},
+    parameters::ParameterTree,
+};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
@@ -109,9 +115,11 @@ impl MambaMixer {
             split_tree.leaf("skip_connection_weight").unwrap().clone();
 
         let activation = match mamba_config.activation {
-            Activation::SiLU { .. } => 1,
+            Activation::SiLU {
+                ..
+            } => 1,
             Activation::Gelu => 2,
-            Activation::Identity => 0
+            Activation::Identity => 0,
         };
 
         let split_inproj =
@@ -121,23 +129,30 @@ impl MambaMixer {
             mtl_context,
             kernel_data_type,
             activation,
-            mamba_config.conv_config.has_biases
-        ).expect("Failed to create conv decode kernel");
-        let conv_pack = Conv1dPackPrefixKernel::new(mtl_context, kernel_data_type)
-            .expect("Failed to create conv pack kernel");
+            mamba_config.conv_config.has_biases,
+        )
+        .expect("Failed to create conv decode kernel");
+        let conv_pack =
+            Conv1dPackPrefixKernel::new(mtl_context, kernel_data_type)
+                .expect("Failed to create conv pack kernel");
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
             kernel_data_type,
             activation,
-            mamba_config.conv_config.has_biases
-        ).expect("Failed to create conv scan kernel");
+            mamba_config.conv_config.has_biases,
+        )
+        .expect("Failed to create conv scan kernel");
         let ssm_prefill = SSDPrefillKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
         let empty_array = unsafe {
-            mtl_context.array_uninitialized(&[0, 0, 0], data_type, "Empty".to_string())
+            mtl_context.array_uninitialized(
+                &[0, 0, 0],
+                data_type,
+                "Empty".to_string(),
+            )
         };
 
         Self {
@@ -156,7 +171,7 @@ impl MambaMixer {
             gate_bias,
             skip_connection_weight,
             prefill_mode,
-            empty_array
+            empty_array,
         }
     }
 
@@ -226,7 +241,7 @@ impl MambaMixer {
             conv_dim as u32,
             inner_dim as u32,
             num_heads as u32,
-            encoder
+            encoder,
         )
     }
 
@@ -250,7 +265,12 @@ impl MambaMixer {
         let mut c_arr = arrays[4].borrow_mut();
 
         let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
-        let state_buf = unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*conv_state.mtl_buffer()) as *mut _).unwrap() };
+        let state_buf = unsafe {
+            objc2::rc::Retained::retain(std::ptr::from_ref(
+                &*conv_state.mtl_buffer(),
+            ) as *mut _)
+            .unwrap()
+        };
         let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
         let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
         let c_buf = unsafe { c_arr.mtl_buffer().to_owned() };
@@ -285,7 +305,7 @@ impl MambaMixer {
                 suffix_length as u32,
                 inner_dim as u32,
                 proj_dim as u32,
-                encoder
+                encoder,
             );
         } else {
             let padded_buf = if state_stride > 0 {
@@ -293,7 +313,12 @@ impl MambaMixer {
                     .conv_padded_buffer()
                     .expect("Missing conv padded buffer");
                 let mut borrow = array.borrow_mut();
-                let buf = unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*borrow.mtl_buffer()) as *mut _).unwrap() };
+                let buf = unsafe {
+                    objc2::rc::Retained::retain(std::ptr::from_ref(
+                        &*borrow.mtl_buffer(),
+                    ) as *mut _)
+                    .unwrap()
+                };
                 drop(borrow);
 
                 self.conv_pack.encode(
@@ -304,7 +329,7 @@ impl MambaMixer {
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
-                    encoder
+                    encoder,
                 );
 
                 Some(buf)
@@ -328,7 +353,7 @@ impl MambaMixer {
                 conv_dim as u32,
                 inner_dim as u32,
                 proj_dim as u32,
-                encoder
+                encoder,
             );
         }
     }
@@ -512,8 +537,9 @@ impl EncodableBlock for MambaMixer {
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_pipeline_with_encoder(state, &encoder, parameters);
             encoder.end_encoding();
 
@@ -531,7 +557,8 @@ impl EncodableBlock for MambaMixer {
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.run_split_inproj(state, &encoder, active_suffix_length);
         self.run_conv_scan(state, &encoder, active_suffix_length);

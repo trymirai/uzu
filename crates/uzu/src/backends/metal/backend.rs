@@ -1,4 +1,4 @@
-use metal::MTLCommandBuffer;
+use metal::{MTLBuffer, MTLCommandBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::common::Backend;
@@ -9,6 +9,7 @@ pub struct Metal;
 
 impl Backend for Metal {
     type Context = MTLContext;
+    type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
     type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
     type Kernels = MetalKernels;
 

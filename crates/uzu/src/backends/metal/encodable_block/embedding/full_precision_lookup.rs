@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use super::{
     super::{EncodableBlock, EncodingParameters},
     EmbeddingError,
@@ -6,14 +5,15 @@ use super::{
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLError,
-        ProtocolObject, Retained,
-        kernel::dsl::FullPrecisionEmbeddingLookupKernel,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        Retained,
         forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::FullPrecisionEmbeddingLookupKernel,
     },
     parameters::ParameterTree,
 };
+use std::rc::Rc;
 
 pub struct FullPrecisionEmbeddingLookup {
     kernel: FullPrecisionEmbeddingLookupKernel,
@@ -32,8 +32,10 @@ impl FullPrecisionEmbeddingLookup {
         input_scale: Option<f32>,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, EmbeddingError> {
-        let kernel =
-            FullPrecisionEmbeddingLookupKernel::new(mtl_context, data_type.into())?;
+        let kernel = FullPrecisionEmbeddingLookupKernel::new(
+            mtl_context,
+            data_type.into(),
+        )?;
 
         let mut weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
@@ -86,7 +88,8 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
@@ -123,7 +126,7 @@ impl EncodableBlock for FullPrecisionEmbeddingLookup {
             self.vocab_size,
             self.model_dim,
             self.input_scale,
-            encoder
+            encoder,
         )
     }
 }

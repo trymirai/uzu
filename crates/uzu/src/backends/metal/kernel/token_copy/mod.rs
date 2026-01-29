@@ -1,6 +1,6 @@
 use crate::backends::metal::{
-    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
-    ProtocolObject, Retained,
+    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 /// Kernel for copying sampled tokens in async pipeline.
@@ -14,8 +14,10 @@ pub struct TokenCopyKernel {
 
 impl TokenCopyKernel {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
-        let copy_to_token_ids = context.compute_pipeline_state("copy_sampled_token", None)?;
-        let copy_to_results = context.compute_pipeline_state("copy_token_to_results", None)?;
+        let copy_to_token_ids =
+            context.compute_pipeline_state("copy_sampled_token", None)?;
+        let copy_to_results =
+            context.compute_pipeline_state("copy_token_to_results", None)?;
 
         Ok(Self {
             copy_to_token_ids,

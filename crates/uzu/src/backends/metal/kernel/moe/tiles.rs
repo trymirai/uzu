@@ -1,7 +1,7 @@
 use crate::backends::metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
-    metal_extensions::ComputeEncoderSetValue,
+    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject,
+    Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Tile Kernels ----
@@ -14,7 +14,7 @@ pub enum MoeTileError {
 
 /// Arguments for tile counts encoder
 pub struct MoeTileCountsArguments<'a> {
-    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // [E+1]
+    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
     pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
     pub e: usize,
 }
@@ -38,9 +38,9 @@ pub struct MoeTileMapBuildArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a> {
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
     pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
-    pub num_tiles_x: u32,             // x dimension for indirect dispatch
+    pub num_tiles_x: u32, // x dimension for indirect dispatch
 }
 
 pub struct MoeTileMapKernel {
@@ -60,9 +60,9 @@ pub struct MoePassATileCountsArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoePassATileScanArguments<'a> {
-    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,  // [E]
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>, // [E]
     pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,  // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
     pub e: usize,
 }
 
@@ -86,7 +86,7 @@ pub struct MoePassATileBuildArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoePassATileDispatchArguments<'a> {
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
     pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_y: u32,
 }
@@ -153,7 +153,7 @@ impl MoePassATileKernel {
         encoder.set_buffer(Some(args.total_tiles), 0, 2);
         let e_u32 = args.e as u32;
         encoder.set_value(&e_u32, 3);
-        encoder.set_threadgroup_memory_length(1024 * size_of::<u32>() , 0);
+        encoder.set_threadgroup_memory_length(1024 * size_of::<u32>(), 0);
         encoder.dispatch_threadgroups(
             MTLSize::new(1, 1, 1),
             MTLSize::new(1024, 1, 1),

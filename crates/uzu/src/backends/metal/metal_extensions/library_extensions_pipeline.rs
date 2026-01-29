@@ -2,7 +2,8 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSError;
 
 use crate::backends::metal::{
-    MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt,
+    MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues,
+    MTLLibrary, MTLLibraryExt,
     error::{LibraryError, MTLError},
 };
 
@@ -22,7 +23,8 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         let function = match constants {
             Some(const_values) => {
                 let mut error: *mut NSError = std::ptr::null_mut();
@@ -31,21 +33,21 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
                     const_values,
                     &mut error,
                 )
-            }
+            },
             None => self.new_function_with_name(function_name),
         }
         .ok_or(MTLError::Library(LibraryError::FunctionCreationFailed))?;
 
         let device = self.device();
 
-        device
-            .new_compute_pipeline_state_with_function(&function)
-            .map_err(|e| {
+        device.new_compute_pipeline_state_with_function(&function).map_err(
+            |e| {
                 MTLError::Library(LibraryError::Custom(format!(
                     "Pipeline state creation failed: {}",
                     e
                 )))
-            })
+            },
+        )
     }
 }
 
@@ -54,7 +56,8 @@ impl LibraryPipelineExtensions for Retained<ProtocolObject<dyn MTLLibrary>> {
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         (**self).compute_pipeline_state(function_name, constants)
     }
 }

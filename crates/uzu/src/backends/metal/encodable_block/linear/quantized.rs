@@ -115,10 +115,18 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
-                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(deq_biases.mtl_buffer() as *const _ as *mut _).unwrap() };
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
+                        objc2::rc::Retained::retain(scales.mtl_buffer()
+                            as *const _
+                            as *mut _)
+                        .unwrap()
+                    };
+                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
+                        objc2::rc::Retained::retain(deq_biases.mtl_buffer()
+                            as *const _
+                            as *mut _)
+                        .unwrap()
+                    };
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
@@ -153,10 +161,19 @@ impl QuantizedLinear {
                             storage_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
-                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*zero_points.mtl_buffer()) as *mut _).unwrap() };
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
+                        objc2::rc::Retained::retain(scales.mtl_buffer()
+                            as *const _
+                            as *mut _)
+                        .unwrap()
+                    };
+                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
+                        objc2::rc::Retained::retain(std::ptr::from_ref(
+                            &*zero_points.mtl_buffer(),
+                        )
+                            as *mut _)
+                        .unwrap()
+                    };
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }
@@ -241,7 +258,8 @@ impl EncodableBlock for QuantizedLinear {
         let input_buffer = unsafe { input_array_mut.mtl_buffer() };
         let output_buffer = unsafe { output_array_mut.mtl_buffer() };
 
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
 
         let args = QuantizedMatmulArguments {

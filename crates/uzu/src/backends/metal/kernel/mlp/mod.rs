@@ -57,7 +57,9 @@ impl MlpFusedConfig {
     }
 
     /// Create function constants for MLP fused matmul
-    pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
+    pub fn make_function_constants(
+        &self
+    ) -> Retained<MTLFunctionConstantValues> {
         let fcv = MTLFunctionConstantValues::new();
         let fused = true;
         fcv.set_constant_value_type_at_index(
@@ -81,7 +83,8 @@ impl MlpFusedConfig {
 }
 
 /// Create function constants for non-fused (standard) matmul
-pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
+pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues>
+{
     let fcv = MTLFunctionConstantValues::new();
     let fused = false;
     fcv.set_constant_value_type_at_index(
@@ -121,9 +124,13 @@ impl MlpGateActMulEncodable {
         m: i32,
     ) -> Result<(), MTLError> {
         let act_type = match self.activation {
-            Activation::SiLU { .. } => 0,
+            Activation::SiLU {
+                ..
+            } => 0,
             Activation::Gelu => 1,
-            Activation::Identity => panic!("Identity activation is not supported for kernel")
+            Activation::Identity => {
+                panic!("Identity activation is not supported for kernel")
+            },
         };
         self.kernel.encode(
             fused_up,

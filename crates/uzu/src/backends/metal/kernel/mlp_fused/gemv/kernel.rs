@@ -1,11 +1,14 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
+use super::{
+    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
+};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
@@ -39,7 +42,10 @@ fn kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    pipelines: HashMap<
+        PipelineConfiguration,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
 }
 
 impl Kernel {
@@ -60,7 +66,8 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 

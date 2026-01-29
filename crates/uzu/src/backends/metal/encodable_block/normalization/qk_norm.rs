@@ -6,8 +6,9 @@ use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        MTLResourceOptions, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::rms_norm::{
             QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel,
