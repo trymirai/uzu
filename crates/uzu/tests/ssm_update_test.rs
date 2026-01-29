@@ -10,7 +10,7 @@ use uzu::backends::{
     common::Context,
     metal::{
         KernelDataType, MTLContext,
-        kernel::ssm::{SSDUpdateArguments, SSDUpdateKernel},
+        kernel::dsl::SSDUpdateKernel
     },
 };
 
@@ -216,10 +216,10 @@ fn ssd_update_with_z_bf16() {
     let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
     let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
 
-    let x_strides = [h * dh, dh, 1usize];
-    let dt_strides = [h, 1usize];
-    let cb_strides = [g * n, n, 1usize];
-    let state_strides = [h * dh * n, dh * n, n, 1usize];
+    let x_strides = [(h * dh) as u32, dh as u32, 1u32];
+    let dt_strides = [h as u32, 1u32];
+    let cb_strides = [(g * n) as u32, n as u32, 1u32];
+    let state_strides = [(h * dh * n) as u32, (dh * n) as u32, n as u32, 1u32];
 
     let x_buf = ctx
         .device
@@ -294,31 +294,27 @@ fn ssd_update_with_z_bf16() {
     let enc = cb
         .new_compute_command_encoder()
         .expect("Failed to create compute encoder");
-    kernel
-        .encode(
-            &enc,
-            SSDUpdateArguments {
-                x: &x_buf,
-                dt: &dt_buf,
-                b: &b_buf,
-                c: &c_buf,
-                d: &d_buf,
-                z: &z_buf,
-                state: &state_buf,
-                y: &y_buf,
-                next_state: &ns_buf,
-                group_size: (h / g) as i32,
-                state_size: n as i32,
-                x_strides,
-                dt_strides,
-                cb_strides,
-                state_strides,
-                b_size: bsz,
-                h_size: h,
-                dh_size: dh,
-            },
-        )
-        .unwrap();
+    kernel.encode(
+        &x_buf,
+        &dt_buf,
+        &b_buf,
+        &c_buf,
+        &d_buf,
+        &z_buf,
+        &state_buf,
+        &y_buf,
+        &ns_buf,
+        (h / g) as u32,
+        n as u32,
+        x_strides.as_slice(),
+        dt_strides.as_slice(),
+        cb_strides.as_slice(),
+        state_strides.as_slice(),
+        bsz as u32,
+        h as u32,
+        dh as u32,
+        &enc
+    );
     enc.end_encoding();
     cb_ref.commit();
     cb_ref.wait_until_completed();
