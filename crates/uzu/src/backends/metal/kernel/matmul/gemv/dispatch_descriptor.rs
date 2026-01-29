@@ -122,11 +122,6 @@ impl DispatchDescriptor {
         let mut batch_pack = 1;
         let mut vector_loads = false;
         let mut ilp2 = false;
-        if m <= 8 {
-            batch_pack = 4.min(m);
-            vector_loads = batch_pack > 1;
-            ilp2 = batch_pack > 1;
-        }
         if m == 4
             && arguments.input_dim <= 2048
             && (1536..=3072).contains(&output_dimension)
@@ -134,6 +129,10 @@ impl DispatchDescriptor {
             batch_pack = 2;
             vector_loads = true;
             ilp2 = false;
+        } else if m <= 8 {
+            batch_pack = 4.min(m);
+            vector_loads = batch_pack > 1;
+            ilp2 = batch_pack > 1;
         }
 
         if batch_pack > m {
