@@ -1,12 +1,13 @@
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments,
+        MoeCountsOffsetsFusedKernel, MoeScatterKernels,
+        MoeScatterWithMapArguments,
+        dsl::MoeFinalizeKernel,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -518,22 +519,20 @@ fn run_moe_parity_test_internal(
         )
         .expect("experts encode");
 
-    let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize");
-    finalize
-        .encode(
-            &cb,
-            MoeFinalizeArguments {
-                tok2row_buffer: &tok2row_buf,
-                probs_buffer: &topk_probs_buf,
-                y_partial_buffer: &y_partial_buf,
-                y_out_buffer: &y_out_buf,
-                t,
-                d_model,
-                k,
-            },
-            KernelDataType::BFloat16,
-        )
+    let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
         .expect("finalize");
+    let encoder = cb.new_compute_command_encoder().expect("encoder");
+    finalize.encode(
+        &tok2row_buf,
+        &topk_probs_buf,
+        &y_partial_buf,
+        &y_out_buf,
+        t as u32,
+        d_model as u32,
+        k as u32,
+        &encoder,
+    );
+    encoder.end_encoding();
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
     cb.commit();

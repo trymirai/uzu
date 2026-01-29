@@ -9,7 +9,7 @@ use super::{
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
-    rng::DerivableSeed,
+    rng::PRng,
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
@@ -96,7 +96,7 @@ impl LanguageModelGenerator {
         let suffix_length = prefill_size - tokens_length;
         let suffix_root = TrieNode::from_speculator(
             &tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -329,7 +329,7 @@ impl LanguageModelGenerator {
         let suffix_length = self.decoding_config.generate_suffix_length();
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -451,9 +451,11 @@ impl LanguageModelGenerator {
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
-        self.context
-            .async_buffers
-            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.prepare_seeds(
+            &self.context.seed,
+            prefill_count,
+            tokens_to_generate,
+        );
         self.context.async_buffers.reset_counter();
     }
 
@@ -692,8 +694,8 @@ impl LanguageModelGenerator {
         self.encoded_tasks.clear();
         self.gpu_capture.reset();
 
-        let base_seed = self.decoding_config.sampling_seed.resolve();
-        self.context.next_seed = DerivableSeed::new(base_seed);
+        let seed = self.decoding_config.sampling_seed.resolve();
+        self.context.seed = PRng::new(seed);
         self.context.async_buffers.reset_counter();
     }
 

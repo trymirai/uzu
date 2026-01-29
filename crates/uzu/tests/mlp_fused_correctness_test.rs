@@ -4,26 +4,23 @@
 use bytemuck;
 use half::f16;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
     MTLDeviceExt, MTLResourceOptions,
 };
 use objc2::rc::autoreleasepool;
 use uzu::{
     DataType,
-    backends::metal::{
-        MTLContext,
-        kernel::{
-            mlp::MlpActivationType,
-            mlp_fused::{MlpFusedArguments, MlpFusedKernel},
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext,
+            kernel::{
+                mlp::MlpActivationType,
+                mlp_fused::{MlpFusedArguments, MlpFusedKernel},
+            },
         },
     },
 };
-
-fn create_test_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
-}
 
 /// CPU reference implementation for SiLU activation
 fn silu(x: f32) -> f32 {
@@ -242,7 +239,7 @@ fn compare_outputs(
 #[test]
 fn test_mlp_fused_gemv_silu_small() {
     autoreleasepool(|_| {
-        let ctx = match create_test_context() {
+        let ctx = match MTLContext::new().ok() {
             Some(c) => c,
             None => {
                 eprintln!("No Metal device available, skipping test");
@@ -306,7 +303,7 @@ fn test_mlp_fused_gemv_silu_small() {
 #[test]
 fn test_mlp_fused_gemv_gelu_small() {
     autoreleasepool(|_| {
-        let ctx = match create_test_context() {
+        let ctx = match MTLContext::new().ok() {
             Some(c) => c,
             None => {
                 eprintln!("No Metal device available, skipping test");
@@ -365,7 +362,7 @@ fn test_mlp_fused_gemv_gelu_small() {
 #[test]
 fn test_mlp_fused_gemm_silu_medium() {
     autoreleasepool(|_| {
-        let ctx = match create_test_context() {
+        let ctx = match MTLContext::new().ok() {
             Some(c) => c,
             None => {
                 eprintln!("No Metal device available, skipping test");
@@ -425,7 +422,7 @@ fn test_mlp_fused_gemm_silu_medium() {
 #[test]
 fn test_mlp_fused_gemv_realistic_dimensions() {
     autoreleasepool(|_| {
-        let ctx = match create_test_context() {
+        let ctx = match MTLContext::new().ok() {
             Some(c) => c,
             None => {
                 eprintln!("No Metal device available, skipping test");

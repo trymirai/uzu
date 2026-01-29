@@ -53,8 +53,9 @@ impl EncodableBlock for MlpBlock {
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -71,8 +72,9 @@ impl EncodableBlock for MlpBlock {
                 let fused_buf = unsafe { fused.mtl_buffer() };
                 let hidden_buf = unsafe { hidden.mtl_buffer() };
 
-                let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+                let encoder = command_buffer
+                    .new_compute_command_encoder()
+                    .expect("Failed to create compute command encoder");
                 self.gate
                     .encode(&encoder, fused_buf, hidden_buf, m)
                     .expect("Failed to encode MLP activation/mul kernel");
@@ -140,7 +142,8 @@ pub struct MlpFusedBlock {
     down: Box<dyn EncodableBlock>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
-    zero_points_or_biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    zero_points_or_biases_buffer:
+        Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -319,8 +322,9 @@ impl EncodableBlock for MlpFusedBlock {
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -334,8 +338,9 @@ impl EncodableBlock for MlpFusedBlock {
                 let input_buf = unsafe { input.mtl_buffer() };
                 let hidden_buf = unsafe { hidden.mtl_buffer() };
 
-                let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+                let encoder = command_buffer
+                    .new_compute_command_encoder()
+                    .expect("Failed to create compute command encoder");
                 self.encode_fused_up(&encoder, input_buf, 0, hidden_buf, batch);
                 encoder.end_encoding();
             }

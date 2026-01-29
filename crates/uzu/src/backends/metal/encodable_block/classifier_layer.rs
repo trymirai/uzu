@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
-use crate::backends::metal::{ProtocolObject,
+use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject,
 };
 use objc2::rc::autoreleasepool;
 
@@ -284,8 +285,9 @@ impl EncodableBlock for ClassifierLayer {
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+                let encoder = command_buffer
+                    .new_compute_command_encoder()
+                    .expect("Failed to create compute command encoder");
                 self.encode_with_shared_encoder(state, &encoder, parameters);
                 encoder.end_encoding();
                 return;

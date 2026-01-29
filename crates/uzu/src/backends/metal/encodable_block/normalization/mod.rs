@@ -11,17 +11,17 @@ pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
 use super::{EncodableBlock, EncodingParameters};
+use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::{RMSNormError},
+        kernel::RMSNormError,
     },
     config::NormalizationConfig,
     parameters::ParameterTree,
 };
-use crate::backends::metal::MTLError;
 
 /// Unified error type for normalization operations.
 #[derive(Debug, thiserror::Error)]

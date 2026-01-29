@@ -1,18 +1,22 @@
 use std::rc::Rc;
 
-
 use super::{
     super::{EncodableBlock, EncodingParameters},
     EmbeddingError,
 };
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::quant_matmul::{
-            QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+    backends::{
+        common::Context,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::quant_matmul::{
+                QuantizationType, QuantizedMatmulArguments,
+                QuantizedMatmulKernel,
+            },
         },
     },
     config::QuantizationMode,
@@ -137,52 +141,52 @@ impl QuantizedEmbeddingReadout {
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
-            Ok(mut deq_biases) => {
-                if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(MTLError::Generic(
-                        format!(
-                            "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
-                            deq_biases.shape(),
-                            vocab_size,
-                            num_groups
-                        ),
-                    )));
-                }
-                if deq_biases.data_type() != data_type {
-                    return Err(EmbeddingError::UnsupportedDataType(
-                        deq_biases.data_type(),
-                    ));
-                }
-                unsafe { deq_biases.mtl_buffer().to_owned().into() }
-            },
-            Err(_) => {
-                // Allocate zero-initialized biases buffer
-                let elem_size: usize = match data_type {
-                    DataType::F16 | DataType::BF16 => 2,
-                    DataType::F32 => 4,
-                    other => {
-                        return Err(EmbeddingError::UnsupportedDataType(other));
-                    },
-                };
-                let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context
-                    .device
-                    .new_buffer(
-                        size_bytes.try_into().unwrap(),
-                        MTLResourceOptions::STORAGE_MODE_SHARED,
-                    )
-                    .expect("Failed to allocate buffer");
-                unsafe {
-                    std::ptr::write_bytes(
-                        metal::MTLBuffer::contents(&*buf).as_ptr(),
-                        0,
-                        size_bytes as usize,
-                    );
-                }
-                buf
-            },
-        };
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+            match parameter_tree.leaf(biases_name) {
+                Ok(mut deq_biases) => {
+                    if deq_biases.shape() != [vocab_size, num_groups] {
+                        return Err(EmbeddingError::MetalError(
+                            MTLError::Generic(format!(
+                                "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
+                                deq_biases.shape(),
+                                vocab_size,
+                                num_groups
+                            )),
+                        ));
+                    }
+                    if deq_biases.data_type() != data_type {
+                        return Err(EmbeddingError::UnsupportedDataType(
+                            deq_biases.data_type(),
+                        ));
+                    }
+                    unsafe { deq_biases.mtl_buffer().to_owned().into() }
+                },
+                Err(_) => {
+                    // Allocate zero-initialized biases buffer
+                    let elem_size: usize = match data_type {
+                        DataType::F16 | DataType::BF16 => 2,
+                        DataType::F32 => 4,
+                        other => {
+                            return Err(EmbeddingError::UnsupportedDataType(
+                                other,
+                            ));
+                        },
+                    };
+                    let size_bytes =
+                        (vocab_size * num_groups * elem_size) as u64;
+                    let buf = mtl_context
+                        .allocate_buffer(size_bytes)
+                        .expect("Failed to allocate buffer");
+                    unsafe {
+                        std::ptr::write_bytes(
+                            metal::MTLBuffer::contents(&*buf).as_ptr(),
+                            0,
+                            size_bytes as usize,
+                        );
+                    }
+                    buf
+                },
+            };
 
         let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
         let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };

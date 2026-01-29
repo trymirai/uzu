@@ -11,11 +11,14 @@ pub enum DeviceClass {
 impl DeviceClass {
     pub fn detect() -> Self {
         use metal::MTLDeviceExt as _;
-        let device: crate::backends::metal::Retained<crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLDevice>> =
-            match <dyn metal::MTLDevice>::system_default() {
-                Some(dev) => dev,
-                None => return DeviceClass::Unknown,
-            };
+        let device: crate::backends::metal::Retained<
+            crate::backends::metal::ProtocolObject<
+                dyn crate::backends::metal::MTLDevice,
+            >,
+        > = match <dyn metal::MTLDevice>::system_default() {
+            Some(dev) => dev,
+            None => return DeviceClass::Unknown,
+        };
 
         let name = device.name().to_lowercase();
 

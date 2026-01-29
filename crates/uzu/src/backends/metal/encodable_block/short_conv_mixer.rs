@@ -4,12 +4,15 @@ use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
     DataType,
     DeviceContext,
-    backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
-        MTLDeviceExt, MTLResource, MTLResourceOptions, MetalArray, ProtocolObject,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel}
+    backends::{
+        common::Context,
+        metal::{
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+            MTLContext, MetalArray, ProtocolObject,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel}
+        },
     },
     config::{DecoderLayerType, ShortConvConfig},
     parameters::ParameterTree,
@@ -217,9 +220,9 @@ impl ShortConvMixer {
         let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
-        let device = in_proj_buf.device();
-        let padded_buf = device
-            .new_buffer(padded_size, MTLResourceOptions::STORAGE_MODE_PRIVATE)
+        let padded_buf = state
+            .mtl_context()
+            .allocate_buffer(padded_size as u64)
             .expect("Failed to create padded buffer");
 
         self.short_conv_pack_kernel.encode(

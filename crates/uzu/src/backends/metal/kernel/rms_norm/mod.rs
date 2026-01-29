@@ -1,8 +1,9 @@
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject,
+        Retained,
     },
 };
 

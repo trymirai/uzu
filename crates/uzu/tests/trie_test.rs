@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use uzu::{
-    language_model::rng::DerivableSeed,
+    language_model::rng::PRng,
     speculators::empty_speculator::EmptySpeculator,
     trie::{TrieCreationConfig, TrieNode},
 };
@@ -37,14 +37,13 @@ fn test_trie_manual_sprout() {
 
 #[test]
 fn test_trie_from_speculator_sprout() {
-    let mut trie_rng = DerivableSeed::new(42);
-    let mut ref_rng = DerivableSeed::new(42);
+    let rng = PRng::new(42);
 
     let speculator = EmptySpeculator;
 
     let trie_root = TrieNode::from_speculator(
         &[0],
-        &mut trie_rng,
+        &rng,
         None,
         &speculator,
         &TrieCreationConfig {
@@ -53,12 +52,12 @@ fn test_trie_from_speculator_sprout() {
         10,
     );
 
-    verify_sprout(&trie_root, ref_rng.next());
+    verify_sprout(&trie_root, rng.derive(0));
 }
 
 fn verify_stick(
     trie_root: &TrieNode,
-    mut expected_seeds: HashSet<u64>,
+    rng: &PRng,
 ) {
     let flat_trie = trie_root.linearize();
 
@@ -75,39 +74,37 @@ fn verify_stick(
     let position = flat_trie.index(cur_node).unwrap();
     assert_eq!(token_ids[position], 0);
     assert_eq!(token_positions[position], 0);
-    assert!(expected_seeds.remove(&token_seeds[position]));
+    assert_eq!(token_seeds[position], rng.derive(0));
 
     for i in 1..10 {
         cur_node = cur_node.get(i as u64).unwrap();
         assert_eq!(cur_node.token(), i as u64);
-        assert!(expected_seeds.remove(&cur_node.seed()));
+        assert_eq!(cur_node.seed(), rng.derive(i));
 
         let position = flat_trie.index(cur_node).unwrap();
         assert_eq!(token_ids[position], cur_node.token());
         assert_eq!(token_positions[position], i as usize);
-        assert_eq!(token_seeds[position], cur_node.seed());
+        assert_eq!(token_seeds[position], rng.derive(i));
     }
-
-    assert!(expected_seeds.is_empty());
 }
 
 #[test]
 fn test_trie_manual_stick() {
-    let mut trie_root = TrieNode::new(0, None, 0);
+    let rng = PRng::new(0);
+    let mut trie_root = TrieNode::new(0, None, rng.derive(0));
 
     let mut trie_leaf = &mut trie_root;
-    for (token, seed) in std::iter::zip(1..10, 1..10) {
-        trie_leaf.add(TrieNode::new(token, None, seed)).unwrap();
-        trie_leaf = trie_leaf.get_mut(token).unwrap();
+    for i in 1..10u64 {
+        trie_leaf.add(TrieNode::new(i, None, rng.derive(i))).unwrap();
+        trie_leaf = trie_leaf.get_mut(i).unwrap();
     }
 
-    verify_stick(&trie_root, (0..10).collect());
+    verify_stick(&trie_root, &rng);
 }
 
 #[test]
 fn test_trie_from_speculator_stick() {
-    let mut trie_rng = DerivableSeed::new(42);
-    let mut ref_rng = DerivableSeed::new(42);
+    let rng = PRng::new(42);
 
     let mut hs = HashMap::new();
     for i in 1..10 {
@@ -120,7 +117,7 @@ fn test_trie_from_speculator_stick() {
 
     let trie_root = TrieNode::from_speculator(
         &[0],
-        &mut trie_rng,
+        &rng,
         None,
         &speculator,
         &TrieCreationConfig {
@@ -129,15 +126,12 @@ fn test_trie_from_speculator_stick() {
         10,
     );
 
-    verify_stick(
-        &trie_root,
-        std::iter::from_fn(|| Some(ref_rng.next())).take(10).collect(),
-    );
+    verify_stick(&trie_root, &rng);
 }
 
 fn verify_bush(
     trie_root: &TrieNode,
-    mut expected_seeds: HashSet<u64>,
+    rng: &PRng,
 ) {
     let flat_trie = trie_root.linearize();
 
@@ -152,40 +146,38 @@ fn verify_bush(
     let root_position = flat_trie.index(&trie_root).unwrap();
     assert_eq!(token_ids[root_position], 0);
     assert_eq!(token_positions[root_position], 0);
-    assert!(expected_seeds.remove(&token_seeds[root_position]));
+    assert_eq!(token_seeds[root_position], rng.derive(0));
 
     for leaf_token in [1, 2, 3] {
         let leaf = trie_root.get(leaf_token).unwrap();
         assert_eq!(leaf.token(), leaf_token);
-        assert!(expected_seeds.remove(&leaf.seed()));
+        assert_eq!(leaf.seed(), rng.derive(1));
 
         let position = flat_trie.index(&leaf).unwrap();
         assert_eq!(token_ids[position], leaf.token());
         assert_eq!(token_positions[position], 1);
-        assert_eq!(token_seeds[position], leaf.seed());
+        assert_eq!(token_seeds[position], rng.derive(1));
     }
-
-    assert!(expected_seeds.is_empty());
 }
 
 #[test]
 fn test_trie_manual_bush() {
-    let mut trie_root = TrieNode::new(0, None, 0);
+    let rng = PRng::new(0);
+    let mut trie_root = TrieNode::new(0, None, rng.derive(0));
 
-    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, rng.derive(1))).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, None, rng.derive(1))).is_err());
     assert!(trie_root.add(TrieNode::new(1, None, 10)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, None, 2)).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, None, 3)).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, None, rng.derive(1))).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, None, rng.derive(1))).is_ok());
 
-    verify_bush(&trie_root, (0..4).into_iter().collect());
+    verify_bush(&trie_root, &rng);
 }
 
 #[test]
 fn test_trie_from_speculator_bush() {
-    let mut trie_rng = DerivableSeed::new(42);
-    let mut ref_rng = DerivableSeed::new(42);
+    let rng = PRng::new(0);
 
     let mut hs = HashMap::new();
     hs.insert(
@@ -198,7 +190,7 @@ fn test_trie_from_speculator_bush() {
 
     let trie_root = TrieNode::from_speculator(
         &[0],
-        &mut trie_rng,
+        &rng,
         None,
         &speculator,
         &TrieCreationConfig {
@@ -207,13 +199,13 @@ fn test_trie_from_speculator_bush() {
         10,
     );
 
-    verify_bush(
-        &trie_root,
-        std::iter::from_fn(|| Some(ref_rng.next())).take(4).collect(),
-    );
+    verify_bush(&trie_root, &rng);
 }
 
-fn verify_tree(trie_root: &TrieNode) {
+fn verify_tree(
+    trie_root: &TrieNode,
+    rng: &PRng,
+) {
     let flat_trie = trie_root.linearize();
 
     assert_eq!(flat_trie.len(), 7);
@@ -227,44 +219,43 @@ fn verify_tree(trie_root: &TrieNode) {
     let root_position = flat_trie.index(&trie_root).unwrap();
     assert_eq!(token_ids[root_position], 0);
     assert_eq!(token_positions[root_position], 0);
-    assert_eq!(token_seeds[root_position], 0);
+    assert_eq!(token_seeds[root_position], rng.derive(0));
 
-    for (mid_token, mid_seed) in [(1, 1), (2, 1), (3, 2)] {
-        let leaf = trie_root.get(mid_token).unwrap();
-        let position = flat_trie.index(&leaf).unwrap();
+    for mid_token in [1, 2, 3] {
+        let node = trie_root.get(mid_token).unwrap();
+        let position = flat_trie.index(&node).unwrap();
         assert_eq!(token_ids[position], mid_token);
         assert_eq!(token_positions[position], 1);
-        assert_eq!(token_seeds[position], mid_seed);
+        assert_eq!(token_seeds[position], rng.derive(1));
     }
 
-    for (mid_token, leaf_token, leaf_seed) in
-        [(2, 10, 15), (3, 20, 25), (3, 21, 26)]
-    {
+    for (mid_token, leaf_token) in [(2, 10), (3, 20), (3, 21)] {
         let leaf = trie_root.get(mid_token).unwrap().get(leaf_token).unwrap();
         let leaf_position = flat_trie.index(leaf).unwrap();
         assert_eq!(token_ids[leaf_position], leaf_token);
         assert_eq!(token_positions[leaf_position], 2);
-        assert_eq!(token_seeds[leaf_position], leaf_seed);
+        assert_eq!(token_seeds[leaf_position], rng.derive(2));
     }
 }
 
 #[test]
 fn test_trie_manual_tree() {
-    let mut trie_root = TrieNode::new(0, None, 0);
+    let rng = PRng::new(0);
+    let mut trie_root = TrieNode::new(0, None, rng.derive(0));
 
-    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(1, None, 1)).is_err());
+    assert!(trie_root.add(TrieNode::new(1, None, rng.derive(1))).is_ok());
+    assert!(trie_root.add(TrieNode::new(1, None, rng.derive(1))).is_err());
     assert!(trie_root.add(TrieNode::new(1, None, 10)).is_err());
 
-    assert!(trie_root.add(TrieNode::new(2, None, 1)).is_ok());
-    assert!(trie_root.add(TrieNode::new(3, None, 2)).is_ok());
+    assert!(trie_root.add(TrieNode::new(2, None, rng.derive(1))).is_ok());
+    assert!(trie_root.add(TrieNode::new(3, None, rng.derive(1))).is_ok());
 
     let mid_b = trie_root.get_mut(2).unwrap();
-    assert!(mid_b.add(TrieNode::new(10, None, 15)).is_ok());
+    assert!(mid_b.add(TrieNode::new(10, None, rng.derive(2))).is_ok());
 
     let mid_c = trie_root.get_mut(3).unwrap();
-    assert!(mid_c.add(TrieNode::new(20, None, 25)).is_ok());
-    assert!(mid_c.add(TrieNode::new(21, None, 26)).is_ok());
+    assert!(mid_c.add(TrieNode::new(20, None, rng.derive(2))).is_ok());
+    assert!(mid_c.add(TrieNode::new(21, None, rng.derive(2))).is_ok());
 
-    verify_tree(&trie_root)
+    verify_tree(&trie_root, &rng)
 }

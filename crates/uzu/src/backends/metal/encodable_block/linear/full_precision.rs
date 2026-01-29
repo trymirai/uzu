@@ -4,7 +4,8 @@ use crate::{
     DataType,
     backends::metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        Retained,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},

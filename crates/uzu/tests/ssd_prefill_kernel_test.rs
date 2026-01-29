@@ -5,18 +5,19 @@ use std::mem::size_of;
 use bytemuck;
 use metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder,
-    MTLCommandQueue, MTLDevice, MTLDeviceExt, MTLResourceOptions,
+    MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
-use uzu::{
-    backends::metal::{
+use uzu::backends::{
+    common::Context,
+    metal::{
         KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
         kernel::ssm::{
             SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
             conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
         },
     },
-    config::Activation,
 };
+use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions =
     MTLResourceOptions::STORAGE_MODE_SHARED;
@@ -32,12 +33,6 @@ fn softplus_f32(x: f32) -> f32 {
     } else {
         (1.0 + x.exp()).ln()
     }
-}
-
-fn create_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
 }
 
 fn write_buffer(
@@ -432,7 +427,7 @@ fn run_conv_scan_once(
 }
 
 fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
-    let Some(ctx) = create_context() else {
+    let Some(ctx) = MTLContext::new().ok() else {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
@@ -449,7 +444,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
 }
 
 fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
-    let Some(ctx) = create_context() else {
+    let Some(ctx) = MTLContext::new().ok() else {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
@@ -536,7 +531,7 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 
 #[test]
 fn conv1d_scan_is_deterministic() {
-    let Some(ctx) = create_context() else {
+    let Some(ctx) = MTLContext::new().ok() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };

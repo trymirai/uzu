@@ -11,7 +11,9 @@ use crate::{
     Array, DataType,
     backends::metal::{
         MTLCommandBuffer,
-        forward_pass::{ArrayId, EncodableBlock, EncodingParameters, ForwardPassState},
+        forward_pass::{
+            ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
+        },
     },
     session::types::Error,
 };

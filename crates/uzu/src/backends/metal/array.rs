@@ -3,10 +3,11 @@ use std::ops::Range;
 use half::{bf16, f16};
 
 use crate::{
-    Array, ArrayElement, DataType, array::array_size_in_bytes,
+    Array, ArrayElement, DataType,
+    array::array_size_in_bytes,
     backends::metal::{
-        MTLBuffer, MTLDeviceExt, MTLResource, MTLResourceExt, MTLResourceOptions, ProtocolObject,
-        Retained,
+        MTLBuffer, MTLDeviceExt, MTLResource, MTLResourceExt,
+        MTLResourceOptions, ProtocolObject, Retained,
     },
 };
 
@@ -168,7 +169,8 @@ impl MetalArray {
                     required_len,
                     MTLResourceOptions::STORAGE_MODE_SHARED,
                 )
-            }.expect("Failed to create child buffer");
+            }
+            .expect("Failed to create child buffer");
 
             // Create split shape
             let mut split_shape = self.shape.to_vec();

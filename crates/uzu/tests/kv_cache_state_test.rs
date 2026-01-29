@@ -1,11 +1,14 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt};
+use metal::{MTLCommandBuffer, MTLCommandQueue};
 use uzu::{
     Array, DataType, DeviceContext,
-    backends::metal::{
-        KVCacheUpdate, KernelDataType, MTLContext,
-        forward_pass::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
+    backends::{
+        common::Context,
+        metal::{
+            KVCacheUpdate, KernelDataType, MTLContext,
+            forward_pass::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
+        },
     },
 };
 
@@ -26,21 +29,6 @@ struct Scenario {
     expected_ring_length: Option<usize>,
     expected_prefix_len: Option<usize>,
     expected_prefix_segment_length: usize,
-}
-
-fn create_test_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    match MTLContext::new(device, command_queue) {
-        Ok(ctx) => Some(ctx),
-        Err(e) => {
-            eprintln!(
-                "Skipping KV cache tests: failed to create Metal context: {:?}",
-                e
-            );
-            None
-        },
-    }
 }
 
 fn make_test_layer(
@@ -319,7 +307,7 @@ fn run_scenario(
 
 #[test]
 fn kv_cache_state_and_mask_scenarios() {
-    let Some(context) = create_test_context() else {
+    let Some(context) = MTLContext::new().ok() else {
         return;
     };
 
@@ -446,7 +434,7 @@ fn kv_cache_state_and_mask_scenarios() {
 
 #[test]
 fn kv_cache_slice_apply_contiguous_window() {
-    let Some(context) = create_test_context() else {
+    let Some(context) = MTLContext::new().ok() else {
         return;
     };
 
@@ -501,7 +489,7 @@ fn kv_cache_slice_apply_contiguous_window() {
 
 #[test]
 fn kv_cache_slice_apply_wrap_window() {
-    let Some(context) = create_test_context() else {
+    let Some(context) = MTLContext::new().ok() else {
         return;
     };
 
@@ -556,7 +544,7 @@ fn kv_cache_slice_apply_wrap_window() {
 
 #[test]
 fn kv_cache_slice_apply_full_restores_metadata() {
-    let Some(context) = create_test_context() else {
+    let Some(context) = MTLContext::new().ok() else {
         return;
     };
 

@@ -165,7 +165,10 @@ fn run_router_topk_once(
     // For BFloat16 kernel, probs buffer must be bf16, not f32
     let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let cb = ctx
+        .command_queue
+        .command_buffer()
+        .expect("Failed to create command buffer");
     let args = MoeRouterTopKArguments {
         input_buffer: &input_buf,
         weight_buffer: &weight_buf,

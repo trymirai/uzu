@@ -1,7 +1,8 @@
 //! Tensor copy encodable.
 
-use crate::backends::metal::{ProtocolObject,
+use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    ProtocolObject,
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -40,7 +41,8 @@ impl EncodableBlock for TensorCopy {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
