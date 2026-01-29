@@ -15,9 +15,8 @@
 *__pycache__
 
 # AI tools
-.github/*.md
 .cursor
-.claude
+.claude/settings.local.json
 
 # Models
 /models/
