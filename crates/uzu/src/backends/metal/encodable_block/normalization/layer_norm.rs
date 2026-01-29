@@ -56,20 +56,12 @@ impl LayerNorm {
             config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
-        let (input_type, scales_type, output_type) = match config.upcast_mode {
-            UpcastMode::OnlyNormalization => {
-                (intermediate_data_type, scale_data_type, scale_data_type)
-            },
-            UpcastMode::FullLayer => {
-                (intermediate_data_type, scale_data_type, scale_data_type)
-            },
-        };
-
         let kernel = LayerNormKernel::new(
             context,
-            input_type.into(),
-            scales_type.into(),
-            output_type.into(),
+            intermediate_data_type.into(),
+            scale_data_type.into(),
+            scale_data_type.into(),
+            accumulation_data_type.into(),
         )?;
         Ok(Self {
             kernel,
