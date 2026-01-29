@@ -322,13 +322,38 @@ impl MetalCompiler {
             })
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
 
-        let tokens = quote! { #(#bindings)* };
+        let imports = quote! {
+            use crate::backends::metal::{
+                ComputeEncoderSetValue,
+                KernelDataType,
+                MTLContext,
+                MTLDataType,
+                MTLError,
+                MTLFunctionConstantValues,
+                MTLSize,
+                ProtocolObject,
+                Retained,
+                metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
+            };
+            use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+        };
+
+        let tokens = quote! {
+            #imports
+            #(#bindings)*
+        };
 
         let parsed =
             syn::parse2(tokens).context("cannot parse generated bindings")?;
         fs::write(&out_path, prettyplease::unparse(&parsed)).with_context(
             || format!("cannot write bindings file {}", out_path.display()),
         )?;
+
+        if let Err(e) =
+            std::process::Command::new("rustfmt").arg(&out_path).status()
+        {
+            println!("cargo::warning=rustfmt failed: {e}");
+        }
 
         fs::write(&hash_path, hash.to_string()).with_context(|| {
             format!("cannot write hash file {}", hash_path.display())

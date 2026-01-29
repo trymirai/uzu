@@ -6,8 +6,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitInt;
 
-use super::ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo};
-use super::wrapper::SpecializeBaseIndices;
+use super::{
+    ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
+    wrapper::SpecializeBaseIndices,
+};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
@@ -42,9 +44,7 @@ pub fn bindgen(
         (
             variant_names
                 .iter()
-                .map(|name|
-                    quote! { #[allow(non_snake_case)] #name: crate::backends::metal::KernelDataType }
-                )
+                .map(|name| quote! { #[allow(non_snake_case)] #name: KernelDataType })
                 .collect(),
             quote! { &format!(#kernel_format, #kernel_name #(, #variant_names.function_name_suffix())*) },
         )
@@ -84,7 +84,7 @@ pub fn bindgen(
             let setup = quote! {
                 function_constants.set_constant_value_type_at_index(
                     std::ptr::NonNull::from(&#arg_name).cast(),
-                    crate::backends::metal::MTLDataType::#mtl_type,
+                    MTLDataType::#mtl_type,
                     #idx,
                 );
             };
@@ -95,7 +95,7 @@ pub fn bindgen(
     let has_specialize = !specialize_args.is_empty();
     let function_constants_init = if has_specialize {
         quote! {
-            let function_constants = crate::backends::metal::MTLFunctionConstantValues::new();
+            let function_constants = MTLFunctionConstantValues::new();
             #(#specialize_setup)*
         }
     } else {
@@ -127,13 +127,13 @@ pub fn bindgen(
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
-                    let def = quote! { #arg_name: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer> };
+                    let def = quote! { #arg_name: &ProtocolObject<dyn MTLBuffer> };
                     let set = quote! {
                         compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
                     };
 
                     (def, set, quote! { #arg_name })
-                },
+                }
                 MetalArgumentType::Constant((r_type, constant_type)) => {
                     let arg_dtype = format_ident!("{r_type}");
 
@@ -184,8 +184,8 @@ pub fn bindgen(
         (
             quote! {
                 compute_encoder.dispatch_threads(
-                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
-                    crate::backends::metal::MTLSize::new(#((#threads_per_group) as usize, )*),
+                    MTLSize::new(#((#threads) as usize, )*),
+                    MTLSize::new(#((#threads_per_group) as usize, )*),
                 );
             },
             threads.into_iter().chain(threads_per_group.into_iter()),
@@ -223,8 +223,8 @@ pub fn bindgen(
         (
             quote! {
                 compute_encoder.dispatch_threadgroups(
-                    crate::backends::metal::MTLSize::new(#((#groups) as usize, )*),
-                    crate::backends::metal::MTLSize::new(#((#threads) as usize, )*),
+                    MTLSize::new(#((#groups) as usize, )*),
+                    MTLSize::new(#((#threads) as usize, )*),
                 );
             },
             groups.into_iter().chain(threads.into_iter()),
@@ -258,28 +258,24 @@ pub fn bindgen(
 
     Ok(quote! {
         pub struct #struct_name {
-            pipeline: crate::backends::metal::Retained<crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputePipelineState>>,
+            pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         }
 
         impl #struct_name {
-            pub fn new(context: &crate::backends::metal::MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, crate::backends::metal::MTLError> {
-                use crate::backends::metal::metal_extensions::LibraryPipelineExtensions;
+            pub fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
                 #function_constants_init
                 let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
                 Ok(Self { pipeline })
             }
 
-            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>) {
-                use metal::MTLComputeCommandEncoder;
-                use crate::backends::metal::ComputeEncoderSetValue;
+            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>) {
                 #empty_dispatch_guards
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
             }
 
-            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLComputeCommandEncoder>, predicate: Option<&crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLBuffer>>) {
-                use crate::backends::metal::metal_extensions::ComputeEncoderConditional;
+            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
                 #empty_dispatch_guards
                 compute_encoder.condition(
                     predicate,
