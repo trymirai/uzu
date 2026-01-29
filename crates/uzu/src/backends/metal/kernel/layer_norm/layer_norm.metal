@@ -110,10 +110,11 @@ void layer_norm_core(
   }
 }
 
-template <typename IN, typename SC, typename OUT>
+template <typename IN, typename SC, typename OUT, typename ACC>
 VARIANTS(IN, float, half, bfloat)
 VARIANTS(SC, float, half, bfloat)
 VARIANTS(OUT, float, half, bfloat)
+VARIANTS(ACC, float)
 KERNEL(LayerNorm) (
     const device IN* input,
     const device SC* scales,
@@ -123,13 +124,13 @@ KERNEL(LayerNorm) (
     constant float& epsilon,
     constant float& scale_offset,
     constant uint& full_layer,
-    threadgroup float shared_mean[SIMD_SIZE],
-    threadgroup float shared_variance[SIMD_SIZE],
+    threadgroup ACC shared_mean[SIMD_SIZE],
+    threadgroup ACC shared_variance[SIMD_SIZE],
     uint batch_idx GROUPS(batch_size),
     uint thread_in_row THREADS(BLOCK_SIZE)
 ) {
   const uint input_offset = batch_idx * model_dim;
-  layer_norm_core<IN, SC, OUT, float>(
+  layer_norm_core<IN, SC, OUT, ACC>(
     input + input_offset,
     scales,
     output + input_offset,
