@@ -460,6 +460,13 @@ static T threadgroup_cooperative_reduce_min(
   return result;
 }
 
+// warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+#if defined(__cpp_if_constexpr)
+    #define IF_CONSTEXPR(cond) if constexpr (cond)
+#else
+    #define IF_CONSTEXPR(cond) if (cond)
+#endif
+
 // MARK: - DSL Annotation Helpers
 
 #ifdef DSL_ANALYZE

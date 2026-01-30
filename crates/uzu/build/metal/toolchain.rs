@@ -78,26 +78,29 @@ impl MetalSdk {
 
 #[derive(Debug)]
 pub enum MetalStd {
-    Metal4_0,
+    Metal3_1,
+    // Metal4_0,
 }
 
 impl MetalStd {
     pub fn to_str(&self) -> &'static str {
         match self {
-            MetalStd::Metal4_0 => "metal4.0",
+            MetalStd::Metal3_1 => "metal3.1",
+            // MetalStd::Metal4_0 => "metal4.0",
         }
     }
 
     pub fn min_os(&self) -> &'static str {
         match self {
-            MetalStd::Metal4_0 => "26.0",
+            MetalStd::Metal3_1 => "14.0",
+            // MetalStd::Metal4_0 => "26.0",
         }
     }
 }
 
 impl Default for MetalStd {
     fn default() -> Self {
-        Self::Metal4_0
+        Self::Metal3_1
     }
 }
 
