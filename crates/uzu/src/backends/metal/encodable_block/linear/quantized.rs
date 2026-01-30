@@ -1,8 +1,11 @@
 use std::rc::Rc;
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+use crate::backends::{
+    common::kernel::TensorAddBiasKernel as _,
+    metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, ProtocolObject, Retained,
+    },
 };
 
 use crate::{
@@ -12,7 +15,6 @@ use crate::{
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            KernelDataType,
             dsl::TensorAddBiasKernel,
             quant_matmul::{
                 QuantizationType, QuantizedMatmulArguments,
@@ -202,7 +204,7 @@ impl QuantizedLinear {
                     }
                     let bias_add_kernel = Some(TensorAddBiasKernel::new(
                         mtl_context,
-                        KernelDataType::from(kernel_data_type),
+                        kernel_data_type,
                     )?);
                     let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
                         unsafe { biases.mtl_buffer() }.to_owned().into();

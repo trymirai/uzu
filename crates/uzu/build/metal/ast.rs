@@ -1,6 +1,11 @@
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::common::kernel::{
+    Kernel, KernelArgument, KernelArgumentType, KernelParameter,
+    KernelParameterType,
+};
+
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -287,12 +292,54 @@ impl MetalArgument {
             bail!("cannot parse c type: {}", self.c_type);
         }
     }
+
+    fn to_argument(&self) -> Option<KernelArgument> {
+        match self.argument_type() {
+            Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
+                name: self.name.clone(),
+                ty: KernelArgumentType::Buffer,
+            }),
+            Ok(MetalArgumentType::Constant((
+                ty,
+                MetalConstantType::Scalar,
+            ))) => Some(KernelArgument {
+                name: self.name.clone(),
+                ty: KernelArgumentType::Scalar(ty),
+            }),
+            Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => {
+                Some(KernelArgument {
+                    name: self.name.clone(),
+                    ty: KernelArgumentType::Constant(ty),
+                })
+            },
+            _ => None,
+        }
+    }
+
+    fn to_parameter(&self) -> Option<KernelParameter> {
+        match self.argument_type() {
+            Ok(MetalArgumentType::Specialize(ty)) => Some(KernelParameter {
+                name: self.name.clone(),
+                ty: KernelParameterType::Specialization(ty),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetalTypeParameter {
     pub name: Box<str>,
     pub variants: Box<[Box<str>]>,
+}
+
+impl MetalTypeParameter {
+    fn to_parameter(&self) -> KernelParameter {
+        KernelParameter {
+            name: self.name.clone(),
+            ty: KernelParameterType::DType,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -319,6 +366,25 @@ impl MetalKernelInfo {
         self.arguments.iter().any(|a| {
             matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_)))
         })
+    }
+
+    pub fn to_kernel(&self) -> Kernel {
+        Kernel {
+            name: self.name.clone(),
+            parameters: self
+                .variants
+                .as_ref()
+                .map(|v| v.iter().map(|p| p.to_parameter()).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .chain(self.arguments.iter().filter_map(|a| a.to_parameter()))
+                .collect(),
+            arguments: self
+                .arguments
+                .iter()
+                .filter_map(|a| a.to_argument())
+                .collect(),
+        }
     }
 }
 

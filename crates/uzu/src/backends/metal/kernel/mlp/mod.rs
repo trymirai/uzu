@@ -2,10 +2,13 @@ use std::ptr::NonNull;
 
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained,
-        kernel::dsl::MlpGateActMulKernel,
+    backends::{
+        common::kernel::MlpGateActMulKernel as _,
+        metal::{
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType,
+            MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+            kernel::dsl::MlpGateActMulKernel,
+        },
     },
     config::Activation,
 };

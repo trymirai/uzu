@@ -14,12 +14,15 @@ use super::{
 };
 use crate::{
     Array,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
-        forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
-            ForwardPassState, INVALID_POSITION,
+    backends::{
+        common::kernel::MaskUpdateKernel as _,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+            MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
+            forward_pass::{
+                AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+                ForwardPassState, INVALID_POSITION,
+            },
         },
     },
     session::{

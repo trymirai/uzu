@@ -4,7 +4,15 @@ use thiserror::Error;
 
 use crate::{
     backends::{
-        common::Context,
+        common::{
+            Context,
+            kernel::{
+                ArgmaxFinalKernel as _, ArgmaxMainKernel as _,
+                ArgmaxSingleKernel as _, BitmaskKernel as _, GumbelKernel as _,
+                MinPKernel as _, TemperatureKernel as _, TopKKernel as _,
+                TopPKernel as _,
+            },
+        },
         metal::{
             KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
@@ -101,23 +109,25 @@ impl SamplingKernel {
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError> {
-        let bitmask = BitmaskKernel::new(context, data_type)?;
-        let temperature = TemperatureKernel::new(context, data_type)?;
-        let topk = TopKKernel::new(context, data_type)?;
-        let topp = TopPKernel::new(context, data_type)?;
-        let minp = MinPKernel::new(context, data_type)?;
-        let gumbel = GumbelKernel::new(context, data_type)?;
+        let bitmask = BitmaskKernel::new(context, data_type.into())?;
+        let temperature = TemperatureKernel::new(context, data_type.into())?;
+        let topk = TopKKernel::new(context, data_type.into())?;
+        let topp = TopPKernel::new(context, data_type.into())?;
+        let minp = MinPKernel::new(context, data_type.into())?;
+        let gumbel = GumbelKernel::new(context, data_type.into())?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
-                let kernel = ArgmaxSingleKernel::new(context, data_type)?;
+                let kernel =
+                    ArgmaxSingleKernel::new(context, data_type.into())?;
 
                 ArgmaxImplementation::SinglePass {
                     kernel,
                 }
             },
             ArgmaxStrategy::TwoPass => {
-                let main_kernel = ArgmaxMainKernel::new(context, data_type)?;
+                let main_kernel =
+                    ArgmaxMainKernel::new(context, data_type.into())?;
                 let final_kernel = ArgmaxFinalKernel::new(context)?;
 
                 let block_size = 1024;

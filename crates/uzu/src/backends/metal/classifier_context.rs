@@ -16,7 +16,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::{common::Context, metal::error::ClassifierError},
+    backends::{
+        common::Context, common::kernel::SigmoidKernel as _,
+        metal::error::ClassifierError,
+    },
     config::{ClassifierModelConfig, ModelMetadata},
     parameters::ParameterLoader,
     session::types::Error,
