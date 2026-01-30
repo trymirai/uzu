@@ -1,21 +1,23 @@
 use std::rc::Rc;
 
-use super::Backend;
+use super::{Allocator, Backend};
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
-    fn allocate_buffer(
+    fn allocator(&self) -> &Allocator<Self::Backend>;
+
+    fn create_buffer(
         &self,
-        size: u64,
+        size: usize,
     ) -> Result<
-        <Self::Backend as Backend>::Buffer,
+        <Self::Backend as Backend>::NativeBuffer,
         <Self::Backend as Backend>::Error,
     >;
 
-    fn allocate_command_buffer(
+    fn create_command_buffer(
         &self
     ) -> Result<
         <Self::Backend as Backend>::CommandBuffer,

@@ -51,7 +51,7 @@ impl ClassifierContext {
             MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context
-            .allocate_command_buffer()
+            .create_command_buffer()
             .map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let config_path = model_path.join("config.json");

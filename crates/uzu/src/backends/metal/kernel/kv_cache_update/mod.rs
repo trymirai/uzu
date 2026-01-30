@@ -68,7 +68,7 @@ impl KVCacheUpdate {
             .map_err(|e| KVCacheUpdateError::MetalError(e))?;
 
         let indices_buffer = context
-            .allocate_buffer((max_sequence_length * size_of::<Swap>()) as u64)
+            .create_buffer(max_sequence_length * size_of::<Swap>())
             .map_err(|_| KVCacheUpdateError::BufferCreationFailed)?;
 
         Ok(Self {
