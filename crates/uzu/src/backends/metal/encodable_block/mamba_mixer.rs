@@ -4,7 +4,9 @@ use std::{env, rc::Rc};
 use super::{transformer_layer, EncodableBlock, EncodingParameters};
 use crate::{
 	backends::metal::{
-		compilation_parameters::CompilationConfig, forward_pass::{ArrayId, ForwardPassState}, kernel::dsl::{
+		compilation_parameters::CompilationConfig,
+        forward_pass::{ArrayId, ForwardPassState},
+        kernel::dsl::{
 			SSDUpdateKernel, SplitInProjKernel
 		},
 		kernel::ssm::{
@@ -20,7 +22,8 @@ use crate::{
 	parameters::ParameterTree,
 	DataType,
 };
-use crate::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
+use crate::backends::metal::kernel::SSDPrefillKernel;
+use crate::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillMode};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
@@ -29,7 +32,7 @@ pub(crate) struct MambaMixer {
     out_projection: Box<dyn EncodableBlock>,
     split_inproj: SplitInProjKernel,
     conv_scan: Conv1dScanKernel,
-    ssd_prefill: SSDPrefillKernels,
+    ssm_prefill: SSDPrefillKernel,
     ssd_update: SSDUpdateKernel,
     conv_weight: MetalArray,
     conv_bias: Option<MetalArray>,
@@ -119,7 +122,8 @@ impl MambaMixer {
             &mamba_config.activation,
         )
         .expect("Failed to create conv scan kernel");
-        let ssd_prefill = SSDPrefillKernels::new(mtl_context, kernel_data_type);
+        let ssm_prefill = SSDPrefillKernel::new(mtl_context, kernel_data_type)
+            .expect("Failed to create SSD prefill kernel");
         let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
@@ -131,7 +135,7 @@ impl MambaMixer {
             out_projection,
             split_inproj,
             conv_scan,
-            ssd_prefill,
+            ssm_prefill,
             ssd_update,
             conv_weight,
             conv_bias,
@@ -377,43 +381,44 @@ impl MambaMixer {
         let skip_weights = self.skip_connection_weight.clone();
         let skip = skip_weights.mtl_buffer_cloned();
 
-        let args = SSDPrefillArguments {
-            x: &x_buf,
-            dt: &dt_buf,
-            b: &b_buf,
-            c: &c_buf,
-            d: &skip,
-            z: &z_buf,
-            state: &state_raw,
-            y: &out_buf,
-            suffix_len: suffix_length as u32,
-            group_size: (self.config.num_heads / self.config.num_groups) as u32,
-            state_size: self.config.state_dim as u32,
-            x_strides: [
-                (self.config.num_heads * self.config.head_dim) as u32,
-                self.config.head_dim as u32,
-                1u32,
-            ],
-            dt_strides: [self.config.num_heads as u32, 1u32],
-            cb_strides: [
-                (self.config.num_groups * self.config.state_dim) as u32,
-                self.config.state_dim as u32,
-                1u32,
-            ],
-            state_strides: [
-                (self.config.head_dim * self.config.state_dim) as u32,
-                self.config.state_dim as u32,
-                1u32,
-            ],
-            channels: self.config.num_heads as u32,
-            head_dim: self.config.head_dim as u32,
-        };
-
-        self.ssd_prefill.encode(
-            self.prefill_mode,
-            &args,
-            encoder
-        );
+        self.ssm_prefill
+            .encode(
+                encoder,
+                SSDPrefillArguments {
+                    x: &x_buf,
+                    dt: &dt_buf,
+                    b: &b_buf,
+                    c: &c_buf,
+                    d: &skip,
+                    z: &z_buf,
+                    state: &state_raw,
+                    y: &out_buf,
+                    suffix_len: suffix_length,
+                    group_size: (self.config.num_heads / self.config.num_groups)
+                        as i32,
+                    state_size: self.config.state_dim as i32,
+                    x_strides: [
+                        self.config.num_heads * self.config.head_dim,
+                        self.config.head_dim,
+                        1,
+                    ],
+                    dt_strides: [self.config.num_heads, 1],
+                    cb_strides: [
+                        self.config.num_groups * self.config.state_dim,
+                        self.config.state_dim,
+                        1,
+                    ],
+                    state_strides: [
+                        self.config.head_dim * self.config.state_dim,
+                        self.config.state_dim,
+                        1,
+                    ],
+                    channels: self.config.num_heads,
+                    head_dim: self.config.head_dim,
+                },
+                self.prefill_mode,
+            )
+            .expect("Failed to encode SSD prefill kernel");
     }
 
     fn run_decode_ssm(
