@@ -381,8 +381,6 @@ fn run_moe_parity_test_internal(
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
-    let encoder = cb.new_compute_command_encoder()
-        .expect("encoder");
 
     // Router + TopK (fused kernel)
     let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
@@ -407,6 +405,8 @@ fn run_moe_parity_test_internal(
 
     let fused_kernel =
         MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let encoder = cb.new_compute_command_encoder()
+        .expect("encoder");
     fused_kernel.encode(
         &topk_ids_buf,
         &offsets_buf,
@@ -417,6 +417,7 @@ fn run_moe_parity_test_internal(
         k as u32,
         &encoder
     );
+    encoder.end_encoding();
 
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter");
     scatter
@@ -517,6 +518,8 @@ fn run_moe_parity_test_internal(
 
     let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
         .expect("finalize");
+    let encoder = cb.new_compute_command_encoder()
+        .expect("encoder");
     finalize.encode(
         &tok2row_buf,
         &topk_probs_buf,
