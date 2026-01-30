@@ -43,8 +43,7 @@ pub fn alloc_buffer<T>(
     ctx: &MTLContext,
     count: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    ctx.create_buffer(count * size_of::<T>())
-        .expect("Failed to create buffer")
+    ctx.create_buffer(count * size_of::<T>()).expect("Failed to create buffer")
 }
 
 /// Compare two bf16 slices with tolerance

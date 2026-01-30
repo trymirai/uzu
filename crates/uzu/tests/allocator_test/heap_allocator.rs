@@ -64,8 +64,7 @@ impl AllocatorTrait for MTLHeapAllocator {
         buffer: Self::Buffer,
     ) {
         let size = buffer.length();
-        self.active_memory
-            .set(self.active_memory.get().saturating_sub(size));
+        self.active_memory.set(self.active_memory.get().saturating_sub(size));
         drop(buffer);
     }
 

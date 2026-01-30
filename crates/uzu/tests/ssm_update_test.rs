@@ -8,10 +8,7 @@ use metal::{
 };
 use uzu::backends::{
     common::Context,
-    metal::{
-        KernelDataType, MTLContext,
-        kernel::dsl::SSDUpdateKernel
-    },
+    metal::{KernelDataType, MTLContext, kernel::dsl::SSDUpdateKernel},
 };
 
 #[allow(dead_code)]
@@ -313,7 +310,7 @@ fn ssd_update_with_z_bf16() {
         bsz as u32,
         h as u32,
         dh as u32,
-        &enc
+        &enc,
     );
     enc.end_encoding();
     cb_ref.commit();

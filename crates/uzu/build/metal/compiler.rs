@@ -19,17 +19,39 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{caching, compiler::Compiler, envs},
+    common::{
+        caching, codegen::write_tokens, compiler::Compiler, envs,
+        kernel::Kernel,
+    },
     debug_log,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ObjectInfo {
+    src_rel_path: PathBuf,
     object_path: PathBuf,
     kernels: Box<[MetalKernelInfo]>,
     specialize_indices: SpecializeBaseIndices,
     buildsystem_hash: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
+}
+
+impl ObjectInfo {
+    fn kernels(&self) -> (Box<[Box<str>]>, Box<[Kernel]>) {
+        let src_rel_path: Box<[Box<str>]> = self
+            .src_rel_path
+            .with_extension("")
+            .as_os_str()
+            .to_str()
+            .unwrap()
+            .split("/")
+            .map(|s| s.to_string().into_boxed_str())
+            .collect();
+
+        let kernels = self.kernels.iter().map(|ki| ki.to_kernel()).collect();
+
+        (src_rel_path, kernels)
+    }
 }
 
 fn is_nax_source(path: &Path) -> bool {
@@ -99,7 +121,7 @@ impl MetalCompiler {
             env::var("CARGO_MANIFEST_DIR")
                 .context("missing CARGO_MANIFEST_DIR")?,
         )
-        .join("src");
+        .join("src/backends/metal/kernel");
 
         let out_dir =
             PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
@@ -140,6 +162,10 @@ impl MetalCompiler {
             .file_name()
             .context("source path has no file name")?
             .to_os_string();
+
+        let source_path_rel = source_path
+            .strip_prefix(&self.src_dir)
+            .context("source is not in src_dir")?;
 
         let build_dir = self.build_dir.join(source_path_hash.to_string());
         let objectinfo_path =
@@ -219,6 +245,7 @@ impl MetalCompiler {
             .context("cannot hash dependencies")?;
 
         let object_info = ObjectInfo {
+            src_rel_path: source_path_rel.into(),
             object_path,
             kernels: kernel_infos.into_boxed_slice(),
             specialize_indices,
@@ -312,7 +339,7 @@ impl MetalCompiler {
 
         debug_log!("bindgen start");
 
-        let bindings = objects
+        let (bindings, associated_types) = objects
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
@@ -320,9 +347,10 @@ impl MetalCompiler {
                     || format!("cannot generate bindings for {}", k.name),
                 )
             })
-            .collect::<anyhow::Result<Vec<TokenStream>>>()?;
+            .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)>>(
+            )?;
 
-        let imports = quote! {
+        let tokens = quote! {
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
                 KernelDataType,
@@ -336,24 +364,19 @@ impl MetalCompiler {
                 metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
             };
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
-        };
 
-        let tokens = quote! {
-            #imports
             #(#bindings)*
+
+            pub struct MetalKernels;
+
+            impl crate::backends::common::kernel::Kernels for MetalKernels {
+                type Backend = crate::backends::metal::Metal;
+
+                #(#associated_types)*
+            }
         };
 
-        let parsed =
-            syn::parse2(tokens).context("cannot parse generated bindings")?;
-        fs::write(&out_path, prettyplease::unparse(&parsed)).with_context(
-            || format!("cannot write bindings file {}", out_path.display()),
-        )?;
-
-        if let Err(e) =
-            std::process::Command::new("rustfmt").arg(&out_path).status()
-        {
-            println!("cargo::warning=rustfmt failed: {e}");
-        }
+        write_tokens(tokens, &out_path).context("cannot write bindings")?;
 
         fs::write(&hash_path, hash.to_string()).with_context(|| {
             format!("cannot write hash file {}", hash_path.display())
@@ -367,7 +390,9 @@ impl MetalCompiler {
 
 #[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(&self) -> anyhow::Result<()> {
+    async fn build(
+        &self
+    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         let nax_enabled = cfg!(feature = "metal-nax");
         debug_log!(
             "metal nax {}",
@@ -404,6 +429,6 @@ impl Compiler for MetalCompiler {
         self.link(&objects).await.context("cannot link objects")?;
         self.bindgen(&objects).context("cannot generate bindings")?;
 
-        Ok(())
+        Ok(objects.iter().map(|o| o.kernels()).collect())
     }
 }

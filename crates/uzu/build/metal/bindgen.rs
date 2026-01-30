@@ -14,7 +14,7 @@ use super::{
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
-) -> anyhow::Result<TokenStream> {
+) -> anyhow::Result<(TokenStream, TokenStream)> {
     let kernel_name = kernel.name.as_ref();
     let struct_name = format_ident!("{kernel_name}Kernel");
 
@@ -44,9 +44,9 @@ pub fn bindgen(
         (
             variant_names
                 .iter()
-                .map(|name| quote! { #[allow(non_snake_case)] #name: KernelDataType })
+                .map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType })
                 .collect(),
-            quote! { &format!(#kernel_format, #kernel_name #(, #variant_names.function_name_suffix())*) },
+            quote! { &format!(#kernel_format, #kernel_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
         )
     } else {
         (Vec::new(), quote! { #kernel_name })
@@ -256,26 +256,27 @@ pub fn bindgen(
         quote! {}
     };
 
-    Ok(quote! {
+    let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         }
 
-        impl #struct_name {
-            pub fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
+        impl crate::backends::common::kernel::#struct_name for #struct_name {
+            type Backend = crate::backends::metal::Metal;
+
+            fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
                 #function_constants_init
                 let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
                 Ok(Self { pipeline })
             }
 
-            pub fn encode(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>) {
+            fn encode(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>) {
                 #empty_dispatch_guards
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
             }
-
-            pub fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
+            fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
                 #empty_dispatch_guards
                 compute_encoder.condition(
                     predicate,
@@ -286,5 +287,9 @@ pub fn bindgen(
                 );
             }
         }
-    })
+    };
+
+    let associated_type = quote! { type #struct_name = #struct_name; };
+
+    Ok((kernel, associated_type))
 }

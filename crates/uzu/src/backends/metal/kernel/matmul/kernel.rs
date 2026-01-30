@@ -1,5 +1,4 @@
 use super::{
-    super::KernelDataType,
     common::MatmulArguments,
     dispatch_descriptor::{
         MatmulDispatchDescriptor, choose_dispatch_descriptor,
@@ -10,9 +9,12 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-        ProtocolObject, kernel::dsl::TensorAddBiasKernel,
+    backends::{
+        common::kernel::TensorAddBiasKernel as _,
+        metal::{
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
+            ProtocolObject, kernel::dsl::TensorAddBiasKernel,
+        },
     },
 };
 
@@ -148,10 +150,8 @@ impl MatmulKernel {
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(TensorAddBiasKernel::new(
-                context,
-                KernelDataType::from(self.data_type),
-            )?);
+            self.bias_add =
+                Some(TensorAddBiasKernel::new(context, self.data_type)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
         bias_add.encode(
