@@ -2,7 +2,7 @@
 
 #include "../matmul/common/loader.h"
 #include "../matmul/common/mma.h"
-
+#include "../definitions.metal"
 #include "gemm_types.h"
 
 using namespace metal;
@@ -390,7 +390,7 @@ template <
     for (short id = 0; id < TD; id++) {
       UZU_PRAGMA_UNROLL
       for (short ik = 0; ik < TK; ik++) {
-        if constexpr (BD == 128) {
+        IF_CONSTEXPR(BD == 128) {
           simdgroup_barrier(mem_flags::mem_none);
         }
 
@@ -401,7 +401,7 @@ template <
             &Vs[Vs_offset + kk * LDV_tgp + dd]
         );
 
-        if constexpr (BD == 128) {
+        IF_CONSTEXPR(BD == 128) {
           simdgroup_barrier(mem_flags::mem_none);
         }
 
