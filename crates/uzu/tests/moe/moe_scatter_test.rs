@@ -6,9 +6,9 @@ use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
+    dsl::MoeCountsOffsetsFusedKernel,
     moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_expert_buckets(

@@ -6,7 +6,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::{
-        dsl::MoeFinalizeKernel,
+        dsl::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -14,7 +14,6 @@ use uzu::backends::metal::{
         },
     },
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {

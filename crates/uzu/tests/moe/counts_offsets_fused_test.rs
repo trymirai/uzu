@@ -7,10 +7,10 @@ use uzu::backends::metal::{
     MTLContext, ProtocolObject, Retained,
     kernel::{
         KernelDataType,
+        dsl::MoeCountsOffsetsFusedKernel,
         moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
     },
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(

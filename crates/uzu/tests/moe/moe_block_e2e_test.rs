@@ -6,7 +6,7 @@ use uzu::backends::metal::{
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
         MoeScatterWithMapArguments,
-        dsl::MoeFinalizeKernel,
+        dsl::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -14,7 +14,6 @@ use uzu::backends::metal::{
         },
     },
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
