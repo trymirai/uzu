@@ -524,9 +524,7 @@ fn execute_quantized_matmul(
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx
-        .allocate_buffer(
-            (batch * output_dim * data_type.size_in_bytes()) as u64,
-        )
+        .create_buffer(batch * output_dim * data_type.size_in_bytes())
         .expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernel::new(
