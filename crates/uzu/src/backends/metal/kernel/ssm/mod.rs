@@ -13,9 +13,7 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
 }
 
 pub mod conv1d_scan;
-pub mod ssd_update;
 
 pub use conv1d_scan::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
 };
-pub use ssd_update::{SSDUpdateArguments, SSDUpdateKernel};
