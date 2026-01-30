@@ -27,7 +27,7 @@ pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     if data.is_empty() {
         // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
-        ctx.allocate_buffer(1).expect("Failed to create empty buffer")
+        ctx.create_buffer(1).expect("Failed to create empty buffer")
     } else {
         ctx.device
             .new_buffer_with_data(
@@ -43,7 +43,7 @@ pub fn alloc_buffer<T>(
     ctx: &MTLContext,
     count: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    ctx.allocate_buffer((count * std::mem::size_of::<T>()) as u64)
+    ctx.create_buffer(count * size_of::<T>())
         .expect("Failed to create buffer")
 }
 
