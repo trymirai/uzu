@@ -1,15 +1,14 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-    MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
+    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
-
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_expert_buckets(
@@ -134,20 +133,19 @@ fn test_scatter_buckets_parity() {
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        fused_kernel
-            .encode(
-                &cb,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t,
-                    e,
-                    k,
-                },
-            )
-            .expect("encode fused");
+        let encoder = cb.new_compute_command_encoder()
+            .expect("encoder");
+        fused_kernel.encode(
+            &topk_ids_buf,
+            &offsets_buf,
+            &sumk_buf,
+            &partials_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            &encoder
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 

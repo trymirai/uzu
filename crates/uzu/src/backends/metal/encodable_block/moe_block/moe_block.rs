@@ -15,10 +15,9 @@ use crate::{
         NSRange, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            dsl::MoeFinalizeKernel,
+            dsl::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
             moe::{
-                MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-                MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
+                MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
                 MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
                 MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
                 MoeRouterTopKKernel, MoeScatterArguments, MoeScatterKernels,
@@ -453,20 +452,20 @@ impl EncodableBlock for MoeBlock {
             },
         }
 
-        self.counts_offsets_kernel
-            .encode(
-                &root,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t: suffix_length,
-                    e,
-                    k,
-                },
-            )
-            .expect("MoE counts+offsets failed");
+        let encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder");
+
+        self.counts_offsets_kernel.encode(
+            &topk_ids_buf,
+            &offsets_buf,
+            &sumk_buf,
+            &partials_buf,
+            suffix_length as u32,
+            e as u32,
+            k as u32,
+            &encoder
+        );
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
@@ -614,9 +613,6 @@ impl EncodableBlock for MoeBlock {
                 .expect("MoE experts two-pass prefill failed");
         }
 
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
         self.finalize_kernel.encode(
             &tok2row_buf,
             &topk_probs_buf,

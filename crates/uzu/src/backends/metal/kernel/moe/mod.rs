@@ -1,7 +1,6 @@
 use crate::backends::metal::KernelDataType;
 
 // Submodules
-mod counts_offsets_fused;
 mod experts;
 mod gather;
 mod router_topk;
@@ -9,10 +8,6 @@ mod scatter;
 mod tiles;
 
 // Re-export public items from submodules
-pub use counts_offsets_fused::{
-    MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedError,
-    MoeCountsOffsetsFusedKernel,
-};
 pub use experts::{
     MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
     MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,

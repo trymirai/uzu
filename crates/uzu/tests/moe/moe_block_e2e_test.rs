@@ -4,8 +4,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeScatterKernels,
+        KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
         MoeScatterWithMapArguments,
         dsl::MoeFinalizeKernel,
         moe::{
@@ -15,7 +14,7 @@ use uzu::backends::metal::{
         },
     },
 };
-
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
@@ -383,6 +382,8 @@ fn run_moe_parity_test_internal(
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
+    let encoder = cb.new_compute_command_encoder()
+        .expect("encoder");
 
     // Router + TopK (fused kernel)
     let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
@@ -407,20 +408,16 @@ fn run_moe_parity_test_internal(
 
     let fused_kernel =
         MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    fused_kernel
-        .encode(
-            &cb,
-            MoeCountsOffsetsFusedArguments {
-                topk_ids_buffer: &topk_ids_buf,
-                offsets_buffer: &offsets_buf,
-                sum_k_buffer: &sumk_buf,
-                partials_buffer: &partials_buf,
-                t,
-                e,
-                k,
-            },
-        )
-        .expect("fused encode");
+    fused_kernel.encode(
+        &topk_ids_buf,
+        &offsets_buf,
+        &sumk_buf,
+        &partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &encoder
+    );
 
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter");
     scatter
@@ -521,7 +518,6 @@ fn run_moe_parity_test_internal(
 
     let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
         .expect("finalize");
-    let encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,
         &topk_probs_buf,

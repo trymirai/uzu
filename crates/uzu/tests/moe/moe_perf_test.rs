@@ -8,14 +8,13 @@ use uzu::backends::metal::{
     kernel::{
         dsl::MoeFinalizeKernel,
         moe::{
-            MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
             MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
         },
     },
 };
-
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
@@ -392,20 +391,19 @@ fn test_moe_pipeline_breakdown_decode() {
                 .command_queue
                 .command_buffer()
                 .expect("Failed to create command buffer");
-            counts_offsets_kernel
-                .encode(
-                    &cb,
-                    MoeCountsOffsetsFusedArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        offsets_buffer: &offsets_buf,
-                        sum_k_buffer: &sumk_buf,
-                        partials_buffer: &partials_buf,
-                        t,
-                        e,
-                        k,
-                    },
-                )
-                .expect("counts+offsets fused");
+            let encoder = cb.new_compute_command_encoder()
+                .expect("encoder");
+            counts_offsets_kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sumk_buf,
+                &partials_buf,
+                t as u32,
+                e as u32,
+                k as u32,
+                &encoder
+            );
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
         });
