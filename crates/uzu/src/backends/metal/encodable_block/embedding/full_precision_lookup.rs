@@ -4,12 +4,15 @@ use super::{
 };
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-        Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::FullPrecisionEmbeddingLookupKernel,
+    backends::{
+        common::kernel::FullPrecisionEmbeddingLookupKernel as _,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::FullPrecisionEmbeddingLookupKernel,
+        },
     },
     parameters::ParameterTree,
 };

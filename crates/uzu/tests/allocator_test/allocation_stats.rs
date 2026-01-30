@@ -10,13 +10,20 @@ pub struct AllocationStats {
 }
 
 impl AllocationStats {
-    pub fn record_alloc(&mut self, size: usize, duration: Duration) {
+    pub fn record_alloc(
+        &mut self,
+        size: usize,
+        duration: Duration,
+    ) {
         self.total_allocs += 1;
         self.total_alloc_time_ns += duration.as_nanos();
         self.total_bytes_requested += size;
     }
 
-    pub fn record_free(&mut self, duration: Duration) {
+    pub fn record_free(
+        &mut self,
+        duration: Duration,
+    ) {
         self.total_frees += 1;
         self.total_free_time_ns += duration.as_nanos();
     }

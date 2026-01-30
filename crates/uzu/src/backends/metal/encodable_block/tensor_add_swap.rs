@@ -1,8 +1,11 @@
 //! Tensor add-swap encodable.
 
-use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject,
+use crate::backends::{
+    common::kernel::TensorAddSwapKernel as _,
+    metal::{
+        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        ProtocolObject,
+    },
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -26,7 +29,7 @@ impl TensorAddSwap {
         data_type: crate::backends::metal::KernelDataType,
         argument_arrays: Box<[ArrayId]>,
     ) -> Result<Self, MTLError> {
-        let kernel = TensorAddSwapKernel::new(context, data_type)?;
+        let kernel = TensorAddSwapKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             argument_arrays,

@@ -5,12 +5,15 @@ use std::rc::Rc;
 use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::LayerNormKernel,
+    backends::{
+        common::kernel::LayerNormKernel as _,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+            MTLResourceOptions, ProtocolObject, Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::LayerNormKernel,
+        },
     },
     config::{NormalizationConfig, UpcastMode},
     parameters::ParameterTree,
