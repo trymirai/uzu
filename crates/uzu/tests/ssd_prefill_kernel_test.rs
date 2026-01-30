@@ -16,7 +16,7 @@ use uzu::backends::{
         },
     },
 };
-use uzu::backends::metal::encodable_block::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
+use uzu::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
 use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions =

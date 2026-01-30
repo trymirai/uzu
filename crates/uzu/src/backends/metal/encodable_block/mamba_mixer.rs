@@ -1,26 +1,26 @@
 //! Mamba2 SSM mixer encodable.
 
 use std::{env, rc::Rc};
-use super::{EncodableBlock, EncodingParameters, transformer_layer};
+use super::{transformer_layer, EncodableBlock, EncodingParameters};
 use crate::{
-    DataType,
-    backends::metal::{
-        KernelDataType, MTLContext, MetalArray,
-        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject,
-        compilation_parameters::CompilationConfig,
-        encodable_block::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::{
-            SplitInProjKernel, SSDUpdateKernel
-        },
-        kernel::ssm::{
-            Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-            conv1d_scan::Conv1dDecodeArguments,
-        },
-    },
-    config::{DecoderLayerType, Mamba2Config},
-    parameters::ParameterTree,
+	backends::metal::{
+		compilation_parameters::CompilationConfig, forward_pass::{ArrayId, ForwardPassState}, kernel::dsl::{
+			SSDUpdateKernel, SplitInProjKernel
+		},
+		kernel::ssm::{
+			conv1d_scan::Conv1dDecodeArguments, Conv1dPackArguments, Conv1dScanArguments,
+			Conv1dScanKernel,
+		}, KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+		MTLComputeCommandEncoder,
+		MTLContext,
+		MetalArray,
+		ProtocolObject,
+	},
+	config::{DecoderLayerType, Mamba2Config},
+	parameters::ParameterTree,
+	DataType,
 };
+use crate::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
