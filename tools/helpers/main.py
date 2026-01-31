@@ -9,7 +9,7 @@ from typing import Annotated
 import google_crc32c
 import requests
 import tomllib
-from model import BenchmarkTask, Message, Model, Registry, Role
+from model import BenchmarkTask, File, Message, Model, Registry, Role
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -135,17 +135,34 @@ def download_model(
         speculators_files = list(
             chain.from_iterable(speculator.files for speculator in model.speculators)
         )
-        for file in chain(model.files, speculators_files):
-            file_path = model_path / file.name
 
+        def need_to_download(file: File, file_path: Path) -> bool:
             if file_path.exists():
                 if file.crc32c != crc32c_file(file_path):
                     os.remove(file_path)
+                else:
+                    return False
+            return True
 
-            if file_path.exists():
+        for file in model.files:
+            file_path = model_path / file.name
+            need_to_download_file = need_to_download(file, file_path)
+            if not need_to_download_file:
                 console.print(f"[green]✓[/green] {file.name} already exists")
             else:
                 files_to_download.append((file, file_path))
+
+        for file in speculators_files:
+            speculators_path = model_path / "speculators"
+            speculators_path.mkdir(parents=True, exist_ok=True)
+
+            file_path = speculators_path / file.name
+            need_to_download_file = need_to_download(file, file_path)
+            if not need_to_download_file:
+                console.print(f"[green]✓[/green] {file.name} already exists")
+            else:
+                files_to_download.append((file, file_path))
+
         if not files_to_download:
             console.print("[green]All files already downloaded![/green]")
             return
