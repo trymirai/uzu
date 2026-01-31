@@ -23,7 +23,7 @@ tokenizers = "0.22.2"
 mpsgraph = "0.2.0"
 objc2 = "0.6.3"
 objc2-foundation = "0.3.2"
-metal = { package = "mtl-rs", version = "0.1.0" }
+metal = { package = "mtl-rs", version = "0.1.3" }
 block2 = "0.6.2"
 bytemuck = "1.23.2"
 num-traits = "0.2.19"
