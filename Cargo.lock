@@ -307,7 +307,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "half",
  "libc",
@@ -536,7 +536,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "benchmarks",
  "clap",
@@ -4217,7 +4217,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",

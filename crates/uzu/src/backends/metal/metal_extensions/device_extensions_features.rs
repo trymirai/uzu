@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::backends::metal::{
-    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier,
-    ProtocolObject,
+    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat,
+    MTLReadWriteTextureTier, ProtocolObject,
 };
 
 /// Enum representing various Metal features that may or may not be supported by a device.
@@ -40,14 +40,12 @@ impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
                 #[allow(deprecated)]
                 #[cfg(target_os = "ios")]
                 {
-                    self.supports_feature_set(MTLFeatureSet::iOS_GPUFamily4_v1)
+                    self.supports_feature_set(MTLFeatureSet::IosGpuFamily4V2)
                 }
                 #[cfg(target_os = "macos")]
                 #[allow(deprecated)]
                 {
-                    self.supports_feature_set(
-                        MTLFeatureSet::MacosGpuFamily1V3,
-                    )
+                    self.supports_feature_set(MTLFeatureSet::MacosGpuFamily1V3)
                 }
                 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
                 {
