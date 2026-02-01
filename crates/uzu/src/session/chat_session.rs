@@ -120,7 +120,6 @@ impl ChatSession {
             }
         }
 
-        // Mamba (SSM) mixers still do not support speculative decoding.
         if has_mamba_mixer
             && decoding_config.speculator_config.number_of_speculated_tokens > 0
         {

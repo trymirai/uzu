@@ -4,8 +4,9 @@ use super::{EncodableBlock, EncodingParameters, transformer_layer};
 use crate::{
     DataType,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
-        MTLDeviceExt, MTLResource, MTLResourceOptions, MetalArray, ProtocolObject,
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLResource,
+        MTLResourceOptions, MetalArray, ProtocolObject,
         compilation_parameters::CompilationConfig,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::short_conv::{
@@ -161,7 +162,10 @@ impl ShortConvMixer {
             .encode_with_shared_encoder(state, encoder, parameters);
     }
 
-    fn clear_suffix_state_valid_range(&self, state: &ForwardPassState) {
+    fn clear_suffix_state_valid_range(
+        &self,
+        state: &ForwardPassState,
+    ) {
         let Some(cache_layers) = state.cache_layers() else {
             return;
         };
@@ -196,7 +200,6 @@ impl ShortConvMixer {
     ) {
         self.clear_suffix_state_valid_range(state);
 
-        // Suffix length 1 must update state in-place (async decode relies on it).
         if active_suffix_length == 1 {
             self.run_decode_conv(state, compute, 1);
             return;
@@ -204,7 +207,6 @@ impl ShortConvMixer {
 
         let sampling_len = state.sampling_length();
         if sampling_len == 0 {
-            // No sampling -> no speculative acceptance. Keep the fast in-place path.
             self.run_prefill_conv(state, compute, active_suffix_length);
             return;
         }
@@ -212,15 +214,11 @@ impl ShortConvMixer {
         let sampling_start = state.sampling_start();
         let trie_len = sampling_len;
 
-        // If the sampled segment is just the root token, there are no speculative
-        // inputs to roll back. The in-place prefill path is correct and cheaper.
         if trie_len <= 1 {
             self.run_prefill_conv(state, compute, active_suffix_length);
             return;
         }
 
-        // Process the non-sampling prefix segment (prompt tokens within this batch),
-        // updating conv_state in-place since those tokens are always accepted.
         if sampling_start > 0 {
             if sampling_start == 1 {
                 self.run_decode_conv(state, compute, 1);
@@ -229,8 +227,6 @@ impl ShortConvMixer {
             }
         }
 
-        // Process the trie segment (from sampling_start), writing per-token post-states
-        // into `suffix_state` without mutating `conv_state`.
         self.run_trie_conv(state, compute, sampling_start, trie_len);
         self.set_suffix_state_valid_range(state, sampling_start, trie_len);
     }
@@ -348,15 +344,15 @@ impl ShortConvMixer {
         let state_stride = kernel_size.saturating_sub(1);
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset =
-            in_proj.buffer_offset() + sampling_start * in_proj_stride * elem_bytes;
+        let in_proj_offset = in_proj.buffer_offset()
+            + sampling_start * in_proj_stride * elem_bytes;
         let out_offset =
             out.buffer_offset() + sampling_start * self.model_dim * elem_bytes;
         let suffix_state_offset = suffix_state.buffer_offset()
             + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.buffer_offset();
-        let parents_offset =
-            parents.buffer_offset() + sampling_start * std::mem::size_of::<i32>();
+        let parents_offset = parents.buffer_offset()
+            + sampling_start * std::mem::size_of::<i32>();
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.mtl_buffer_cloned();

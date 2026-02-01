@@ -13,7 +13,9 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
-pub use mode::{ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState};
+pub use mode::{
+    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
+};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -24,8 +26,9 @@ use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
     backends::metal::{
-        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
-        MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLResourceOptions, MetalArray,
+        ProtocolObject, Retained,
     },
     session::parameter::SamplingMethod,
 };
@@ -110,12 +113,10 @@ impl ForwardPassState {
             parents.fill(-1);
 
             if sampling_length > 0 {
-                let root_pos = token_positions
-                    .get(sampling_start)
-                    .copied()
-                    .unwrap_or(0);
+                let root_pos =
+                    token_positions.get(sampling_start).copied().unwrap_or(0);
 
-                let mut stack: Vec<usize> = Vec::new(); // last local index per depth
+                let mut stack: Vec<usize> = Vec::new();
 
                 for local_idx in 0..sampling_length {
                     let abs_idx = sampling_start + local_idx;
@@ -127,7 +128,6 @@ impl ForwardPassState {
                     let parent_local: i32 = if depth == 0 {
                         -1
                     } else if let Some(&p) = stack.get(depth - 1) {
-                        // Parent must have been seen earlier in DFS order.
                         p as i32
                     } else {
                         debug_assert!(
@@ -173,7 +173,10 @@ impl ForwardPassState {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         skip_attention_bias_fill: bool,
-        async_positions: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        async_positions: Option<(
+            &Retained<ProtocolObject<dyn MTLBuffer>>,
+            usize,
+        )>,
         async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();

@@ -1,4 +1,7 @@
-use std::{cell::{Cell, RefCell}, collections::HashMap};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+};
 
 use super::{
     super::{MTLContext, MetalArray},
@@ -323,7 +326,8 @@ impl CacheLayers {
                     kv_cache_update,
                 );
             } else if let Some(layer) = layer.as_short_conv() {
-                layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
+                layer
+                    .commit_from_suffix_state_if_valid(short_conv_commit_index);
             }
         }
     }
@@ -518,7 +522,6 @@ impl CacheLayers {
                             "{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"
                         ),
                     );
-                    // `suffix_state` is transient; no need to preserve contents.
                     {
                         new_suffix.buffer_mut().fill(0);
                     }
