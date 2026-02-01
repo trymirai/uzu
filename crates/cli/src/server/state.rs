@@ -2,8 +2,9 @@ use std::{path::PathBuf, sync::Mutex};
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use uzu::session::{
-    Session, config::DecodingConfig, parameter::PrefillStepSize,
+use uzu::{
+    prelude::SamplingSeed,
+    session::{Session, config::DecodingConfig, parameter::PrefillStepSize},
 };
 
 pub struct SessionWrapper(Mutex<Session>);
@@ -30,6 +31,7 @@ unsafe impl Sync for SessionState {}
 pub fn load_session(
     model_path: String,
     prefill_step_size: Option<usize>,
+    seed: Option<u64>,
 ) -> Session {
     let style_bold = Style::new().bold();
 
@@ -57,7 +59,11 @@ pub fn load_session(
     }
 
     let decoding_config = DecodingConfig::default()
-        .with_prefill_step_size(prefill_step_size_config);
+        .with_prefill_step_size(prefill_step_size_config)
+        .with_sampling_seed(match seed {
+            Some(seed) => SamplingSeed::Custom(seed),
+            None => SamplingSeed::Default,
+        });
     let session = Session::new(model_path_buf, decoding_config)
         .expect("Failed to create session");
 

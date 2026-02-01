@@ -307,7 +307,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "half",
  "libc",
@@ -403,9 +403,9 @@ checksum = "793db76d6187cd04dff33004d8e6c9cc4e05cd330500379d2394209271b4aeee"
 
 [[package]]
 name = "bytemuck"
-version = "1.24.0"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -536,7 +536,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "benchmarks",
  "clap",
@@ -2290,9 +2290,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.1.0"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "254387a6d3fc828eb42370c798c43c6687df4c63ee2c6062bcf65a9c8abf5a22"
+checksum = "5f54694f41a93f21dc24a4325f0255f00526052eeb541909830be8af39a98a8f"
 dependencies = [
  "bitflags 2.10.0",
  "block2",
@@ -4217,7 +4217,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",

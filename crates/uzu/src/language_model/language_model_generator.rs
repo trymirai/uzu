@@ -1,4 +1,6 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -7,17 +9,17 @@ use super::{
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
-    rng::DerivableSeed,
+    rng::PRng,
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
     Array,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-        MTLCommandEncoder, MTLCommandQueue,
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
         forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
-            INVALID_POSITION,
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+            ForwardPassState, INVALID_POSITION,
         },
     },
     session::{
@@ -94,7 +96,7 @@ impl LanguageModelGenerator {
         let suffix_length = prefill_size - tokens_length;
         let suffix_root = TrieNode::from_speculator(
             &tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -327,7 +329,7 @@ impl LanguageModelGenerator {
         let suffix_length = self.decoding_config.generate_suffix_length();
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -409,7 +411,7 @@ impl LanguageModelGenerator {
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
-        self.update_cache_layers(&accepted_token_indices[1..], None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -449,9 +451,11 @@ impl LanguageModelGenerator {
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
-        self.context
-            .async_buffers
-            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.prepare_seeds(
+            &self.context.seed,
+            prefill_count,
+            tokens_to_generate,
+        );
         self.context.async_buffers.reset_counter();
     }
 
@@ -575,13 +579,10 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
-        let token_ids_buffer = self
-            .context
-            .scratch_buffers
-            .token_ids
-            .borrow()
-            .mtl_buffer_cloned();
+        let sampling_output_buffer =
+            sampling_output.borrow().mtl_buffer_cloned();
+        let token_ids_buffer =
+            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -693,8 +694,8 @@ impl LanguageModelGenerator {
         self.encoded_tasks.clear();
         self.gpu_capture.reset();
 
-        let base_seed = self.decoding_config.sampling_seed.resolve();
-        self.context.next_seed = DerivableSeed::new(base_seed);
+        let seed = self.decoding_config.sampling_seed.resolve();
+        self.context.seed = PRng::new(seed);
         self.context.async_buffers.reset_counter();
     }
 
