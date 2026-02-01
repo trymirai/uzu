@@ -132,9 +132,6 @@ def download_model(
         console.print(f"[green]✓[/green] {benchmark_task_name} generated")
 
         files_to_download = []
-        speculators_files = list(
-            chain.from_iterable(speculator.files for speculator in model.speculators)
-        )
 
         def need_to_download(file: File, file_path: Path) -> bool:
             if file_path.exists():
@@ -152,16 +149,20 @@ def download_model(
             else:
                 files_to_download.append((file, file_path))
 
-        for file in speculators_files:
-            speculators_path = model_path / "speculators"
-            speculators_path.mkdir(parents=True, exist_ok=True)
+        speculators_path = model_path / "speculators"
+        speculators_path.mkdir(parents=True, exist_ok=True)
 
-            file_path = speculators_path / file.name
-            need_to_download_file = need_to_download(file, file_path)
-            if not need_to_download_file:
-                console.print(f"[green]✓[/green] {file.name} already exists")
-            else:
-                files_to_download.append((file, file_path))
+        for speculator in model.speculators:
+            speculator_path = speculators_path / speculator.use_case
+            speculator_path.mkdir(parents=True, exist_ok=True)
+
+            for file in speculator.files:
+                file_path = speculator_path / file.name
+                need_to_download_file = need_to_download(file, file_path)
+                if not need_to_download_file:
+                    console.print(f"[green]✓[/green] {file.name} already exists")
+                else:
+                    files_to_download.append((file, file_path))
 
         if not files_to_download:
             console.print("[green]All files already downloaded![/green]")

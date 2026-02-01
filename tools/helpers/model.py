@@ -19,6 +19,7 @@ class Speculator:
     id: str
     title: str
     description: str
+    use_case: str
     files: List[File]
 
     @classmethod
@@ -27,6 +28,7 @@ class Speculator:
             id=data["id"],
             title=data["title"],
             description=data["description"],
+            use_case=data["useCase"],
             files=[File.from_dict(file) for file in data["files"]],
         )
 
