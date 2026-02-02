@@ -85,8 +85,7 @@ impl MambaMixer {
             ),
             ArrayId::Main,
             ArrayId::SsmInProj,
-        )
-            .expect("Failed to create in-projection kernel");
+        ).expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &mamba_config.out_projection_config,
@@ -100,8 +99,7 @@ impl MambaMixer {
             ),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-        )
-            .expect("Failed to create out-projection kernel");
+        ).expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {
@@ -120,8 +118,7 @@ impl MambaMixer {
             mtl_context,
             kernel_data_type,
             &mamba_config.activation,
-        )
-            .expect("Failed to create conv scan kernel");
+        ).expect("Failed to create conv scan kernel");
         let ssd_prefill = SSDPrefillKernels::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
         let ssd_update =
@@ -240,7 +237,7 @@ impl MambaMixer {
             objc2::rc::Retained::retain(std::ptr::from_ref(
                 &*conv_state.mtl_buffer(),
             ) as *mut _)
-                .unwrap()
+            .unwrap()
         };
         let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
         let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
