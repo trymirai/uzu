@@ -38,6 +38,7 @@ pub fn handle_run(
     tokens_limit: usize,
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
+    mut message: Option<String>,
 ) {
     let mut session = load_session(model_path, prefill_step_size, seed);
 
@@ -50,15 +51,23 @@ pub fn handle_run(
     })
     .unwrap();
 
+    let non_interactive = message.is_some();
+
     loop {
-        let input =
+        let input = if let Some(msg) = message.take() {
+            msg
+        } else {
             match Text::new("").with_placeholder("Send a message").prompt() {
                 Ok(input) => input,
                 Err(_) => {
                     break;
                 },
-            };
+            }
+        };
         if input.is_empty() {
+            if non_interactive {
+                break;
+            }
             continue;
         }
 
@@ -118,5 +127,9 @@ pub fn handle_run(
         progress_bar.finish_and_clear();
         println!("{}", result);
         is_model_running.store(false, Ordering::SeqCst);
+
+        if non_interactive {
+            break;
+        }
     }
 }
