@@ -10,14 +10,14 @@ use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
     backends::{
-        common::kernel::MoeFinalizeKernel as _,
+        common::kernel::MoeFinalizeKernel,
         metal::{
             KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
             MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
             MetalArray, NSRange, ProtocolObject, Retained,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::{
-                dsl::MoeFinalizeKernel,
+                dsl::MoeFinalizeMetalKernel,
                 moe::{
                     MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
                     MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
@@ -50,7 +50,7 @@ pub struct MoeBlock {
     gather_kernel: MoeGatherKernel,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
-    finalize_kernel: MoeFinalizeKernel,
+    finalize_kernel: MoeFinalizeMetalKernel,
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
     hidden_dim: usize,
@@ -173,13 +173,15 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let finalize_kernel = MoeFinalizeKernel::new(context, data_type.into())
-            .map_err(|e| {
-                crate::backends::metal::MTLError::Generic(format!(
-                    "Finalize kernel error: {:?}",
-                    e
-                ))
-            })?;
+        let finalize_kernel =
+            MoeFinalizeMetalKernel::new(context, data_type.into()).map_err(
+                |e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Finalize kernel error: {:?}",
+                        e
+                    ))
+                },
+            )?;
 
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
