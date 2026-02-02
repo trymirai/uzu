@@ -11,7 +11,8 @@ use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::ast::{
-    MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel,
+    MetalAstKind, MetalAstNode, MetalKernelInfo, MetalStructInfo,
+    validate_raw_kernel,
 };
 
 #[derive(Debug)]
@@ -168,6 +169,7 @@ impl MetalToolchain {
         path: impl AsRef<Path>,
     ) -> anyhow::Result<(
         impl Iterator<Item = MetalKernelInfo>,
+        impl Iterator<Item = MetalStructInfo>,
         impl Iterator<Item = Box<str>>,
     )> {
         let path = path.as_ref();
@@ -219,19 +221,22 @@ impl MetalToolchain {
                 .context("validation of legacy (non-dsl) kernel failed")?;
         }
 
-        let kernel_infos = ast_root
-            .inner
-            .into_iter()
-            .filter_map(|node| {
-                MetalKernelInfo::from_ast_node_and_source(
-                    node,
-                    &source_contents,
-                )
-                .transpose()
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("cannot parse kernel infos from AST")?
-            .into_iter();
+        let mut kernel_infos = Vec::new();
+        let mut struct_infos = Vec::new();
+
+        for node in ast_root.inner {
+            if let Some(kernel) = MetalKernelInfo::from_ast_node_and_source(
+                node.clone(),
+                &source_contents,
+            )
+            .transpose()
+            {
+                kernel_infos.push(kernel?);
+            }
+            if let Some(struct_info) = MetalStructInfo::from_ast_node(node)? {
+                struct_infos.push(struct_info);
+            }
+        }
 
         let depfile_contents = fs::read_to_string(depfile_path.path())
             .context("cannot read depfile")?;
@@ -244,7 +249,7 @@ impl MetalToolchain {
             .collect::<Vec<_>>()
             .into_iter();
 
-        Ok((kernel_infos, dependencies))
+        Ok((kernel_infos.into_iter(), struct_infos.into_iter(), dependencies))
     }
 
     pub async fn compile(

@@ -3,6 +3,7 @@ pub enum KernelArgumentType {
     Buffer,
     Constant(Box<str>),
     Scalar(Box<str>),
+    Struct(Box<str>),
 }
 
 #[derive(PartialEq, Debug)]

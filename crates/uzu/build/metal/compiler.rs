@@ -14,7 +14,7 @@ use tokio::{io::AsyncReadExt, task::spawn_blocking};
 use walkdir::WalkDir;
 
 use super::{
-    ast::MetalKernelInfo,
+    ast::{MetalKernelInfo, MetalStructInfo},
     toolchain::MetalToolchain,
     wrapper::{SpecializeBaseIndices, wrappers},
 };
@@ -31,6 +31,7 @@ struct ObjectInfo {
     src_rel_path: PathBuf,
     object_path: PathBuf,
     kernels: Box<[MetalKernelInfo]>,
+    structs: Box<[MetalStructInfo]>,
     specialize_indices: SpecializeBaseIndices,
     buildsystem_hash: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
@@ -206,13 +207,13 @@ impl MetalCompiler {
             format!("cannot create build directory {}", build_dir.display())
         })?;
 
-        // Analyze source
-        let (metal_kernel_infos, dependencies) =
+        let (metal_kernel_infos, metal_struct_infos, dependencies) =
             self.toolchain.analyze(&source_path).await.with_context(|| {
                 format!("cannot analyze {}", source_path_display)
             })?;
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
+        let struct_infos: Vec<MetalStructInfo> = metal_struct_infos.collect();
 
         let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos)
             .context("cannot generate kernel wrappers")?;
@@ -248,6 +249,7 @@ impl MetalCompiler {
             src_rel_path: source_path_rel.into(),
             object_path,
             kernels: kernel_infos.into_boxed_slice(),
+            structs: struct_infos.into_boxed_slice(),
             specialize_indices,
             buildsystem_hash,
             dependency_hashes,
@@ -321,6 +323,56 @@ impl MetalCompiler {
         Ok(library_path)
     }
 
+    fn generate_struct_bindings(
+        &self,
+        structs: &[MetalStructInfo],
+    ) -> anyhow::Result<TokenStream> {
+        if structs.is_empty() {
+            return Ok(quote! {});
+        }
+
+        let mut header_content = String::from("#include <stdint.h>\n\n");
+        for struct_info in structs {
+            header_content
+                .push_str(&format!("struct {} {{\n", struct_info.name));
+            for field in struct_info.fields.iter() {
+                header_content.push_str(&format!(
+                    "    {} {};\n",
+                    field.c_type, field.name
+                ));
+            }
+            header_content.push_str("};\n\n");
+        }
+
+        let temp_header = self.build_dir.join("dsl_structs.h");
+        fs::write(&temp_header, header_content)
+            .context("cannot write temp header for struct bindgen")?;
+
+        let mut builder = bindgen::Builder::default()
+            .header(temp_header.to_string_lossy())
+            .clang_arg("-x")
+            .clang_arg("c")
+            .derive_default(true)
+            .derive_copy(true)
+            .derive_debug(true)
+            .use_core()
+            .layout_tests(true);
+
+        for struct_info in structs {
+            builder = builder.allowlist_type(struct_info.name.as_ref());
+        }
+
+        let bindings = builder
+            .generate()
+            .context("bindgen failed to generate struct bindings")?;
+
+        let bindings_str = bindings.to_string();
+        let syntax_tree: syn::File = syn::parse_str(&bindings_str)
+            .context("failed to parse bindgen output")?;
+
+        Ok(quote! { #syntax_tree })
+    }
+
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
@@ -338,6 +390,16 @@ impl MetalCompiler {
         }
 
         debug_log!("bindgen start");
+
+        let all_structs: Vec<MetalStructInfo> = objects
+            .clone()
+            .into_iter()
+            .flat_map(|o| o.structs.iter().cloned())
+            .collect();
+
+        let struct_bindings = self
+            .generate_struct_bindings(&all_structs)
+            .context("cannot generate struct bindings")?;
 
         let (bindings, associated_types) = objects
             .into_iter()
@@ -364,6 +426,8 @@ impl MetalCompiler {
                 metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
             };
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+
+            #struct_bindings
 
             #(#bindings)*
 

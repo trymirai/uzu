@@ -46,6 +46,10 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                     let ty = format_ident!("{}", ty.as_ref());
                     quote! { #ty }
                 },
+                KernelArgumentType::Struct(struct_name) => {
+                    let struct_type = format_ident!("{}", struct_name.as_ref());
+                    quote! { &#struct_type }
+                },
             };
 
             quote! { #name: #ty }
