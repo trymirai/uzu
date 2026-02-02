@@ -1,13 +1,14 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeFinalizeKernel;
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
         MoeCountsOffsetsFusedKernel, MoeScatterKernels,
         MoeScatterWithMapArguments,
-        dsl::MoeFinalizeKernel,
+        dsl::MoeFinalizeMetalKernel,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -519,8 +520,9 @@ fn run_moe_parity_test_internal(
         )
         .expect("experts encode");
 
-    let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
-        .expect("finalize");
+    let finalize =
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
+            .expect("finalize");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,

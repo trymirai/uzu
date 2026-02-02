@@ -3,10 +3,11 @@ use std::time::Instant;
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeFinalizeKernel;
 use uzu::backends::metal::{
     KernelDataType,
     kernel::{
-        dsl::MoeFinalizeKernel,
+        dsl::MoeFinalizeMetalKernel,
         moe::{
             MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
@@ -352,7 +353,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
     let finalize_kernel =
-        MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
             .expect("finalize");
     let router_topk_fused_kernel =
         MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");

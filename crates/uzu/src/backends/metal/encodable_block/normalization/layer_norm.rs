@@ -6,13 +6,13 @@ use super::super::{EncodableBlock, EncodingParameters};
 use crate::{
     Array, DataType,
     backends::{
-        common::kernel::LayerNormKernel as _,
+        common::kernel::LayerNormKernel,
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
             MTLResourceOptions, ProtocolObject, Retained,
             forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::LayerNormKernel,
+            kernel::dsl::LayerNormMetalKernel,
         },
     },
     config::{NormalizationConfig, UpcastMode},
@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub struct LayerNorm {
-    kernel: LayerNormKernel,
+    kernel: LayerNormMetalKernel,
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -59,7 +59,7 @@ impl LayerNorm {
             config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
-        let kernel = LayerNormKernel::new(
+        let kernel = LayerNormMetalKernel::new(
             context,
             intermediate_data_type.into(),
             scale_data_type.into(),

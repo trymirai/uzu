@@ -7,15 +7,15 @@ use super::{
     super::{
         MTLContext, MTLError,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::ActivationKernel,
+        kernel::dsl::ActivationMetalKernel,
     },
     EncodableBlock, EncodingParameters,
 };
-use crate::backends::common::kernel::ActivationKernel as _;
+use crate::backends::common::kernel::ActivationKernel;
 use crate::{Array, DataType, config::Activation as ActivationConfig};
 
 pub struct Activation {
-    kernel: ActivationKernel,
+    kernel: ActivationMetalKernel,
     config: ActivationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -29,7 +29,7 @@ impl Activation {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
-        let kernel = ActivationKernel::new(context, data_type.into())?;
+        let kernel = ActivationMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             config,
