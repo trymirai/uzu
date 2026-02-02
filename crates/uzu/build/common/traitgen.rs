@@ -5,12 +5,11 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use super::kernel::Kernel;
 use crate::common::{
     codegen::write_tokens,
-    kernel::{KernelArgumentType, KernelParameterType},
+    kernel::{ConstantType, KernelArgumentType, KernelParameterType},
 };
-
-use super::kernel::Kernel;
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let kernel_name = kernel.name.as_ref();
@@ -38,17 +37,13 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                 KernelArgumentType::Buffer => {
                     quote! { &<Self::Backend as Backend>::BufferRef }
                 },
-                KernelArgumentType::Constant(ty) => {
+                KernelArgumentType::Constant((ty, constant_type)) => {
                     let ty = format_ident!("{}", ty.as_ref());
-                    quote! { &[#ty] }
-                },
-                KernelArgumentType::Scalar(ty) => {
-                    let ty = format_ident!("{}", ty.as_ref());
-                    quote! { #ty }
-                },
-                KernelArgumentType::Struct(struct_name) => {
-                    let struct_type = format_ident!("{}", struct_name.as_ref());
-                    quote! { &#struct_type }
+                    match constant_type {
+                        ConstantType::Scalar => quote! { #ty },
+                        ConstantType::Array => quote! { &[#ty] },
+                        ConstantType::Struct => quote! { &#ty },
+                    }
                 },
             };
 

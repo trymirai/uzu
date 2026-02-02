@@ -1,9 +1,14 @@
 #[derive(PartialEq, Debug)]
+pub enum ConstantType {
+    Scalar,
+    Array,
+    Struct,
+}
+
+#[derive(PartialEq, Debug)]
 pub enum KernelArgumentType {
     Buffer,
-    Constant(Box<str>),
-    Scalar(Box<str>),
-    Struct(Box<str>),
+    Constant((Box<str>, ConstantType)),
 }
 
 #[derive(PartialEq, Debug)]
