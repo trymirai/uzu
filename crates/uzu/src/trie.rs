@@ -102,14 +102,16 @@ impl TrieNode {
 
         let mut length = 1;
         let mut height = 0;
+        let mut node_count = 0u64;
         let mask = compiled_grammar
             .as_deref_mut()
             .and_then(|g| g.next_bitmask().unwrap());
         let mut root = Self::new(
             *prefix.last().unwrap(),
             mask,
-            seed.derive((prefix_length - 1) as u64),
+            seed.derive(prefix_length as u64 - 1 + node_count),
         );
+        node_count += 1;
 
         let mut cur_node = &mut root;
         let mut cur_node_width = 0;
@@ -146,8 +148,9 @@ impl TrieNode {
                 let leaf_node = Self::new(
                     next_speculated_token,
                     mask,
-                    seed.derive((prefix_length + height) as u64),
+                    seed.derive(prefix_length as u64 - 1 + node_count),
                 );
+                node_count += 1;
                 cur_node.add(leaf_node).unwrap();
 
                 // If this is the first node we sampled (most likely to be selected after gumbel noise application) - set it as the next one

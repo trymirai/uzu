@@ -110,7 +110,7 @@ impl AsyncBuffers {
         let ptr = self.seeds.contents().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
-                *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
+                *ptr.add(i) = seed.derive((prefix_len + i) as u64);
             }
         }
     }
