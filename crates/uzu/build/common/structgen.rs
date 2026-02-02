@@ -6,7 +6,10 @@ use quote::quote;
 
 use super::kernel::Struct;
 
-pub fn structgen(structs: &[Struct], build_dir: &std::path::Path) -> anyhow::Result<TokenStream> {
+pub fn structgen(
+    structs: &[Struct],
+    build_dir: &std::path::Path,
+) -> anyhow::Result<TokenStream> {
     if structs.is_empty() {
         return Ok(quote! {});
     }
@@ -15,7 +18,8 @@ pub fn structgen(structs: &[Struct], build_dir: &std::path::Path) -> anyhow::Res
     for struct_info in structs {
         header_content.push_str(&format!("struct {} {{\n", struct_info.name));
         for field in struct_info.fields.iter() {
-            header_content.push_str(&format!("    {} {};\n", field.ty, field.name));
+            header_content
+                .push_str(&format!("    {} {};\n", field.ty, field.name));
         }
         header_content.push_str("};\n\n");
     }
