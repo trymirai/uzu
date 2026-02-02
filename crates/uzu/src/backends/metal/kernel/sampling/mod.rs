@@ -7,10 +7,9 @@ use crate::{
         common::{
             Context,
             kernel::{
-                ArgmaxFinalKernel as _, ArgmaxMainKernel as _,
-                ArgmaxSingleKernel as _, BitmaskKernel as _, GumbelKernel as _,
-                MinPKernel as _, TemperatureKernel as _, TopKKernel as _,
-                TopPKernel as _,
+                ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
+                BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
+                TopKKernel, TopPKernel,
             },
         },
         metal::{
@@ -18,9 +17,10 @@ use crate::{
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
             Retained,
             kernel::dsl::{
-                ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-                BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-                TopKKernel, TopPKernel,
+                ArgmaxFinalMetalKernel, ArgmaxMainMetalKernel,
+                ArgmaxSingleMetalKernel, BitmaskMetalKernel, GumbelMetalKernel,
+                MinPMetalKernel, TemperatureMetalKernel, TopKMetalKernel,
+                TopPMetalKernel,
             },
         },
     },
@@ -51,22 +51,22 @@ impl Default for ArgmaxPair {
 
 enum ArgmaxImplementation {
     SinglePass {
-        kernel: ArgmaxSingleKernel,
+        kernel: ArgmaxSingleMetalKernel,
     },
     TwoPass {
-        main_kernel: ArgmaxMainKernel,
-        final_kernel: ArgmaxFinalKernel,
+        main_kernel: ArgmaxMainMetalKernel,
+        final_kernel: ArgmaxFinalMetalKernel,
         partial_results_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     },
 }
 
 pub struct SamplingKernel {
-    bitmask: BitmaskKernel,
-    temperature: TemperatureKernel,
-    topk: TopKKernel,
-    topp: TopPKernel,
-    minp: MinPKernel,
-    gumbel: GumbelKernel,
+    bitmask: BitmaskMetalKernel,
+    temperature: TemperatureMetalKernel,
+    topk: TopKMetalKernel,
+    topp: TopPMetalKernel,
+    minp: MinPMetalKernel,
+    gumbel: GumbelMetalKernel,
     argmax_implementation: ArgmaxImplementation,
     max_batch_size: usize,
     max_vocab_size: usize,
@@ -109,17 +109,18 @@ impl SamplingKernel {
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError> {
-        let bitmask = BitmaskKernel::new(context, data_type.into())?;
-        let temperature = TemperatureKernel::new(context, data_type.into())?;
-        let topk = TopKKernel::new(context, data_type.into())?;
-        let topp = TopPKernel::new(context, data_type.into())?;
-        let minp = MinPKernel::new(context, data_type.into())?;
-        let gumbel = GumbelKernel::new(context, data_type.into())?;
+        let bitmask = BitmaskMetalKernel::new(context, data_type.into())?;
+        let temperature =
+            TemperatureMetalKernel::new(context, data_type.into())?;
+        let topk = TopKMetalKernel::new(context, data_type.into())?;
+        let topp = TopPMetalKernel::new(context, data_type.into())?;
+        let minp = MinPMetalKernel::new(context, data_type.into())?;
+        let gumbel = GumbelMetalKernel::new(context, data_type.into())?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
                 let kernel =
-                    ArgmaxSingleKernel::new(context, data_type.into())?;
+                    ArgmaxSingleMetalKernel::new(context, data_type.into())?;
 
                 ArgmaxImplementation::SinglePass {
                     kernel,
@@ -127,8 +128,8 @@ impl SamplingKernel {
             },
             ArgmaxStrategy::TwoPass => {
                 let main_kernel =
-                    ArgmaxMainKernel::new(context, data_type.into())?;
-                let final_kernel = ArgmaxFinalKernel::new(context)?;
+                    ArgmaxMainMetalKernel::new(context, data_type.into())?;
+                let final_kernel = ArgmaxFinalMetalKernel::new(context)?;
 
                 let block_size = 1024;
                 let grain_size = 4;

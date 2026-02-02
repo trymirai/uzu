@@ -17,10 +17,11 @@ use super::{
 use crate::{
     DataType,
     backends::{
-        common::{Context, kernel::MaskUpdateKernel as _},
+        common::{Context, kernel::MaskUpdateKernel},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
-            MTLEvent, ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
+            MTLEvent, ProtocolObject, Retained,
+            kernel::dsl::MaskUpdateMetalKernel,
         },
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -149,7 +150,7 @@ pub struct LanguageModelGeneratorContext {
     /// Kernel for copying sampled tokens in async pipeline
     pub token_copy: TokenCopyKernel,
     /// Kernel for updating attention mask between async passes
-    pub mask_update: Option<MaskUpdateKernel>,
+    pub mask_update: Option<MaskUpdateMetalKernel>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers,
 }
@@ -260,7 +261,7 @@ impl LanguageModelGeneratorContext {
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateKernel::new(&context, kernel_data_type.into())
+                MaskUpdateMetalKernel::new(&context, kernel_data_type.into())
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {
