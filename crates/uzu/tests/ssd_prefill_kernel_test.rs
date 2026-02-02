@@ -12,11 +12,11 @@ use uzu::backends::{
     metal::{
         KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
         kernel::ssm::{
+            SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode,
             conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
         },
     },
 };
-use uzu::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
 use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions =
@@ -218,7 +218,7 @@ impl SSDPrefillFixture {
 
 fn run_prefill_kernel_mode(
     ctx: &MTLContext,
-    kernel: &SSDPrefillKernels,
+    kernel: &SSDPrefillKernel,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
@@ -278,15 +278,15 @@ fn run_prefill_kernel_mode(
         z: &z_buf,
         state: &state_buf,
         y: &y_buf,
-        suffix_len: fixture.suffix_len as u32,
-        group_size: fixture.group_size as u32,
-        state_size: fixture.state_dim as u32,
-        x_strides: fixture.x_strides.map(|s| s as u32),
-        dt_strides: fixture.dt_strides.map(|s| s as u32),
-        cb_strides: fixture.cb_strides.map(|s| s as u32),
-        state_strides: fixture.state_strides.map(|s| s as u32),
-        channels: fixture.num_heads as u32,
-        head_dim: fixture.head_dim as u32,
+        suffix_len: fixture.suffix_len,
+        group_size: fixture.group_size,
+        state_size: fixture.state_dim as i32,
+        x_strides: fixture.x_strides,
+        dt_strides: fixture.dt_strides,
+        cb_strides: fixture.cb_strides,
+        state_strides: fixture.state_strides,
+        channels: fixture.num_heads,
+        head_dim: fixture.head_dim,
     };
 
     let command_buffer = ctx
@@ -296,7 +296,7 @@ fn run_prefill_kernel_mode(
     let encoder = command_buffer
         .new_compute_command_encoder()
         .expect("Failed to create compute encoder");
-    kernel.encode(mode, &args, &encoder);
+    kernel.encode(&encoder, args, mode).unwrap();
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -431,7 +431,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32);
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_a, state_a, _) =
@@ -448,7 +448,7 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32);
+    let kernel = SSDPrefillKernel::new(&ctx, KernelDataType::Float32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(

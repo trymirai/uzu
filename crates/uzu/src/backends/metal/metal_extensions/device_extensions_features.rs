@@ -45,7 +45,9 @@ impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
                 #[cfg(target_os = "macos")]
                 #[allow(deprecated)]
                 {
-                    self.supports_feature_set(MTLFeatureSet::MacosGpuFamily1V3)
+                    self.supports_feature_set(
+                        MTLFeatureSet::macOS_GPUFamily1_v3,
+                    )
                 }
                 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
                 {
