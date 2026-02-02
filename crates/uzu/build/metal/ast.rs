@@ -115,13 +115,13 @@ fn annotation_from_ast_node(
 pub enum MetalConstantType {
     Scalar,
     Array,
+    Struct,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer,
     Constant((Box<str>, MetalConstantType)),
-    Struct(Box<str>),
     Shared(Box<str>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
@@ -285,7 +285,10 @@ impl MetalArgument {
                     MetalConstantType::Array,
                 )))
             } else {
-                Ok(MetalArgumentType::Struct((*c_type_name).into()))
+                Ok(MetalArgumentType::Constant((
+                    (*c_type_name).into(),
+                    MetalConstantType::Struct,
+                )))
             }
         } else if self.c_type.contains("threadgroup")
             && self.c_type.contains('*')
@@ -325,12 +328,13 @@ impl MetalArgument {
                     ty: KernelArgumentType::Constant(ty),
                 })
             },
-            Ok(MetalArgumentType::Struct(struct_name)) => {
-                Some(KernelArgument {
-                    name: self.name.clone(),
-                    ty: KernelArgumentType::Struct(struct_name),
-                })
-            },
+            Ok(MetalArgumentType::Constant((
+                struct_name,
+                MetalConstantType::Struct,
+            ))) => Some(KernelArgument {
+                name: self.name.clone(),
+                ty: KernelArgumentType::Struct(struct_name),
+            }),
             _ => None,
         }
     }
