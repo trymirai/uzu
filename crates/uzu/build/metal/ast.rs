@@ -2,7 +2,7 @@ use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::common::kernel::{
-    Kernel, KernelArgument, KernelArgumentType, KernelParameter,
+    ConstantType, Kernel, KernelArgument, KernelArgumentType, KernelParameter,
     KernelParameterType, Struct, StructField,
 };
 
@@ -174,12 +174,12 @@ impl MetalArgument {
             bail!("more than one annotation on argument ast node");
         }
 
-        let annotation =
-            if let Some(annotation_node) = annotation_nodes.first() {
-                Some(annotation_from_ast_node((*annotation_node).clone())?)
-            } else {
-                None
-            };
+        let annotation = if let Some(annotation_node) = annotation_nodes.first()
+        {
+            Some(annotation_from_ast_node((*annotation_node).clone())?)
+        } else {
+            None
+        };
 
         let start_offset = range
             .begin
@@ -307,26 +307,17 @@ impl MetalArgument {
                 name: self.name.clone(),
                 ty: KernelArgumentType::Buffer,
             }),
-            Ok(MetalArgumentType::Constant((
-                ty,
-                MetalConstantType::Scalar,
-            ))) => Some(KernelArgument {
-                name: self.name.clone(),
-                ty: KernelArgumentType::Scalar(ty),
-            }),
-            Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => {
+            Ok(MetalArgumentType::Constant((ty, metal_constant_type))) => {
+                let constant_type = match metal_constant_type {
+                    MetalConstantType::Scalar => ConstantType::Scalar,
+                    MetalConstantType::Array => ConstantType::Array,
+                    MetalConstantType::Struct => ConstantType::Struct,
+                };
                 Some(KernelArgument {
                     name: self.name.clone(),
-                    ty: KernelArgumentType::Constant(ty),
+                    ty: KernelArgumentType::Constant((ty, constant_type)),
                 })
             },
-            Ok(MetalArgumentType::Constant((
-                struct_name,
-                MetalConstantType::Struct,
-            ))) => Some(KernelArgument {
-                name: self.name.clone(),
-                ty: KernelArgumentType::Struct(struct_name),
-            }),
             _ => None,
         }
     }
