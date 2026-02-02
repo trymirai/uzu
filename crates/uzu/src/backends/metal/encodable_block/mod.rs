@@ -7,8 +7,8 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 use super::{
-	forward_pass::ForwardPassState, MTLCommandBuffer, MTLComputeCommandEncoder,
-	ProtocolObject,
+    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject,
+    forward_pass::ForwardPassState,
 };
 
 mod activation;
@@ -37,9 +37,9 @@ pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::Decoder;
 pub use embedding::{
-	EmbeddingError, FullPrecisionEmbeddingLookup,
-	FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
-	QuantizedEmbeddingReadout,
+    EmbeddingError, FullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout,
 };
 pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
@@ -48,7 +48,7 @@ pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{
-	LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,
+    LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,
 };
 pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;

@@ -1,29 +1,30 @@
 //! Mamba2 SSM mixer encodable.
 
 use std::{env, rc::Rc};
-use super::{transformer_layer, EncodableBlock, EncodingParameters};
-use crate::{
-	backends::metal::{
-		compilation_parameters::CompilationConfig,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::{
-			SSDUpdateKernel, SplitInProjKernel
-		},
-		kernel::ssm::{
-			conv1d_scan::Conv1dDecodeArguments, Conv1dPackArguments, Conv1dScanArguments,
-            ssd_prefill::{SSDPrefillArguments, SSDPrefillMode},
-			Conv1dScanKernel,
-            SSDPrefillKernel,
-		}, KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-		MTLComputeCommandEncoder,
-		MTLContext,
-		MetalArray,
-		ProtocolObject,
-	},
-	config::{DecoderLayerType, Mamba2Config},
-	parameters::ParameterTree,
-	DataType,
+use super::{EncodableBlock, EncodingParameters, transformer_layer};
+use crate::backends::metal::kernel::ssm::ssd_prefill::{
+    SSDPrefillArguments, SSDPrefillMode,
 };
+use crate::{
+    DataType,
+    backends::{
+        common::kernel::{SSDUpdateKernel as _, SplitInProjKernel as _},
+        metal::{
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::{SSDUpdateKernel, SplitInProjKernel},
+            kernel::ssm::{
+                Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
+                conv1d_scan::Conv1dDecodeArguments,
+            },
+        },
+    },
+    config::{DecoderLayerType, Mamba2Config},
+    parameters::ParameterTree,
+};
+use crate::backends::metal::kernel::ssm::SSDPrefillKernel;
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
@@ -114,7 +115,7 @@ impl MambaMixer {
             split_tree.leaf("skip_connection_weight").unwrap().clone();
 
         let split_inproj =
-            SplitInProjKernel::new(mtl_context, kernel_data_type)
+            SplitInProjKernel::new(mtl_context, kernel_data_type.into())
                 .expect("Failed to create split in-projection kernel");
         let conv_scan = Conv1dScanKernel::new(
             mtl_context,
@@ -124,8 +125,9 @@ impl MambaMixer {
         .expect("Failed to create conv scan kernel");
         let ssm_prefill = SSDPrefillKernel::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
-        let ssd_update = SSDUpdateKernel::new(mtl_context, kernel_data_type)
-            .expect("Failed to create SSD decode kernel");
+        let ssd_update =
+            SSDUpdateKernel::new(mtl_context, kernel_data_type.into())
+                .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
         Self {
@@ -490,7 +492,7 @@ impl MambaMixer {
             suffix_length as u32,
             h,
             dh,
-            encoder
+            encoder,
         );
     }
 }
