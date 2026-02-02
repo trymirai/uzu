@@ -1,17 +1,18 @@
-use std::fs;
+use std::{env, fs, path::PathBuf};
 
 use anyhow::Context;
-use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::kernel::Struct;
+use super::{codegen::write_tokens, kernel::Struct};
 
-pub fn structgen(
-    structs: &[Struct],
-    build_dir: &std::path::Path,
-) -> anyhow::Result<TokenStream> {
+pub fn structgen_all(structs: &[Struct]) -> anyhow::Result<()> {
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+
     if structs.is_empty() {
-        return Ok(quote! {});
+        write_tokens(quote! {}, out_dir.join("dsl_structs.rs"))
+            .context("cannot write empty struct bindings")?;
+        return Ok(());
     }
 
     let mut header_content = String::from("#include <stdint.h>\n\n");
@@ -24,7 +25,7 @@ pub fn structgen(
         header_content.push_str("};\n\n");
     }
 
-    let temp_header = build_dir.join("dsl_structs.h");
+    let temp_header = out_dir.join("dsl_structs.h");
     fs::write(&temp_header, header_content)
         .context("cannot write temp header for struct bindgen")?;
 
@@ -50,5 +51,8 @@ pub fn structgen(
     let syntax_tree: syn::File = syn::parse_str(&bindings_str)
         .context("failed to parse bindgen output")?;
 
-    Ok(quote! { #syntax_tree })
+    write_tokens(quote! { #syntax_tree }, out_dir.join("dsl_structs.rs"))
+        .context("cannot write struct bindings")?;
+
+    Ok(())
 }

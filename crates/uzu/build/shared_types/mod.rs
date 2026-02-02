@@ -1,13 +1,13 @@
-use std::collections::HashMap;
 use std::{env, fs, path::PathBuf};
 
 use anyhow::Context;
+use async_trait::async_trait;
 use tokio::{task::spawn_blocking, try_join};
 
-use async_trait::async_trait;
-
-use crate::common::{compiler::Compiler, kernel::Kernel};
-use crate::debug_log;
+use crate::{
+    common::compiler::{BuildResult, Compiler},
+    debug_log,
+};
 
 struct BindgenConfig {
     name: &'static str,
@@ -136,9 +136,7 @@ impl SharedTypesCompiler {
 
 #[async_trait]
 impl Compiler for SharedTypesCompiler {
-    async fn build(
-        &self
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(&self) -> anyhow::Result<BuildResult> {
         let (matmul_result, attn_result) = try_join!(
             spawn_blocking({
                 let src_dir = self.src_dir.clone();
@@ -167,6 +165,9 @@ impl Compiler for SharedTypesCompiler {
         matmul_result?;
         attn_result?;
 
-        Ok(HashMap::new())
+        Ok(BuildResult {
+            kernels: std::collections::HashMap::new(),
+            structs: Vec::new(),
+        })
     }
 }

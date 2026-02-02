@@ -20,8 +20,11 @@ use super::{
 };
 use crate::{
     common::{
-        caching, codegen::write_tokens, compiler::Compiler, envs,
-        kernel::Kernel, structgen,
+        caching,
+        codegen::write_tokens,
+        compiler::{BuildResult, Compiler},
+        envs,
+        kernel::Kernel,
     },
     debug_log,
 };
@@ -341,16 +344,6 @@ impl MetalCompiler {
 
         debug_log!("bindgen start");
 
-        let all_structs: Vec<_> = objects
-            .clone()
-            .into_iter()
-            .flat_map(|o| o.structs.iter().map(|s| s.to_struct()))
-            .collect();
-
-        let struct_bindings =
-            structgen::structgen(&all_structs, &self.build_dir)
-                .context("cannot generate struct bindings")?;
-
         let (bindings, associated_types) = objects
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
@@ -376,8 +369,8 @@ impl MetalCompiler {
                 metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
             };
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
-
-            #struct_bindings
+            #[allow(unused_imports)]
+            use crate::backends::common::kernel::*;
 
             #(#bindings)*
 
@@ -404,9 +397,7 @@ impl MetalCompiler {
 
 #[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(
-        &self
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(&self) -> anyhow::Result<BuildResult> {
         let nax_enabled = cfg!(feature = "metal-nax");
         debug_log!(
             "metal nax {}",
@@ -443,6 +434,15 @@ impl Compiler for MetalCompiler {
         self.link(&objects).await.context("cannot link objects")?;
         self.bindgen(&objects).context("cannot generate bindings")?;
 
-        Ok(objects.iter().map(|o| o.kernels()).collect())
+        let kernels = objects.iter().map(|o| o.kernels()).collect();
+        let structs = objects
+            .iter()
+            .flat_map(|o| o.structs.iter().map(|s| s.to_struct()))
+            .collect();
+
+        Ok(BuildResult {
+            kernels,
+            structs,
+        })
     }
 }
