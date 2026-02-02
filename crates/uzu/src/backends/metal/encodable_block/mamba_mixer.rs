@@ -11,7 +11,9 @@ use crate::{
 		},
 		kernel::ssm::{
 			conv1d_scan::Conv1dDecodeArguments, Conv1dPackArguments, Conv1dScanArguments,
+            ssd_prefill::{SSDPrefillArguments, SSDPrefillMode},
 			Conv1dScanKernel,
+            SSDPrefillKernel,
 		}, KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
 		MTLComputeCommandEncoder,
 		MTLContext,
@@ -22,8 +24,6 @@ use crate::{
 	parameters::ParameterTree,
 	DataType,
 };
-use crate::backends::metal::kernel::SSDPrefillKernel;
-use crate::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillMode};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
