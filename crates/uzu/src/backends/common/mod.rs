@@ -3,7 +3,9 @@ mod backend;
 mod buffer;
 mod buffer_lifetime;
 mod context;
-mod kernel;
+pub mod kernel {
+    include!(concat!(env!("OUT_DIR"), "/traits.rs"));
+}
 mod native_buffer;
 
 pub use allocator::{AllocError, Allocator};

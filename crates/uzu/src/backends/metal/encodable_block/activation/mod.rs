@@ -11,6 +11,7 @@ use super::{
     },
     EncodableBlock, EncodingParameters,
 };
+use crate::backends::common::kernel::ActivationKernel as _;
 use crate::{Array, DataType, config::Activation as ActivationConfig};
 
 pub struct Activation {

@@ -17,7 +17,7 @@ use super::{
 use crate::{
     DataType,
     backends::{
-        common::Context,
+        common::{Context, kernel::MaskUpdateKernel as _},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
             MTLEvent, ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
@@ -260,7 +260,7 @@ impl LanguageModelGeneratorContext {
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateKernel::new(&context, kernel_data_type)
+                MaskUpdateKernel::new(&context, kernel_data_type.into())
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {

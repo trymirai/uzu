@@ -7,7 +7,7 @@ use super::{
 use crate::{
     Array, DataType,
     backends::{
-        common::Context,
+        common::{Context, kernel::QuantizedEmbeddingLookupKernel as _},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,

@@ -9,8 +9,7 @@ mod shared_types;
 #[cfg(feature = "metal")]
 mod metal;
 
-use common::compiler::Compiler;
-use common::envs;
+use common::{compiler::Compiler, envs, traitgen::traitgen_all};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -45,7 +44,12 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new()?));
 
-    try_join_all(compilers.iter().map(|c| c.build())).await?;
+    let backends_kernels =
+        try_join_all(compilers.iter().map(|c| c.build())).await?;
+
+    debug_log!("backend build end");
+
+    traitgen_all(backends_kernels)?;
 
     debug_log!("build script ended");
 
