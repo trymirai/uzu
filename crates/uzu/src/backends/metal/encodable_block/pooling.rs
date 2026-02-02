@@ -4,11 +4,14 @@ use super::{EncodableBlock, EncodingParameters};
 #[cfg(feature = "tracing")]
 use crate::Array;
 use crate::{
-    backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::{PoolingClsKernel, PoolingMeanKernel},
+    backends::{
+        common::kernel::{PoolingClsKernel as _, PoolingMeanKernel as _},
+        metal::{
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::{PoolingClsKernel, PoolingMeanKernel},
+        },
     },
     config::PoolingType,
 };
@@ -52,12 +55,14 @@ impl Pooling {
         model_dim: usize,
     ) -> Result<Self, MTLError> {
         let pooling_kernel = match pooling_type {
-            PoolingType::Cls => {
-                PoolingKernel::Cls(PoolingClsKernel::new(context, data_type)?)
-            },
-            PoolingType::Mean => {
-                PoolingKernel::Mean(PoolingMeanKernel::new(context, data_type)?)
-            },
+            PoolingType::Cls => PoolingKernel::Cls(PoolingClsKernel::new(
+                context,
+                data_type.into(),
+            )?),
+            PoolingType::Mean => PoolingKernel::Mean(PoolingMeanKernel::new(
+                context,
+                data_type.into(),
+            )?),
         };
         Ok(Self {
             pooling_kernel,

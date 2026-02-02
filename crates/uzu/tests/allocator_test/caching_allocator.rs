@@ -14,21 +14,29 @@ pub struct CachingAllocator {
 impl CachingAllocator {
     pub fn new() -> Self {
         let context = MTLContext::new().expect("Failed to create MTLContext");
-        Self { context }
+        Self {
+            context,
+        }
     }
 }
 
 impl AllocatorTrait for CachingAllocator {
     type Buffer = Buffer<Metal>;
 
-    fn alloc(&self, size: usize) -> Self::Buffer {
+    fn alloc(
+        &self,
+        size: usize,
+    ) -> Self::Buffer {
         self.context
             .allocator()
             .alloc(BufferLifetime::Scratch, size)
             .expect("Allocation failed")
     }
 
-    fn free(&self, buffer: Self::Buffer) {
+    fn free(
+        &self,
+        buffer: Self::Buffer,
+    ) {
         drop(buffer);
     }
 
