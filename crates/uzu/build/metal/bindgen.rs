@@ -117,7 +117,9 @@ pub fn bindgen(
         .filter(|k| {
             matches!(
                 k.argument_type(),
-                Ok(MetalArgumentType::Buffer | MetalArgumentType::Constant(_))
+                Ok(MetalArgumentType::Buffer
+                    | MetalArgumentType::Constant(_)
+                    | MetalArgumentType::Struct(_))
             )
         })
         .enumerate()
@@ -147,6 +149,14 @@ pub fn bindgen(
                             quote! { compute_encoder.set_slice(#arg_name, #arg_index); },
                         ),
                     };
+
+                    (def, set, quote! { #arg_name })
+                }
+                MetalArgumentType::Struct(struct_name) => {
+                    let struct_type = format_ident!("{struct_name}");
+                    let def = quote! { #arg_name: &#struct_type };
+                    let set =
+                        quote! { compute_encoder.set_value(#arg_name, #arg_index); };
 
                     (def, set, quote! { #arg_name })
                 }

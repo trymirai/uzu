@@ -32,6 +32,14 @@ pub enum MetalAstKind {
         #[serde(rename = "type")]
         ty: ParmVarDeclType,
     },
+    CXXRecordDecl {
+        name: Option<Box<str>>,
+    },
+    FieldDecl {
+        name: Option<Box<str>>,
+        #[serde(rename = "type")]
+        ty: ParmVarDeclType,
+    },
     AnnotateAttr,
     ConstantExpr,
     ImplicitCastExpr,
@@ -113,6 +121,7 @@ pub enum MetalConstantType {
 pub enum MetalArgumentType {
     Buffer,
     Constant((Box<str>, MetalConstantType)),
+    Struct(Box<str>),
     Shared(Box<str>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
@@ -267,13 +276,17 @@ impl MetalArgument {
                 Self::scalar_type_to_rust(c_type_scalar)?.into(),
                 MetalConstantType::Scalar,
             )))
-        } else if let ["const", "constant", c_type_scalar, "*"] =
+        } else if let ["const", "constant", c_type_name, "*"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
         {
-            Ok(MetalArgumentType::Constant((
-                Self::scalar_type_to_rust(c_type_scalar)?.into(),
-                MetalConstantType::Array,
-            )))
+            if Self::scalar_type_to_rust(c_type_name).is_ok() {
+                Ok(MetalArgumentType::Constant((
+                    Self::scalar_type_to_rust(c_type_name)?.into(),
+                    MetalConstantType::Array,
+                )))
+            } else {
+                Ok(MetalArgumentType::Struct((*c_type_name).into()))
+            }
         } else if self.c_type.contains("threadgroup")
             && self.c_type.contains('*')
         {
@@ -310,6 +323,12 @@ impl MetalArgument {
                 Some(KernelArgument {
                     name: self.name.clone(),
                     ty: KernelArgumentType::Constant(ty),
+                })
+            },
+            Ok(MetalArgumentType::Struct(struct_name)) => {
+                Some(KernelArgument {
+                    name: self.name.clone(),
+                    ty: KernelArgumentType::Struct(struct_name),
                 })
             },
             _ => None,
@@ -527,6 +546,72 @@ impl MetalKernelInfo {
             name,
             arguments,
             variants,
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetalStructField {
+    pub name: Box<str>,
+    pub c_type: Box<str>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetalStructInfo {
+    pub name: Box<str>,
+    pub fields: Box<[MetalStructField]>,
+}
+
+impl MetalStructInfo {
+    pub fn from_ast_node(node: MetalAstNode) -> anyhow::Result<Option<Self>> {
+        let MetalAstKind::CXXRecordDecl {
+            name,
+        } = node.kind
+        else {
+            return Ok(None);
+        };
+
+        let Some(name) = name else {
+            return Ok(None);
+        };
+
+        let has_dsl_struct = node.inner.iter().any(|child| {
+            if let MetalAstKind::AnnotateAttr = child.kind {
+                if let Ok(annotation) = annotation_from_ast_node(child.clone())
+                {
+                    return annotation.first().map(|s| s.as_ref())
+                        == Some("dsl.struct");
+                }
+            }
+            false
+        });
+
+        if !has_dsl_struct {
+            return Ok(None);
+        }
+
+        let fields = node
+            .inner
+            .into_iter()
+            .filter_map(|child| {
+                if let MetalAstKind::FieldDecl {
+                    name: field_name,
+                    ty,
+                } = child.kind
+                {
+                    field_name.map(|name| MetalStructField {
+                        name,
+                        c_type: ty.desugared_qual_type.unwrap_or(ty.qual_type),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(Some(MetalStructInfo {
+            name,
+            fields,
         }))
     }
 }
