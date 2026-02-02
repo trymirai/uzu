@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::kernel::{
     Kernel, KernelArgument, KernelArgumentType, KernelParameter,
-    KernelParameterType,
+    KernelParameterType, Struct, StructField,
 };
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
@@ -617,6 +617,20 @@ impl MetalStructInfo {
             name,
             fields,
         }))
+    }
+
+    pub fn to_struct(&self) -> Struct {
+        Struct {
+            name: self.name.clone(),
+            fields: self
+                .fields
+                .iter()
+                .map(|f| StructField {
+                    name: f.name.clone(),
+                    ty: f.c_type.clone(),
+                })
+                .collect(),
+        }
     }
 }
 

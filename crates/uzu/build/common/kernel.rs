@@ -30,3 +30,15 @@ pub struct Kernel {
     pub parameters: Box<[KernelParameter]>,
     pub arguments: Box<[KernelArgument]>,
 }
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct StructField {
+    pub name: Box<str>,
+    pub ty: Box<str>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Struct {
+    pub name: Box<str>,
+    pub fields: Box<[StructField]>,
+}
