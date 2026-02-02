@@ -323,7 +323,6 @@ impl MetalCompiler {
         Ok(library_path)
     }
 
-
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
@@ -348,8 +347,9 @@ impl MetalCompiler {
             .flat_map(|o| o.structs.iter().map(|s| s.to_struct()))
             .collect();
 
-        let struct_bindings = structgen::structgen(&all_structs, &self.build_dir)
-            .context("cannot generate struct bindings")?;
+        let struct_bindings =
+            structgen::structgen(&all_structs, &self.build_dir)
+                .context("cannot generate struct bindings")?;
 
         let (bindings, associated_types) = objects
             .into_iter()

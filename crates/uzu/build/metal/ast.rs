@@ -64,35 +64,22 @@ fn annotation_from_ast_node(
     annotation_node
         .inner
         .into_iter()
-        .map(|mut constant_expr| {
+        .map(|constant_expr| {
             let MetalAstKind::ConstantExpr = constant_expr.kind else {
                 bail!("expected ConstantExpr, found {:?}", constant_expr.kind);
             };
 
-            if constant_expr.inner.len() != 1 {
-                bail!(
-                    "ConstantExpr must have exactly one child, found {}",
-                    constant_expr.inner.len()
-                );
-            }
+            let implicit_cast_expr = constant_expr
+                .inner
+                .into_iter()
+                .find(|n| matches!(n.kind, MetalAstKind::ImplicitCastExpr))
+                .context("no ImplicitCastExpr found in ConstantExpr")?;
 
-            let mut implicit_cast_expr = constant_expr.inner.pop().unwrap();
-
-            let MetalAstKind::ImplicitCastExpr = implicit_cast_expr.kind else {
-                bail!(
-                    "expected ImplicitCastExpr, found {:?}",
-                    implicit_cast_expr.kind
-                );
-            };
-
-            if implicit_cast_expr.inner.len() != 1 {
-                bail!(
-                    "ImplicitCastExpr must have exactly one child, found {}",
-                    implicit_cast_expr.inner.len()
-                );
-            }
-
-            let string_literal = implicit_cast_expr.inner.pop().unwrap();
+            let string_literal = implicit_cast_expr
+                .inner
+                .into_iter()
+                .find(|n| matches!(n.kind, MetalAstKind::StringLiteral { .. }))
+                .context("no StringLiteral found in ImplicitCastExpr")?;
 
             let MetalAstKind::StringLiteral {
                 value,
@@ -104,7 +91,6 @@ fn annotation_from_ast_node(
                 );
             };
 
-            // NOTE: string literal includes "" (and is probably not parsed?), using json parse here for now
             Ok(serde_json::from_str(&value)
                 .context("failed to parse string literal")?)
         })
@@ -178,13 +164,19 @@ impl MetalArgument {
 
         let c_type = desugared_qual_type.unwrap_or(qual_type);
 
-        if argument_node.inner.len() > 1 {
+        let annotation_nodes: Vec<_> = argument_node
+            .inner
+            .iter()
+            .filter(|n| matches!(n.kind, MetalAstKind::AnnotateAttr))
+            .collect();
+
+        if annotation_nodes.len() > 1 {
             bail!("more than one annotation on argument ast node");
         }
 
         let annotation =
-            if let Some(annotation_node) = argument_node.inner.first() {
-                Some(annotation_from_ast_node(annotation_node.clone())?)
+            if let Some(annotation_node) = annotation_nodes.first() {
+                Some(annotation_from_ast_node((*annotation_node).clone())?)
             } else {
                 None
             };
