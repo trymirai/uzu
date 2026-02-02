@@ -142,11 +142,9 @@ fn kernel_wrappers(
             .arguments
             .iter()
             .filter_map(|a| match a.argument_type() {
-                Ok(MetalArgumentType::Buffer)
-                | Ok(MetalArgumentType::Constant(_))
-                | Ok(MetalArgumentType::Struct(_)) => {
-                    Some(format!("{} {}", apply_replace(&a.c_type), a.name))
-                },
+                Ok(
+                    MetalArgumentType::Buffer | MetalArgumentType::Constant(_),
+                ) => Some(format!("{} {}", apply_replace(&a.c_type), a.name)),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -199,7 +197,6 @@ fn kernel_wrappers(
                 .map(|a| match a.argument_type().unwrap() {
                     MetalArgumentType::Buffer
                     | MetalArgumentType::Constant(_)
-                    | MetalArgumentType::Struct(_)
                     | MetalArgumentType::Shared(_) => a.name.to_string(),
                     MetalArgumentType::Specialize(_) => {
                         format!("__dsl_specialize_{}_{}", kernel.name, a.name)
