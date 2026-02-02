@@ -21,7 +21,7 @@ use super::{
 use crate::{
     common::{
         caching, codegen::write_tokens, compiler::Compiler, envs,
-        kernel::Kernel,
+        kernel::Kernel, structgen,
     },
     debug_log,
 };
@@ -323,55 +323,6 @@ impl MetalCompiler {
         Ok(library_path)
     }
 
-    fn generate_struct_bindings(
-        &self,
-        structs: &[MetalStructInfo],
-    ) -> anyhow::Result<TokenStream> {
-        if structs.is_empty() {
-            return Ok(quote! {});
-        }
-
-        let mut header_content = String::from("#include <stdint.h>\n\n");
-        for struct_info in structs {
-            header_content
-                .push_str(&format!("struct {} {{\n", struct_info.name));
-            for field in struct_info.fields.iter() {
-                header_content.push_str(&format!(
-                    "    {} {};\n",
-                    field.c_type, field.name
-                ));
-            }
-            header_content.push_str("};\n\n");
-        }
-
-        let temp_header = self.build_dir.join("dsl_structs.h");
-        fs::write(&temp_header, header_content)
-            .context("cannot write temp header for struct bindgen")?;
-
-        let mut builder = bindgen::Builder::default()
-            .header(temp_header.to_string_lossy())
-            .clang_arg("-x")
-            .clang_arg("c")
-            .derive_default(true)
-            .derive_copy(true)
-            .derive_debug(true)
-            .use_core()
-            .layout_tests(true);
-
-        for struct_info in structs {
-            builder = builder.allowlist_type(struct_info.name.as_ref());
-        }
-
-        let bindings = builder
-            .generate()
-            .context("bindgen failed to generate struct bindings")?;
-
-        let bindings_str = bindings.to_string();
-        let syntax_tree: syn::File = syn::parse_str(&bindings_str)
-            .context("failed to parse bindgen output")?;
-
-        Ok(quote! { #syntax_tree })
-    }
 
     fn bindgen<'a>(
         &self,
@@ -391,14 +342,13 @@ impl MetalCompiler {
 
         debug_log!("bindgen start");
 
-        let all_structs: Vec<MetalStructInfo> = objects
+        let all_structs: Vec<_> = objects
             .clone()
             .into_iter()
-            .flat_map(|o| o.structs.iter().cloned())
+            .flat_map(|o| o.structs.iter().map(|s| s.to_struct()))
             .collect();
 
-        let struct_bindings = self
-            .generate_struct_bindings(&all_structs)
+        let struct_bindings = structgen::structgen(&all_structs, &self.build_dir)
             .context("cannot generate struct bindings")?;
 
         let (bindings, associated_types) = objects
