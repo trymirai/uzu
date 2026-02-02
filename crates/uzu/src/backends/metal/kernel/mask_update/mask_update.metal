@@ -1,17 +1,21 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
+DSL_STRUCT MaskUpdateParams {
+  int unmask_col;
+  int mask_col;
+};
+
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(MaskUpdate) (
     device T* mask,
-    constant int& unmask_col,
-    constant int& mask_col
+    constant MaskUpdateParams* params
 ) {
-  if (unmask_col >= 0) {
-    mask[unmask_col] = T(0);
+  if (params->unmask_col >= 0) {
+    mask[params->unmask_col] = T(0);
   }
-  if (mask_col >= 0) {
-    mask[mask_col] = -numeric_limits<T>::infinity();
+  if (params->mask_col >= 0) {
+    mask[params->mask_col] = -numeric_limits<T>::infinity();
   }
 }

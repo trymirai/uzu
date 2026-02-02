@@ -469,11 +469,7 @@ static T threadgroup_cooperative_reduce_min(
 
 // MARK: - DSL Annotation Helpers
 
-#ifdef DSL_ANALYZE
-#define DSL_STRUCT struct [[clang::annotate("dsl.struct")]]
-#else
-#define DSL_STRUCT struct
-#endif
+#define DSL_STRUCT struct DSL_META("dsl.struct")
 
 #ifdef DSL_ANALYZE
 #define DSL_META(...) [[clang::annotate("", __VA_ARGS__)]]

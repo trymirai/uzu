@@ -15,7 +15,7 @@ use super::{
 use crate::{
     Array,
     backends::{
-        common::kernel::MaskUpdateKernel as _,
+        common::kernel::{MaskUpdateKernel as _, MaskUpdateParams},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
             MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
@@ -637,8 +637,10 @@ impl LanguageModelGenerator {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
                             mask_buffer.borrow().backend_buffer(),
-                            update.unmask_col,
-                            update.mask_col,
+                            &MaskUpdateParams {
+                                unmask_col: update.unmask_col,
+                                mask_col: update.mask_col,
+                            },
                             &encoder,
                         );
                     }
