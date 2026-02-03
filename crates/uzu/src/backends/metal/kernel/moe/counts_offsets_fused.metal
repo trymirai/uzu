@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 #include <metal_atomic>
+
 #include "../definitions.metal"
-using namespace metal;
 
 #define BLOCK_SIZE 128
 #define TILE_E 512

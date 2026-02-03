@@ -186,28 +186,21 @@ fn kernel_wrappers(
 
         let wrapper_arguments = wrapper_arguments.join(", ");
 
-        let shared_definitions = kernel.arguments.iter().filter_map(|a| {
-            if let Ok(MetalArgumentType::Shared(len_opt)) = a.argument_type() {
-                let result: String;
-                if let Some(len) = len_opt {
-                    result = format!(
-                        "{} {}[{}]",
-                        apply_replace(&a.c_type.replace('*', "")),
-                        a.name,
-                        len.as_ref(),
-                    )
-                } else {
-                    result = format!(
-                        "{} {}",
-                        apply_replace(&a.c_type.replace('&', "")),
-                        a.name
-                    )
-                }
-                Some(result)
-            } else {
-                None
-            }
-        });
+        let shared_definitions =
+            kernel.arguments.iter().filter_map(|a| match a.argument_type() {
+                Ok(MetalArgumentType::Shared(Some(len))) => Some(format!(
+                    "{} {}[{}]",
+                    apply_replace(&a.c_type.replace('*', "")),
+                    a.name,
+                    len.as_ref(),
+                )),
+                Ok(MetalArgumentType::Shared(None)) => Some(format!(
+                    "{} {}",
+                    apply_replace(&a.c_type.replace('&', "")),
+                    a.name
+                )),
+                _ => None,
+            });
 
         let underlying_arguments = {
             let mut group_axis_letters = ["x", "y", "z"].iter();
