@@ -19,6 +19,7 @@ pub use experts::{
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };
+pub use experts_single::{MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels};
 pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
