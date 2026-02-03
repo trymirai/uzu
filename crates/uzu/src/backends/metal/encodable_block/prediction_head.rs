@@ -1,30 +1,30 @@
 //! Prediction head encodable for classification output.
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 #[cfg(feature = "tracing")]
 use crate::Array;
 #[cfg(feature = "tracing")]
 use crate::backends::metal::forward_pass::ArrayId;
 use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, forward_pass::ForwardPassState,
+    ProtocolObject, Retained, forward_pass::ForwardPassState,
 };
 
 pub struct ClassifierPredictionHead {
-    dense: Box<dyn EncodableBlock>,
-    activation: Box<dyn EncodableBlock>,
-    norm: Box<dyn EncodableBlock>,
-    readout: Box<dyn EncodableBlock>,
+    dense: Box<dyn EncodableBlock<Metal>>,
+    activation: Box<dyn EncodableBlock<Metal>>,
+    norm: Box<dyn EncodableBlock<Metal>>,
+    readout: Box<dyn EncodableBlock<Metal>>,
     #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     num_labels: usize,
 }
 
 impl ClassifierPredictionHead {
     pub fn new(
-        dense: Box<dyn EncodableBlock>,
-        activation: Box<dyn EncodableBlock>,
-        norm: Box<dyn EncodableBlock>,
-        readout: Box<dyn EncodableBlock>,
+        dense: Box<dyn EncodableBlock<Metal>>,
+        activation: Box<dyn EncodableBlock<Metal>>,
+        norm: Box<dyn EncodableBlock<Metal>>,
+        readout: Box<dyn EncodableBlock<Metal>>,
         num_labels: usize,
     ) -> Self {
         Self {
@@ -37,11 +37,11 @@ impl ClassifierPredictionHead {
     }
 }
 
-impl EncodableBlock for ClassifierPredictionHead {
+impl EncodableBlock<Metal> for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

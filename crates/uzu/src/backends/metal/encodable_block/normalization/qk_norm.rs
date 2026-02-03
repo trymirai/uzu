@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::super::{EncodableBlock, EncodingParameters};
+use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -156,11 +156,11 @@ impl QKNorm {
     }
 }
 
-impl EncodableBlock for QKNorm {
+impl EncodableBlock<Metal> for QKNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer

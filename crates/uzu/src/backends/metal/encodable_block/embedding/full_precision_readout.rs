@@ -6,7 +6,7 @@ use crate::backends::metal::{
 };
 
 use super::{
-    super::{EncodableBlock, EncodingParameters},
+    super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -85,11 +85,11 @@ impl FullPrecisionEmbeddingReadout {
     }
 }
 
-impl EncodableBlock for FullPrecisionEmbeddingReadout {
+impl EncodableBlock<Metal> for FullPrecisionEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

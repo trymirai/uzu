@@ -10,12 +10,13 @@ pub use layer_norm::LayerNorm;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
+        Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::RMSNormError,
     },
@@ -73,11 +74,11 @@ impl Normalization {
     }
 }
 
-impl EncodableBlock for Normalization {
+impl EncodableBlock<Metal> for Normalization {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         match self {

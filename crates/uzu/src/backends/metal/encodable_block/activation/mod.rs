@@ -1,6 +1,6 @@
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal,
+    ProtocolObject, Retained,
 };
 
 use super::{
@@ -39,11 +39,11 @@ impl Activation {
     }
 }
 
-impl EncodableBlock for Activation {
+impl EncodableBlock<Metal> for Activation {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

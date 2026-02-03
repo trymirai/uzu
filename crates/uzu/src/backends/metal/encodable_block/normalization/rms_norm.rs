@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::super::{EncodableBlock, EncodingParameters};
+use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -99,11 +99,11 @@ impl RMSNorm {
     }
 }
 
-impl EncodableBlock for RMSNorm {
+impl EncodableBlock<Metal> for RMSNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer
