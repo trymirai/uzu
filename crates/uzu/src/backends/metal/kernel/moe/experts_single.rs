@@ -84,6 +84,10 @@ impl MoeExpertsSingleDecodeKernels {
 		command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
 		args: MoeExpertsSingleDecodeArguments,
 	) {
+		if args.k == 0 {
+			return
+		}
+		
 		let gate_idx = args.gating_code.min(3) as usize;
 		let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
 
