@@ -1,7 +1,7 @@
 //! Mamba2 SSM mixer encodable.
 
+use std::{env, rc::Rc};
 use super::{EncodableBlock, EncodingParameters, transformer_layer};
-use crate::backends::metal::kernel::SSDPrefillKernel;
 use crate::backends::metal::kernel::ssm::ssd_prefill::{
     SSDPrefillArguments, SSDPrefillMode,
 };
@@ -24,7 +24,7 @@ use crate::{
     config::{DecoderLayerType, Mamba2Config},
     parameters::ParameterTree,
 };
-use std::{env, rc::Rc};
+use crate::backends::metal::kernel::ssm::SSDPrefillKernel;
 
 pub(crate) struct MambaMixer {
     layer_index: usize,

@@ -3,20 +3,19 @@ use std::time::Instant;
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeFinalizeKernel;
+use uzu::backends::common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::{
         dsl::MoeFinalizeMetalKernel,
         moe::{
-            MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
             MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
         },
     },
 };
-
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
@@ -347,7 +346,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
     // Create kernel structs (use production-validated encoding logic)
     let counts_offsets_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
+        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
@@ -393,20 +392,19 @@ fn test_moe_pipeline_breakdown_decode() {
                 .command_queue
                 .command_buffer()
                 .expect("Failed to create command buffer");
-            counts_offsets_kernel
-                .encode(
-                    &cb,
-                    MoeCountsOffsetsFusedArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        offsets_buffer: &offsets_buf,
-                        sum_k_buffer: &sumk_buf,
-                        partials_buffer: &partials_buf,
-                        t,
-                        e,
-                        k,
-                    },
-                )
-                .expect("counts+offsets fused");
+            let encoder = cb.new_compute_command_encoder()
+                .expect("encoder");
+            counts_offsets_kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sumk_buf,
+                &partials_buf,
+                t as u32,
+                e as u32,
+                k as u32,
+                &encoder
+            );
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
         });
