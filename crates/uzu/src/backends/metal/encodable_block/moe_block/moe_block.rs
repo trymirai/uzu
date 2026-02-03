@@ -461,20 +461,22 @@ impl EncodableBlock for MoeBlock {
             },
         }
 
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-
-        self.counts_offsets_kernel.encode(
-            &topk_ids_buf,
-            &offsets_buf,
-            &sumk_buf,
-            &partials_buf,
-            suffix_length as u32,
-            e as u32,
-            k as u32,
-            &encoder
-        );
+        {
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
+            self.counts_offsets_kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sumk_buf,
+                &partials_buf,
+                suffix_length as u32,
+                e as u32,
+                k as u32,
+                &encoder
+            );
+            encoder.end_encoding();
+        }
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
@@ -622,17 +624,22 @@ impl EncodableBlock for MoeBlock {
                 .expect("MoE experts two-pass prefill failed");
         }
 
-        self.finalize_kernel.encode(
-            &tok2row_buf,
-            &topk_probs_buf,
-            &y_partial_buf,
-            &main_buf,
-            suffix_length as u32,
-            self.model_dim as u32,
-            k as u32,
-            &encoder,
-        );
-        encoder.end_encoding();
+        {
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
+            self.finalize_kernel.encode(
+                &tok2row_buf,
+                &topk_probs_buf,
+                &y_partial_buf,
+                &main_buf,
+                suffix_length as u32,
+                self.model_dim as u32,
+                k as u32,
+                &encoder,
+            );
+            encoder.end_encoding();
+        }
 
         if parameters.wait_until_completed {
             command_buffer.commit();
