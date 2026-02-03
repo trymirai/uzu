@@ -7,13 +7,13 @@ use super::{
 use crate::{
     Array, DataType,
     backends::{
-        common::{Context, kernel::QuantizedEmbeddingLookupKernel as _},
+        common::{Context, kernel::QuantizedEmbeddingLookupKernel},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
             Retained,
             forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::QuantizedEmbeddingLookupKernel,
+            kernel::dsl::QuantizedEmbeddingLookupMetalKernel,
         },
     },
     config::QuantizationMode,
@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub struct QuantizedEmbeddingLookup {
-    kernel: QuantizedEmbeddingLookupKernel,
+    kernel: QuantizedEmbeddingLookupMetalKernel,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
@@ -98,8 +98,10 @@ impl QuantizedEmbeddingLookup {
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
-        let kernel =
-            QuantizedEmbeddingLookupKernel::new(mtl_context, data_type.into())?;
+        let kernel = QuantizedEmbeddingLookupMetalKernel::new(
+            mtl_context,
+            data_type.into(),
+        )?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
         let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {

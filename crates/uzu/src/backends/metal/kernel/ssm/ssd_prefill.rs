@@ -1,3 +1,4 @@
+use objc2::Message;
 use crate::backends::{
     common::kernel::{
         SSDPrefill64Kernel as _, SSDPrefillKernel as _,
@@ -7,7 +8,7 @@ use crate::backends::{
         KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
         MTLError, ProtocolObject,
         kernel::dsl::{
-            SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel,
+            SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel,
         },
     },
 };
@@ -39,9 +40,9 @@ pub struct SSDPrefillArguments<'a> {
 }
 
 pub struct SSDPrefillKernels {
-    single: SSDPrefillKernel,
-    single_64: SSDPrefill64Kernel,
-    sequential: SSDPrefillSequentialKernel,
+    single: SSDPrefillMetalKernel,
+    single_64: SSDPrefill64MetalKernel,
+    sequential: SSDPrefillSequentialMetalKernel,
 }
 
 impl SSDPrefillKernels {
@@ -49,10 +50,10 @@ impl SSDPrefillKernels {
         context: &MTLContext,
         data_type: KernelDataType,
     ) -> Result<Self, MTLError> {
-        let single = SSDPrefillKernel::new(context, data_type.into())?;
-        let single_64 = SSDPrefill64Kernel::new(context, data_type.into())?;
+        let single = SSDPrefillMetalKernel::new(context, data_type.into())?;
+        let single_64 = SSDPrefill64MetalKernel::new(context, data_type.into())?;
         let sequential =
-            SSDPrefillSequentialKernel::new(context, data_type.into())?;
+            SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             single,
             single_64,
@@ -69,14 +70,14 @@ impl SSDPrefillKernels {
         if mode == SSDPrefillMode::SinglePass {
             if args.state_size == 64 {
                 self.single.encode(
-                    args.x,
-                    args.dt,
-                    args.b,
-                    args.c,
-                    args.d,
-                    args.z,
-                    args.state,
-                    args.y,
+                    &args.x.retain(),
+                    &args.dt.retain(),
+                    &args.b.retain(),
+                    &args.c.retain(),
+                    &args.d.retain(),
+                    &args.z.retain(),
+                    &args.state.retain(),
+                    &args.y.retain(),
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
@@ -106,14 +107,14 @@ impl SSDPrefillKernels {
                 )
             } else {
                 self.single_64.encode(
-                    args.x,
-                    args.dt,
-                    args.b,
-                    args.c,
-                    args.d,
-                    args.z,
-                    args.state,
-                    args.y,
+                    &args.x.retain(),
+                    &args.dt.retain(),
+                    &args.b.retain(),
+                    &args.c.retain(),
+                    &args.d.retain(),
+                    &args.z.retain(),
+                    &args.state.retain(),
+                    &args.y.retain(),
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
@@ -144,14 +145,14 @@ impl SSDPrefillKernels {
             }
         } else if mode == SSDPrefillMode::Sequential {
             self.sequential.encode(
-                args.x,
-                args.dt,
-                args.b,
-                args.c,
-                args.d,
-                args.z,
-                args.state,
-                args.y,
+                &args.x.retain(),
+                &args.dt.retain(),
+                &args.b.retain(),
+                &args.c.retain(),
+                &args.d.retain(),
+                &args.z.retain(),
+                &args.state.retain(),
+                &args.y.retain(),
                 args.suffix_len as u32,
                 args.group_size,
                 args.state_size,

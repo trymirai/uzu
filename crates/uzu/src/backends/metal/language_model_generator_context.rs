@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{
-    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
+    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
     ModelShape,
     compilation_parameters::CompilationConfig,
     encodable_block::Sampling,
@@ -17,10 +17,11 @@ use super::{
 use crate::{
     DataType,
     backends::{
-        common::{Context, kernel::MaskUpdateKernel as _},
+        common::{Context, kernel::MaskUpdateKernel},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
-            MTLEvent, ProtocolObject, Retained, kernel::dsl::MaskUpdateKernel,
+            MTLEvent, ProtocolObject, Retained,
+            kernel::dsl::MaskUpdateMetalKernel,
         },
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -143,13 +144,13 @@ pub struct LanguageModelGeneratorContext {
     pub model_shape: ModelShape,
     pub executables: Decoder,
     pub kv_cache_update: Box<KVCacheUpdate>,
-    pub gpu_sampler: Sampling,
+    pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,
 
     /// Kernel for copying sampled tokens in async pipeline
     pub token_copy: TokenCopyKernel,
     /// Kernel for updating attention mask between async passes
-    pub mask_update: Option<MaskUpdateKernel>,
+    pub mask_update: Option<MaskUpdateMetalKernel>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers,
 }
@@ -246,9 +247,9 @@ impl LanguageModelGeneratorContext {
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
-        let gpu_sampler = Sampling::new(
+        let gpu_sampler = Sampling::<Metal>::new(
             &context,
-            kernel_data_type,
+            intermediate_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
         )
@@ -260,7 +261,7 @@ impl LanguageModelGeneratorContext {
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateKernel::new(&context, kernel_data_type.into())
+                MaskUpdateMetalKernel::new(&context, kernel_data_type.into())
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {

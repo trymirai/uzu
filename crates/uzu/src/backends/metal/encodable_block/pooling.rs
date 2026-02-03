@@ -5,27 +5,28 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::Array;
 use crate::{
     backends::{
-        common::kernel::{PoolingClsKernel as _, PoolingMeanKernel as _},
+        common::kernel::{PoolingClsKernel, PoolingMeanKernel},
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
             forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::{PoolingClsKernel, PoolingMeanKernel},
+            kernel::dsl::{PoolingClsMetalKernel, PoolingMeanMetalKernel},
         },
     },
     config::PoolingType,
 };
 
 enum PoolingKernel {
-    Cls(PoolingClsKernel),
-    Mean(PoolingMeanKernel),
+    Cls(PoolingClsMetalKernel),
+    Mean(PoolingMeanMetalKernel),
 }
 
 impl PoolingKernel {
     fn encode(
         &self,
-        input: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
-        output: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
+        input: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        output: &Retained<ProtocolObject<dyn MTLBuffer>>,
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,
@@ -55,14 +56,13 @@ impl Pooling {
         model_dim: usize,
     ) -> Result<Self, MTLError> {
         let pooling_kernel = match pooling_type {
-            PoolingType::Cls => PoolingKernel::Cls(PoolingClsKernel::new(
+            PoolingType::Cls => PoolingKernel::Cls(PoolingClsMetalKernel::new(
                 context,
                 data_type.into(),
             )?),
-            PoolingType::Mean => PoolingKernel::Mean(PoolingMeanKernel::new(
-                context,
-                data_type.into(),
-            )?),
+            PoolingType::Mean => PoolingKernel::Mean(
+                PoolingMeanMetalKernel::new(context, data_type.into())?,
+            ),
         };
         Ok(Self {
             pooling_kernel,

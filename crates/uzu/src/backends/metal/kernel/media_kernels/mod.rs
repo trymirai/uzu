@@ -123,7 +123,7 @@ impl ExtractImagePatches {
     pub fn encode_internal(
         &self,
         padded_normalized_image: &Image,
-        output_buffer_mtl: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer_mtl: &Retained<ProtocolObject<dyn MTLBuffer>>,
         patch_params_ptr: *const std::ffi::c_void,
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) {
