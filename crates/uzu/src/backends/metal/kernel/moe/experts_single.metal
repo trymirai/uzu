@@ -1,9 +1,9 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "../definitions.metal"
 using namespace metal;
 
-constant uint GATING_SEL
-    [[function_constant(30)]]; // 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
+#define SIMD_SIZE 32
 
 static inline float gelu_approx(float x) {
   const float k0 = 0.7978845608f;
@@ -26,27 +26,30 @@ static inline float silu(float x, float alpha) {
 // Each simdgroup: 32 threads reduce d_model with float4 vectorized loads
 // Grid: (ceil(d_ff/4), K)
 // ============================================================================
-
-template <typename T, typename T4>
-inline void moe_experts_decode_single_pass_a_impl(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeExpertsDecodeSinglePassA)(
     device const T* x,
     device const int* topk_ids,
-    device const T* W13_all,
+    device const T* w13_all,
     device const T* biases,
     device float* hidden_out,
-    uint d_model,
-    uint d_ff,
-    uint K,
-    float silu_alpha,
-    float gate_clip_min,
-    float gate_clip_max,
-    float up_clip_min,
-    float up_clip_max,
-    uint k_slot,
-    uint h_block_idx,
-    uint simd_gid,
-    uint simd_lid
+    constant uint& d_model,
+    constant uint& d_ff,
+    constant uint& k,
+    constant float& silu_alpha,
+    constant float& gate_clip_min,
+    constant float& gate_clip_max,
+    constant float& up_clip_min,
+    constant float& up_clip_max,
+    const uint gating_sel SPECIALIZE, // 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
+    const uint h_block_idx GROUPS(d_ff.div_ceil(4)),
+    const uint k_slot GROUPS(k),
+    const uint tid THREADS(128)
 ) {
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
+
   const int expert_id = topk_ids[k_slot];
   if (expert_id < 0)
     return;
@@ -60,9 +63,9 @@ inline void moe_experts_decode_single_pass_a_impl(
   const ulong w13_base = (ulong)expert_u * w13_stride;
   const ulong bias_base = (ulong)expert_u * (ulong)(2 * d_ff);
 
-  device const T* w_up_row = W13_all + w13_base + (ulong)h_idx * (ulong)d_model;
+  device const T* w_up_row = w13_all + w13_base + (ulong)h_idx * (ulong)d_model;
   device const T* w_gate_row =
-      W13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
+      w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
 
   float acc_up = 0.0f;
   float acc_gate = 0.0f;
@@ -72,21 +75,19 @@ inline void moe_experts_decode_single_pass_a_impl(
   for (uint i = 0; i < vec_iters; ++i) {
     uint base_idx = i * 128 + simd_lid * 4;
 
-    T4 x_vec = *reinterpret_cast<device const T4*>(x + base_idx);
-    T4 w_up_vec = *reinterpret_cast<device const T4*>(w_up_row + base_idx);
+    device const T* x_vec2 = reinterpret_cast<device const T*>(x + base_idx);
+    device const T* w_up_vec2 = reinterpret_cast<device const T*>(w_up_row + base_idx);
+    acc_up += float(x_vec2[0]) * float(w_up_vec2[0]);
+    acc_up += float(x_vec2[1]) * float(w_up_vec2[1]);
+    acc_up += float(x_vec2[2]) * float(w_up_vec2[2]);
+    acc_up += float(x_vec2[3]) * float(w_up_vec2[3]);
 
-    acc_up += float(x_vec.x) * float(w_up_vec.x);
-    acc_up += float(x_vec.y) * float(w_up_vec.y);
-    acc_up += float(x_vec.z) * float(w_up_vec.z);
-    acc_up += float(x_vec.w) * float(w_up_vec.w);
-
-    if (GATING_SEL > 1) {
-      T4 w_gate_vec =
-          *reinterpret_cast<device const T4*>(w_gate_row + base_idx);
-      acc_gate += float(x_vec.x) * float(w_gate_vec.x);
-      acc_gate += float(x_vec.y) * float(w_gate_vec.y);
-      acc_gate += float(x_vec.z) * float(w_gate_vec.z);
-      acc_gate += float(x_vec.w) * float(w_gate_vec.w);
+    if (gating_sel > 1) {
+      device const T* w_gate_vec2 = reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      acc_gate += float(x_vec2[0]) * float(w_gate_vec2[0]);
+      acc_gate += float(x_vec2[1]) * float(w_gate_vec2[1]);
+      acc_gate += float(x_vec2[2]) * float(w_gate_vec2[2]);
+      acc_gate += float(x_vec2[3]) * float(w_gate_vec2[3]);
     }
   }
 
@@ -94,13 +95,13 @@ inline void moe_experts_decode_single_pass_a_impl(
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x[idx]);
     acc_up += xv * float(w_up_row[idx]);
-    if (GATING_SEL > 1) {
+    if (gating_sel > 1) {
       acc_gate += xv * float(w_gate_row[idx]);
     }
   }
 
   acc_up = simd_sum(acc_up);
-  if (GATING_SEL > 1) {
+  if (gating_sel > 1) {
     acc_gate = simd_sum(acc_gate);
   }
 
@@ -112,16 +113,16 @@ inline void moe_experts_decode_single_pass_a_impl(
     );
 
     float activated;
-    if (GATING_SEL <= 1) {
+    if (gating_sel <= 1) {
       activated =
-          (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+          (gating_sel == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
     } else {
       float gate_val = clamp(
           acc_gate + float(biases[bias_base + d_ff + h_idx]),
           gate_clip_min,
           gate_clip_max
       );
-      float gate_act = (GATING_SEL == 2) ? silu(gate_val, silu_alpha)
+      float gate_act = (gating_sel == 2) ? silu(gate_val, silu_alpha)
                                          : gelu_approx(gate_val);
       activated = gate_act * up_val;
     }
@@ -130,50 +131,6 @@ inline void moe_experts_decode_single_pass_a_impl(
   }
 }
 
-#define MOE_DECODE_SINGLE_PASS_A_KERNEL(DTYPE, DTYPE4, SUFFIX)                 \
-  [[max_total_threads_per_threadgroup(128)]]                                   \
-  kernel void moe_experts_decode_single_pass_a_##SUFFIX(                       \
-      device const DTYPE* x [[buffer(0)]],                                     \
-      device const int* topk_ids [[buffer(1)]],                                \
-      device const DTYPE* W13_all [[buffer(2)]],                               \
-      device const DTYPE* biases [[buffer(3)]],                                \
-      device float* hidden_out [[buffer(4)]],                                  \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& K [[buffer(7)]],                                          \
-      constant float& silu_alpha [[buffer(8)]],                                \
-      constant float& gate_clip_min [[buffer(9)]],                             \
-      constant float& gate_clip_max [[buffer(10)]],                            \
-      constant float& up_clip_min [[buffer(11)]],                              \
-      constant float& up_clip_max [[buffer(12)]],                              \
-      uint2 tgpig [[threadgroup_position_in_grid]],                            \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    moe_experts_decode_single_pass_a_impl<DTYPE, DTYPE4>(                      \
-        x,                                                                     \
-        topk_ids,                                                              \
-        W13_all,                                                               \
-        biases,                                                                \
-        hidden_out,                                                            \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        K,                                                                     \
-        silu_alpha,                                                            \
-        gate_clip_min,                                                         \
-        gate_clip_max,                                                         \
-        up_clip_min,                                                           \
-        up_clip_max,                                                           \
-        tgpig.y,                                                               \
-        tgpig.x,                                                               \
-        simd_gid,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-MOE_DECODE_SINGLE_PASS_A_KERNEL(half, half4, f16)
-MOE_DECODE_SINGLE_PASS_A_KERNEL(bfloat, bfloat4, bf16)
-MOE_DECODE_SINGLE_PASS_A_KERNEL(float, float4, f32)
 
 // ============================================================================
 // Pass B (fused with finalize): hidden[k] @ W2[expert] → y (directly)
@@ -181,22 +138,24 @@ MOE_DECODE_SINGLE_PASS_A_KERNEL(float, float4, f32)
 // Each simdgroup computes one final output element
 // Grid: (ceil(d_model/8), 1)  - NOT per K!
 // ============================================================================
-
-template <typename T, typename T4>
-inline void moe_experts_decode_single_pass_b_impl(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeExpertsDecodeSinglePassB)(
     device const float* hidden, // [K, d_ff]
     device const int* topk_ids, // [K]
     device const T* topk_probs, // [K]
-    device const T* W2_all,     // [E, d_model, d_ff]
+    device const T* w2_all,     // [E, d_model, d_ff]
     device const T* biases,     // [E, d_model]
     device T* y,                // [d_model]
-    uint d_model,
-    uint d_ff,
-    uint K,
-    uint d_block,
-    uint simd_gid,
-    uint simd_lid
+    constant uint& d_model,
+    constant uint& d_ff,
+    constant uint& k_input,
+    const uint d_block GROUPS(d_model.div_ceil(8)),
+    const uint tid THREADS(256)
 ) {
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
+
   const uint my_col = d_block * 8 + simd_gid;
   if (my_col >= d_model)
     return;
@@ -206,13 +165,13 @@ inline void moe_experts_decode_single_pass_b_impl(
 
   float final_acc = 0.0f;
 
-  // Loop over K experts
-  for (uint k = 0; k < K; ++k) {
+  // Loop over k_input experts
+  for (uint k = 0; k < k_input; ++k) {
     const uint expert_u = uint(topk_ids[k]);
     const float prob = float(topk_probs[k]);
 
     device const float* hidden_ptr = hidden + (ulong)k * (ulong)d_ff;
-    device const T* w2_ptr = W2_all + (ulong)expert_u * w2_expert_stride +
+    device const T* w2_ptr = w2_all + (ulong)expert_u * w2_expert_stride +
                              (ulong)my_col * (ulong)d_ff;
 
     float acc = 0.0f;
@@ -221,14 +180,12 @@ inline void moe_experts_decode_single_pass_b_impl(
     for (uint i = 0; i < vec_iters; ++i) {
       uint base_idx = i * 128 + simd_lid * 4;
 
-      float4 h_vec =
-          *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
-      T4 w_vec = *reinterpret_cast<device const T4*>(w2_ptr + base_idx);
-
-      acc += h_vec.x * float(w_vec.x);
-      acc += h_vec.y * float(w_vec.y);
-      acc += h_vec.z * float(w_vec.z);
-      acc += h_vec.w * float(w_vec.w);
+      float4 h_vec = *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
+      device const T* w_vec2 = reinterpret_cast<device const T*>(w2_ptr + base_idx);
+      acc += h_vec.x * float(w_vec2[0]);
+      acc += h_vec.y * float(w_vec2[1]);
+      acc += h_vec.z * float(w_vec2[2]);
+      acc += h_vec.w * float(w_vec2[3]);
     }
 
     // Remainder
@@ -248,39 +205,3 @@ inline void moe_experts_decode_single_pass_b_impl(
     y[my_col] = T(final_acc);
   }
 }
-
-#define MOE_DECODE_SINGLE_PASS_B_KERNEL(DTYPE, DTYPE4, SUFFIX)                 \
-  [[max_total_threads_per_threadgroup(256)]]                                   \
-  kernel void moe_experts_decode_single_pass_b_##SUFFIX(                       \
-      device const float* hidden [[buffer(0)]],                                \
-      device const int* topk_ids [[buffer(1)]],                                \
-      device const DTYPE* topk_probs [[buffer(2)]],                            \
-      device const DTYPE* W2_all [[buffer(3)]],                                \
-      device const DTYPE* biases [[buffer(4)]],                                \
-      device DTYPE* y [[buffer(5)]],                                           \
-      constant uint& d_model [[buffer(6)]],                                    \
-      constant uint& d_ff [[buffer(7)]],                                       \
-      constant uint& K [[buffer(8)]],                                          \
-      uint tgpig [[threadgroup_position_in_grid]],                             \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    moe_experts_decode_single_pass_b_impl<DTYPE, DTYPE4>(                      \
-        hidden,                                                                \
-        topk_ids,                                                              \
-        topk_probs,                                                            \
-        W2_all,                                                                \
-        biases,                                                                \
-        y,                                                                     \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        K,                                                                     \
-        tgpig,                                                                 \
-        simd_gid,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-MOE_DECODE_SINGLE_PASS_B_KERNEL(half, half4, f16)
-MOE_DECODE_SINGLE_PASS_B_KERNEL(bfloat, bfloat4, bf16)
-MOE_DECODE_SINGLE_PASS_B_KERNEL(float, float4, f32)
