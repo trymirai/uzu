@@ -42,7 +42,7 @@ KERNEL(MoeExpertsDecodeSinglePassA)(
     constant float& gate_clip_max,
     constant float& up_clip_min,
     constant float& up_clip_max,
-    const int gating_sel SPECIALIZE, // 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
+    const uint gating_sel SPECIALIZE, // 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
     const uint h_block_idx GROUPS(d_ff.div_ceil(4)),
     const uint k_slot GROUPS(k),
     const uint tid THREADS(128)
