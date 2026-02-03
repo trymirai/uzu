@@ -7,6 +7,7 @@ mod gather;
 mod router_topk;
 mod scatter;
 mod tiles;
+mod experts_single;
 
 // Re-export public items from submodules
 pub use counts_offsets_fused::{
@@ -14,11 +15,11 @@ pub use counts_offsets_fused::{
     MoeCountsOffsetsFusedKernel,
 };
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
-    MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };
+pub use experts_single::{MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels};
 pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
