@@ -36,7 +36,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
             let name = format_ident!("{}", a.name.as_ref());
             let ty = match &a.ty {
                 KernelArgumentType::Buffer => {
-                    quote! { &<Self::Backend as Backend>::BufferRef }
+                    quote! { &<Self::Backend as Backend>::NativeBuffer }
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty = format_ident!("{}", ty.as_ref());
@@ -59,7 +59,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
             fn new(context: &<Self::Backend as Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as Backend>::Error>;
 
             fn encode(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::EncoderRef);
-            fn encode_if(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::EncoderRef, predicate: Option<&<Self::Backend as Backend>::BufferRef>);
+            fn encode_if(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::EncoderRef, predicate: Option<&<Self::Backend as Backend>::NativeBuffer>);
         }
     };
 

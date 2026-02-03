@@ -170,12 +170,12 @@ impl SamplingKernel {
 
     pub fn encode(
         &self,
-        logits_buffer: &ProtocolObject<dyn MTLBuffer>,
-        seeds_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
+        logits_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        seeds_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         seeds_offset: usize,
-        bitmask_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
+        bitmask_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &ProtocolObject<dyn MTLBuffer>,
+        sampled_tokens_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
@@ -202,12 +202,12 @@ impl SamplingKernel {
 
     pub fn encode_with_encoder(
         &self,
-        logits_buffer: &ProtocolObject<dyn MTLBuffer>,
-        seeds_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
+        logits_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        seeds_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         seeds_offset: usize,
-        bitmask_buffer: Option<&ProtocolObject<dyn MTLBuffer>>,
+        bitmask_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &ProtocolObject<dyn MTLBuffer>,
+        sampled_tokens_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,

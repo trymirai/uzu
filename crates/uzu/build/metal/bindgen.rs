@@ -128,7 +128,7 @@ pub fn bindgen(
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
-                    let def = quote! { #arg_name: &ProtocolObject<dyn MTLBuffer> };
+                    let def = quote! { #arg_name: &Retained<ProtocolObject<dyn MTLBuffer>> };
                     let set = quote! {
                         compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
                     };
@@ -277,7 +277,7 @@ pub fn bindgen(
                 #(#encode_args_sets)*
                 #dispatch
             }
-            fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
+            fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>) {
                 #empty_dispatch_guards
                 compute_encoder.condition(
                     predicate,
