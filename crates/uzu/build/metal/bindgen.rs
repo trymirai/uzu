@@ -147,6 +147,10 @@ pub fn bindgen(
                             quote! { #arg_name: &[#arg_dtype] },
                             quote! { compute_encoder.set_slice(#arg_name, #arg_index); },
                         ),
+                        MetalConstantType::Struct => (
+                            quote! { #arg_name: &#arg_dtype },
+                            quote! { compute_encoder.set_value(#arg_name, #arg_index); },
+                        ),
                     };
 
                     (def, set, quote! { #arg_name })

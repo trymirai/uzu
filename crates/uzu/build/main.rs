@@ -9,7 +9,7 @@ mod shared_types;
 #[cfg(feature = "metal")]
 mod metal;
 
-use common::{compiler::Compiler, envs, traitgen::traitgen_all};
+use common::{compiler::Compiler, envs, structgen, traitgen::traitgen_all};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -44,11 +44,17 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new()?));
 
-    let backends_kernels =
+    let build_results =
         try_join_all(compilers.iter().map(|c| c.build())).await?;
 
     debug_log!("backend build end");
 
+    let all_structs: Vec<_> =
+        build_results.iter().flat_map(|r| r.structs.iter().cloned()).collect();
+    structgen::structgen_all(&all_structs)?;
+
+    let backends_kernels: Vec<_> =
+        build_results.into_iter().map(|r| r.kernels).collect();
     traitgen_all(backends_kernels)?;
 
     debug_log!("build script ended");

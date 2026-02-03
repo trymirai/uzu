@@ -1,8 +1,14 @@
 #[derive(PartialEq, Debug)]
+pub enum ConstantType {
+    Scalar,
+    Array,
+    Struct,
+}
+
+#[derive(PartialEq, Debug)]
 pub enum KernelArgumentType {
     Buffer,
-    Constant(Box<str>),
-    Scalar(Box<str>),
+    Constant((Box<str>, ConstantType)),
 }
 
 #[derive(PartialEq, Debug)]
@@ -28,4 +34,16 @@ pub struct Kernel {
     pub name: Box<str>,
     pub parameters: Box<[KernelParameter]>,
     pub arguments: Box<[KernelArgument]>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct StructField {
+    pub name: Box<str>,
+    pub ty: Box<str>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Struct {
+    pub name: Box<str>,
+    pub fields: Box<[StructField]>,
 }

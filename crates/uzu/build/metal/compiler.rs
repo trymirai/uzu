@@ -14,13 +14,16 @@ use tokio::{io::AsyncReadExt, task::spawn_blocking};
 use walkdir::WalkDir;
 
 use super::{
-    ast::MetalKernelInfo,
+    ast::{MetalKernelInfo, MetalStructInfo},
     toolchain::MetalToolchain,
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
     common::{
-        caching, codegen::write_tokens, compiler::Compiler, envs,
+        caching,
+        codegen::write_tokens,
+        compiler::{BuildResult, Compiler},
+        envs,
         kernel::Kernel,
     },
     debug_log,
@@ -31,6 +34,7 @@ struct ObjectInfo {
     src_rel_path: PathBuf,
     object_path: PathBuf,
     kernels: Box<[MetalKernelInfo]>,
+    structs: Box<[MetalStructInfo]>,
     specialize_indices: SpecializeBaseIndices,
     buildsystem_hash: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
@@ -206,13 +210,13 @@ impl MetalCompiler {
             format!("cannot create build directory {}", build_dir.display())
         })?;
 
-        // Analyze source
-        let (metal_kernel_infos, dependencies) =
+        let (metal_kernel_infos, metal_struct_infos, dependencies) =
             self.toolchain.analyze(&source_path).await.with_context(|| {
                 format!("cannot analyze {}", source_path_display)
             })?;
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
+        let struct_infos: Vec<MetalStructInfo> = metal_struct_infos.collect();
 
         let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos)
             .context("cannot generate kernel wrappers")?;
@@ -248,6 +252,7 @@ impl MetalCompiler {
             src_rel_path: source_path_rel.into(),
             object_path,
             kernels: kernel_infos.into_boxed_slice(),
+            structs: struct_infos.into_boxed_slice(),
             specialize_indices,
             buildsystem_hash,
             dependency_hashes,
@@ -364,6 +369,8 @@ impl MetalCompiler {
                 metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
             };
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+            #[allow(unused_imports)]
+            use crate::backends::common::kernel::*;
 
             #(#bindings)*
 
@@ -390,9 +397,7 @@ impl MetalCompiler {
 
 #[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(
-        &self
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(&self) -> anyhow::Result<BuildResult> {
         let nax_enabled = cfg!(feature = "metal-nax");
         debug_log!(
             "metal nax {}",
@@ -429,6 +434,15 @@ impl Compiler for MetalCompiler {
         self.link(&objects).await.context("cannot link objects")?;
         self.bindgen(&objects).context("cannot generate bindings")?;
 
-        Ok(objects.iter().map(|o| o.kernels()).collect())
+        let kernels = objects.iter().map(|o| o.kernels()).collect();
+        let structs = objects
+            .iter()
+            .flat_map(|o| o.structs.iter().map(|s| s.to_struct()))
+            .collect();
+
+        Ok(BuildResult {
+            kernels,
+            structs,
+        })
     }
 }
