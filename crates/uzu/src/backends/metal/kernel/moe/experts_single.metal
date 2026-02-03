@@ -3,6 +3,8 @@
 #include "../definitions.metal"
 using namespace metal;
 
+#define SIMD_SIZE 32
+
 static inline float gelu_approx(float x) {
   const float k0 = 0.7978845608f;
   const float k1 = 0.044715f;
@@ -45,8 +47,8 @@ KERNEL(MoeExpertsDecodeSinglePassA)(
     const uint k_slot GROUPS(k),
     const uint tid THREADS(128)
 ) {
-  const uint simd_gid = tid / 32;
-  const uint simd_lid = tid % 4;
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
 
   const int expert_id = topk_ids[k_slot];
   if (expert_id < 0)
@@ -75,17 +77,17 @@ KERNEL(MoeExpertsDecodeSinglePassA)(
 
     device const T* x_vec = x + base_idx;
     device const T* w_up_vec = w_up_row + base_idx;
-    #pragma unroll(4)
-    for (uint i = 0; i < 4; ++i) {
-      acc_up += float(x_vec[i]) * float(w_up_vec[i]);
-    }
+    acc_up += float(x_vec[0]) * float(w_up_vec[0]);
+    acc_up += float(x_vec[1]) * float(w_up_vec[1]);
+    acc_up += float(x_vec[2]) * float(w_up_vec[2]);
+    acc_up += float(x_vec[3]) * float(w_up_vec[3]);
 
     if (gating_sel > 1) {
       device const T* w_gate_vec = w_gate_row + base_idx;
-      #pragma unroll(4)
-      for (uint i = 0; i < 4; ++i) {
-        acc_up += float(x_vec[i]) * float(w_gate_vec[i]);
-      }
+      acc_up += float(x_vec[0]) * float(w_gate_vec[0]);
+      acc_up += float(x_vec[1]) * float(w_gate_vec[1]);
+      acc_up += float(x_vec[2]) * float(w_gate_vec[2]);
+      acc_up += float(x_vec[3]) * float(w_gate_vec[3]);
     }
   }
 
@@ -151,8 +153,8 @@ KERNEL(MoeExpertsDecodeSinglePassB)(
     const uint d_block GROUPS(d_model.div_ceil(8)),
     const uint tid THREADS(256)
 ) {
-  const uint simd_gid = tid / 32;
-  const uint simd_lid = tid % 4;
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
 
   const uint my_col = d_block * 8 + simd_gid;
   if (my_col >= d_model)
