@@ -3,11 +3,11 @@ use std::ptr::NonNull;
 use crate::{
     DataType,
     backends::{
-        common::kernel::MlpGateActMulKernel as _,
+        common::kernel::MlpGateActMulKernel,
         metal::{
             MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType,
             MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
-            kernel::dsl::MlpGateActMulKernel,
+            kernel::dsl::MlpGateActMulMetalKernel,
         },
     },
     config::Activation,
@@ -99,7 +99,7 @@ pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues
 }
 
 pub struct MlpGateActMulEncodable {
-    kernel: MlpGateActMulKernel,
+    kernel: MlpGateActMulMetalKernel,
     activation: Activation,
     hidden_dim: usize,
 }
@@ -111,7 +111,7 @@ impl MlpGateActMulEncodable {
         activation: Activation,
         hidden_dim: usize,
     ) -> Result<Self, MTLError> {
-        let kernel = MlpGateActMulKernel::new(context, data_type.into())?;
+        let kernel = MlpGateActMulMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             activation,
@@ -122,8 +122,8 @@ impl MlpGateActMulEncodable {
     pub fn encode(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        fused_up: &ProtocolObject<dyn MTLBuffer>,
-        hidden: &ProtocolObject<dyn MTLBuffer>,
+        fused_up: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        hidden: &Retained<ProtocolObject<dyn MTLBuffer>>,
         m: i32,
     ) -> Result<(), MTLError> {
         let act_type = match self.activation {

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::backends::{
-    common::kernel::TensorAddBiasKernel as _,
+    common::kernel::TensorAddBiasKernel,
     metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
         MTLComputeCommandEncoder, ProtocolObject, Retained,
@@ -15,7 +15,7 @@ use crate::{
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            dsl::TensorAddBiasKernel,
+            dsl::TensorAddBiasMetalKernel,
             quant_matmul::{
                 QuantizationType, QuantizedMatmulArguments,
                 QuantizedMatmulKernel,
@@ -29,7 +29,7 @@ use crate::{
 
 pub struct QuantizedLinear {
     kernel: QuantizedMatmulKernel,
-    bias_add_kernel: Option<TensorAddBiasKernel>,
+    bias_add_kernel: Option<TensorAddBiasMetalKernel>,
     biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
@@ -202,7 +202,7 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let bias_add_kernel = Some(TensorAddBiasKernel::new(
+                    let bias_add_kernel = Some(TensorAddBiasMetalKernel::new(
                         mtl_context,
                         kernel_data_type,
                     )?);
@@ -294,7 +294,7 @@ impl EncodableBlock for QuantizedLinear {
                 self.output_dim as u32,
                 total_len as u32,
                 &encoder,
-                parameters.predicate.map(|v| &**v),
+                parameters.predicate,
             );
         }
 
@@ -351,7 +351,7 @@ impl EncodableBlock for QuantizedLinear {
                 self.output_dim as u32,
                 total_len as u32,
                 encoder,
-                parameters.predicate.map(|v| &**v),
+                parameters.predicate,
             );
         }
     }

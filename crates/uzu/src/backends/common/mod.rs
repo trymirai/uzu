@@ -3,10 +3,7 @@ mod backend;
 mod buffer;
 mod buffer_lifetime;
 mod context;
-pub mod kernel {
-    include!(concat!(env!("OUT_DIR"), "/dsl_structs.rs"));
-    include!(concat!(env!("OUT_DIR"), "/traits.rs"));
-}
+pub mod kernel;
 mod native_buffer;
 
 pub use allocator::{AllocError, Allocator};

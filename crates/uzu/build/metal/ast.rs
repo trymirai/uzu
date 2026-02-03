@@ -108,7 +108,7 @@ pub enum MetalConstantType {
 pub enum MetalArgumentType {
     Buffer,
     Constant((Box<str>, MetalConstantType)),
-    Shared(Box<str>),
+    Shared(Option<Box<str>>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
     Groups(Box<str>),
@@ -125,21 +125,16 @@ pub struct MetalArgument {
 
 impl MetalArgument {
     fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<&'static str> {
-        let tokens: Vec<_> = c_type.split_whitespace().collect();
-        if tokens.contains(&"&") {
-            bail!("dsl.specialize does not support reference types: {c_type}");
+        let mut tokens: Vec<_> = c_type.split_whitespace().collect();
+        if tokens.first() == Some(&"const") {
+            tokens.remove(0);
         }
-        let c_type_scalar = match tokens.as_slice() {
-            ["const", scalar] => *scalar,
-            [scalar] => *scalar,
-            _ => bail!("cannot parse scalar type from: {c_type}"),
-        };
-        match c_type_scalar {
-            "bool" => Ok("bool"),
-            "uint" | "uint32_t" => Ok("u32"),
-            "int" | "int32_t" => Ok("i32"),
-            "float" => Ok("f32"),
-            _ => bail!("unknown scalar type: {c_type_scalar}"),
+        match tokens.as_slice() {
+            ["bool"] => Ok("bool"),
+            ["uint"] | ["uint32_t"] | ["unsigned", "int"] => Ok("u32"),
+            ["int"] | ["int32_t"] => Ok("i32"),
+            ["float"] => Ok("f32"),
+            _ => bail!("unknown scalar type: {c_type}"),
         }
     }
 
@@ -295,7 +290,11 @@ impl MetalArgument {
                 .rfind(']')
                 .context("threadgroup missing size bracket")?;
             let size_expr = &self.source[lbracket..rbracket];
-            Ok(MetalArgumentType::Shared(size_expr.into()))
+            Ok(MetalArgumentType::Shared(Some(size_expr.into())))
+        } else if self.c_type.contains("threadgroup")
+            && self.c_type.contains('&')
+        {
+            Ok(MetalArgumentType::Shared(None))
         } else {
             bail!("cannot parse c type: {}", self.c_type);
         }

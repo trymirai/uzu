@@ -8,7 +8,8 @@ use metal::{
 };
 use uzu::backends::{
     common::Context,
-    metal::{KernelDataType, MTLContext, kernel::dsl::SSDUpdateKernel},
+    common::kernel::SSDUpdateKernel,
+    metal::{KernelDataType, MTLContext, kernel::dsl::SSDUpdateMetalKernel},
 };
 
 #[allow(dead_code)]
@@ -282,7 +283,9 @@ fn ssd_update_with_z_bf16() {
         )
         .expect("Failed to create buffer");
 
-    let kernel = SSDUpdateKernel::new(&ctx, KernelDataType::BFloat16).unwrap();
+    let kernel =
+        SSDUpdateMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
+            .unwrap();
     let cb_ref = ctx
         .command_queue
         .command_buffer()

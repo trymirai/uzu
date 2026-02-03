@@ -15,7 +15,7 @@ use super::{
 use crate::{
     Array,
     backends::{
-        common::kernel::{MaskUpdateKernel as _, MaskUpdateParams},
+        common::kernel::{MaskUpdateKernel, MaskUpdateParams},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
             MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
