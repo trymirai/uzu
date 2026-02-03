@@ -56,7 +56,7 @@ pub async fn run_server(
         "📝 Endpoints:\n   POST /chat/completions - Chat completions API\n"
     );
 
-    let session = load_session(model_path, prefill_step_size);
+    let session = load_session(model_path, prefill_step_size, None);
     let state = SessionState {
         model_name,
         session_wrapper: SessionWrapper::new(session),

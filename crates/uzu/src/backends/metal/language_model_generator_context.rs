@@ -22,7 +22,7 @@ use super::{
 use crate::{
     DataType,
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
-    language_model::rng::DerivableSeed,
+    language_model::rng::PRng,
     parameters::ParameterLoader,
     session::{
         config::DecodingConfig,
@@ -104,13 +104,14 @@ impl AsyncBuffers {
     /// Prepare seeds buffer with deterministic sequence
     pub fn prepare_seeds(
         &self,
-        seed_source: &mut DerivableSeed,
+        seed: &PRng,
+        prefix_len: usize,
         tokens_to_generate: usize,
     ) {
         let ptr = self.seeds.contents().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
-                *ptr.add(i) = seed_source.next();
+                *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
             }
         }
     }
@@ -144,7 +145,7 @@ pub struct LanguageModelGeneratorContext {
     pub executables: Decoder,
     pub kv_cache_update: Box<KVCacheUpdate>,
     pub gpu_sampler: Sampling,
-    pub next_seed: DerivableSeed,
+    pub seed: PRng,
 
     /// Kernel for copying sampled tokens in async pipeline
     pub token_copy: TokenCopyKernel,
@@ -282,8 +283,7 @@ impl LanguageModelGeneratorContext {
             async_batch_size,
         );
 
-        let base_seed = decoding_config.sampling_seed.resolve();
-        let next_seed = DerivableSeed::new(base_seed);
+        let seed = PRng::new(decoding_config.sampling_seed.resolve());
 
         let context = Self {
             mtl_context,
@@ -297,7 +297,7 @@ impl LanguageModelGeneratorContext {
             executables,
             kv_cache_update,
             gpu_sampler,
-            next_seed,
+            seed,
             token_copy,
             mask_update,
             async_buffers,

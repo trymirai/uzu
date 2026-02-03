@@ -15,6 +15,9 @@ enum Commands {
         model_path: String,
         /// Prefill step size
         prefill_step_size: Option<usize>,
+        // Seed
+        #[arg(long)]
+        seed: Option<u64>,
     },
     /// Start a server with the specified model path
     Serve {
@@ -41,8 +44,9 @@ fn main() {
         Some(Commands::Run {
             model_path,
             prefill_step_size,
+            seed,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size);
+            handle_run(model_path, 2048, prefill_step_size, seed);
         },
         Some(Commands::Serve {
             model_path,

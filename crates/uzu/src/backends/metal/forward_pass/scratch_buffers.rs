@@ -12,6 +12,7 @@ pub struct ScratchBuffers<Context: DeviceContext> {
     // 1-D
     pub token_ids: Array<Context>,
     pub token_positions: Array<Context>,
+    pub token_parents: Array<Context>,
     pub token_bitmask: Array<Context>,
     pub token_seeds: Array<Context>,
     pub sampling_output: Array<Context>,
@@ -99,6 +100,11 @@ impl<Context: DeviceContext> ScratchBuffers<Context> {
                 &[max_suffix_len],
                 DataType::I32,
                 "token_positions",
+            ),
+            token_parents: alloc(
+                &[max_suffix_len],
+                DataType::I32,
+                "token_parents",
             ),
             token_bitmask: alloc(
                 &model_shape.bitmask_shape(max_suffix_len),
