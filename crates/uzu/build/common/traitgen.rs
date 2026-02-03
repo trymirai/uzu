@@ -63,7 +63,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         }
     };
 
-    let kernel_type = quote! { type #trait_name: #trait_name; };
+    let kernel_type =
+        quote! { type #trait_name: #trait_name<Backend = Self::Backend>; };
 
     (kernel_trait, kernel_type)
 }

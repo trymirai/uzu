@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{
-    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext,
+    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
     ModelShape,
     compilation_parameters::CompilationConfig,
     encodable_block::Sampling,
@@ -144,7 +144,7 @@ pub struct LanguageModelGeneratorContext {
     pub model_shape: ModelShape,
     pub executables: Decoder,
     pub kv_cache_update: Box<KVCacheUpdate>,
-    pub gpu_sampler: Sampling,
+    pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,
 
     /// Kernel for copying sampled tokens in async pipeline
@@ -247,9 +247,9 @@ impl LanguageModelGeneratorContext {
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
-        let gpu_sampler = Sampling::new(
+        let gpu_sampler = Sampling::<Metal>::new(
             &context,
-            kernel_data_type,
+            intermediate_data_type,
             max_suffix_length,
             decoder_config.vocab_size,
         )
