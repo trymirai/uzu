@@ -130,21 +130,16 @@ pub struct MetalArgument {
 
 impl MetalArgument {
     fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<&'static str> {
-        let tokens: Vec<_> = c_type.split_whitespace().collect();
-        if tokens.contains(&"&") {
-            bail!("dsl.specialize does not support reference types: {c_type}");
+        let mut tokens: Vec<_> = c_type.split_whitespace().collect();
+        if tokens.first() == Some(&"const") {
+            tokens.remove(0);
         }
-        let c_type_scalar = match tokens.as_slice() {
-            ["const", scalar] => *scalar,
-            [scalar] => *scalar,
-            _ => bail!("cannot parse scalar type from: {c_type}"),
-        };
-        match c_type_scalar {
-            "bool" => Ok("bool"),
-            "uint" | "uint32_t" => Ok("u32"),
-            "int" | "int32_t" => Ok("i32"),
-            "float" => Ok("f32"),
-            _ => bail!("unknown scalar type: {c_type_scalar}"),
+        match tokens.as_slice() {
+            ["bool"] => Ok("bool"),
+            ["uint"] | ["uint32_t"] | ["unsigned", "int"] => Ok("u32"),
+            ["int"] | ["int32_t"] => Ok("i32"),
+            ["float"] => Ok("f32"),
+            _ => bail!("unknown scalar type: {c_type}"),
         }
     }
 
