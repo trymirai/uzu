@@ -6,7 +6,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::moe::{
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
+        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
     },
@@ -414,7 +414,7 @@ fn run_fused_single_token_case(
         .collect();
 
     let fused_kernel =
-        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+        MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -453,7 +453,7 @@ fn run_fused_single_token_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -465,7 +465,7 @@ fn run_fused_single_token_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -702,8 +702,7 @@ fn run_fused_decode_timed(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel =
-        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -742,7 +741,7 @@ fn run_fused_decode_timed(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -754,7 +753,7 @@ fn run_fused_decode_timed(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);

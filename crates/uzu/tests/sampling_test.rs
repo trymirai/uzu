@@ -7,17 +7,21 @@ use metal::{
 use rand::{Rng, seq::SliceRandom};
 // for Vec::shuffle
 use uzu::{
+    DataType,
     backends::{
-        common::Context,
-        metal::{
-            KernelDataType, MTLContext,
+        common::{
+            Context,
             kernel::{
-                SamplingKernel,
-                dsl::{
-                    GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
-                    TopPKernel,
-                },
-                sampling::ArgmaxStrategy,
+                GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel,
+                TopPKernel,
+                sampling::{ArgmaxStrategy, SamplingKernel},
+            },
+        },
+        metal::{
+            KernelDataType, MTLContext, Metal,
+            kernel::dsl::{
+                GumbelMetalKernel, MinPMetalKernel, TemperatureMetalKernel,
+                TopKMetalKernel, TopPMetalKernel,
             },
             metal_extensions::CommandBufferTimingExt,
         },
@@ -98,9 +102,9 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::new_with_strategy(
+    let kernel = SamplingKernel::<Metal>::new_with_strategy(
         &context,
-        KernelDataType::Float32,
+        DataType::F32,
         batch_size,
         vocab_size,
         strategy,
@@ -138,8 +142,11 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let command_buffer = command_buffer_ref.to_owned();
 
     // Run sampling
+    let compute_encoder = command_buffer
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
     kernel
-        .encode(
+        .encode_with_encoder(
             &logits_buffer,
             None,
             0,
@@ -149,9 +156,10 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             batch_size,
             vocab_size,
-            &command_buffer,
+            &compute_encoder,
         )
         .expect("Argmax sampling should succeed");
+    compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
     command_buffer_ref.wait_until_completed();
@@ -212,9 +220,9 @@ fn test_topp_sampling_from_prob_exact_match(
     let p = (k as f32) * 0.1;
 
     // Create kernel
-    let kernel = SamplingKernel::new(
+    let kernel = SamplingKernel::<Metal>::new(
         &context,
-        KernelDataType::Float32,
+        DataType::F32,
         batch_size,
         vocab_size,
     )
@@ -294,8 +302,11 @@ fn test_topp_sampling_from_prob_exact_match(
             .command_buffer()
             .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
+        let compute_encoder = cb
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
         kernel
-            .encode(
+            .encode_with_encoder(
                 &logits_buf,
                 Some(&seeds_buf),
                 0,
@@ -310,9 +321,10 @@ fn test_topp_sampling_from_prob_exact_match(
                 },
                 batch_size,
                 vocab_size,
-                &cb,
+                &compute_encoder,
             )
             .expect("encode");
+        compute_encoder.end_encoding();
         cb_ref.commit();
         cb_ref.wait_until_completed();
 
@@ -381,7 +393,7 @@ fn test_topp_sampling_statistical_large() {
 
     // ===== 3. Build kernel =====
     let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB)
             .expect("Failed to create sampling kernel");
 
     // ===== 4. Generate reproducible random logits =====
@@ -435,9 +447,12 @@ fn test_topp_sampling_statistical_large() {
             .command_buffer()
             .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
+        let compute_encoder = cb
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
 
         kernel
-            .encode(
+            .encode_with_encoder(
                 &logits_buf,
                 Some(&seeds_buf),
                 0,
@@ -452,9 +467,10 @@ fn test_topp_sampling_statistical_large() {
                 },
                 BATCH,
                 VOCAB,
-                &cb,
+                &compute_encoder,
             )
             .expect("encode");
+        compute_encoder.end_encoding();
 
         cb_ref.commit();
         cb_ref.wait_until_completed();
@@ -517,7 +533,7 @@ fn perf_topp_128k_vocab() {
 
     // ---- Kernel ----
     let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB)
             .expect("Failed to create sampling kernel");
 
     // ---- Build random logits ----
@@ -558,9 +574,12 @@ fn perf_topp_128k_vocab() {
         .command_buffer()
         .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
+    let compute_encoder = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     kernel
-        .encode(
+        .encode_with_encoder(
             &logits_buf,
             Some(&seeds_buf),
             0,
@@ -575,9 +594,10 @@ fn perf_topp_128k_vocab() {
             },
             BATCH,
             VOCAB,
-            &cb,
+            &compute_encoder,
         )
         .expect("encode");
+    compute_encoder.end_encoding();
 
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
@@ -631,9 +651,9 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     const VOCAB: usize = 128000; // 128K
 
     // ---- Kernel ----
-    let kernel = SamplingKernel::new_with_strategy(
+    let kernel = SamplingKernel::<Metal>::new_with_strategy(
         &context,
-        KernelDataType::Float32,
+        DataType::F32,
         BATCH,
         VOCAB,
         strategy,
@@ -678,9 +698,12 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         .command_buffer()
         .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
+    let compute_encoder = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     kernel
-        .encode(
+        .encode_with_encoder(
             &logits_buf,
             Some(&seeds_buf),
             0,
@@ -690,9 +713,10 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             BATCH,
             VOCAB,
-            &cb,
+            &compute_encoder,
         )
         .expect("encode");
+    compute_encoder.end_encoding();
 
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
@@ -761,9 +785,9 @@ fn test_categorical_sampling() {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::new(
+    let kernel = SamplingKernel::<Metal>::new(
         &context,
-        KernelDataType::Float32,
+        DataType::F32,
         batch_size,
         vocab_size,
     )
@@ -814,9 +838,12 @@ fn test_categorical_sampling() {
             .command_buffer()
             .expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
 
         kernel
-            .encode(
+            .encode_with_encoder(
                 &logits_buffer,
                 Some(&seeds_buffer),
                 0,
@@ -831,9 +858,10 @@ fn test_categorical_sampling() {
                 },
                 batch_size,
                 vocab_size,
-                &command_buffer,
+                &compute_encoder,
             )
             .expect("Categorical sampling should succeed");
+        compute_encoder.end_encoding();
 
         command_buffer_ref.commit();
         command_buffer_ref.wait_until_completed();
@@ -907,7 +935,7 @@ fn test_categorical_sampling_statistical() {
     const TOLERANCE: f32 = 0.05; // 5% tolerance
 
     let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB)
             .expect("Failed to create sampling kernel");
 
     // Generate random logits
@@ -972,9 +1000,12 @@ fn test_categorical_sampling_statistical() {
             .command_buffer()
             .expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
+        let compute_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
 
         kernel
-            .encode(
+            .encode_with_encoder(
                 &logits_buffer,
                 Some(&seeds_buffer),
                 0,
@@ -989,9 +1020,10 @@ fn test_categorical_sampling_statistical() {
                 },
                 BATCH,
                 VOCAB,
-                &command_buffer,
+                &compute_encoder,
             )
             .expect("encode");
+        compute_encoder.end_encoding();
 
         command_buffer_ref.commit();
         command_buffer_ref.wait_until_completed();
@@ -1052,7 +1084,7 @@ fn perf_categorical_128k_vocab() {
     const VOCAB: usize = 128000; // 128K
 
     let kernel =
-        SamplingKernel::new(&context, KernelDataType::Float32, BATCH, VOCAB)
+        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB)
             .expect("Failed to create sampling kernel");
 
     // Build random logits
@@ -1093,9 +1125,12 @@ fn perf_categorical_128k_vocab() {
         .command_buffer()
         .expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
+    let compute_encoder = cb
+        .new_compute_command_encoder()
+        .expect("Failed to create compute encoder");
 
     kernel
-        .encode(
+        .encode_with_encoder(
             &logits_buf,
             Some(&seeds_buf),
             0,
@@ -1110,9 +1145,10 @@ fn perf_categorical_128k_vocab() {
             },
             BATCH,
             VOCAB,
-            &cb,
+            &compute_encoder,
         )
         .expect("encode");
+    compute_encoder.end_encoding();
 
     let host_timer = Instant::now();
     cb_ref.commit();
@@ -1162,8 +1198,9 @@ fn test_temperature_gpu_cpu_match() {
     const RTOL: f32 = 1e-6;
     const ATOL: f32 = 1e-6;
 
-    let kernel = TemperatureKernel::new(&context, KernelDataType::Float32)
-        .expect("Failed to create temperature kernel");
+    let kernel =
+        TemperatureMetalKernel::new(&context, KernelDataType::Float32.into())
+            .expect("Failed to create temperature kernel");
 
     let logits: Vec<f32> = (0..BATCH * VOCAB)
         .map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01)
@@ -1250,7 +1287,7 @@ fn test_topk_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPK: u32 = 16;
 
-    let kernel = TopKKernel::new(&context, KernelDataType::Float32)
+    let kernel = TopKMetalKernel::new(&context, KernelDataType::Float32.into())
         .expect("Failed to create topk kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1336,7 +1373,7 @@ fn test_topp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPP: f32 = 0.9;
 
-    let kernel = TopPKernel::new(&context, KernelDataType::Float32)
+    let kernel = TopPMetalKernel::new(&context, KernelDataType::Float32.into())
         .expect("Failed to create topp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1426,7 +1463,7 @@ fn test_minp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const MINP: f32 = 0.1;
 
-    let kernel = MinPKernel::new(&context, KernelDataType::Float32)
+    let kernel = MinPMetalKernel::new(&context, KernelDataType::Float32.into())
         .expect("Failed to create minp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1507,9 +1544,9 @@ fn test_minp_sampling_exact_match(
         },
     };
 
-    let kernel = SamplingKernel::new(
+    let kernel = SamplingKernel::<Metal>::new(
         &context,
-        KernelDataType::Float32,
+        DataType::F32,
         batch_size,
         vocab_size,
     )
@@ -1576,8 +1613,11 @@ fn test_minp_sampling_exact_match(
             .command_buffer()
             .expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
+        let compute_encoder = cb
+            .new_compute_command_encoder()
+            .expect("Failed to create compute encoder");
         kernel
-            .encode(
+            .encode_with_encoder(
                 &logits_buf,
                 Some(&seeds_buf),
                 0,
@@ -1592,9 +1632,10 @@ fn test_minp_sampling_exact_match(
                 },
                 batch_size,
                 vocab_size,
-                &cb,
+                &compute_encoder,
             )
             .expect("encode");
+        compute_encoder.end_encoding();
         cb_ref.commit();
         cb_ref.wait_until_completed();
 
@@ -1656,8 +1697,9 @@ fn test_gumbel_gpu_cpu_match() {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let kernel = GumbelKernel::new(&context, KernelDataType::Float32)
-        .expect("Failed to create gumbel kernel");
+    let kernel =
+        GumbelMetalKernel::new(&context, KernelDataType::Float32.into())
+            .expect("Failed to create gumbel kernel");
 
     let logits = vec![0.0f32; BATCH * VOCAB];
     let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();

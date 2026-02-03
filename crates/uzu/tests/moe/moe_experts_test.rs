@@ -15,7 +15,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
+        MoeExpertsSingleDecodeKernels,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
         MoeExpertsTwoPassPrefillKernel,
     },
@@ -27,6 +27,7 @@ use test_utils::{
     alloc_buffer, alloc_buffer_with_data, assert_bf16_close, cpu_tile_counts,
     cpu_tile_scan, create_ctx,
 };
+use uzu::backends::metal::kernel::moe::MoeExpertsSingleDecodeArguments;
 
 /// Test data for MoE experts
 struct MoeTestData {
@@ -890,7 +891,7 @@ fn test_fused_single_token_decode() {
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     // Run fused decode kernel
-    let fused_kernel = MoeExpertsSingleDecodeKernel::new(&ctx)
+    let fused_kernel = MoeExpertsSingleDecodeKernels::new(&ctx)
         .expect("MoeExpertsSingleDecodeKernel::new");
     let cb = ctx
         .command_queue
@@ -921,8 +922,7 @@ fn test_fused_single_token_decode() {
                 up_clip_max: f32::INFINITY,
                 data_type: KernelDataType::BFloat16,
             },
-        )
-        .expect("fused decode encode");
+        );
 
     cb.commit();
     cb.wait_until_completed();
@@ -1046,7 +1046,7 @@ fn test_fused_single_token_k4() {
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     let fused_kernel =
-        MoeExpertsSingleDecodeKernel::new(&ctx).expect("fused kernel");
+        MoeExpertsSingleDecodeKernels::new(&ctx).expect("fused kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
@@ -1075,8 +1075,7 @@ fn test_fused_single_token_k4() {
                 up_clip_max: f32::INFINITY,
                 data_type: KernelDataType::BFloat16,
             },
-        )
-        .expect("fused encode");
+        );
     cb.commit();
     cb.wait_until_completed();
 

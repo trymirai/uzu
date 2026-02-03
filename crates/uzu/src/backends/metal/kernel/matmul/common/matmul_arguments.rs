@@ -1,14 +1,14 @@
-use crate::backends::metal::{MTLBuffer, ProtocolObject};
+use crate::backends::metal::{MTLBuffer, ProtocolObject, Retained};
 
 #[derive(Debug, Clone)]
 pub struct MatmulArguments<'a> {
-    pub a: &'a ProtocolObject<dyn MTLBuffer>,
+    pub a: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,
-    pub b: &'a ProtocolObject<dyn MTLBuffer>,
-    pub c: Option<&'a ProtocolObject<dyn MTLBuffer>>,
-    pub d: &'a ProtocolObject<dyn MTLBuffer>,
-    pub bias: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub b: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub c: Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>,
+    pub d: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub bias: Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
     pub batch: i32,
     /// K dimension - input_dim/reduction dimension (cols of A, rows of B)

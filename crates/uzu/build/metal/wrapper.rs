@@ -141,11 +141,23 @@ fn kernel_wrappers(
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
-            .filter_map(|a| match a.argument_type() {
-                Ok(
-                    MetalArgumentType::Buffer | MetalArgumentType::Constant(_),
-                ) => Some(format!("{} {}", apply_replace(&a.c_type), a.name)),
-                _ => None,
+            .filter(|a| {
+                matches!(
+                    a.argument_type(),
+                    Ok(MetalArgumentType::Buffer)
+                        | Ok(MetalArgumentType::Constant(_))
+                )
+            })
+            .enumerate()
+            .map(|(i, a)| match a.argument_type() {
+                Ok(MetalArgumentType::Buffer)
+                | Ok(MetalArgumentType::Constant(_)) => format!(
+                    "{} {} [[buffer({})]]",
+                    apply_replace(&a.c_type),
+                    a.name,
+                    i
+                ),
+                _ => unreachable!(),
             })
             .collect::<Vec<_>>();
 
@@ -174,18 +186,21 @@ fn kernel_wrappers(
 
         let wrapper_arguments = wrapper_arguments.join(", ");
 
-        let shared_definitions = kernel.arguments.iter().filter_map(|a| {
-            if let Ok(MetalArgumentType::Shared(len)) = a.argument_type() {
-                Some(format!(
+        let shared_definitions =
+            kernel.arguments.iter().filter_map(|a| match a.argument_type() {
+                Ok(MetalArgumentType::Shared(Some(len))) => Some(format!(
                     "{} {}[{}]",
                     apply_replace(&a.c_type.replace('*', "")),
                     a.name,
                     len.as_ref(),
-                ))
-            } else {
-                None
-            }
-        });
+                )),
+                Ok(MetalArgumentType::Shared(None)) => Some(format!(
+                    "{} {}",
+                    apply_replace(&a.c_type.replace('&', "")),
+                    a.name
+                )),
+                _ => None,
+            });
 
         let underlying_arguments = {
             let mut group_axis_letters = ["x", "y", "z"].iter();

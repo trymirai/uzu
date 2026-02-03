@@ -2,6 +2,7 @@ use objc2::msg_send;
 
 use crate::backends::metal::{
     MTLBuffer, MTLCompareFunction, MTLComputeCommandEncoder, ProtocolObject,
+    Retained,
 };
 
 /// Low-level, unsafe conditional control of Metal encoders.
@@ -24,7 +25,7 @@ trait ComputeEncoderRawConditional {
 pub trait ComputeEncoderConditional {
     fn condition<IfBlock, ElseBlock>(
         &self,
-        predicate: Option<&ProtocolObject<dyn MTLBuffer>>,
+        predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
@@ -69,7 +70,7 @@ where
 {
     fn condition<IfBlock, ElseBlock>(
         &self,
-        predicate: Option<&ProtocolObject<dyn MTLBuffer>>,
+        predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where

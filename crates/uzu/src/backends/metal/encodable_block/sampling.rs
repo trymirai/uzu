@@ -1,26 +1,32 @@
 //! Sampling kernel encodable.
 
-use std::rc::Rc;
-
 use super::{EncodableBlock, EncodingParameters};
-use crate::backends::metal::{
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
+use crate::{
+    DataType,
+    backends::{
+        common::{
+            Backend,
+            kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
+        },
+        metal::{
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+            Metal, ProtocolObject,
+            forward_pass::{ArrayId, ForwardPassState},
+        },
+    },
 };
 
-pub struct Sampling {
-    pub kernel: SamplingKernel,
+pub struct Sampling<B: Backend> {
+    pub kernel: SamplingKernel<B>,
 }
 
-impl Sampling {
+impl<B: Backend> Sampling<B> {
     pub fn new(
-        context: &Rc<MTLContext>,
-        data_type: KernelDataType,
+        context: &B::Context,
+        data_type: DataType,
         max_batch_size: usize,
         max_vocab_size: usize,
-    ) -> Result<Self, SamplingError> {
+    ) -> Result<Self, SamplingError<B>> {
         let kernel = SamplingKernel::new(
             context,
             data_type,
@@ -33,12 +39,12 @@ impl Sampling {
     }
 
     pub fn new_with_strategy(
-        context: &Rc<MTLContext>,
-        data_type: KernelDataType,
+        context: &B::Context,
+        data_type: DataType,
         max_batch_size: usize,
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
-    ) -> Result<Self, SamplingError> {
+    ) -> Result<Self, SamplingError<B>> {
         let kernel = SamplingKernel::new_with_strategy(
             context,
             data_type,
@@ -52,7 +58,7 @@ impl Sampling {
     }
 }
 
-impl EncodableBlock for Sampling {
+impl EncodableBlock for Sampling<Metal> {
     fn encode(
         &self,
         state: &mut ForwardPassState,
@@ -127,7 +133,7 @@ impl EncodableBlock for Sampling {
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             seeds_offset,
-            bitmask_buffer.as_deref(),
+            bitmask_buffer.as_ref(),
             bitmask_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,

@@ -12,12 +12,12 @@ use super::{
     forward_pass::{
         ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
     },
-    kernel::dsl::SigmoidKernel,
+    kernel::dsl::SigmoidMetalKernel,
 };
 use crate::{
     DataType,
     backends::{
-        common::Context, common::kernel::SigmoidKernel as _,
+        common::Context, common::kernel::SigmoidKernel,
         metal::error::ClassifierError,
     },
     config::{ClassifierModelConfig, ModelMetadata},
@@ -45,7 +45,7 @@ pub struct ClassifierContext {
     pub pooling: Box<dyn EncodableBlock>,
     pub prediction_head: Box<dyn EncodableBlock>,
 
-    pub sigmoid_kernel: SigmoidKernel,
+    pub sigmoid_kernel: SigmoidMetalKernel,
 }
 
 impl ClassifierContext {
@@ -356,11 +356,13 @@ impl ClassifierContext {
             )))
         })?;
 
-        let sigmoid_kernel = SigmoidKernel::new(&context, data_type.into())
-            .map_err(|e| {
-                eprintln!("Failed to create sigmoid kernel: {:?}", e);
-                Error::UnableToCreateMetalContext
-            })?;
+        let sigmoid_kernel =
+            SigmoidMetalKernel::new(&context, data_type.into()).map_err(
+                |e| {
+                    eprintln!("Failed to create sigmoid kernel: {:?}", e);
+                    Error::UnableToCreateMetalContext
+                },
+            )?;
 
         let pooling = Box::new(
             Pooling::new(

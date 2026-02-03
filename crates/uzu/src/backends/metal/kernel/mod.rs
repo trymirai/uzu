@@ -19,7 +19,6 @@ pub mod moe;
 pub mod quant_matmul;
 pub mod rms_norm;
 pub mod rope;
-pub mod sampling;
 pub mod short_conv;
 pub mod ssm;
 pub mod token_copy;
@@ -33,27 +32,23 @@ pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
-    MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-    MoeCountsOffsetsFusedError, MoeCountsOffsetsFusedKernel,
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
-    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
-    MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError,
-    MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError,
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernel,
+    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
+    MoeScatterError, MoeScatterKernels, MoeScatterWithMapArguments,
 };
 pub use rms_norm::{
     QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormError,
     RMSNormKernel, RMSNormKernelType,
 };
 pub use rope::{RopeError, RopeKernel, RopeKernelArguments};
-pub use sampling::{ArgmaxStrategy, SamplingError, SamplingKernel};
 pub use short_conv::{
     ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelError,
     ShortConvPrefillArguments,
 };
 pub use ssm::{
-    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
-    SSDPrefillArguments, SSDPrefillKernel, SSDPrefillMode, SSMKernelError,
+    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSMKernelError,
 };
 pub use token_copy::TokenCopyKernel;
 

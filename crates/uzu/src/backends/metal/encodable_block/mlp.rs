@@ -243,9 +243,9 @@ impl MlpFusedBlock {
     fn encode_fused_up(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        input: &ProtocolObject<dyn MTLBuffer>,
+        input: &Retained<ProtocolObject<dyn MTLBuffer>>,
         input_offset: u64,
-        output: &ProtocolObject<dyn MTLBuffer>,
+        output: &Retained<ProtocolObject<dyn MTLBuffer>>,
         batch: i32,
     ) {
         match &self.fused_up {

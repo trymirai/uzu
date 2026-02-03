@@ -1,7 +1,7 @@
 //! Tensor copy encodable.
 
 use crate::backends::{
-    common::kernel::TensorCopyKernel as _,
+    common::kernel::TensorCopyKernel,
     metal::{
         MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
         ProtocolObject,
@@ -14,12 +14,12 @@ use crate::{
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::TensorCopyKernel,
+        kernel::dsl::TensorCopyMetalKernel,
     },
 };
 
 pub struct TensorCopy {
-    kernel: TensorCopyKernel,
+    kernel: TensorCopyMetalKernel,
     argument_arrays: Box<[ArrayId]>,
 }
 
@@ -29,7 +29,7 @@ impl TensorCopy {
         data_type: crate::backends::metal::KernelDataType,
         argument_arrays: Box<[ArrayId]>,
     ) -> Result<Self, MTLError> {
-        let kernel = TensorCopyKernel::new(context, data_type.into())?;
+        let kernel = TensorCopyMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             argument_arrays,

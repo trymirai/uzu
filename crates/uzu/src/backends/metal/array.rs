@@ -23,7 +23,7 @@ pub struct MetalArray {
 }
 
 impl Array for MetalArray {
-    type BackendBuffer = ProtocolObject<dyn MTLBuffer>;
+    type BackendBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 
     fn shape(&self) -> &[usize] {
         &self.shape
@@ -55,7 +55,7 @@ impl Array for MetalArray {
         }
     }
 
-    fn backend_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
+    fn backend_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.buffer
     }
 }
@@ -102,7 +102,9 @@ impl MetalArray {
         self.offset
     }
 
-    pub unsafe fn mtl_buffer(&mut self) -> &ProtocolObject<dyn MTLBuffer> {
+    pub unsafe fn mtl_buffer(
+        &mut self
+    ) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.buffer
     }
 
