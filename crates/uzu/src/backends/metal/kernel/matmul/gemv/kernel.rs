@@ -31,7 +31,7 @@ fn gemv_kernel_name(
     let prefix = if config.transpose_matrix {
         "gemv_t"
     } else if config.batch_pack > 1 {
-        "gemv_bp_vec_ilp2"
+        "gemv_bp"
     } else {
         "gemv"
     };
