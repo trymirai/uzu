@@ -294,7 +294,7 @@ impl EncodableBlock for QuantizedLinear {
                 self.output_dim as u32,
                 total_len as u32,
                 &encoder,
-                parameters.predicate.map(|v| &**v),
+                parameters.predicate,
             );
         }
 
@@ -351,7 +351,7 @@ impl EncodableBlock for QuantizedLinear {
                 self.output_dim as u32,
                 total_len as u32,
                 encoder,
-                parameters.predicate.map(|v| &**v),
+                parameters.predicate,
             );
         }
     }
