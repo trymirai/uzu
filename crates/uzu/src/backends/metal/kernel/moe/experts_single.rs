@@ -62,10 +62,10 @@ pub struct MoeExpertsSingleDecodeKernels {
 impl MoeExpertsSingleDecodeKernels {
 	pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
 		let mut pass_a = vec![];
-		for _ in 0..4 {
+		for gate in 0..4 {
 			let mut kernels = vec![];
 			for dtype in &DTYPES {
-				let kernel = MoeExpertsDecodeSinglePassAMetalKernel::new(ctx, (*dtype).into())?;
+				let kernel = MoeExpertsDecodeSinglePassAMetalKernel::new(ctx, (*dtype).into(), gate)?;
 				kernels.push(kernel)
 			}
 			pass_a.push(kernels);
@@ -107,7 +107,6 @@ impl MoeExpertsSingleDecodeKernels {
 				args.gate_clip_max,
 				args.up_clip_min,
 				args.up_clip_max,
-				gate_idx as u32,
 				&encoder
 			);
 			encoder.end_encoding();
