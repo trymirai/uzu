@@ -3,29 +3,19 @@ use std::mem::size_of;
 use thiserror::Error;
 
 use crate::{
-    backends::{
-        common::{
-            Context,
-            kernel::{
-                ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-                BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-                TopKKernel, TopPKernel,
-            },
-        },
-        metal::{
-            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
-            kernel::dsl::{
-                ArgmaxFinalMetalKernel, ArgmaxMainMetalKernel,
-                ArgmaxSingleMetalKernel, BitmaskMetalKernel, GumbelMetalKernel,
-                MinPMetalKernel, TemperatureMetalKernel, TopKMetalKernel,
-                TopPMetalKernel,
-            },
+    DataType,
+    backends::common::{
+        Context,
+        kernel::{
+            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
+            BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
+            TopKKernel, TopPKernel,
         },
     },
     session::parameter::SamplingMethod,
 };
+
+use super::{Backend, Kernels};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArgmaxStrategy {
@@ -49,33 +39,33 @@ impl Default for ArgmaxPair {
     }
 }
 
-enum ArgmaxImplementation {
+enum ArgmaxImplementation<B: Backend> {
     SinglePass {
-        kernel: ArgmaxSingleMetalKernel,
+        kernel: <B::Kernels as Kernels>::ArgmaxSingleKernel,
     },
     TwoPass {
-        main_kernel: ArgmaxMainMetalKernel,
-        final_kernel: ArgmaxFinalMetalKernel,
-        partial_results_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+        main_kernel: <B::Kernels as Kernels>::ArgmaxMainKernel,
+        final_kernel: <B::Kernels as Kernels>::ArgmaxFinalKernel,
+        partial_results_buffer: B::NativeBuffer,
     },
 }
 
-pub struct SamplingKernel {
-    bitmask: BitmaskMetalKernel,
-    temperature: TemperatureMetalKernel,
-    topk: TopKMetalKernel,
-    topp: TopPMetalKernel,
-    minp: MinPMetalKernel,
-    gumbel: GumbelMetalKernel,
-    argmax_implementation: ArgmaxImplementation,
+pub struct SamplingKernel<B: Backend> {
+    bitmask: <B::Kernels as Kernels>::BitmaskKernel,
+    temperature: <B::Kernels as Kernels>::TemperatureKernel,
+    topk: <B::Kernels as Kernels>::TopKKernel,
+    topp: <B::Kernels as Kernels>::TopPKernel,
+    minp: <B::Kernels as Kernels>::MinPKernel,
+    gumbel: <B::Kernels as Kernels>::GumbelKernel,
+    argmax_implementation: ArgmaxImplementation<B>,
     max_batch_size: usize,
     max_vocab_size: usize,
 }
 
 #[derive(Debug, Error)]
-pub enum SamplingError {
-    #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+pub enum SamplingError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
     #[error("Batch size {0} exceeds maximum {1}")]
@@ -86,13 +76,13 @@ pub enum SamplingError {
     StochasticWithoutSeed,
 }
 
-impl SamplingKernel {
+impl<B: Backend> SamplingKernel<B> {
     pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
+        context: &B::Context,
+        data_type: DataType,
         max_batch_size: usize,
         max_vocab_size: usize,
-    ) -> Result<Self, SamplingError> {
+    ) -> Result<Self, SamplingError<B>> {
         Self::new_with_strategy(
             context,
             data_type,
@@ -103,24 +93,34 @@ impl SamplingKernel {
     }
 
     pub fn new_with_strategy(
-        context: &MTLContext,
-        data_type: KernelDataType,
+        context: &B::Context,
+        data_type: DataType,
         max_batch_size: usize,
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
-    ) -> Result<Self, SamplingError> {
-        let bitmask = BitmaskMetalKernel::new(context, data_type.into())?;
+    ) -> Result<Self, SamplingError<B>> {
+        let bitmask =
+            <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type)
+                .map_err(SamplingError::BackendError)?;
         let temperature =
-            TemperatureMetalKernel::new(context, data_type.into())?;
-        let topk = TopKMetalKernel::new(context, data_type.into())?;
-        let topp = TopPMetalKernel::new(context, data_type.into())?;
-        let minp = MinPMetalKernel::new(context, data_type.into())?;
-        let gumbel = GumbelMetalKernel::new(context, data_type.into())?;
+            <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type)
+                .map_err(SamplingError::BackendError)?;
+        let topk = <B::Kernels as Kernels>::TopKKernel::new(context, data_type)
+            .map_err(SamplingError::BackendError)?;
+        let topp = <B::Kernels as Kernels>::TopPKernel::new(context, data_type)
+            .map_err(SamplingError::BackendError)?;
+        let minp = <B::Kernels as Kernels>::MinPKernel::new(context, data_type)
+            .map_err(SamplingError::BackendError)?;
+        let gumbel =
+            <B::Kernels as Kernels>::GumbelKernel::new(context, data_type)
+                .map_err(SamplingError::BackendError)?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
-                let kernel =
-                    ArgmaxSingleMetalKernel::new(context, data_type.into())?;
+                let kernel = <B::Kernels as Kernels>::ArgmaxSingleKernel::new(
+                    context, data_type,
+                )
+                .map_err(SamplingError::BackendError)?;
 
                 ArgmaxImplementation::SinglePass {
                     kernel,
@@ -128,8 +128,13 @@ impl SamplingKernel {
             },
             ArgmaxStrategy::TwoPass => {
                 let main_kernel =
-                    ArgmaxMainMetalKernel::new(context, data_type.into())?;
-                let final_kernel = ArgmaxFinalMetalKernel::new(context)?;
+                    <B::Kernels as Kernels>::ArgmaxMainKernel::new(
+                        context, data_type,
+                    )
+                    .map_err(SamplingError::BackendError)?;
+                let final_kernel =
+                    <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context)
+                        .map_err(SamplingError::BackendError)?;
 
                 let block_size = 1024;
                 let grain_size = 4;
@@ -168,51 +173,19 @@ impl SamplingKernel {
         })
     }
 
-    pub fn encode(
-        &self,
-        logits_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        seeds_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
-        seeds_offset: usize,
-        bitmask_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
-        bitmask_offset: usize,
-        sampled_tokens_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        sampling_method: SamplingMethod,
-        batch_size: usize,
-        vocab_size: usize,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-    ) -> Result<(), SamplingError> {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        self.encode_with_encoder(
-            logits_buffer,
-            seeds_buffer,
-            seeds_offset,
-            bitmask_buffer,
-            bitmask_offset,
-            sampled_tokens_buffer,
-            sampling_method,
-            batch_size,
-            vocab_size,
-            &compute_encoder,
-        )?;
-        compute_encoder.end_encoding();
-        Ok(())
-    }
-
     pub fn encode_with_encoder(
         &self,
-        logits_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        seeds_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        logits_buffer: &B::NativeBuffer,
+        seeds_buffer: Option<&B::NativeBuffer>,
         seeds_offset: usize,
-        bitmask_buffer: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        bitmask_buffer: Option<&B::NativeBuffer>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        sampled_tokens_buffer: &B::NativeBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-    ) -> Result<(), SamplingError> {
+        compute_encoder: &B::EncoderRef,
+    ) -> Result<(), SamplingError<B>> {
         if batch_size > self.max_batch_size {
             return Err(SamplingError::BatchSizeExceeded(
                 batch_size,
