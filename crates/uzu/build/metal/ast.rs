@@ -113,7 +113,7 @@ pub enum MetalConstantType {
 pub enum MetalArgumentType {
     Buffer,
     Constant((Box<str>, MetalConstantType)),
-    Shared(Box<str>),
+    Shared(Option<Box<str>>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
     Groups(Box<str>),
@@ -282,7 +282,11 @@ impl MetalArgument {
                 .rfind(']')
                 .context("threadgroup missing size bracket")?;
             let size_expr = &self.source[lbracket..rbracket];
-            Ok(MetalArgumentType::Shared(size_expr.into()))
+            Ok(MetalArgumentType::Shared(Some(size_expr.into())))
+        } else if self.c_type.contains("threadgroup")
+            && self.c_type.contains('&')
+        {
+            Ok(MetalArgumentType::Shared(None))
         } else {
             bail!("cannot parse c type: {}", self.c_type);
         }

@@ -1,17 +1,17 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
 use uzu::backends::metal::{
     MTLContext, ProtocolObject, Retained,
     kernel::{
-        KernelDataType, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel,
+        KernelDataType,
+        dsl::MoeCountsOffsetsFusedMetalKernel,
         moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
     },
 };
-
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(
@@ -131,21 +131,26 @@ fn test_counts_offsets_fused_parity_random() {
             let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
             let kernel =
-                MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+                MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
             let cb = ctx
                 .command_queue
                 .command_buffer()
                 .expect("Failed to create command buffer");
-            let args = MoeCountsOffsetsFusedArguments {
-                topk_ids_buffer: &topk_ids_buf,
-                offsets_buffer: &offsets_buf,
-                sum_k_buffer: &sum_k_buf,
-                partials_buffer: &partials_buf,
-                t,
-                e,
-                k,
-            };
-            kernel.encode(&cb, args).expect("encode fused");
+            let encoder = cb.new_compute_command_encoder()
+                .expect("encoder");
+
+            kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sum_k_buf,
+                &partials_buf,
+                t as u32,
+                e as u32,
+                k as u32,
+                &encoder
+            );
+
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
 
@@ -193,21 +198,24 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
-    let args = MoeCountsOffsetsFusedArguments {
-        topk_ids_buffer: &topk_ids_buf,
-        offsets_buffer: &offsets_buf,
-        sum_k_buffer: &sum_k_buf,
-        partials_buffer: &partials_buf,
-        t,
-        e,
-        k,
-    };
-    kernel.encode(&cb, args).expect("encode fused");
+    let encoder = cb.new_compute_command_encoder()
+        .expect("encoder");
+    kernel.encode(
+        &topk_ids_buf,
+        &offsets_buf,
+        &sum_k_buf,
+        &partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &encoder
+    );
+    encoder.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -231,21 +239,24 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
-    let args = MoeCountsOffsetsFusedArguments {
-        topk_ids_buffer: &topk_ids_buf,
-        offsets_buffer: &offsets_buf,
-        sum_k_buffer: &sum_k_buf,
-        partials_buffer: &partials_buf,
-        t,
-        e,
-        k,
-    };
-    kernel.encode(&cb, args).expect("encode fused");
+    let encoder = cb.new_compute_command_encoder()
+        .expect("encoder");
+    kernel.encode(
+        &topk_ids_buf,
+        &offsets_buf,
+        &sum_k_buf,
+        &partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &encoder
+    );
+    encoder.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
