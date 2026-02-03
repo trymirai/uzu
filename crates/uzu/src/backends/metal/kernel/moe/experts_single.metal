@@ -75,19 +75,19 @@ KERNEL(MoeExpertsDecodeSinglePassA)(
   for (uint i = 0; i < vec_iters; ++i) {
     uint base_idx = i * 128 + simd_lid * 4;
 
-    device const T* x_vec = reinterpret_cast<device const T*>(x + base_idx);
-    device const T* w_up_vec = reinterpret_cast<device const T*>(w_up_row + base_idx);
-    acc_up += float(x_vec[0]) * float(w_up_vec[0]);
-    acc_up += float(x_vec[1]) * float(w_up_vec[1]);
-    acc_up += float(x_vec[2]) * float(w_up_vec[2]);
-    acc_up += float(x_vec[3]) * float(w_up_vec[3]);
+    device const T* x_vec2 = reinterpret_cast<device const T*>(x + base_idx);
+    device const T* w_up_vec2 = reinterpret_cast<device const T*>(w_up_row + base_idx);
+    acc_up += float(x_vec2[0]) * float(w_up_vec2[0]);
+    acc_up += float(x_vec2[1]) * float(w_up_vec2[1]);
+    acc_up += float(x_vec2[2]) * float(w_up_vec2[2]);
+    acc_up += float(x_vec2[3]) * float(w_up_vec2[3]);
 
     if (gating_sel > 1) {
-      device const T* w_gate_vec = reinterpret_cast<device const T*>(w_gate_row + base_idx);
-      acc_up += float(x_vec[0]) * float(w_gate_vec[0]);
-      acc_up += float(x_vec[1]) * float(w_gate_vec[1]);
-      acc_up += float(x_vec[2]) * float(w_gate_vec[2]);
-      acc_up += float(x_vec[3]) * float(w_gate_vec[3]);
+      device const T* w_gate_vec2 = reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      acc_gate += float(x_vec2[0]) * float(w_gate_vec2[0]);
+      acc_gate += float(x_vec2[1]) * float(w_gate_vec2[1]);
+      acc_gate += float(x_vec2[2]) * float(w_gate_vec2[2]);
+      acc_gate += float(x_vec2[3]) * float(w_gate_vec2[3]);
     }
   }
 
@@ -181,11 +181,11 @@ KERNEL(MoeExpertsDecodeSinglePassB)(
       uint base_idx = i * 128 + simd_lid * 4;
 
       float4 h_vec = *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
-      device const T* w_vec = reinterpret_cast<device const T*>(w2_ptr + base_idx);
-      acc += h_vec.x * float(w_vec[0]);
-      acc += h_vec.y * float(w_vec[1]);
-      acc += h_vec.z * float(w_vec[2]);
-      acc += h_vec.w * float(w_vec[3]);
+      device const T* w_vec2 = reinterpret_cast<device const T*>(w2_ptr + base_idx);
+      acc += h_vec.x * float(w_vec2[0]);
+      acc += h_vec.y * float(w_vec2[1]);
+      acc += h_vec.z * float(w_vec2[2]);
+      acc += h_vec.w * float(w_vec2[3]);
     }
 
     // Remainder
