@@ -1,12 +1,13 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel};
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
         KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
         MoeScatterWithMapArguments,
-        dsl::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        dsl::MoeFinalizeMetalKernel,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -14,6 +15,7 @@ use uzu::backends::metal::{
         },
     },
 };
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
@@ -404,7 +406,7 @@ fn run_moe_parity_test_internal(
         .expect("router+topk encode");
 
     let fused_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let encoder = cb.new_compute_command_encoder()
         .expect("encoder");
     fused_kernel.encode(
@@ -516,10 +518,10 @@ fn run_moe_parity_test_internal(
         )
         .expect("experts encode");
 
-    let finalize = MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
-        .expect("finalize");
-    let encoder = cb.new_compute_command_encoder()
-        .expect("encoder");
+    let finalize =
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
+            .expect("finalize");
+    let encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,
         &topk_probs_buf,

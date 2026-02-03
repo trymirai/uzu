@@ -5,13 +5,13 @@ use super::{
 use crate::{
     Array, DataType,
     backends::{
-        common::kernel::FullPrecisionEmbeddingLookupKernel as _,
+        common::kernel::FullPrecisionEmbeddingLookupKernel,
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
             Retained,
             forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::FullPrecisionEmbeddingLookupKernel,
+            kernel::dsl::FullPrecisionEmbeddingLookupMetalKernel,
         },
     },
     parameters::ParameterTree,
@@ -19,7 +19,7 @@ use crate::{
 use std::rc::Rc;
 
 pub struct FullPrecisionEmbeddingLookup {
-    kernel: FullPrecisionEmbeddingLookupKernel,
+    kernel: FullPrecisionEmbeddingLookupMetalKernel,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     vocab_size: u32,
     model_dim: u32,
@@ -35,7 +35,7 @@ impl FullPrecisionEmbeddingLookup {
         input_scale: Option<f32>,
         parameter_tree: &ParameterTree<Rc<MTLContext>>,
     ) -> Result<Self, EmbeddingError> {
-        let kernel = FullPrecisionEmbeddingLookupKernel::new(
+        let kernel = FullPrecisionEmbeddingLookupMetalKernel::new(
             mtl_context,
             data_type.into(),
         )?;

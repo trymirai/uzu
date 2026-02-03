@@ -16,7 +16,8 @@ pub fn bindgen(
     specialize_indices: &SpecializeBaseIndices,
 ) -> anyhow::Result<(TokenStream, TokenStream)> {
     let kernel_name = kernel.name.as_ref();
-    let struct_name = format_ident!("{kernel_name}Kernel");
+    let trait_name = format_ident!("{kernel_name}Kernel");
+    let struct_name = format_ident!("{kernel_name}MetalKernel");
 
     let parse_expr = |expr: &Box<str>| -> anyhow::Result<TokenStream> {
         syn::parse_str(expr.as_ref()).with_context(|| {
@@ -127,7 +128,7 @@ pub fn bindgen(
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
-                    let def = quote! { #arg_name: &ProtocolObject<dyn MTLBuffer> };
+                    let def = quote! { #arg_name: &Retained<ProtocolObject<dyn MTLBuffer>> };
                     let set = quote! {
                         compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
                     };
@@ -261,7 +262,7 @@ pub fn bindgen(
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
         }
 
-        impl crate::backends::common::kernel::#struct_name for #struct_name {
+        impl crate::backends::common::kernel::#trait_name for #struct_name {
             type Backend = crate::backends::metal::Metal;
 
             fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
@@ -276,7 +277,7 @@ pub fn bindgen(
                 #(#encode_args_sets)*
                 #dispatch
             }
-            fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&ProtocolObject<dyn MTLBuffer>>) {
+            fn encode_if(&self, #(#encode_args_defs, )* compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>) {
                 #empty_dispatch_guards
                 compute_encoder.condition(
                     predicate,
@@ -289,7 +290,7 @@ pub fn bindgen(
         }
     };
 
-    let associated_type = quote! { type #struct_name = #struct_name; };
+    let associated_type = quote! { type #trait_name = #struct_name; };
 
     Ok((kernel, associated_type))
 }

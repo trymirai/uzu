@@ -4,11 +4,12 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
 use uzu::backends::metal::kernel::{
     KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
-    dsl::MoeCountsOffsetsFusedKernel,
     moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_expert_buckets(
@@ -128,7 +129,7 @@ fn test_scatter_buckets_parity() {
         let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
         let fused_kernel =
-            MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+            MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
         let cb = ctx
             .command_queue
             .command_buffer()

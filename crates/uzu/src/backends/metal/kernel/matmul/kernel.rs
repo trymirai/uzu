@@ -10,10 +10,10 @@ use super::{
 use crate::{
     DataType,
     backends::{
-        common::kernel::TensorAddBiasKernel as _,
+        common::kernel::TensorAddBiasKernel,
         metal::{
             MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-            ProtocolObject, kernel::dsl::TensorAddBiasKernel,
+            ProtocolObject, Retained, kernel::dsl::TensorAddBiasMetalKernel,
         },
     },
 };
@@ -23,7 +23,7 @@ pub struct MatmulKernel {
     gemm: Option<gemm::GemmKernel>,
     gemv: Option<GemvKernel>,
     splitk: Option<SplitKGemm>,
-    bias_add: Option<TensorAddBiasKernel>,
+    bias_add: Option<TensorAddBiasMetalKernel>,
 }
 
 impl MatmulKernel {
@@ -139,7 +139,7 @@ impl MatmulKernel {
         context: &MTLContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
-        bias: &ProtocolObject<dyn MTLBuffer>,
+        bias: &Retained<ProtocolObject<dyn MTLBuffer>>,
     ) -> Result<(), MTLError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
@@ -151,7 +151,7 @@ impl MatmulKernel {
 
         if self.bias_add.is_none() {
             self.bias_add =
-                Some(TensorAddBiasKernel::new(context, self.data_type)?);
+                Some(TensorAddBiasMetalKernel::new(context, self.data_type)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
         bias_add.encode(

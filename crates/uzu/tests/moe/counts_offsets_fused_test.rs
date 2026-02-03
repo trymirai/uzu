@@ -3,11 +3,12 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
 use uzu::backends::metal::{
     MTLContext, ProtocolObject, Retained,
     kernel::{
         KernelDataType,
-        dsl::MoeCountsOffsetsFusedKernel,
+        dsl::MoeCountsOffsetsFusedMetalKernel,
         moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
     },
 };
@@ -130,7 +131,7 @@ fn test_counts_offsets_fused_parity_random() {
             let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
             let kernel =
-                MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+                MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
             let cb = ctx
                 .command_queue
                 .command_buffer()
@@ -197,7 +198,7 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
@@ -238,7 +239,7 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let cb = ctx
         .command_queue
         .command_buffer()

@@ -3,10 +3,11 @@ use std::time::Instant;
 
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::{
-        dsl::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        dsl::MoeFinalizeMetalKernel,
         moe::{
             MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
             MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
@@ -14,6 +15,7 @@ use uzu::backends::metal::{
         },
     },
 };
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
@@ -344,13 +346,13 @@ fn test_moe_pipeline_breakdown_decode() {
 
     // Create kernel structs (use production-validated encoding logic)
     let counts_offsets_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
+        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
     let finalize_kernel =
-        MoeFinalizeKernel::new(&ctx, KernelDataType::BFloat16)
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
             .expect("finalize");
     let router_topk_fused_kernel =
         MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
