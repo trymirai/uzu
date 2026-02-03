@@ -127,7 +127,7 @@ impl EncodableBlock for Sampling {
             unsafe { &logits.mtl_buffer() },
             unsafe { Some(&seeds.mtl_buffer()) },
             seeds_offset,
-            bitmask_buffer.as_deref(),
+            bitmask_buffer.as_ref(),
             bitmask_offset,
             unsafe { &output_buffer_ref.mtl_buffer() },
             sampling_method,

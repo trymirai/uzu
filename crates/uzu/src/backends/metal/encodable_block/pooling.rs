@@ -7,8 +7,9 @@ use crate::{
     backends::{
         common::kernel::{PoolingClsKernel, PoolingMeanKernel},
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::dsl::{PoolingClsMetalKernel, PoolingMeanMetalKernel},
         },
@@ -24,8 +25,8 @@ enum PoolingKernel {
 impl PoolingKernel {
     fn encode(
         &self,
-        input: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
-        output: &ProtocolObject<dyn crate::backends::metal::MTLBuffer>,
+        input: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        output: &Retained<ProtocolObject<dyn MTLBuffer>>,
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,

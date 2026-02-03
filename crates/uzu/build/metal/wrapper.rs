@@ -141,12 +141,23 @@ fn kernel_wrappers(
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
-            .filter_map(|a| match a.argument_type() {
+            .filter(|a| {
+                matches!(
+                    a.argument_type(),
+                    Ok(MetalArgumentType::Buffer)
+                        | Ok(MetalArgumentType::Constant(_))
+                )
+            })
+            .enumerate()
+            .map(|(i, a)| match a.argument_type() {
                 Ok(MetalArgumentType::Buffer)
-                | Ok(MetalArgumentType::Constant(_)) => {
-                    Some(format!("{} {}", apply_replace(&a.c_type), a.name))
-                },
-                _ => None,
+                | Ok(MetalArgumentType::Constant(_)) => format!(
+                    "{} {} [[buffer({})]]",
+                    apply_replace(&a.c_type),
+                    a.name,
+                    i
+                ),
+                _ => unreachable!(),
             })
             .collect::<Vec<_>>();
 

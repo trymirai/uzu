@@ -13,7 +13,7 @@ use crate::{
         common::kernel::TensorAddBiasKernel,
         metal::{
             MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-            ProtocolObject, kernel::dsl::TensorAddBiasMetalKernel,
+            ProtocolObject, Retained, kernel::dsl::TensorAddBiasMetalKernel,
         },
     },
 };
@@ -139,7 +139,7 @@ impl MatmulKernel {
         context: &MTLContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
-        bias: &ProtocolObject<dyn MTLBuffer>,
+        bias: &Retained<ProtocolObject<dyn MTLBuffer>>,
     ) -> Result<(), MTLError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
