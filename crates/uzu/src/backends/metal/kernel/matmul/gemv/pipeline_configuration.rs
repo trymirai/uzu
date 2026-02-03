@@ -6,7 +6,6 @@ pub struct PipelineConfiguration {
     pub transpose_b: bool,
     pub transpose_matrix: bool,
     pub batch_pack: u32,
-    pub vector_loads: bool,
     pub ilp2: bool,
     pub threadgroup_rows: u32,
     pub threadgroup_cols: u32,
@@ -47,7 +46,6 @@ pub fn select_configuration(
     transpose_b: bool,
     transpose_matrix: bool,
     batch_pack: u32,
-    vector_loads: bool,
     ilp2: bool,
     input_dimension: i32,
     output_dimension: i32,
@@ -58,10 +56,8 @@ pub fn select_configuration(
     let (threads_per_simdgroup_row, threads_per_simdgroup_col);
     let (elements_per_thread_row, elements_per_thread_col);
 
-    let mut vector_loads = vector_loads;
     let mut ilp2 = ilp2;
     if batch_pack <= 1 || transpose_matrix {
-        vector_loads = false;
         ilp2 = false;
     }
     if FORCE_TILESET_SMALL_BATCH == 1 && !transpose_matrix {
@@ -137,7 +133,6 @@ pub fn select_configuration(
         transpose_b,
         transpose_matrix,
         batch_pack,
-        vector_loads,
         ilp2,
         threadgroup_rows,
         threadgroup_cols,

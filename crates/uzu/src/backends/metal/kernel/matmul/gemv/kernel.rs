@@ -92,7 +92,6 @@ impl Kernel {
                 transpose_b: true,
                 transpose_matrix: false,
                 batch_pack: 1,
-                vector_loads: false,
                 ilp2: false,
                 threadgroup_rows,
                 threadgroup_cols: 1,
