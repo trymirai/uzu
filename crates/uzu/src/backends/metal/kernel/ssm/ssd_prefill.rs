@@ -69,7 +69,7 @@ impl SSDPrefillKernels {
     ) {
         if mode == SSDPrefillMode::SinglePass {
             if args.state_size == 64 {
-                self.single.encode(
+                self.single_64.encode(
                     &args.x.retain(),
                     &args.dt.retain(),
                     &args.b.retain(),
@@ -106,7 +106,7 @@ impl SSDPrefillKernels {
                     compute_encoder,
                 )
             } else {
-                self.single_64.encode(
+                self.single.encode(
                     &args.x.retain(),
                     &args.dt.retain(),
                     &args.b.retain(),
