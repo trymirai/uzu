@@ -93,7 +93,11 @@ impl LanguageModelGenerator {
 
         let speculator = &self.decoding_config.speculator_config.speculator;
 
-        let suffix_length = prefill_size - tokens_length;
+        let suffix_length = if sample_suffix {
+            self.decoding_config.generate_suffix_length().saturating_sub(1)
+        } else {
+            prefill_size - tokens_length
+        };
         let suffix_root = TrieNode::from_speculator(
             &tokens,
             &self.context.seed,

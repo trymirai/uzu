@@ -17,6 +17,7 @@ use super::RopeType;
 pub enum ArrayId {
     TokenIds,
     TokenPositions,
+    TokenParents,
     TokenBitmask,
     Logits,
     TokenSeeds,
@@ -40,6 +41,7 @@ pub enum ArrayId {
     SsmDt(usize),
     SsmZ(usize),
     ShortConvState(usize),
+    ShortConvSuffixState(usize),
 
     RotatedQueries,
     RotatedKeys,
