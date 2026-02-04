@@ -110,13 +110,19 @@ pub enum MetalConstantType {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum MetalGroupsType {
+    Direct(Box<str>),
+    Indirect,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer,
     Constant((Box<str>, MetalConstantType)),
     Shared(Option<Box<str>>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
-    Groups(Box<str>),
+    Groups(MetalGroupsType),
     Threads(Box<str>),
 }
 
@@ -237,7 +243,15 @@ impl MetalArgument {
                             annotation.len()
                         );
                     }
-                    Ok(MetalArgumentType::Groups(annotation.remove(0)))
+                    let dim = annotation.remove(0);
+                    match dim.as_ref() {
+                        "INDIRECT" => Ok(MetalArgumentType::Groups(
+                            MetalGroupsType::Indirect,
+                        )),
+                        _ => Ok(MetalArgumentType::Groups(
+                            MetalGroupsType::Direct(dim),
+                        )),
+                    }
                 },
                 "dsl.threads" => {
                     if annotation.len() != 1 {
@@ -292,29 +306,6 @@ impl MetalArgument {
         }
     }
 
-    fn to_argument(&self) -> Option<KernelArgument> {
-        match self.argument_type() {
-            Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
-                name: self.name.clone(),
-                ty: KernelArgumentType::Buffer,
-            }),
-            Ok(MetalArgumentType::Constant((
-                ty,
-                MetalConstantType::Scalar,
-            ))) => Some(KernelArgument {
-                name: self.name.clone(),
-                ty: KernelArgumentType::Scalar(ty),
-            }),
-            Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => {
-                Some(KernelArgument {
-                    name: self.name.clone(),
-                    ty: KernelArgumentType::Constant(ty),
-                })
-            },
-            _ => None,
-        }
-    }
-
     fn to_parameter(&self) -> Option<KernelParameter> {
         match self.argument_type() {
             Ok(MetalArgumentType::Specialize(ty)) => Some(KernelParameter {
@@ -361,6 +352,24 @@ impl MetalKernelInfo {
         })
     }
 
+    pub fn has_groups_direct(&self) -> bool {
+        self.arguments.iter().any(|a| {
+            matches!(
+                a.argument_type(),
+                Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(_)))
+            )
+        })
+    }
+
+    pub fn has_groups_indirect(&self) -> bool {
+        self.arguments.iter().any(|a| {
+            matches!(
+                a.argument_type(),
+                Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect))
+            )
+        })
+    }
+
     pub fn has_threads(&self) -> bool {
         self.arguments.iter().any(|a| {
             matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_)))
@@ -368,6 +377,8 @@ impl MetalKernelInfo {
     }
 
     pub fn to_kernel(&self) -> Kernel {
+        let mut indirect_flag = false;
+
         Kernel {
             name: self.name.clone(),
             parameters: self
@@ -381,7 +392,36 @@ impl MetalKernelInfo {
             arguments: self
                 .arguments
                 .iter()
-                .filter_map(|a| a.to_argument())
+                .filter_map(|a| match a.argument_type() {
+                    Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Buffer,
+                    }),
+                    Ok(MetalArgumentType::Groups(
+                        MetalGroupsType::Indirect,
+                    )) if !indirect_flag => {
+                        indirect_flag = true;
+                        Some(KernelArgument {
+                            name: "__dsl_indirect_dispatch_buffer".into(),
+                            ty: KernelArgumentType::Buffer,
+                        })
+                    },
+                    Ok(MetalArgumentType::Constant((
+                        ty,
+                        MetalConstantType::Scalar,
+                    ))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Scalar(ty),
+                    }),
+                    Ok(MetalArgumentType::Constant((
+                        ty,
+                        MetalConstantType::Array,
+                    ))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Constant(ty),
+                    }),
+                    _ => None,
+                })
                 .collect(),
         }
     }
