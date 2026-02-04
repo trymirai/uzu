@@ -6,6 +6,7 @@ pub mod parameters;
 pub mod prelude;
 pub mod session;
 pub mod speculators;
+pub mod tool_calling;
 #[cfg(feature = "tracing")]
 pub mod tracer;
 pub mod trie;

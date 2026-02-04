@@ -25,6 +25,8 @@ rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
+uuid.workspace = true
+uzu-macros.workspace = true
 
 # metal feature requires objc2, block2 (for callbacks) and metal
 objc2 = { workspace = true, optional = true }
