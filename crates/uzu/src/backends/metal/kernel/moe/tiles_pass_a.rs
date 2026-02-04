@@ -16,7 +16,6 @@ use crate::backends::{
         },
     },
 };
-// ---- Tile Kernels ----
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeTileError {
