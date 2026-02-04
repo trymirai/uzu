@@ -2,11 +2,11 @@ use crate::backends::metal::KernelDataType;
 
 // Submodules
 mod experts;
+mod experts_single;
 mod gather;
 mod router_topk;
 mod scatter;
 mod tiles;
-mod experts_single;
 pub mod tiles_map;
 
 // Re-export public items from submodules
@@ -15,7 +15,9 @@ pub use experts::{
     MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     MoeScatterError,
 };
-pub use experts_single::{MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels};
+pub use experts_single::{
+    MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
+};
 pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
@@ -27,8 +29,7 @@ pub use scatter::{
 pub use tiles::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments,
-    MoeTileError,
+    MoePassATileKernel, MoePassATileScanArguments, MoeTileError,
 };
 
 // Common utility functions

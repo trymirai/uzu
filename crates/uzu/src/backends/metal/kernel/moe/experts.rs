@@ -3,16 +3,19 @@ use std::{mem::size_of, ptr::NonNull};
 use super::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments, MoeTileError,
-    dtype_index, dtype_suffix,
+    MoePassATileKernel, MoePassATileScanArguments, MoeTileError, dtype_index,
+    dtype_suffix,
 };
 use crate::backends::metal::{
     KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
     MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
     MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize,
     NSRange, ProtocolObject, Retained,
+    kernel::moe::tiles_map::{
+        MoeTileCountsArguments, MoeTileDispatchArguments,
+        MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments,
+    },
 };
-use crate::backends::metal::kernel::moe::tiles_map::{MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {

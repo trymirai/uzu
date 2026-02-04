@@ -1,9 +1,11 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
-
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::moe::tiles_map::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments};
+use uzu::backends::metal::kernel::moe::tiles_map::{
+    MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments,
+};
+
 use super::test_utils::{
     alloc_buffer, alloc_buffer_with_data, cpu_tile_counts, cpu_tile_scan,
     create_ctx,
