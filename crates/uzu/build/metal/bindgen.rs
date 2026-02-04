@@ -6,6 +6,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitInt;
 
+use crate::metal::ast::MetalGroupsType;
+
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
     wrapper::SpecializeBaseIndices,
@@ -108,6 +110,9 @@ pub fn bindgen(
         quote! { None }
     };
 
+    let mut arg_count: usize = 0;
+    let mut indirect_flag = false;
+
     let (encode_args_defs, encode_args_sets, encode_args_names): (
         Vec<TokenStream>,
         Vec<TokenStream>,
@@ -115,25 +120,19 @@ pub fn bindgen(
     ) = kernel
         .arguments
         .iter()
-        .filter(|k| {
-            matches!(
-                k.argument_type(),
-                Ok(MetalArgumentType::Buffer | MetalArgumentType::Constant(_))
-            )
-        })
-        .enumerate()
-        .map(|(i, ka)| {
-            let arg_index = i;
+        .filter_map(|ka| {
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
                 MetalArgumentType::Buffer => {
                     let def = quote! { #arg_name: &Retained<ProtocolObject<dyn MTLBuffer>> };
                     let set = quote! {
-                        compute_encoder.set_buffer(Some(#arg_name), 0, #arg_index);
+                        compute_encoder.set_buffer(Some(#arg_name), 0, #arg_count);
                     };
 
-                    (def, set, quote! { #arg_name })
+                    arg_count += 1;
+
+                    Some((def, set, quote! { #arg_name }))
                 }
                 MetalArgumentType::Constant((r_type, constant_type)) => {
                     let arg_dtype = format_ident!("{r_type}");
@@ -141,17 +140,24 @@ pub fn bindgen(
                     let (def, set) = match constant_type {
                         MetalConstantType::Scalar => (
                             quote! { #arg_name: #arg_dtype },
-                            quote! { compute_encoder.set_value(&#arg_name, #arg_index); },
+                            quote! { compute_encoder.set_value(&#arg_name, #arg_count); },
                         ),
                         MetalConstantType::Array => (
                             quote! { #arg_name: &[#arg_dtype] },
-                            quote! { compute_encoder.set_slice(#arg_name, #arg_index); },
+                            quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
                         ),
                     };
 
-                    (def, set, quote! { #arg_name })
+                    arg_count += 1;
+
+                    Some((def, set, quote! { #arg_name }))
                 }
-                _ => unreachable!(),
+                MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
+                    indirect_flag = true;
+
+                    Some((quote! { __dsl_indirect_dispatch_buffer: &Retained<ProtocolObject<dyn MTLBuffer>> }, quote! {}, quote! { __dsl_indirect_dispatch_buffer }))
+                }
+                _ => None,
             }
         })
         .multiunzip();
@@ -192,20 +198,6 @@ pub fn bindgen(
             threads.into_iter().chain(threads_per_group.into_iter()),
         )
     } else {
-        let mut groups = kernel
-            .arguments
-            .iter()
-            .filter_map(|a| {
-                if let Ok(MetalArgumentType::Groups(rexprs)) = a.argument_type()
-                {
-                    Some(parse_expr(&rexprs))
-                } else {
-                    None
-                }
-            })
-            .collect::<anyhow::Result<Vec<TokenStream>>>()?;
-        groups.extend(repeat_n(quote! {1}, 3 - groups.len()));
-
         let mut threads = kernel
             .arguments
             .iter()
@@ -221,15 +213,48 @@ pub fn bindgen(
             .collect::<anyhow::Result<Vec<TokenStream>>>()?;
         threads.extend(repeat_n(quote! {1}, 3 - threads.len()));
 
-        (
-            quote! {
-                compute_encoder.dispatch_threadgroups(
-                    MTLSize::new(#((#groups) as usize, )*),
-                    MTLSize::new(#((#threads) as usize, )*),
-                );
-            },
-            groups.into_iter().chain(threads.into_iter()),
-        )
+        if kernel.has_groups_indirect() {
+            if kernel.has_groups_direct() {
+                anyhow::bail!("cannot mix indirect and direct groups");
+            }
+
+            (
+                quote! {
+                    compute_encoder.dispatch_threadgroups_indirect(
+                        __dsl_indirect_dispatch_buffer,
+                        0,
+                        MTLSize::new(#((#threads) as usize, )*),
+                    );
+                },
+                vec![].into_iter().chain(threads.into_iter()),
+            )
+        } else {
+            let mut groups = kernel
+                .arguments
+                .iter()
+                .filter_map(|a| {
+                    if let Ok(MetalArgumentType::Groups(
+                        MetalGroupsType::Direct(rexprs),
+                    )) = a.argument_type()
+                    {
+                        Some(parse_expr(&rexprs))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<anyhow::Result<Vec<TokenStream>>>()?;
+            groups.extend(repeat_n(quote! {1}, 3 - groups.len()));
+
+            (
+                quote! {
+                    compute_encoder.dispatch_threadgroups(
+                        MTLSize::new(#((#groups) as usize, )*),
+                        MTLSize::new(#((#threads) as usize, )*),
+                    );
+                },
+                groups.into_iter().chain(threads.into_iter()),
+            )
+        }
     };
 
     let guards = elements
