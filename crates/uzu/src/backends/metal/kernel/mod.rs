@@ -48,7 +48,8 @@ pub use short_conv::{
     ShortConvPrefillArguments,
 };
 pub use ssm::{
-    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSMKernelError,
+    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
+    SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
 };
 pub use token_copy::TokenCopyKernel;
 
