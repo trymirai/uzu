@@ -7,7 +7,7 @@ use crate::backends::metal::{
     ProtocolObject, Retained,
 };
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array, DataType,
     backends::metal::{
@@ -26,16 +26,16 @@ use crate::{
 };
 
 pub struct MlpBlock {
-    up: Box<dyn EncodableBlock>,
+    up: Box<dyn EncodableBlock<Metal>>,
     gate: MlpGateActMulEncodable,
-    down: Box<dyn EncodableBlock>,
+    down: Box<dyn EncodableBlock<Metal>>,
 }
 
 impl MlpBlock {
     pub fn new(
-        up: Box<dyn EncodableBlock>,
+        up: Box<dyn EncodableBlock<Metal>>,
         gate: MlpGateActMulEncodable,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
     ) -> Self {
         Self {
             up,
@@ -45,11 +45,11 @@ impl MlpBlock {
     }
 }
 
-impl EncodableBlock for MlpBlock {
+impl EncodableBlock<Metal> for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
@@ -139,7 +139,7 @@ pub enum MlpFusedUpKernel {
 pub struct MlpFusedBlock {
     context: Rc<MTLContext>,
     fused_up: MlpFusedUpKernel,
-    down: Box<dyn EncodableBlock>,
+    down: Box<dyn EncodableBlock<Metal>>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     zero_points_or_biases_buffer:
@@ -160,7 +160,7 @@ impl MlpFusedBlock {
         input_dim: usize,
         hidden_dim: usize,
         activation: &Activation,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
@@ -196,7 +196,7 @@ impl MlpFusedBlock {
         mode: crate::config::QuantizationMode,
         quantization_type: crate::backends::metal::kernel::quant_matmul::QuantizationType,
         activation: &Activation,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
@@ -314,11 +314,11 @@ impl MlpFusedBlock {
     }
 }
 
-impl EncodableBlock for MlpFusedBlock {
+impl EncodableBlock<Metal> for MlpFusedBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

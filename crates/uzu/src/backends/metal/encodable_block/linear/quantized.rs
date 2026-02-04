@@ -1,3 +1,4 @@
+use crate::backends::metal::Metal;
 use std::rc::Rc;
 
 use crate::backends::{
@@ -244,11 +245,11 @@ impl QuantizedLinear {
     }
 }
 
-impl EncodableBlock for QuantizedLinear {
+impl EncodableBlock<Metal> for QuantizedLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

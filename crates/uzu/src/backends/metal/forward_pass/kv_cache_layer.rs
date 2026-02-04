@@ -5,7 +5,7 @@ use crate::{
     DeviceContext,
     array::Array,
     backends::metal::{
-        MTLCommandBuffer, ProtocolObject,
+        MTLCommandBuffer, ProtocolObject, Retained,
         kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
     },
 };
@@ -184,7 +184,7 @@ impl KVCacheLayer {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         match &mut self.state {
@@ -252,7 +252,7 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {

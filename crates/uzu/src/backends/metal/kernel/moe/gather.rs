@@ -47,7 +47,7 @@ impl MoeGatherKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         dtype: KernelDataType,
         args: MoeGatherArguments,
     ) -> Result<(), MoeGatherError> {

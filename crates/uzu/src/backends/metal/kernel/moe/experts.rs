@@ -167,7 +167,7 @@ impl MoeExpertsTwoPassDecodeKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {
@@ -385,7 +385,7 @@ impl MoeExpertsTwoPassPrefillKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeExpertsTwoPassArguments,
     ) -> Result<(), MoeExpertsError> {
         if args.total_rows == 0 {

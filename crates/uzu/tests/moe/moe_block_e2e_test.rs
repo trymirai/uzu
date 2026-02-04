@@ -1,7 +1,11 @@
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel};
+use uzu::backends::common::kernel::{
+    MoeCountsOffsetsFusedKernel, MoeFinalizeKernel,
+};
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use uzu::backends::metal::{
     MTLContext,
     kernel::{
@@ -15,8 +19,6 @@ use uzu::backends::metal::{
         },
     },
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
     x: f32,
@@ -407,8 +409,7 @@ fn run_moe_parity_test_internal(
 
     let fused_kernel =
         MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
-    let encoder = cb.new_compute_command_encoder()
-        .expect("encoder");
+    let encoder = cb.new_compute_command_encoder().expect("encoder");
     fused_kernel.encode(
         &topk_ids_buf,
         &offsets_buf,
@@ -417,7 +418,7 @@ fn run_moe_parity_test_internal(
         t as u32,
         e as u32,
         k as u32,
-        &encoder
+        &encoder,
     );
     encoder.end_encoding();
 

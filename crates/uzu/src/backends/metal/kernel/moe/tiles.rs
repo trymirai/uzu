@@ -81,7 +81,7 @@ impl MoePassATileKernel {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoePassATileCountsArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -103,7 +103,7 @@ impl MoePassATileKernel {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoePassATileScanArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -126,7 +126,7 @@ impl MoePassATileKernel {
 
     pub fn encode_row_map(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoePassARowMapArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -149,7 +149,7 @@ impl MoePassATileKernel {
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoePassATileBuildArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer
@@ -175,7 +175,7 @@ impl MoePassATileKernel {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoePassATileDispatchArguments,
     ) -> Result<(), MoeTileError> {
         let encoder = command_buffer

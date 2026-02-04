@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use super::Metal;
 use super::{
     EncodableBlock, FullPrecisionEmbeddingLookup,
     FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock,
@@ -26,7 +27,7 @@ pub fn linear_block<const N: usize>(
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
         LinearConfig::Quantized(quantization_config)
@@ -71,7 +72,7 @@ pub fn mlp_block(
     hidden_dimension: usize,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType =
             dense_config.linear_config.activation_precision().into();
@@ -144,7 +145,7 @@ pub fn mlp_fused_block(
     hidden_dimension: usize,
     context: Rc<MTLContext>,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         match &dense_config.linear_config {
             LinearConfig::Quantized(quantization_config)
@@ -310,7 +311,7 @@ pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             common,
@@ -466,7 +467,7 @@ pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
     parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,

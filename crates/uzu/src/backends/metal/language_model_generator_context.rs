@@ -10,7 +10,6 @@ use super::{
     CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
     ModelShape,
     compilation_parameters::CompilationConfig,
-    encodable_block::Sampling,
     forward_pass::{ScratchBuffers, SharedBuffers},
     kernel::TokenCopyKernel,
 };
@@ -25,6 +24,7 @@ use crate::{
         },
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
+    encodable_block::Sampling,
     language_model::rng::PRng,
     parameters::ParameterLoader,
     session::{

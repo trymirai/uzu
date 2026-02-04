@@ -1,5 +1,6 @@
 use std::{mem, ptr::NonNull};
 
+use crate::backends::metal::Metal;
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
@@ -50,7 +51,7 @@ impl ScalePadNormalizeImage {
         input_image: &Image,
         output_image: &Image,
         image_params_ptr: *const std::ffi::c_void,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -79,11 +80,11 @@ impl ScalePadNormalizeImage {
     }
 }
 
-impl EncodableBlock for ScalePadNormalizeImage {
+impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters,
     ) {
         let _ = command_buffer;
@@ -125,7 +126,7 @@ impl ExtractImagePatches {
         padded_normalized_image: &Image,
         output_buffer_mtl: &Retained<ProtocolObject<dyn MTLBuffer>>,
         patch_params_ptr: *const std::ffi::c_void,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()

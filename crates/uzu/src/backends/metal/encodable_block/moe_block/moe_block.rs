@@ -3,16 +3,15 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::{
-    super::{EncodableBlock, EncodingParameters},
+    super::{EncodableBlock, EncodingParameters, Metal},
     SharedMoeWeights,
 };
+use crate::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
     backends::{
-        common::kernel::{
-            MoeFinalizeKernel, MoeCountsOffsetsFusedKernel
-        },
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
             KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
             MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
@@ -33,7 +32,6 @@ use crate::{
     },
     parameters::ParameterTree,
 };
-use crate::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 
 enum RouterBlock {
     Metal {
@@ -299,11 +297,11 @@ impl MoeBlock {
     }
 }
 
-impl EncodableBlock for MoeBlock {
+impl EncodableBlock<Metal> for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.active_suffix_length();
@@ -362,8 +360,7 @@ impl EncodableBlock for MoeBlock {
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
-        let mtl_command_buffer = command_buffer.to_owned();
-        let root = &*mtl_command_buffer;
+        let root = command_buffer;
         let k_tile = 128;
 
         // Clear internal MoE buffers
@@ -442,7 +439,7 @@ impl EncodableBlock for MoeBlock {
                 // Use the fused router+topk kernel
                 self.router_topk_kernel
                     .encode(
-                        &root,
+                        root,
                         self.router_data_type,
                         MoeRouterTopKArguments {
                             input_buffer: &main_buf,
@@ -473,7 +470,7 @@ impl EncodableBlock for MoeBlock {
                 suffix_length as u32,
                 e as u32,
                 k as u32,
-                &encoder
+                &encoder,
             );
             encoder.end_encoding();
         }
@@ -483,7 +480,7 @@ impl EncodableBlock for MoeBlock {
 
         self.scatter_kernels
             .encode_block_bases(
-                &root,
+                root,
                 MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
@@ -497,7 +494,7 @@ impl EncodableBlock for MoeBlock {
 
         self.scatter_kernels
             .encode_scatter_with_map(
-                &root,
+                root,
                 MoeScatterWithMapArguments {
                     base: MoeScatterArguments {
                         topk_ids_buffer: &topk_ids_buf,
@@ -521,7 +518,7 @@ impl EncodableBlock for MoeBlock {
 
         self.gather_kernel
             .encode(
-                &root,
+                root,
                 self.data_type,
                 MoeGatherArguments {
                     x_buffer: &main_buf,
@@ -554,7 +551,7 @@ impl EncodableBlock for MoeBlock {
 
             self.experts_two_pass_decode_kernel
                 .encode(
-                    &root,
+                    root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
                         expert_offsets: &offsets_buf,
@@ -591,7 +588,7 @@ impl EncodableBlock for MoeBlock {
 
             self.experts_two_pass_prefill_kernel
                 .encode(
-                    &root,
+                    root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
                         expert_offsets: &offsets_buf,
