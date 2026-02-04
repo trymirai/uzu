@@ -1,3 +1,4 @@
+use crate::backends::metal::Metal;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -103,11 +104,11 @@ impl FullPrecisionLinear {
     }
 }
 
-impl EncodableBlock for FullPrecisionLinear {
+impl EncodableBlock<Metal> for FullPrecisionLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

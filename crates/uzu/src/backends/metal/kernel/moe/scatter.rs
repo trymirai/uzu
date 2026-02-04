@@ -89,7 +89,7 @@ impl MoeScatterKernels {
 
     pub fn encode_block_bases(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
         let compute_encoder = command_buffer
@@ -121,7 +121,7 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
@@ -172,7 +172,7 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter_with_map(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {

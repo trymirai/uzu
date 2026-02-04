@@ -147,7 +147,7 @@ impl MetalImagePreprocessor {
 
     pub unsafe fn encode_preprocessing(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         input_image: &Image,
         params: &ImagePreprocessingParams,
         requirements: &ImagePreprocessingRequirements,

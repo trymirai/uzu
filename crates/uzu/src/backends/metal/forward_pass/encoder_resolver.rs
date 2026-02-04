@@ -1,18 +1,18 @@
 use super::ForwardPassState;
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal,
     ProtocolObject, Retained,
     encodable_block::{EncodableBlock, EncodingParameters},
 };
 
 pub struct EncoderResolver<'a> {
-    command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>,
+    command_buffer: &'a Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoder: Option<Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>>,
 }
 
 impl<'a> EncoderResolver<'a> {
     pub fn new(
-        command_buffer: &'a ProtocolObject<dyn MTLCommandBuffer>
+        command_buffer: &'a Retained<ProtocolObject<dyn MTLCommandBuffer>>
     ) -> Self {
         Self {
             command_buffer,
@@ -22,7 +22,7 @@ impl<'a> EncoderResolver<'a> {
 
     pub fn encode(
         &mut self,
-        block: &dyn EncodableBlock,
+        block: &dyn EncodableBlock<Metal>,
         state: &mut ForwardPassState,
         parameters: &EncodingParameters,
     ) {

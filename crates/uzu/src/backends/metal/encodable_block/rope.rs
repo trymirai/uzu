@@ -2,10 +2,10 @@
 
 use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject,
+    ProtocolObject, Retained,
 };
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array,
     backends::metal::{
@@ -34,11 +34,11 @@ impl Rope {
     }
 }
 
-impl EncodableBlock for Rope {
+impl EncodableBlock<Metal> for Rope {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let compute_encoder = command_buffer

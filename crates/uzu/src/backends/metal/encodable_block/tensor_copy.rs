@@ -4,11 +4,11 @@ use crate::backends::{
     common::kernel::TensorCopyKernel,
     metal::{
         MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        ProtocolObject,
+        ProtocolObject, Retained,
     },
 };
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array,
     backends::metal::{
@@ -37,11 +37,11 @@ impl TensorCopy {
     }
 }
 
-impl EncodableBlock for TensorCopy {
+impl EncodableBlock<Metal> for TensorCopy {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

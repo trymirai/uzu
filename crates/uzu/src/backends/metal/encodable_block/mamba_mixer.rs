@@ -1,9 +1,8 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::{env, rc::Rc};
-use super::{EncodableBlock, EncodingParameters, transformer_layer};
+use super::{EncodableBlock, EncodingParameters, Metal, transformer_layer};
 use crate::backends::metal::kernel::ssm::ssd_prefill::{
-    SSDPrefillArguments, SSDPrefillMode, SSDPrefillKernels
+    SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
 };
 use crate::{
     DataType,
@@ -12,6 +11,7 @@ use crate::{
         metal::{
             KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             compilation_parameters::CompilationConfig,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
@@ -24,12 +24,13 @@ use crate::{
     config::{DecoderLayerType, Mamba2Config},
     parameters::ParameterTree,
 };
+use std::{env, rc::Rc};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,
     config: Mamba2Config,
-    in_projection: Box<dyn EncodableBlock>,
-    out_projection: Box<dyn EncodableBlock>,
+    in_projection: Box<dyn EncodableBlock<Metal>>,
+    out_projection: Box<dyn EncodableBlock<Metal>>,
     split_inproj: SplitInProjMetalKernel,
     conv_scan: Conv1dScanKernel,
     ssd_prefill: SSDPrefillKernels,
@@ -85,7 +86,8 @@ impl MambaMixer {
             ),
             ArrayId::Main,
             ArrayId::SsmInProj,
-        ).expect("Failed to create in-projection kernel");
+        )
+        .expect("Failed to create in-projection kernel");
 
         let out_projection = transformer_layer::linear_block(
             &mamba_config.out_projection_config,
@@ -99,7 +101,8 @@ impl MambaMixer {
             ),
             ArrayId::AttentionOutput,
             ArrayId::Main,
-        ).expect("Failed to create out-projection kernel");
+        )
+        .expect("Failed to create out-projection kernel");
 
         let conv_weight = conv_tree.leaf("weights").unwrap().clone();
         let conv_bias = if mamba_config.conv_config.has_biases {
@@ -118,7 +121,8 @@ impl MambaMixer {
             mtl_context,
             kernel_data_type,
             &mamba_config.activation,
-        ).expect("Failed to create conv scan kernel");
+        )
+        .expect("Failed to create conv scan kernel");
         let ssd_prefill = SSDPrefillKernels::new(mtl_context, kernel_data_type)
             .expect("Failed to create SSD prefill kernel");
         let ssd_update =
@@ -289,7 +293,7 @@ impl MambaMixer {
                     objc2::rc::Retained::retain(std::ptr::from_ref(
                         &*borrow.mtl_buffer(),
                     ) as *mut _)
-                        .unwrap()
+                    .unwrap()
                 };
                 drop(borrow);
 
@@ -504,11 +508,11 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
     }
 }
 
-impl EncodableBlock for MambaMixer {
+impl EncodableBlock<Metal> for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

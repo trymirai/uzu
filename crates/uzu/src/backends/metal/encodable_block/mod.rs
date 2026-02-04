@@ -6,10 +6,9 @@
 //! Encodables implement `EncodableBlock` and orchestrate one or more
 //! kernels to perform operations on `ForwardPassState`.
 
-use super::{
-    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject,
-    forward_pass::ForwardPassState,
-};
+pub use super::Metal;
+use super::forward_pass::ForwardPassState;
+pub use crate::encodable_block::EncodableBlock;
 
 mod activation;
 mod attention;
@@ -26,7 +25,6 @@ mod normalization;
 mod pooling;
 mod prediction_head;
 mod rope;
-mod sampling;
 mod short_conv_mixer;
 mod tensor_add_swap;
 mod tensor_copy;
@@ -53,35 +51,6 @@ pub use normalization::{
 pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;
 pub use rope::Rope;
-pub use sampling::Sampling;
 pub(crate) use short_conv_mixer::ShortConvMixer;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
-
-/// Trait for encodable blocks that operate on `ForwardPassState`.
-pub trait EncodableBlock {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        parameters: &EncodingParameters,
-    );
-
-    /// Returns true if this block supports using a shared compute encoder.
-    ///
-    /// If true, `encode_with_shared_encoder` must correctly encode into the
-    /// provided encoder without creating or ending encoders internally.
-    fn supports_shared_encoder(&self) -> bool {
-        false
-    }
-
-    /// Encode using a shared compute encoder. Only called if `supports_shared_encoder` returns true.
-    fn encode_with_shared_encoder(
-        &self,
-        _state: &mut ForwardPassState,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
-    ) {
-        panic!("encode_with_shared_encoder called on unsupported type");
-    }
-}

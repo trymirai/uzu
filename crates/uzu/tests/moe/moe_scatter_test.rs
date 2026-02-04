@@ -2,15 +2,16 @@
 
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
+    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
+    MoeScatterKernels,
     moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_expert_buckets(
     topk_ids: &[i32],
@@ -134,8 +135,7 @@ fn test_scatter_buckets_parity() {
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder()
-            .expect("encoder");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
         fused_kernel.encode(
             &topk_ids_buf,
             &offsets_buf,
@@ -144,7 +144,7 @@ fn test_scatter_buckets_parity() {
             t as u32,
             e as u32,
             k as u32,
-            &encoder
+            &encoder,
         );
         encoder.end_encoding();
         cb.commit();

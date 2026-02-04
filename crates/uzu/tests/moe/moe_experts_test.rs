@@ -15,9 +15,8 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
-        MoeExpertsSingleDecodeKernels,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-        MoeExpertsTwoPassPrefillKernel,
+        MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
+        MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
     },
 };
 
@@ -898,31 +897,30 @@ fn test_fused_single_token_decode() {
         .command_buffer()
         .expect("Failed to create command buffer");
 
-    fused_kernel
-        .encode(
-            &cb,
-            MoeExpertsSingleDecodeArguments {
-                x: &x_buf,
-                topk_ids: &topk_ids_buf,
-                topk_probs: &topk_probs_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                hidden: &hidden_buf,
-                y: &y_buf,
-                d_model,
-                d_ff,
-                k,
-                gating_code,
-                silu_alpha: 1.0, // Standard SiLU for testing
-                gate_clip_min: f32::NEG_INFINITY,
-                gate_clip_max: f32::INFINITY,
-                up_clip_min: f32::NEG_INFINITY,
-                up_clip_max: f32::INFINITY,
-                data_type: KernelDataType::BFloat16,
-            },
-        );
+    fused_kernel.encode(
+        &cb,
+        MoeExpertsSingleDecodeArguments {
+            x: &x_buf,
+            topk_ids: &topk_ids_buf,
+            topk_probs: &topk_probs_buf,
+            w13_all: &w13_buf,
+            w2_all: &w2_buf,
+            up_biases: &up_biases_buf,
+            down_biases: &down_biases_buf,
+            hidden: &hidden_buf,
+            y: &y_buf,
+            d_model,
+            d_ff,
+            k,
+            gating_code,
+            silu_alpha: 1.0, // Standard SiLU for testing
+            gate_clip_min: f32::NEG_INFINITY,
+            gate_clip_max: f32::INFINITY,
+            up_clip_min: f32::NEG_INFINITY,
+            up_clip_max: f32::INFINITY,
+            data_type: KernelDataType::BFloat16,
+        },
+    );
 
     cb.commit();
     cb.wait_until_completed();
@@ -1051,31 +1049,30 @@ fn test_fused_single_token_k4() {
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
-    fused_kernel
-        .encode(
-            &cb,
-            MoeExpertsSingleDecodeArguments {
-                x: &x_buf,
-                topk_ids: &topk_ids_buf,
-                topk_probs: &topk_probs_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                hidden: &hidden_buf,
-                y: &y_buf,
-                d_model,
-                d_ff,
-                k,
-                gating_code,
-                silu_alpha,
-                gate_clip_min: f32::NEG_INFINITY,
-                gate_clip_max: f32::INFINITY,
-                up_clip_min: f32::NEG_INFINITY,
-                up_clip_max: f32::INFINITY,
-                data_type: KernelDataType::BFloat16,
-            },
-        );
+    fused_kernel.encode(
+        &cb,
+        MoeExpertsSingleDecodeArguments {
+            x: &x_buf,
+            topk_ids: &topk_ids_buf,
+            topk_probs: &topk_probs_buf,
+            w13_all: &w13_buf,
+            w2_all: &w2_buf,
+            up_biases: &up_biases_buf,
+            down_biases: &down_biases_buf,
+            hidden: &hidden_buf,
+            y: &y_buf,
+            d_model,
+            d_ff,
+            k,
+            gating_code,
+            silu_alpha,
+            gate_clip_min: f32::NEG_INFINITY,
+            gate_clip_max: f32::INFINITY,
+            up_clip_min: f32::NEG_INFINITY,
+            up_clip_max: f32::INFINITY,
+            data_type: KernelDataType::BFloat16,
+        },
+    );
     cb.commit();
     cb.wait_until_completed();
 

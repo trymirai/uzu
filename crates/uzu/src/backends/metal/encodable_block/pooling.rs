@@ -1,6 +1,6 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 #[cfg(feature = "tracing")]
 use crate::Array;
 use crate::{
@@ -71,11 +71,11 @@ impl Pooling {
     }
 }
 
-impl EncodableBlock for Pooling {
+impl EncodableBlock<Metal> for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

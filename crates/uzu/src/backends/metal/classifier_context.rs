@@ -1,3 +1,4 @@
+use crate::backends::metal::Metal;
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
@@ -35,15 +36,15 @@ pub struct ClassifierContext {
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
 
-    pub embed: Box<dyn EncodableBlock>,
+    pub embed: Box<dyn EncodableBlock<Metal>>,
     pub embedding_norm: Normalization,
     pub layers: Box<[ClassifierLayer]>,
     pub output_norm: Normalization,
-    pub global_rope: Rc<Box<dyn EncodableBlock>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock>>>,
+    pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
+    pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
 
-    pub pooling: Box<dyn EncodableBlock>,
-    pub prediction_head: Box<dyn EncodableBlock>,
+    pub pooling: Box<dyn EncodableBlock<Metal>>,
+    pub prediction_head: Box<dyn EncodableBlock<Metal>>,
 
     pub sigmoid_kernel: SigmoidMetalKernel,
 }
@@ -412,10 +413,10 @@ impl ClassifierContext {
         mtl_context: &MTLContext,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Result<Rc<Box<dyn EncodableBlock>>, ClassifierError> {
+    ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {
         let kernel_data_type: KernelDataType = data_type.into();
 
-        let rotation: Box<dyn EncodableBlock> = Box::new(
+        let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
             Rope::new(mtl_context, kernel_data_type, rope_type).map_err(
                 |e| {
                     ClassifierError::KernelCreationFailed(format!(

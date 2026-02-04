@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::{EncodableBlock, EncodingParameters, transformer_layer};
+use super::{EncodableBlock, EncodingParameters, Metal, transformer_layer};
 use crate::{
     DataType,
     backends::{
@@ -8,6 +8,7 @@ use crate::{
         metal::{
             KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             compilation_parameters::CompilationConfig,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::short_conv::{
@@ -24,8 +25,8 @@ pub(crate) struct ShortConvMixer {
     layer_index: usize,
     config: ShortConvConfig,
     model_dim: usize,
-    in_projection: Box<dyn EncodableBlock>,
-    out_projection: Box<dyn EncodableBlock>,
+    in_projection: Box<dyn EncodableBlock<Metal>>,
+    out_projection: Box<dyn EncodableBlock<Metal>>,
     short_conv_kernel: ShortConvKernel,
     conv_weight: MetalArray,
     conv_bias: Option<MetalArray>,
@@ -120,7 +121,7 @@ impl ShortConvMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -296,11 +297,11 @@ impl ShortConvMixer {
     }
 }
 
-impl EncodableBlock for ShortConvMixer {
+impl EncodableBlock<Metal> for ShortConvMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

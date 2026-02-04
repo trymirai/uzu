@@ -1,9 +1,13 @@
 use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use std::time::Instant;
 
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel};
+use uzu::backends::common::kernel::{
+    MoeCountsOffsetsFusedKernel, MoeFinalizeKernel,
+};
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use uzu::backends::metal::{
     KernelDataType,
     kernel::{
@@ -15,8 +19,6 @@ use uzu::backends::metal::{
         },
     },
 };
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
     name: String,
@@ -345,8 +347,8 @@ fn test_moe_pipeline_breakdown_decode() {
     let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
     // Create kernel structs (use production-validated encoding logic)
-    let counts_offsets_kernel =
-        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
+    let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx)
+        .expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
@@ -392,8 +394,7 @@ fn test_moe_pipeline_breakdown_decode() {
                 .command_queue
                 .command_buffer()
                 .expect("Failed to create command buffer");
-            let encoder = cb.new_compute_command_encoder()
-                .expect("encoder");
+            let encoder = cb.new_compute_command_encoder().expect("encoder");
             counts_offsets_kernel.encode(
                 &topk_ids_buf,
                 &offsets_buf,
@@ -402,7 +403,7 @@ fn test_moe_pipeline_breakdown_decode() {
                 t as u32,
                 e as u32,
                 k as u32,
-                &encoder
+                &encoder,
             );
             encoder.end_encoding();
             cb.commit();

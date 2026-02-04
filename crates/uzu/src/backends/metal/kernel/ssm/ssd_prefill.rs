@@ -1,4 +1,3 @@
-use objc2::Message;
 use crate::backends::{
     common::kernel::{
         SSDPrefill64Kernel as _, SSDPrefillKernel as _,
@@ -8,10 +7,12 @@ use crate::backends::{
         KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
         MTLError, ProtocolObject,
         kernel::dsl::{
-            SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel,
+            SSDPrefill64MetalKernel, SSDPrefillMetalKernel,
+            SSDPrefillSequentialMetalKernel,
         },
     },
 };
+use objc2::Message;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {
@@ -51,7 +52,8 @@ impl SSDPrefillKernels {
         data_type: KernelDataType,
     ) -> Result<Self, MTLError> {
         let single = SSDPrefillMetalKernel::new(context, data_type.into())?;
-        let single_64 = SSDPrefill64MetalKernel::new(context, data_type.into())?;
+        let single_64 =
+            SSDPrefill64MetalKernel::new(context, data_type.into())?;
         let sequential =
             SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
         Ok(Self {

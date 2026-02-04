@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::{
-    super::{EncodableBlock, EncodingParameters},
+    super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -220,11 +220,11 @@ impl QuantizedEmbeddingLookup {
     }
 }
 
-impl EncodableBlock for QuantizedEmbeddingLookup {
+impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer

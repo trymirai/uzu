@@ -1,6 +1,5 @@
 //! Sampling kernel encodable.
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::{
@@ -9,15 +8,16 @@ use crate::{
             kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
         },
         metal::{
-            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-            Metal, ProtocolObject,
+            MTLComputeCommandEncoder, Metal, ProtocolObject,
             forward_pass::{ArrayId, ForwardPassState},
         },
     },
 };
 
+use super::{EncodableBlock, EncodingParameters};
+
 pub struct Sampling<B: Backend> {
-    pub kernel: SamplingKernel<B>,
+    kernel: SamplingKernel<B>,
 }
 
 impl<B: Backend> Sampling<B> {
@@ -58,34 +58,12 @@ impl<B: Backend> Sampling<B> {
     }
 }
 
-impl EncodableBlock for Sampling<Metal> {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        parameters: &EncodingParameters,
-    ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &encoder, parameters);
-        encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
+impl EncodableBlock<Metal> for Sampling<Metal> {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         assert!(
             state.sampling_output().is_some(),

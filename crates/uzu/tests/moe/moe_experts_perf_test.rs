@@ -702,7 +702,8 @@ fn run_fused_decode_timed(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
+    let fused_kernel =
+        MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);

@@ -981,7 +981,7 @@ impl ForwardPassState {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         source_array_id: ArrayId,
         destination_array: RefCell<MetalArray>,
     ) {
