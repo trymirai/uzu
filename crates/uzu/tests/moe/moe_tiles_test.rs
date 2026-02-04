@@ -1,10 +1,9 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
-
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::moe::{
-    MoeTileCountsArguments, MoeTileMapKernel, MoeTileScanArguments,
+use uzu::backends::metal::kernel::moe::tiles_map::{
+    MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments,
 };
 
 use super::test_utils::{
@@ -38,21 +37,19 @@ fn test_tile_counts_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel =
-            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
+            MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        tile_kernel
-            .encode_counts(
-                &cb,
-                &MoeTileCountsArguments {
-                    offsets_buffer: &offsets_buf,
-                    tile_counts_buffer: &tile_counts_buf,
-                    e,
-                },
-            )
-            .expect("encode tile counts");
+        tile_kernel.encode_counts(
+            &cb,
+            &MoeTileCountsArguments {
+                offsets_buffer: &offsets_buf,
+                tile_counts_buffer: &tile_counts_buf,
+                e,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
 
@@ -99,22 +96,20 @@ fn test_tile_scan_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel =
-            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
+            MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        tile_kernel
-            .encode_scan(
-                &cb,
-                &MoeTileScanArguments {
-                    tile_counts_buffer: &tile_counts_buf,
-                    tile_offsets_buffer: &tile_offsets_buf,
-                    total_tiles_buffer: &total_tiles_buf,
-                    e,
-                },
-            )
-            .expect("encode tile scan");
+        tile_kernel.encode_scan(
+            &cb,
+            &MoeTileScanArguments {
+                tile_counts_buffer: &tile_counts_buf,
+                tile_offsets_buffer: &tile_offsets_buf,
+                total_tiles_buffer: &total_tiles_buf,
+                e,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
 
@@ -159,21 +154,19 @@ fn test_tile_edge_cases() {
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel =
-            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
+            MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        tile_kernel
-            .encode_counts(
-                &cb,
-                &MoeTileCountsArguments {
-                    offsets_buffer: &offsets_buf,
-                    tile_counts_buffer: &tile_counts_buf,
-                    e,
-                },
-            )
-            .expect("encode tile counts");
+        tile_kernel.encode_counts(
+            &cb,
+            &MoeTileCountsArguments {
+                offsets_buffer: &offsets_buf,
+                tile_counts_buffer: &tile_counts_buf,
+                e,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
 
@@ -200,21 +193,19 @@ fn test_tile_edge_cases() {
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel =
-            MoeTileMapKernel::new(&ctx).expect("MoeTileMapKernel::new");
+            MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        tile_kernel
-            .encode_counts(
-                &cb,
-                &MoeTileCountsArguments {
-                    offsets_buffer: &offsets_buf,
-                    tile_counts_buffer: &tile_counts_buf,
-                    e,
-                },
-            )
-            .expect("encode tile counts");
+        tile_kernel.encode_counts(
+            &cb,
+            &MoeTileCountsArguments {
+                offsets_buffer: &offsets_buf,
+                tile_counts_buffer: &tile_counts_buf,
+                e,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
 
