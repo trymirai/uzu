@@ -12,44 +12,6 @@ pub enum MoeTileError {
     MetalError(#[from] MTLError),
 }
 
-/// Arguments for tile counts encoder
-pub struct MoeTileCountsArguments<'a> {
-    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
-    pub e: usize,
-}
-
-/// Arguments for tile scan encoder
-pub struct MoeTileScanArguments<'a> {
-    pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
-    pub tile_offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub total_tiles_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [>=2]
-    pub e: usize,
-}
-
-#[derive(Debug)]
-pub struct MoeTileMapBuildArguments<'a> {
-    pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>,   // [E+1]
-    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,    // [E]
-    pub tile_map: &'a ProtocolObject<dyn MTLBuffer>,       // [total_tiles * 3]
-    pub e: usize,
-}
-
-#[derive(Debug)]
-pub struct MoeTileDispatchArguments<'a> {
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
-    pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
-    pub num_tiles_x: u32, // x dimension for indirect dispatch
-}
-
-pub struct MoeTileMapKernel {
-    counts_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    scan_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    build_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    dispatch_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-}
-
 #[derive(Debug)]
 pub struct MoePassATileCountsArguments<'a> {
     pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
@@ -232,102 +194,102 @@ impl MoePassATileKernel {
     }
 }
 
-impl MoeTileMapKernel {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MoeTileError> {
-        Ok(Self {
-            counts_pipeline: ctx
-                .compute_pipeline_state("moe_tile_counts", None)?,
-            scan_pipeline: ctx.compute_pipeline_state("moe_tile_scan", None)?,
-            build_pipeline: ctx
-                .compute_pipeline_state("moe_build_tile_map", None)?,
-            dispatch_pipeline: ctx
-                .compute_pipeline_state("moe_write_dispatch_args", None)?,
-        })
-    }
-
-    pub fn encode_counts(
-        &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        args: &MoeTileCountsArguments,
-    ) -> Result<(), MoeTileError> {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder.set_compute_pipeline_state(&self.counts_pipeline);
-        encoder.set_buffer(Some(args.offsets_buffer), 0, 0);
-        encoder.set_buffer(Some(args.tile_counts_buffer), 0, 1);
-        let e_u32 = args.e as u32;
-        encoder.set_value(&e_u32, 2);
-        encoder.dispatch_threadgroups(
-            MTLSize::new((args.e + 255) / 256, 1, 1),
-            MTLSize::new(256, 1, 1),
-        );
-        encoder.end_encoding();
-        Ok(())
-    }
-
-    pub fn encode_scan(
-        &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        args: &MoeTileScanArguments,
-    ) -> Result<(), MoeTileError> {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder.set_compute_pipeline_state(&self.scan_pipeline);
-        encoder.set_buffer(Some(args.tile_counts_buffer), 0, 0);
-        encoder.set_buffer(Some(args.tile_offsets_buffer), 0, 1);
-        encoder.set_buffer(Some(args.total_tiles_buffer), 0, 2);
-        let e_u32 = args.e as u32;
-        encoder.set_value(&e_u32, 3);
-        encoder.dispatch_threadgroups(
-            MTLSize::new(1, 1, 1),
-            MTLSize::new(256, 1, 1),
-        );
-        encoder.end_encoding();
-        Ok(())
-    }
-
-    pub fn encode_build_map(
-        &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        args: &MoeTileMapBuildArguments,
-    ) -> Result<(), MoeTileError> {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder.set_compute_pipeline_state(&self.build_pipeline);
-        encoder.set_buffer(Some(args.expert_offsets), 0, 0);
-        encoder.set_buffer(Some(args.tile_offsets), 0, 1);
-        encoder.set_buffer(Some(args.tile_counts), 0, 2);
-        encoder.set_buffer(Some(args.tile_map), 0, 3);
-        let e_u32 = args.e as u32;
-        encoder.set_value(&e_u32, 4);
-        encoder.dispatch_threadgroups(
-            MTLSize::new((args.e + 255) / 256, 1, 1),
-            MTLSize::new(256, 1, 1),
-        );
-        encoder.end_encoding();
-        Ok(())
-    }
-
-    pub fn encode_dispatch_args(
-        &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        args: &MoeTileDispatchArguments,
-    ) -> Result<(), MoeTileError> {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder.set_compute_pipeline_state(&self.dispatch_pipeline);
-        encoder.set_buffer(Some(args.total_tiles), 0, 0);
-        encoder.set_buffer(Some(args.dispatch_args), 0, 1);
-        encoder.set_value(&args.num_tiles_x, 2);
-        encoder.dispatch_threadgroups(
-            MTLSize::new(1, 1, 1),
-            MTLSize::new(1, 1, 1),
-        );
-        encoder.end_encoding();
-        Ok(())
-    }
-}
+// impl MoeTileMapKernel {
+//     pub fn new(ctx: &MTLContext) -> Result<Self, MoeTileError> {
+//         Ok(Self {
+//             counts_pipeline: ctx
+//                 .compute_pipeline_state("moe_tile_counts", None)?,
+//             scan_pipeline: ctx.compute_pipeline_state("moe_tile_scan", None)?,
+//             build_pipeline: ctx
+//                 .compute_pipeline_state("moe_build_tile_map", None)?,
+//             dispatch_pipeline: ctx
+//                 .compute_pipeline_state("moe_write_dispatch_args", None)?,
+//         })
+//     }
+//
+//     pub fn encode_counts(
+//         &self,
+//         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+//         args: &MoeTileCountsArguments,
+//     ) -> Result<(), MoeTileError> {
+//         let encoder = command_buffer
+//             .new_compute_command_encoder()
+//             .expect("Failed to create compute command encoder");
+//         encoder.set_compute_pipeline_state(&self.counts_pipeline);
+//         encoder.set_buffer(Some(args.offsets_buffer), 0, 0);
+//         encoder.set_buffer(Some(args.tile_counts_buffer), 0, 1);
+//         let e_u32 = args.e as u32;
+//         encoder.set_value(&e_u32, 2);
+//         encoder.dispatch_threadgroups(
+//             MTLSize::new((args.e + 255) / 256, 1, 1),
+//             MTLSize::new(256, 1, 1),
+//         );
+//         encoder.end_encoding();
+//         Ok(())
+//     }
+//
+//     pub fn encode_scan(
+//         &self,
+//         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+//         args: &MoeTileScanArguments,
+//     ) -> Result<(), MoeTileError> {
+//         let encoder = command_buffer
+//             .new_compute_command_encoder()
+//             .expect("Failed to create compute command encoder");
+//         encoder.set_compute_pipeline_state(&self.scan_pipeline);
+//         encoder.set_buffer(Some(args.tile_counts_buffer), 0, 0);
+//         encoder.set_buffer(Some(args.tile_offsets_buffer), 0, 1);
+//         encoder.set_buffer(Some(args.total_tiles_buffer), 0, 2);
+//         let e_u32 = args.e as u32;
+//         encoder.set_value(&e_u32, 3);
+//         encoder.dispatch_threadgroups(
+//             MTLSize::new(1, 1, 1),
+//             MTLSize::new(256, 1, 1),
+//         );
+//         encoder.end_encoding();
+//         Ok(())
+//     }
+//
+//     pub fn encode_build_map(
+//         &self,
+//         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+//         args: &MoeTileMapBuildArguments,
+//     ) -> Result<(), MoeTileError> {
+//         let encoder = command_buffer
+//             .new_compute_command_encoder()
+//             .expect("Failed to create compute command encoder");
+//         encoder.set_compute_pipeline_state(&self.build_pipeline);
+//         encoder.set_buffer(Some(args.expert_offsets), 0, 0);
+//         encoder.set_buffer(Some(args.tile_offsets), 0, 1);
+//         encoder.set_buffer(Some(args.tile_counts), 0, 2);
+//         encoder.set_buffer(Some(args.tile_map), 0, 3);
+//         let e_u32 = args.e as u32;
+//         encoder.set_value(&e_u32, 4);
+//         encoder.dispatch_threadgroups(
+//             MTLSize::new((args.e + 255) / 256, 1, 1),
+//             MTLSize::new(256, 1, 1),
+//         );
+//         encoder.end_encoding();
+//         Ok(())
+//     }
+//
+//     pub fn encode_dispatch_args(
+//         &self,
+//         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+//         args: &MoeTileDispatchArguments,
+//     ) -> Result<(), MoeTileError> {
+//         let encoder = command_buffer
+//             .new_compute_command_encoder()
+//             .expect("Failed to create compute command encoder");
+//         encoder.set_compute_pipeline_state(&self.dispatch_pipeline);
+//         encoder.set_buffer(Some(args.total_tiles), 0, 0);
+//         encoder.set_buffer(Some(args.dispatch_args), 0, 1);
+//         encoder.set_value(&args.num_tiles_x, 2);
+//         encoder.dispatch_threadgroups(
+//             MTLSize::new(1, 1, 1),
+//             MTLSize::new(1, 1, 1),
+//         );
+//         encoder.end_encoding();
+//         Ok(())
+//     }
+// }

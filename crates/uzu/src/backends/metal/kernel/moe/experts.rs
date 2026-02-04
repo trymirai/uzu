@@ -3,9 +3,8 @@ use std::{mem::size_of, ptr::NonNull};
 use super::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments, MoeTileCountsArguments,
-    MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
-    MoeTileMapKernel, MoeTileScanArguments, dtype_index, dtype_suffix,
+    MoePassATileKernel, MoePassATileScanArguments, MoeTileError,
+    dtype_index, dtype_suffix,
 };
 use crate::backends::metal::{
     KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
@@ -13,6 +12,7 @@ use crate::backends::metal::{
     MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize,
     NSRange, ProtocolObject, Retained,
 };
+use crate::backends::metal::kernel::moe::tiles_map::{MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {
@@ -74,7 +74,7 @@ pub struct MoeExpertsTwoPassDecodeKernel {
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
-    tile_map: MoeTileMapKernel,
+    tile_map: MoeTileMapKernels,
     pass_a_indirect:
         Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
     pass_b_indirect: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
@@ -374,7 +374,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 .push(ctx.compute_pipeline_state(&kernel_name, None)?);
         }
         Ok(Self {
-            tile_map: MoeTileMapKernel::new(ctx)?,
+            tile_map: MoeTileMapKernels::new(ctx)?,
             pass_a_indirect,
             pass_b_indirect,
         })
@@ -411,7 +411,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 tile_counts_buffer: args.tile_counts,
                 e: args.e,
             },
-        )?;
+        );
         self.tile_map.encode_scan(
             command_buffer,
             &MoeTileScanArguments {
@@ -420,7 +420,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 total_tiles_buffer: args.total_tiles,
                 e: args.e,
             },
-        )?;
+        );
         self.tile_map.encode_build_map(
             command_buffer,
             &MoeTileMapBuildArguments {
@@ -430,7 +430,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 tile_map: args.tile_map,
                 e: args.e,
             },
-        )?;
+        );
         let d_model_u32 = args.d_model as u32;
         let d_ff_u32 = args.d_ff as u32;
         let e_u32 = args.e as u32;
@@ -453,7 +453,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 dispatch_args: args.dispatch_args,
                 num_tiles_x: n_tiles_ff,
             },
-        )?;
+        );
         let pass_a_pipeline = &self.pass_a_indirect[gate_idx][dtype_idx];
         let encoder_a = command_buffer
             .new_compute_command_encoder()
@@ -527,7 +527,7 @@ impl MoeExpertsTwoPassPrefillKernel {
                 dispatch_args: args.dispatch_args,
                 num_tiles_x: n_tiles_model,
             },
-        )?;
+        );
         let pass_b_pipeline = &self.pass_b_indirect[dtype_idx];
         let encoder_b = command_buffer
             .new_compute_command_encoder()
