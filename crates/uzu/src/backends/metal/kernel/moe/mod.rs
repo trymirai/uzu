@@ -6,8 +6,8 @@ mod experts_single;
 mod gather;
 mod router_topk;
 mod scatter;
-mod tiles;
 pub mod tiles_map;
+pub mod tiles_pass_a;
 
 // Re-export public items from submodules
 pub use experts::{
@@ -26,10 +26,10 @@ pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
-pub use tiles::{
+pub use tiles_pass_a::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments, MoeTileError,
+    MoePassATileKernels, MoePassATileScanArguments, MoeTileError,
 };
 
 // Common utility functions

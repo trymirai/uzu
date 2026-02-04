@@ -3,7 +3,7 @@ use std::{mem::size_of, ptr::NonNull};
 use super::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments, MoeTileError, dtype_index,
+    MoePassATileKernels, MoePassATileScanArguments, MoeTileError, dtype_index,
     dtype_suffix,
 };
 use crate::backends::metal::{
@@ -70,7 +70,7 @@ pub struct MoeExpertsArguments<'a> {
 }
 
 pub struct MoeExpertsTwoPassDecodeKernel {
-    pass_a_tile: MoePassATileKernel,
+    pass_a_tile: MoePassATileKernels,
     pass_a_indirect:
         Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
     fused_down: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
@@ -159,7 +159,7 @@ impl MoeExpertsTwoPassDecodeKernel {
             fused_down.push(ctx.compute_pipeline_state(&kernel_name, None)?);
         }
         Ok(Self {
-            pass_a_tile: MoePassATileKernel::new(ctx)?,
+            pass_a_tile: MoePassATileKernels::new(ctx)?,
             pass_a_indirect,
             fused_down,
         })
@@ -185,7 +185,7 @@ impl MoeExpertsTwoPassDecodeKernel {
                 e: args.e,
                 h_blocks,
             },
-        )?;
+        );
         self.pass_a_tile.encode_scan(
             command_buffer,
             &MoePassATileScanArguments {
@@ -194,7 +194,7 @@ impl MoeExpertsTwoPassDecodeKernel {
                 total_tiles: args.total_tiles,
                 e: args.e,
             },
-        )?;
+        );
         self.pass_a_tile.encode_row_map(
             command_buffer,
             &MoePassARowMapArguments {
@@ -203,7 +203,7 @@ impl MoeExpertsTwoPassDecodeKernel {
                 total_rows: args.total_rows,
                 e: args.e,
             },
-        )?;
+        );
         self.pass_a_tile.encode_build_map(
             command_buffer,
             &MoePassATileBuildArguments {
@@ -214,7 +214,7 @@ impl MoeExpertsTwoPassDecodeKernel {
                 total_rows: args.total_rows,
                 h_blocks,
             },
-        )?;
+        );
         self.pass_a_tile.encode_dispatch_args(
             command_buffer,
             &MoePassATileDispatchArguments {
@@ -222,7 +222,7 @@ impl MoeExpertsTwoPassDecodeKernel {
                 dispatch_args: args.dispatch_args,
                 num_tiles_y: 1,
             },
-        )?;
+        );
         let d_model_u32 = args.d_model as u32;
         let d_ff_u32 = args.d_ff as u32;
         let e_u32 = args.e as u32;
