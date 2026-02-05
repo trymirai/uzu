@@ -57,7 +57,7 @@ fn test_context_mode_none() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::None);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        Session::new(build_model_path(), decoding_config, None).unwrap();
 
     let tokens_limit = 48;
     let input_text = "What is Alice's occupation?".to_string();
@@ -97,7 +97,7 @@ fn test_context_mode_static() {
             ]),
         });
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        Session::new(build_model_path(), decoding_config, None).unwrap();
 
     let tokens_limit = 48;
     let response_occupation = request(
@@ -143,7 +143,7 @@ fn test_context_mode_dynamic() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::Dynamic);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        Session::new(build_model_path(), decoding_config, None).unwrap();
 
     let update = |session: &mut Session, input_text: String| {
         request(session, input_text, 0)
@@ -197,7 +197,7 @@ fn test_context_mode_dynamic_scenario() {
     let decoding_config =
         build_decoding_config().with_context_mode(ContextMode::Dynamic);
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        Session::new(build_model_path(), decoding_config, None).unwrap();
 
     let user_prompts = vec![
         String::from("Tell about London"),

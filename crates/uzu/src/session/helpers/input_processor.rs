@@ -112,13 +112,19 @@ impl InputProcessor for InputProcessorDefault {
             .get_template(template_name)
             .map_err(|_| Error::UnableToLoadPromptTemplate)?;
 
-        let tools = tools
-            .into_iter()
-            .map(|tool| {
-                serde_json::to_value(&tool)
-                    .map_err(|_| Error::UnableToSerializeTool)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let tools: Option<Vec<serde_json::Value>> = if tools.len() > 0 {
+            Some(
+                tools
+                    .into_iter()
+                    .map(|tool| {
+                        serde_json::to_value(&tool)
+                            .map_err(|_| Error::UnableToSerializeTool)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        } else {
+            None
+        };
 
         let result = template
             .render(context!(

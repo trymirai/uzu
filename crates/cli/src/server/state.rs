@@ -58,7 +58,7 @@ pub fn load_session(
 
     let decoding_config = DecodingConfig::default()
         .with_prefill_step_size(prefill_step_size_config);
-    let session = Session::new(model_path_buf, decoding_config)
+    let session = Session::new(model_path_buf, decoding_config, None)
         .expect("Failed to create session");
 
     progress_bar.set_style(

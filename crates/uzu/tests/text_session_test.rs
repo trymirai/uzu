@@ -39,7 +39,8 @@ fn test_text_session_scenario() {
 #[test]
 fn test_text_session_stability() {
     let mut session =
-        Session::new(build_model_path(), build_decoding_config()).unwrap();
+        Session::new(build_model_path(), build_decoding_config(), None)
+            .unwrap();
     println!("Index | TTFT, s | Prompt t/s | Generate t/s");
     for index in 0..10 {
         let input = Input::Text(build_default_text());
@@ -68,7 +69,7 @@ fn run(
     tokens_limit: u64,
 ) {
     let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+        Session::new(build_model_path(), decoding_config, None).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(
@@ -104,7 +105,8 @@ fn run_scenario(
     user_prompts: Vec<String>,
 ) {
     let mut session =
-        Session::new(build_model_path(), build_decoding_config()).unwrap();
+        Session::new(build_model_path(), build_decoding_config(), None)
+            .unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {

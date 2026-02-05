@@ -47,6 +47,7 @@ impl Runner {
         let mut session = ChatSession::new(
             PathBuf::from(self.model_path.clone()),
             DecodingConfig::default(),
+            None,
         )?;
         let run_config = RunConfig::default().tokens_limit(1);
         let output = session.run(
@@ -80,6 +81,7 @@ impl Runner {
         let mut session = ChatSession::new(
             PathBuf::from(self.model_path.clone()),
             decoding_config,
+            None,
         )?;
 
         let precision =

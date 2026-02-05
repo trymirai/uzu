@@ -44,7 +44,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     let decoding_config = DecodingConfig::default()
         .with_sampling_seed(uzu::prelude::SamplingSeed::Custom(42))
         .with_speculator_config(speculator_config);
-    let mut session = Session::new(model_dir, decoding_config)
+    let mut session = Session::new(model_dir, decoding_config, None)
         .expect("Failed to create session");
 
     let input = Input::Text(
