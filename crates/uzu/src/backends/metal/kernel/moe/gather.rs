@@ -6,12 +6,10 @@ use crate::{
         common::kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
         metal::{
             KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-            MTLError, MTLSize, ProtocolObject, Retained,
+            MTLContext, MTLError, ProtocolObject, Retained,
             kernel::dsl::{
                 MoeGatherXPerm1DMetalKernel, MoeGatherXPerm2DMetalKernel,
             },
-            metal_extensions::ComputeEncoderSetValue,
         },
     },
 };

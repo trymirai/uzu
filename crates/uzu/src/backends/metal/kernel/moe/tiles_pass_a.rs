@@ -17,12 +17,6 @@ use crate::backends::{
     },
 };
 
-#[derive(Debug, thiserror::Error)]
-pub enum MoeTileError {
-    #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
-}
-
 #[derive(Debug)]
 pub struct MoePassATileCountsArguments<'a> {
     pub expert_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
@@ -73,7 +67,7 @@ pub struct MoePassATileKernels {
 }
 
 impl MoePassATileKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MoeTileError> {
+    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
         Ok(Self {
             counts: MoePassATileCountsMetalKernel::new(ctx)?,
             scan: MoePassATileScanMetalKernel::new(ctx)?,

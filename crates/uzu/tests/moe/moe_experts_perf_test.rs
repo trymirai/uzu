@@ -1,13 +1,13 @@
-use metal::{MTLCommandBuffer, MTLCommandQueue};
 use std::time::Instant;
 
 use half::bf16;
+use metal::{MTLCommandBuffer, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
     KernelDataType, MTLContext,
     kernel::moe::{
         MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
         MoeExpertsTwoPassPrefillKernel,
     },
 };
@@ -86,8 +86,8 @@ fn run_decode_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let experts_kernel =
-        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("experts decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(ctx)
+        .expect("experts decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -147,9 +147,7 @@ fn run_decode_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -161,9 +159,7 @@ fn run_decode_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -589,7 +585,7 @@ fn run_indirect_decode_timed(
         .collect();
 
     let experts_kernel =
-        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("decode kernel");
+        MoeExpertsTwoPassDecodeKernels::new(ctx).expect("decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
@@ -644,7 +640,7 @@ fn run_indirect_decode_timed(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel.encode(&cb, make_args()).expect("encode");
+        experts_kernel.encode(&cb, &make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -656,7 +652,7 @@ fn run_indirect_decode_timed(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel.encode(&cb, make_args()).expect("encode");
+        experts_kernel.encode(&cb, &make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);

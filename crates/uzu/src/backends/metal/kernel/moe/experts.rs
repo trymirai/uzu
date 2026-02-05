@@ -1,11 +1,6 @@
 use std::{mem::size_of, ptr::NonNull};
 
-use super::{
-    MoePassARowMapArguments, MoePassATileBuildArguments,
-    MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernels, MoePassATileScanArguments, MoeTileError, dtype_index,
-    dtype_suffix,
-};
+use super::{dtype_index, dtype_suffix};
 use crate::backends::metal::{
     KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
     MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
@@ -28,16 +23,6 @@ pub enum MoeExpertsError {
     MetalError(#[from] MTLError),
     #[error("{0}")]
     Generic(String),
-}
-
-impl From<MoeTileError> for MoeExpertsError {
-    fn from(err: MoeTileError) -> Self {
-        match err {
-            MoeTileError::MetalError(inner) => {
-                MoeExpertsError::MetalError(inner)
-            },
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -67,13 +52,6 @@ pub struct MoeExpertsArguments<'a> {
     pub up_clip_max: f32,
     pub silu_alpha: f32,
     pub data_type: KernelDataType,
-}
-
-pub struct MoeExpertsTwoPassDecodeKernel {
-    pass_a_tile: MoePassATileKernels,
-    pass_a_indirect:
-        Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
-    fused_down: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>, // [dtype]
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
@@ -111,228 +89,6 @@ pub struct MoeExpertsTwoPassArguments<'a> {
     pub up_clip_max: f32,
     pub silu_alpha: f32,
     pub data_type: KernelDataType,
-}
-
-impl MoeExpertsTwoPassDecodeKernel {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let dtypes = [
-            KernelDataType::Float16,
-            KernelDataType::BFloat16,
-            KernelDataType::Float32,
-        ];
-        let mut pass_a_indirect = vec![Vec::with_capacity(dtypes.len()); 4];
-        for gate in 0u32..4u32 {
-            for dtype in &dtypes {
-                let dtype_suffix = dtype_suffix(*dtype);
-                let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_type_at_index(
-                    NonNull::from(&gate).cast(),
-                    MTLDataType::UInt,
-                    30,
-                );
-                let tile_h: u32 = 512;
-                fcv.set_constant_value_type_at_index(
-                    NonNull::from(&tile_h).cast(),
-                    MTLDataType::UInt,
-                    32,
-                );
-                let kernel_name = format!(
-                    "moe_experts_decode_pass_a_indirect_{}",
-                    dtype_suffix
-                );
-                let cache_key =
-                    format!("{}_gate_{}_tile_{}", kernel_name, gate, tile_h);
-                pass_a_indirect[gate as usize].push(
-                    ctx.compute_pipeline_state_cached(
-                        &cache_key,
-                        &kernel_name,
-                        Some(&fcv),
-                    )?,
-                );
-            }
-        }
-        let mut fused_down = Vec::with_capacity(dtypes.len());
-        for dtype in &dtypes {
-            let dtype_suffix = dtype_suffix(*dtype);
-            let kernel_name =
-                format!("moe_experts_decode_down_fused_2d_{}", dtype_suffix);
-            fused_down.push(ctx.compute_pipeline_state(&kernel_name, None)?);
-        }
-        Ok(Self {
-            pass_a_tile: MoePassATileKernels::new(ctx)?,
-            pass_a_indirect,
-            fused_down,
-        })
-    }
-
-    pub fn encode(
-        &self,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        args: MoeExpertsTwoPassArguments,
-    ) -> Result<(), MoeExpertsError> {
-        if args.total_rows == 0 {
-            return Ok(());
-        }
-        let gate_idx = (args.gating_code.min(3)) as usize;
-        let dtype_idx = dtype_index(args.data_type);
-        const BLOCK_M: u32 = 4;
-        let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
-        self.pass_a_tile.encode_counts(
-            command_buffer,
-            &MoePassATileCountsArguments {
-                expert_offsets: args.expert_offsets,
-                tile_counts: args.tile_counts,
-                e: args.e,
-                h_blocks,
-            },
-        );
-        self.pass_a_tile.encode_scan(
-            command_buffer,
-            &MoePassATileScanArguments {
-                tile_counts: args.tile_counts,
-                tile_offsets: args.tile_offsets,
-                total_tiles: args.total_tiles,
-                e: args.e,
-            },
-        );
-        self.pass_a_tile.encode_row_map(
-            command_buffer,
-            &MoePassARowMapArguments {
-                expert_offsets: args.expert_offsets,
-                row_expert_map: args.row_expert_map,
-                total_rows: args.total_rows,
-                e: args.e,
-            },
-        );
-        self.pass_a_tile.encode_build_map(
-            command_buffer,
-            &MoePassATileBuildArguments {
-                expert_offsets: args.expert_offsets,
-                tile_offsets: args.tile_offsets,
-                row_expert_map: args.row_expert_map,
-                tile_map: args.tile_map,
-                total_rows: args.total_rows,
-                h_blocks,
-            },
-        );
-        self.pass_a_tile.encode_dispatch_args(
-            command_buffer,
-            &MoePassATileDispatchArguments {
-                total_tiles: args.total_tiles,
-                dispatch_args: args.dispatch_args,
-                num_tiles_y: 1,
-            },
-        );
-        let d_model_u32 = args.d_model as u32;
-        let d_ff_u32 = args.d_ff as u32;
-        let e_u32 = args.e as u32;
-        let pass_a_pipeline = &self.pass_a_indirect[gate_idx][dtype_idx];
-        let encoder_a = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder_a.set_compute_pipeline_state(pass_a_pipeline);
-        encoder_a.set_buffer(Some(args.x_perm_buffer), 0, 0);
-        encoder_a.set_buffer(Some(args.expert_offsets), 0, 1);
-        encoder_a.set_buffer(Some(args.w13_all), 0, 2);
-        encoder_a.set_buffer(Some(args.hidden_buffer), 0, 3);
-        encoder_a.set_buffer(Some(args.up_biases), 0, 4);
-        unsafe {
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                5,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                6,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                7,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(
-                    &args.gate_clip_min as *const _ as *mut _,
-                ),
-                size_of::<f32>(),
-                8,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(
-                    &args.gate_clip_max as *const _ as *mut _,
-                ),
-                size_of::<f32>(),
-                9,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.up_clip_min as *const _ as *mut _),
-                size_of::<f32>(),
-                10,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.up_clip_max as *const _ as *mut _),
-                size_of::<f32>(),
-                11,
-            );
-            encoder_a.set_bytes(
-                NonNull::new_unchecked(&args.silu_alpha as *const _ as *mut _),
-                size_of::<f32>(),
-                12,
-            );
-        }
-        encoder_a.set_buffer(Some(args.tile_map), 0, 13);
-        encoder_a.dispatch_threadgroups_indirect(
-            args.dispatch_args,
-            0,
-            MTLSize::new(128, 1, 1),
-        );
-        encoder_a.end_encoding();
-        let total_rows_u32 = args.total_rows as u32;
-        let pass_b_pipeline = &self.fused_down[dtype_idx];
-        let encoder_b = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        encoder_b.set_compute_pipeline_state(pass_b_pipeline);
-        encoder_b.set_buffer(Some(args.hidden_buffer), 0, 0);
-        encoder_b.set_buffer(Some(args.row_expert_map), 0, 1);
-        encoder_b.set_buffer(Some(args.w2_all), 0, 2);
-        encoder_b.set_buffer(Some(args.down_biases), 0, 3);
-        encoder_b.set_buffer(Some(args.output_buffer), 0, 4);
-        unsafe {
-            encoder_b.set_bytes(
-                NonNull::new_unchecked(&total_rows_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                5,
-            );
-            encoder_b.set_bytes(
-                NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                6,
-            );
-            encoder_b.set_bytes(
-                NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                7,
-            );
-            encoder_b.set_bytes(
-                NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
-                size_of::<u32>(),
-                8,
-            );
-        }
-        const SIMDGROUPS_PER_TG: u32 = 8;
-        const THREADS_PER_TG: u32 = 256;
-        let col_blocks =
-            (args.d_model as u32 + SIMDGROUPS_PER_TG - 1) / SIMDGROUPS_PER_TG;
-        encoder_b.dispatch_threadgroups(
-            MTLSize::new(col_blocks as usize, args.total_rows, 1),
-            MTLSize::new(THREADS_PER_TG as usize, 1, 1),
-        );
-        encoder_b.end_encoding();
-        Ok(())
-    }
 }
 
 impl MoeExpertsTwoPassPrefillKernel {
