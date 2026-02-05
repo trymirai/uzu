@@ -10,7 +10,7 @@ use uzu::backends::{
         kernel::{
             dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
             moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
                 MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
                 MoeRouterTopKKernel, MoeScatterKernels,
                 MoeScatterWithMapArguments,
@@ -352,7 +352,7 @@ fn test_moe_pipeline_breakdown_decode() {
         .expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
+    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx)
         .expect("experts two-pass decode");
     let finalize_kernel =
         MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
@@ -484,39 +484,37 @@ fn test_moe_pipeline_breakdown_decode() {
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel
-            .encode(
-                &cb,
-                MoeExpertsTwoPassArguments {
-                    x_perm_buffer: &x_perm_buf,
-                    expert_offsets: &offsets_buf,
-                    row_expert_map: &row_expert_map_buf,
-                    hidden_buffer: &hidden_buf,
-                    output_buffer: &y_partial_buf,
-                    w13_all: &w13_buf,
-                    w2_all: &w2_buf,
-                    up_biases: &up_biases_buf,
-                    down_biases: &down_biases_buf,
-                    tile_counts: &tile_counts_buf,
-                    tile_offsets: &tile_offsets_buf,
-                    tile_map: &tile_map_buf,
-                    total_tiles: &total_tiles_buf,
-                    dispatch_args: &dispatch_args_buf,
-                    total_rows: sum_k,
-                    d_model,
-                    d_ff,
-                    e,
-                    num_tiles_k: num_tiles_k as u32,
-                    gating_code: 2, // SILU
-                    gate_clip_min: f32::NEG_INFINITY,
-                    gate_clip_max: 20.0,
-                    up_clip_min: -19.0,
-                    up_clip_max: 21.0,
-                    silu_alpha: 1.702,
-                    data_type: KernelDataType::BFloat16,
-                },
-            )
-            .expect("experts");
+        experts_kernel.encode(
+            &cb,
+            &MoeExpertsTwoPassArguments {
+                x_perm_buffer: &x_perm_buf,
+                expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                output_buffer: &y_partial_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                tile_counts: &tile_counts_buf,
+                tile_offsets: &tile_offsets_buf,
+                tile_map: &tile_map_buf,
+                total_tiles: &total_tiles_buf,
+                dispatch_args: &dispatch_args_buf,
+                total_rows: sum_k,
+                d_model,
+                d_ff,
+                e,
+                num_tiles_k: num_tiles_k as u32,
+                gating_code: 2, // SILU
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: 20.0,
+                up_clip_min: -19.0,
+                up_clip_max: 21.0,
+                silu_alpha: 1.702,
+                data_type: KernelDataType::BFloat16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     });

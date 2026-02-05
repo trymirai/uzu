@@ -1,36 +1,44 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "../definitions.metal"
 #include "moe_commons.h"
 using namespace metal;
-
-constant uint GATING_SEL
-    [[function_constant(30)]]; // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
 
 // === Pass A: Vectorized GEMV with float4 loads ===
 // Structure: 4 simdgroups (128 threads), each outputs 1 hidden element
 // Each simdgroup: 32 threads reduce d_model using float4 vectorized loads
 // Grid: (h_blocks, rows, 1) where h_blocks = ceil(d_ff/4)
-template <typename T, typename T4>
-void moe_experts_decode_pass_a_impl(
-    device const T* X_perm,            // [total_rows, d_model]
-    device const uint* expert_offsets, // [E + 1]
-    device const T* W13_all,           // [E, 2*d_ff, d_model]
-    device const T* up_biases,         // [E, 2*d_ff]
-    device float* hidden_out,          // [total_rows, d_ff]
-    uint d_model,
-    uint d_ff,
-    uint E,
-    float gate_clip_min,
-    float gate_clip_max,
-    float up_clip_min,
-    float up_clip_max,
-    float silu_alpha,
-    uint expert_idx,
-    uint row_in_expert,
-    uint h_block_idx,
-    uint simd_gid,
-    uint simd_lid
+#define SIMD_SIZE 32
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeExpertsDecodePassA)(
+    device const T* x_perm,             // [total_rows, d_model]
+    device const uint* expert_offsets,  // [E + 1]
+    device const T* w13_all,            // [E, 2*d_ff, d_model]
+    device float* hidden_out,           // [E, 2*d_ff]
+    device const T* up_biases,          // [total_rows, d_ff]
+    constant uint& d_model,
+    constant uint& d_ff,
+    constant uint& e,
+    constant float& gate_clip_min,
+    constant float& gate_clip_max,
+    constant float& up_clip_min,
+    constant float& up_clip_max,
+    constant float& silu_alpha,
+    device const uint* tile_map,
+    const uint gating_sel SPECIALIZE,
+    const uint tile_idx GROUPS(INDIRECT),
+    const uint tid THREADS(128)
 ) {
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
+
+  // Read tile descriptor
+  const uint h_block_idx = tile_map[tile_idx * 3 + 0];
+  const uint expert_idx = tile_map[tile_idx * 3 + 1];
+  const uint row_in_expert = tile_map[tile_idx * 3 + 2];
+
   // Validate row bounds
   const uint seg_start = expert_offsets[expert_idx];
   const uint seg_end = expert_offsets[expert_idx + 1];
@@ -49,10 +57,10 @@ void moe_experts_decode_pass_a_impl(
   const ulong bias_base = (ulong)expert_idx * (ulong)(2 * d_ff);
   const ulong x_row_base = (ulong)global_row * (ulong)d_model;
 
-  device const T* x_ptr = X_perm + x_row_base;
-  device const T* w_up_row = W13_all + w13_base + (ulong)h_idx * (ulong)d_model;
+  device const T* x_ptr = x_perm + x_row_base;
+  device const T* w_up_row = w13_all + w13_base + (ulong)h_idx * (ulong)d_model;
   device const T* w_gate_row =
-      W13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
+      w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
 
   float acc_up = 0.0f;
   float acc_gate = 0.0f;
@@ -63,21 +71,19 @@ void moe_experts_decode_pass_a_impl(
   for (uint i = 0; i < vec_iters; ++i) {
     uint base_idx = i * 128 + simd_lid * 4;
 
-    T4 x_vec = *reinterpret_cast<device const T4*>(x_ptr + base_idx);
-    T4 w_up_vec = *reinterpret_cast<device const T4*>(w_up_row + base_idx);
+    device const T* x_vec = reinterpret_cast<device const T*>(x_ptr + base_idx);
+    device const T* w_up_vec = reinterpret_cast<device const T*>(w_up_row + base_idx);
+    acc_up += float(x_vec[0]) * float(w_up_vec[0]);
+    acc_up += float(x_vec[1]) * float(w_up_vec[1]);
+    acc_up += float(x_vec[2]) * float(w_up_vec[2]);
+    acc_up += float(x_vec[3]) * float(w_up_vec[3]);
 
-    acc_up += float(x_vec.x) * float(w_up_vec.x);
-    acc_up += float(x_vec.y) * float(w_up_vec.y);
-    acc_up += float(x_vec.z) * float(w_up_vec.z);
-    acc_up += float(x_vec.w) * float(w_up_vec.w);
-
-    if (GATING_SEL > 1) {
-      T4 w_gate_vec =
-          *reinterpret_cast<device const T4*>(w_gate_row + base_idx);
-      acc_gate += float(x_vec.x) * float(w_gate_vec.x);
-      acc_gate += float(x_vec.y) * float(w_gate_vec.y);
-      acc_gate += float(x_vec.z) * float(w_gate_vec.z);
-      acc_gate += float(x_vec.w) * float(w_gate_vec.w);
+    if (gating_sel > 1) {
+      device const T* w_gate_vec = reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      acc_gate += float(x_vec[0]) * float(w_gate_vec[0]);
+      acc_gate += float(x_vec[1]) * float(w_gate_vec[1]);
+      acc_gate += float(x_vec[2]) * float(w_gate_vec[2]);
+      acc_gate += float(x_vec[3]) * float(w_gate_vec[3]);
     }
   }
 
@@ -86,14 +92,14 @@ void moe_experts_decode_pass_a_impl(
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x_ptr[idx]);
     acc_up += xv * float(w_up_row[idx]);
-    if (GATING_SEL > 1) {
+    if (gating_sel > 1) {
       acc_gate += xv * float(w_gate_row[idx]);
     }
   }
 
   // Simdgroup reduction
   acc_up = simd_sum(acc_up);
-  if (GATING_SEL > 1) {
+  if (gating_sel > 1) {
     acc_gate = simd_sum(acc_gate);
   }
 
@@ -103,14 +109,12 @@ void moe_experts_decode_pass_a_impl(
     up_val = clamp(up_val, up_clip_min, up_clip_max);
 
     float activated;
-    if (GATING_SEL <= 1) {
-      activated =
-          (GATING_SEL == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+    if (gating_sel <= 1) {
+      activated = (gating_sel == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
     } else {
       float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
       gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
-      float gate_act = (GATING_SEL == 2) ? silu(gate_val, silu_alpha)
-                                         : gelu_approx(gate_val);
+      float gate_act = (gating_sel == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
       activated = gate_act * up_val;
     }
 
@@ -118,130 +122,35 @@ void moe_experts_decode_pass_a_impl(
   }
 }
 
-// Modified Pass A that reads from tile map for indirect dispatch
-template <typename T, typename T4>
-void moe_experts_decode_pass_a_indirect_impl(
-    device const T* X_perm,
-    device const uint* expert_offsets,
-    device const T* W13_all,
-    device const T* up_biases,
-    device float* hidden_out,
-    device const uint* tile_map, // [total_tiles * 3]
-    uint d_model,
-    uint d_ff,
-    uint E,
-    float gate_clip_min,
-    float gate_clip_max,
-    float up_clip_min,
-    float up_clip_max,
-    float silu_alpha,
-    uint tile_idx, // flat threadgroup index
-    uint simd_gid,
-    uint simd_lid
-) {
-  // Read tile descriptor
-  const uint h_block_idx = tile_map[tile_idx * 3 + 0];
-  const uint expert_idx = tile_map[tile_idx * 3 + 1];
-  const uint row_in_expert = tile_map[tile_idx * 3 + 2];
-
-  // Call original implementation
-  moe_experts_decode_pass_a_impl<T, T4>(
-      X_perm,
-      expert_offsets,
-      W13_all,
-      up_biases,
-      hidden_out,
-      d_model,
-      d_ff,
-      E,
-      gate_clip_min,
-      gate_clip_max,
-      up_clip_min,
-      up_clip_max,
-      silu_alpha,
-      expert_idx,
-      row_in_expert,
-      h_block_idx,
-      simd_gid,
-      simd_lid
-  );
-}
-
-#define MOE_PASS_A_INDIRECT_KERNEL(DTYPE, DTYPE4, SUFFIX)                      \
-  [[max_total_threads_per_threadgroup(128)]]                                   \
-  kernel void moe_experts_decode_pass_a_indirect_##SUFFIX(                     \
-      device const DTYPE* X_perm [[buffer(0)]],                                \
-      device const uint* expert_offsets [[buffer(1)]],                         \
-      device const DTYPE* W13_all [[buffer(2)]],                               \
-      device float* hidden_out [[buffer(3)]],                                  \
-      device const DTYPE* up_biases [[buffer(4)]],                             \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& E [[buffer(7)]],                                          \
-      constant float& gate_clip_min [[buffer(8)]],                             \
-      constant float& gate_clip_max [[buffer(9)]],                             \
-      constant float& up_clip_min [[buffer(10)]],                              \
-      constant float& up_clip_max [[buffer(11)]],                              \
-      constant float& silu_alpha [[buffer(12)]],                               \
-      device const uint* tile_map [[buffer(13)]],                              \
-      uint3 tgpig [[threadgroup_position_in_grid]],                            \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    moe_experts_decode_pass_a_indirect_impl<DTYPE, DTYPE4>(                    \
-        X_perm,                                                                \
-        expert_offsets,                                                        \
-        W13_all,                                                               \
-        up_biases,                                                             \
-        hidden_out,                                                            \
-        tile_map,                                                              \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        gate_clip_min,                                                         \
-        gate_clip_max,                                                         \
-        up_clip_min,                                                           \
-        up_clip_max,                                                           \
-        silu_alpha,                                                            \
-        tgpig.x,                                                               \
-        simd_gid,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-MOE_PASS_A_INDIRECT_KERNEL(bfloat, bfloat4, bf16)
-MOE_PASS_A_INDIRECT_KERNEL(half, half4, f16)
-MOE_PASS_A_INDIRECT_KERNEL(float, float4, f32)
-
 // === Pass B: Simdgroup cooperation along K for coalescing ===
 // W2 layout [E, d_model, d_ff] - 32 threads cooperate on one output, reading
 // consecutive K elements
+#define THREADS_PER_SIMD 32
+#define SIMDGROUPS_PER_TG 8
 
 template <typename T, typename AccumT>
-void moe_experts_decode_down_fused_2d_impl(
-    device const float* hidden, // [total_rows, d_ff] - f32 from Pass A
-    device const uint*
-        row_expert_map,          // [total_rows] - direct row->expert lookup
-    device const T* w2_all,      // [E, d_model, d_ff] - layout
-    device const T* down_biases, // [E, d_model]
-    device T* y_out,             // [total_rows, d_model]
-    uint total_rows,
-    uint d_model,
-    uint d_ff,
-    uint E,
-    uint2 tgpig,
-    uint simd_gid,
-    uint simd_lid
+VARIANTS(T, float, half, bfloat)
+VARIANTS(AccumT, float)
+KERNEL(MoeExpertsDecodeDownFused2D)(
+    device const float* hidden,         // [total_rows, d_ff] - f32 from Pass A
+    device const uint* row_expert_map,  // [total_rows] - direct row->expert lookup
+    device const T* w2_all,             // [E, d_model, d_ff] - layout
+    device const T* down_biases,        // [E, d_model]
+    device T* y_out,                    // [total_rows, d_model]
+    constant uint& total_rows,
+    constant uint& d_model,
+    constant uint& d_ff,
+    constant uint& e,
+    const uint tgpig_x GROUPS(d_model.div_ceil(SIMDGROUPS_PER_TG)),
+    const uint tgpig_y GROUPS(total_rows),
+    const uint tid THREADS(256) 
 ) {
-  constexpr uint THREADS_PER_SIMD = 32;
-  constexpr uint SIMDGROUPS_PER_TG = 8;
-
-  const uint row_idx = tgpig.y;
-  if (row_idx >= total_rows)
-    return;
+  const uint simd_gid = tid / SIMD_SIZE;
+  const uint simd_lid = tid % SIMD_SIZE;
+  const uint row_idx = tgpig_y;
 
   // Each simdgroup computes one output column
-  const uint my_col = tgpig.x * SIMDGROUPS_PER_TG + simd_gid;
+  const uint my_col = tgpig_x * SIMDGROUPS_PER_TG + simd_gid;
   if (my_col >= d_model)
     return;
 
@@ -275,22 +184,14 @@ void moe_experts_decode_down_fused_2d_impl(
     const AccumT h7 = hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD];
 
     // W2: lane-coalesced
-    const AccumT w0 =
-        AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
-    const AccumT w1 =
-        AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
-    const AccumT w2 =
-        AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
-    const AccumT w3 =
-        AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
-    const AccumT w4 =
-        AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
-    const AccumT w5 =
-        AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
-    const AccumT w6 =
-        AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
-    const AccumT w7 =
-        AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+    const AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+    const AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+    const AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+    const AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+    const AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+    const AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+    const AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+    const AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
 
     // dual trees for ILP
     acc0 = fma(h0, w0, acc0);
@@ -337,39 +238,3 @@ void moe_experts_decode_down_fused_2d_impl(
     y_out[out_idx] = T(result);
   }
 }
-
-#define MOE_PASS_B_FUSED_2D_KERNEL(DTYPE, SUFFIX)                              \
-  [[max_total_threads_per_threadgroup(256)]]                                   \
-  kernel void moe_experts_decode_down_fused_2d_##SUFFIX(                       \
-      device const float* hidden [[buffer(0)]],                                \
-      device const uint* row_expert_map [[buffer(1)]],                         \
-      device const DTYPE* w2_all [[buffer(2)]],                                \
-      device const DTYPE* down_biases [[buffer(3)]],                           \
-      device DTYPE* y_out [[buffer(4)]],                                       \
-      constant uint& total_rows [[buffer(5)]],                                 \
-      constant uint& d_model [[buffer(6)]],                                    \
-      constant uint& d_ff [[buffer(7)]],                                       \
-      constant uint& E [[buffer(8)]],                                          \
-      uint2 tgpig [[threadgroup_position_in_grid]],                            \
-      uint simd_gid [[simdgroup_index_in_threadgroup]],                        \
-      uint simd_lid [[thread_index_in_simdgroup]]                              \
-  ) {                                                                          \
-    moe_experts_decode_down_fused_2d_impl<DTYPE, float>(                       \
-        hidden,                                                                \
-        row_expert_map,                                                        \
-        w2_all,                                                                \
-        down_biases,                                                           \
-        y_out,                                                                 \
-        total_rows,                                                            \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        tgpig,                                                                 \
-        simd_gid,                                                              \
-        simd_lid                                                               \
-    );                                                                         \
-  }
-
-MOE_PASS_B_FUSED_2D_KERNEL(bfloat, bf16)
-MOE_PASS_B_FUSED_2D_KERNEL(half, f16)
-MOE_PASS_B_FUSED_2D_KERNEL(float, f32)
