@@ -2,7 +2,7 @@ use std::{
     env::{self},
     ffi::OsString,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
 };
 
@@ -114,10 +114,13 @@ pub struct MetalToolchain {
     std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
+    include_dirs: Box<[PathBuf]>,
 }
 
 impl MetalToolchain {
-    pub fn from_env() -> anyhow::Result<Self> {
+    pub fn from_env_with_include_dir(
+        include_dir: PathBuf
+    ) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::default();
 
@@ -143,17 +146,23 @@ impl MetalToolchain {
                 sdk.os(),
                 std.min_os()
             )),
-            // NOTE: Previous build.rs script didn't forward metal compiler warnings to cargo warnings, the new one does. This is temporary to avoid warning spam without modifying unrelated things in the same pull request as introducing the dsl and converting kernels
             OsString::from("-Wno-sign-compare"),
             OsString::from("-Wno-macro-redefined"),
             OsString::from("-Wno-unused-variable"),
         ]);
+
+        let include_dirs = if include_dir.as_os_str().is_empty() {
+            Box::new([]) as Box<[PathBuf]>
+        } else {
+            Box::new([include_dir])
+        };
 
         Ok(Self {
             sdk,
             std,
             opt_flags,
             extra_options,
+            include_dirs,
         })
     }
 
@@ -161,6 +170,15 @@ impl MetalToolchain {
         let mut cmd = Command::new("xcrun");
         cmd.args(["-sdk", self.sdk.to_str()]);
         cmd
+    }
+
+    fn add_include_dirs(
+        &self,
+        cmd: &mut Command,
+    ) {
+        for dir in self.include_dirs.iter() {
+            cmd.arg("-I").arg(dir);
+        }
     }
 
     pub async fn analyze(
@@ -175,23 +193,25 @@ impl MetalToolchain {
         let depfile_path =
             NamedTempFile::new().context("cannot create temporary file")?;
 
-        let analyze_output = self
-            .xcrun()
-            .arg("metal")
+        let mut cmd = self.xcrun();
+        cmd.arg("metal")
             .args(["-x", "metal"])
             .arg(format!("-std={}", self.std.to_str()))
-            .args(self.extra_options.as_ref())
-            .arg("-DDSL_ANALYZE")
+            .args(self.extra_options.as_ref());
+
+        self.add_include_dirs(&mut cmd);
+
+        cmd.arg("-DDSL_ANALYZE")
             .arg(path)
             .arg("-fsyntax-only")
             .args(["-MMD", "-MF"])
             .arg(depfile_path.path())
             .args(["-Xclang", "-ast-dump=json"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .context("cannot execute metal analyzer")?;
+            .stderr(Stdio::piped());
+
+        let analyze_output =
+            cmd.output().await.context("cannot execute metal analyzer")?;
 
         if !analyze_output.status.success() {
             bail!(
@@ -253,23 +273,26 @@ impl MetalToolchain {
         footer: impl AsRef<str>,
         output: impl AsRef<Path>,
     ) -> anyhow::Result<Option<Box<str>>> {
-        let mut compile_child = self
-            .xcrun()
-            .arg("metal")
+        let mut cmd = self.xcrun();
+        cmd.arg("metal")
             .arg("-c")
             .args(["-x", "metal"])
             .arg(format!("-std={}", self.std.to_str()))
             .args(self.extra_options.as_ref())
-            .args(self.opt_flags.as_ref())
-            .arg("-include")
+            .args(self.opt_flags.as_ref());
+
+        self.add_include_dirs(&mut cmd);
+
+        cmd.arg("-include")
             .arg(source.as_ref())
             .arg("-")
             .arg("-o")
             .arg(output.as_ref())
             .stdin(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("cannot execute metal compiler")?;
+            .stderr(Stdio::piped());
+
+        let mut compile_child =
+            cmd.spawn().context("cannot execute metal compiler")?;
 
         compile_child
             .stdin
