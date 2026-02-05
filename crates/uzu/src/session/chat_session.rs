@@ -38,6 +38,7 @@ use crate::{
             TotalStats,
         },
     },
+    tool_calling::ToolRegistry,
 };
 
 struct RunContext {
@@ -62,12 +63,14 @@ pub struct ChatSession {
     output_parser: OutputParser,
     llm: Option<LanguageModelGenerator>,
     static_context: Option<Context>,
+    tool_registry: ToolRegistry,
 }
 
 impl ChatSession {
     pub fn new(
         model_path: PathBuf,
         decoding_config: DecodingConfig,
+        tool_registry: Option<ToolRegistry>,
     ) -> Result<Self, Error> {
         if !model_path.exists() {
             return Err(Error::ModelFolderNotFound);
@@ -169,6 +172,7 @@ impl ChatSession {
             output_parser,
             llm: Some(llm),
             static_context: None,
+            tool_registry: tool_registry.unwrap_or_default(),
         })
     }
 
@@ -273,6 +277,7 @@ impl ChatSession {
             &input,
             config.enable_thinking,
             config.tokens_limit > 0,
+            self.tool_registry.tools(),
         )?;
         let tokens: Vec<u64> = self
             .tokenizer

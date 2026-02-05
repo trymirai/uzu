@@ -9,6 +9,7 @@ use crate::{
         parameter::ConfigResolvableValue,
         types::{Error, Input, Role},
     },
+    tool_calling::Tool,
 };
 
 pub trait InputProcessor: Send + Sync {
@@ -17,6 +18,7 @@ pub trait InputProcessor: Send + Sync {
         input: &Input,
         enable_thinking: bool,
         add_generation_prompt: bool,
+        tools: Vec<Tool>,
     ) -> Result<String, Error>;
 }
 
@@ -81,6 +83,7 @@ impl InputProcessor for InputProcessorDefault {
         input: &Input,
         enable_thinking: bool,
         add_generation_prompt: bool,
+        tools: Vec<Tool>,
     ) -> Result<String, Error> {
         let messages = input.get_messages();
         for message in &messages {
@@ -109,12 +112,21 @@ impl InputProcessor for InputProcessorDefault {
             .get_template(template_name)
             .map_err(|_| Error::UnableToLoadPromptTemplate)?;
 
+        let tools = tools
+            .into_iter()
+            .map(|tool| {
+                serde_json::to_value(&tool)
+                    .map_err(|_| Error::UnableToSerializeTool)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let result = template
             .render(context!(
                 messages => messages,
                 add_generation_prompt => add_generation_prompt,
                 bos_token => bos_token,
-                enable_thinking => enable_thinking
+                enable_thinking => enable_thinking,
+                tools => tools,
             ))
             .map_err(|_| Error::UnableToRenderPromptTemplate)?;
         Ok(result)

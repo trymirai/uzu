@@ -24,6 +24,8 @@ pub enum Error {
     UnableToLoadPromptTemplate,
     #[error("Unable to render prompt template")]
     UnableToRenderPromptTemplate,
+    #[error("Unable to serialize tool")]
+    UnableToSerializeTool,
     #[error("Only assistant messages can have reasoning content")]
     UnexpectedReasoningContent,
     #[error("Unable to build output parser regex")]
