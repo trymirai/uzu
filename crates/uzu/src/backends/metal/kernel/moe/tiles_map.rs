@@ -1,6 +1,6 @@
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
 use objc2::{__framework_prelude::ProtocolObject, Message};
-
+use objc2::__framework_prelude::Retained;
 use crate::backends::{
     common::kernel::{
         MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel,
@@ -34,7 +34,7 @@ impl MoeTileMapKernels {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileCountsArguments,
     ) {
         let encoder = command_buffer
@@ -51,7 +51,7 @@ impl MoeTileMapKernels {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileScanArguments,
     ) {
         let encoder = command_buffer
@@ -69,7 +69,7 @@ impl MoeTileMapKernels {
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileMapBuildArguments,
     ) {
         let encoder = command_buffer
@@ -88,7 +88,7 @@ impl MoeTileMapKernels {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileDispatchArguments,
     ) {
         let encoder = command_buffer
