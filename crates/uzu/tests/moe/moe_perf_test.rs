@@ -1,24 +1,25 @@
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use std::time::Instant;
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::{
-    MoeCountsOffsetsFusedKernel, MoeFinalizeKernel,
-};
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use uzu::backends::metal::{
-    KernelDataType,
-    kernel::{
-        dsl::MoeFinalizeMetalKernel,
-        moe::{
-            MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
-            MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+use uzu::backends::{
+    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+    metal::{
+        KernelDataType,
+        kernel::{
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+            moe::{
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
+                MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+                MoeRouterTopKKernel, MoeScatterKernels,
+                MoeScatterWithMapArguments,
+            },
         },
     },
 };
+
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 struct PerfResult {
     name: String,
@@ -350,7 +351,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx)
         .expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
-    let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
+    let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
         .expect("experts two-pass decode");
     let finalize_kernel =
@@ -461,21 +462,19 @@ fn test_moe_pipeline_breakdown_decode() {
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        gather_kernel
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeGatherArguments {
-                    x_buffer: &x_buf,
-                    bucketed_ids_buffer: &bucketed_ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t,
-                    k,
-                    d_model,
-                },
-            )
-            .expect("gather");
+        gather_kernel.encode(
+            &cb,
+            KernelDataType::BFloat16,
+            &MoeGatherArguments {
+                x_buffer: &x_buf,
+                bucketed_ids_buffer: &bucketed_ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t,
+                k,
+                d_model,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     });

@@ -34,7 +34,7 @@ pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError,
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernel,
+    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
     MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
     MoeScatterError, MoeScatterKernels, MoeScatterWithMapArguments,
 };

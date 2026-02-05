@@ -6,7 +6,6 @@ use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     SharedMoeWeights,
 };
-use crate::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
@@ -18,14 +17,17 @@ use crate::{
             MetalArray, NSRange, ProtocolObject, Retained,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::{
-                dsl::MoeFinalizeMetalKernel,
+                MoeGatherKernels,
+                dsl::{
+                    MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
+                },
                 moe::{
                     MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
                     MoeExpertsTwoPassDecodeKernel,
                     MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
-                    MoeGatherKernel, MoeRouterTopKArguments,
-                    MoeRouterTopKKernel, MoeScatterArguments,
-                    MoeScatterKernels, MoeScatterWithMapArguments,
+                    MoeRouterTopKArguments, MoeRouterTopKKernel,
+                    MoeScatterArguments, MoeScatterKernels,
+                    MoeScatterWithMapArguments,
                 },
             },
         },
@@ -47,7 +49,7 @@ pub struct MoeBlock {
     router_topk_kernel: MoeRouterTopKKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
-    gather_kernel: MoeGatherKernel,
+    gather_kernels: MoeGatherKernels,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
     finalize_kernel: MoeFinalizeMetalKernel,
@@ -153,7 +155,7 @@ impl MoeBlock {
                 e
             ))
         })?;
-        let gather_kernel = MoeGatherKernel::new(context).map_err(|e| {
+        let gather_kernel = MoeGatherKernels::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Gather kernel error: {:?}",
                 e
@@ -272,7 +274,7 @@ impl MoeBlock {
             router_topk_kernel,
             counts_offsets_kernel,
             scatter_kernels,
-            gather_kernel,
+            gather_kernels: gather_kernel,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
             finalize_kernel,
@@ -516,21 +518,19 @@ impl EncodableBlock<Metal> for MoeBlock {
             )
             .expect("MoE scatter failed");
 
-        self.gather_kernel
-            .encode(
-                root,
-                self.data_type,
-                MoeGatherArguments {
-                    x_buffer: &main_buf,
-                    bucketed_ids_buffer: &bucketed_ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t: suffix_length,
-                    k,
-                    d_model: self.model_dim,
-                },
-            )
-            .expect("MoE gather failed");
+        self.gather_kernels.encode(
+            root,
+            self.data_type,
+            &MoeGatherArguments {
+                x_buffer: &main_buf,
+                bucketed_ids_buffer: &bucketed_ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t: suffix_length,
+                k,
+                d_model: self.model_dim,
+            },
+        );
 
         let gating_code = Self::gating_code_from_activation(
             &self.moe_config.expert_config.activation,
