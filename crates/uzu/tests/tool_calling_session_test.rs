@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 mod common;
@@ -38,8 +40,33 @@ struct WindSpeedParameters {
     location: String,
 }
 
+#[derive(Debug, Serialize, JsonSchema)]
+struct BashOutput {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+}
+
+#[tool(description = "Execute a bash command and return its output.")]
+fn bash(
+    /// The bash command to execute
+    command: String
+) -> Result<BashOutput, String> {
+    let output = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(&command)
+        .output()
+        .map_err(|error| format!("Failed to execute bash: {}", error))?;
+
+    Ok(BashOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        exit_code: output.status.code().unwrap_or(-1),
+    })
+}
+
 #[test]
-fn test_tool_calling_session() {
+fn test_tool_calling_session_base() {
     let mut tool_registry = ToolRegistry::new();
     tool_registry.register(GetCurrentTemperatureToolImplementation);
     tool_registry.register_lambda(
@@ -49,14 +76,31 @@ fn test_tool_calling_session() {
             return Ok(10.0);
         },
     );
+    run_with_tools_registry(
+        "What is temperature and wind speed in London?".to_string(),
+        tool_registry,
+    );
+}
 
+#[test]
+fn test_tool_calling_session_bash() {
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(BashToolImplementation);
+    run_with_tools_registry(
+        "Find desktop folder and list its contents".to_string(),
+        tool_registry,
+    );
+}
+
+fn run_with_tools_registry(
+    prompt: String,
+    tool_registry: ToolRegistry,
+) {
     let model_path = common::get_test_model_path();
     let config = DecodingConfig::default();
     let mut session =
         ChatSession::new(model_path, config, Some(tool_registry)).unwrap();
-    let input = Input::Text(String::from(
-        "What is temperature and wind speed in London?",
-    ));
+    let input = Input::Text(prompt);
     let output = session
         .run(
             input,
