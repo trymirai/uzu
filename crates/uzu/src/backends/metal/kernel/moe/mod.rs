@@ -18,7 +18,7 @@ pub use experts::{
 pub use experts_single::{
     MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
 };
-pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
+pub use gather::{MoeGatherArguments, MoeGatherKernels};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
 };

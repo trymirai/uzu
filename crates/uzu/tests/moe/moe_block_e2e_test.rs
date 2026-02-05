@@ -1,24 +1,24 @@
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::{
-    MoeCountsOffsetsFusedKernel, MoeFinalizeKernel,
-};
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use uzu::backends::metal::{
-    MTLContext,
-    kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
-        MoeScatterWithMapArguments,
-        dsl::MoeFinalizeMetalKernel,
-        moe::{
-            MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
-            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
-            MoeRouterTopKKernel,
+use uzu::backends::{
+    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+    metal::{
+        MTLContext,
+        kernel::{
+            KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
+            MoeScatterWithMapArguments,
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+            moe::{
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
+                MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+                MoeRouterTopKKernel,
+            },
         },
     },
 };
+
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn silu(
     x: f32,
@@ -461,22 +461,20 @@ fn run_moe_parity_test_internal(
         )
         .expect("scatter");
 
-    let gather = MoeGatherKernel::new(&ctx).expect("gather");
-    gather
-        .encode(
-            &cb,
-            KernelDataType::BFloat16,
-            MoeGatherArguments {
-                x_buffer: &x_buf,
-                bucketed_ids_buffer: &bucketed_ids_buf,
-                x_perm_buffer: &x_perm_buf,
-                sumk_buffer: &sumk_buf,
-                t,
-                k,
-                d_model,
-            },
-        )
-        .expect("gather");
+    let gather = MoeGatherKernels::new(&ctx).expect("gather");
+    gather.encode(
+        &cb,
+        KernelDataType::BFloat16,
+        &MoeGatherArguments {
+            x_buffer: &x_buf,
+            bucketed_ids_buffer: &bucketed_ids_buf,
+            x_perm_buffer: &x_perm_buf,
+            sumk_buffer: &sumk_buf,
+            t,
+            k,
+            d_model,
+        },
+    );
 
     // Additional buffers for 2-pass
     let total_rows = t * k;
