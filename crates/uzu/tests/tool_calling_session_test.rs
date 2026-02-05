@@ -66,5 +66,5 @@ fn test_tool_calling_session() {
             }),
         )
         .unwrap();
-    println!("output: {:?}", output.text.original);
+    println!("{}", output.text.original);
 }

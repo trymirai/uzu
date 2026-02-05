@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use serde::{Serialize, Serializer};
 
 use crate::tool_calling::Value;
@@ -15,16 +14,20 @@ impl ToolCallResultContent {
         match self {
             ToolCallResultContent::Success(value) => value.clone(),
             ToolCallResultContent::Failure(error) => {
-                let mut error_object = HashMap::new();
-                error_object.insert("error".to_string(), Value::String(error.clone()));
+                let mut error_object = IndexMap::new();
+                error_object
+                    .insert("error".to_string(), Value::String(error.clone()));
                 Value::Object(error_object)
-            }
+            },
         }
     }
 }
 
 impl Serialize for ToolCallResultContent {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {

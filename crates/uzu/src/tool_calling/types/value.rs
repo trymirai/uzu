@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::ops::Index;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ pub enum Value {
     Double(f64),
     String(String),
     Array(Vec<Value>),
-    Object(HashMap<String, Value>),
+    Object(IndexMap<String, Value>),
 }
 
 impl Value {
@@ -81,7 +81,7 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&HashMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
         match self {
             Value::Object(value) => Some(value),
             _ => None,
@@ -203,8 +203,8 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
     }
 }
 
-impl<T: Into<Value>> From<HashMap<String, T>> for Value {
-    fn from(map: HashMap<String, T>) -> Self {
+impl<T: Into<Value>> From<IndexMap<String, T>> for Value {
+    fn from(map: IndexMap<String, T>) -> Self {
         Value::Object(
             map.into_iter().map(|(key, value)| (key, value.into())).collect(),
         )

@@ -286,7 +286,7 @@ pub fn expand_tool_attribute(
                     schema_settings.inline_subschemas = true;
                 });
                 let mut schema_generator = settings.into_generator();
-                let mut properties = std::collections::HashMap::new();
+                let mut properties = indexmap::IndexMap::new();
                 let mut required = Vec::new();
 
                 #(#schema_properties)*

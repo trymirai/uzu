@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::tool_calling::Value;
@@ -13,7 +12,7 @@ pub struct ToolFunctionParameters {
     #[serde(rename = "type", default = "default_parameter_type")]
     parameter_type: String,
     #[serde(default)]
-    pub properties: HashMap<String, Value>,
+    pub properties: IndexMap<String, Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required: Vec<String>,
 }
@@ -28,14 +27,14 @@ impl ToolFunctionParameters {
     pub fn new() -> Self {
         Self {
             parameter_type: "object".to_string(),
-            properties: HashMap::new(),
+            properties: IndexMap::new(),
             required: Vec::new(),
         }
     }
 
     pub fn with_properties(
         mut self,
-        properties: HashMap<String, Value>,
+        properties: IndexMap<String, Value>,
     ) -> Self {
         self.properties = properties;
         self
@@ -60,31 +59,6 @@ impl ToolFunctionParameters {
             self.required.push(name);
         }
         self
-    }
-}
-
-impl From<ToolFunctionParameters> for Value {
-    fn from(function_parameters: ToolFunctionParameters) -> Self {
-        let properties: HashMap<String, Value> = function_parameters.properties;
-
-        let mut map = HashMap::new();
-        map.insert("type".to_string(), Value::String("object".to_string()));
-        map.insert("properties".to_string(), Value::Object(properties));
-
-        if !function_parameters.required.is_empty() {
-            map.insert(
-                "required".to_string(),
-                Value::Array(
-                    function_parameters
-                        .required
-                        .into_iter()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-
-        Value::Object(map)
     }
 }
 
