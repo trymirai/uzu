@@ -1,4 +1,7 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use super::model_shape::ModelShape;
 use crate::{
@@ -115,9 +118,7 @@ impl<Context: DeviceContext> ScratchBuffers<Context> {
             // 2-D
             attention_window_size_to_bias: {
                 // Collect unique window sizes across all layers
-                let unique_window_sizes: std::collections::HashSet<
-                    Option<usize>,
-                > = model_shape
+                let unique_window_sizes: HashSet<Option<usize>> = model_shape
                     .sliding_window_length_per_layer
                     .iter()
                     .copied()

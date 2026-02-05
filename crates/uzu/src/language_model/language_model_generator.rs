@@ -1,4 +1,6 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -13,11 +15,11 @@ use super::{
 use crate::{
     Array,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-        MTLCommandEncoder, MTLCommandQueue,
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
         forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
-            INVALID_POSITION,
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+            ForwardPassState, INVALID_POSITION,
         },
     },
     session::{
@@ -234,7 +236,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
-                self.skip_attention_bias_fill(),
+                self.skip_attention_bias_fill_windows(true),
             );
 
             if should_capture {
@@ -401,7 +403,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
-            self.skip_attention_bias_fill(),
+            self.skip_attention_bias_fill_windows(false),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -509,8 +511,11 @@ impl LanguageModelGenerator {
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        let skip_attention_bias_fill =
-            pass_idx > 0 && self.skip_attention_bias_fill();
+        let skip_attention_bias_fill_windows = if pass_idx > 0 {
+            self.skip_attention_bias_fill_windows(false)
+        } else {
+            HashSet::new()
+        };
 
         let skip_token_ids_copy = pass_idx > 0;
 
@@ -540,7 +545,7 @@ impl LanguageModelGenerator {
             task.is_prefilling,
             None,
             skip_token_ids_copy,
-            skip_attention_bias_fill,
+            &skip_attention_bias_fill_windows,
             async_positions,
             async_seeds,
         );
@@ -575,13 +580,10 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
-        let token_ids_buffer = self
-            .context
-            .scratch_buffers
-            .token_ids
-            .borrow()
-            .mtl_buffer_cloned();
+        let sampling_output_buffer =
+            sampling_output.borrow().mtl_buffer_cloned();
+        let token_ids_buffer =
+            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -722,8 +724,13 @@ impl LanguageModelGenerator {
             is_prefilling: false,
         };
 
-        let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default(), false);
+        let (_, _) = self.run_model(
+            task,
+            true,
+            false,
+            SamplingMethod::default(),
+            HashSet::new(),
+        );
     }
 
     fn run_model(
@@ -732,7 +739,7 @@ impl LanguageModelGenerator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-        skip_attention_bias_fill: bool,
+        skip_attention_bias_fill_windows: HashSet<Option<usize>>,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
@@ -740,7 +747,7 @@ impl LanguageModelGenerator {
             let mut state = task.create_state(
                 &mut self.context,
                 None,
-                skip_attention_bias_fill,
+                &skip_attention_bias_fill_windows,
             );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
@@ -898,14 +905,23 @@ impl LanguageModelGenerator {
         }
     }
 
-    fn skip_attention_bias_fill(&self) -> bool {
-        let sliding_window_sizes =
-            self.context.model_shape.sliding_window_length_per_layer.clone();
-        let has_sliding_window =
-            sliding_window_sizes.iter().any(|size| size.is_some());
+    fn skip_attention_bias_fill_windows(
+        &self,
+        is_prefilling: bool,
+    ) -> HashSet<Option<usize>> {
         let has_speculative_suffix =
             self.decoding_config.generate_suffix_length() > 1;
-        let should_skip = !has_sliding_window && !has_speculative_suffix;
-        return should_skip;
+
+        let should_skip_all = !is_prefilling && !has_speculative_suffix;
+        if should_skip_all {
+            self.context
+                .model_shape
+                .sliding_window_length_per_layer
+                .iter()
+                .cloned()
+                .collect()
+        } else {
+            HashSet::new()
+        }
     }
 }
