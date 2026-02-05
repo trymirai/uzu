@@ -2,6 +2,7 @@
 #include <metal_simdgroup>
 #include <metal_simdgroup_matrix>
 #include "../quant_matmul/mma.h"
+#include "moe_commons.h"
 
 using namespace metal;
 
@@ -10,23 +11,6 @@ static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
 
 static inline uint linear_tid(uint3 tid, uint3 tpg) {
   return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x;
-}
-
-static inline float gelu_approx(float x) {
-  const float k0 = 0.7978845608f; // sqrt(2/pi)
-  const float k1 = 0.044715f;
-  if (x > 10.0f)
-    return x;
-  if (x < -10.0f)
-    return 0.0f;
-  float x3 = x * x * x;
-  float t = clamp(k0 * (x + k1 * x3), -10.0f, 10.0f);
-  return 0.5f * x * (1.0f + tanh(t));
-}
-
-static inline float silu(float x, float alpha) {
-  // alpha=1 gives standard SiLU; keep alpha param for parity with your API
-  return x / (1.0f + exp(-alpha * x));
 }
 
 template <typename T>
