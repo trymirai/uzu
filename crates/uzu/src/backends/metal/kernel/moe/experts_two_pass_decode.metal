@@ -1,24 +1,10 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "moe_commons.h"
 using namespace metal;
 
 constant uint GATING_SEL
     [[function_constant(30)]]; // 0=GELU,1=SiLU,2=SwiGLU,3=GEGLU
-
-static inline float gelu_approx(float x) {
-  const float k0 = 0.7978845608f;
-  const float k1 = 0.044715f;
-  if (x > 10.0f)
-    return x;
-  if (x < -10.0f)
-    return 0.0f;
-  return 0.5f * x *
-         (1.0f + tanh(clamp(k0 * (x + k1 * x * x * x), -10.0f, 10.0f)));
-}
-
-static inline float silu(float x, float alpha) {
-  return x / (1.0f + exp(-alpha * x));
-}
 
 // === Pass A: Vectorized GEMV with float4 loads ===
 // Structure: 4 simdgroups (128 threads), each outputs 1 hidden element

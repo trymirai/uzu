@@ -1,24 +1,9 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
 #include "../definitions.metal"
-using namespace metal;
+#include "moe_commons.h"
 
 #define SIMD_SIZE 32
-
-static inline float gelu_approx(float x) {
-  const float k0 = 0.7978845608f;
-  const float k1 = 0.044715f;
-  if (x > 10.0f)
-    return x;
-  if (x < -10.0f)
-    return 0.0f;
-  return 0.5f * x *
-         (1.0f + tanh(clamp(k0 * (x + k1 * x * x * x), -10.0f, 10.0f)));
-}
-
-static inline float silu(float x, float alpha) {
-  return x / (1.0f + exp(-alpha * x));
-}
 
 // ============================================================================
 // Pass A: x @ W13[expert] → hidden[k]
