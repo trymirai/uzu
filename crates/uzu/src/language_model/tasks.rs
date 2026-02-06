@@ -1,9 +1,8 @@
-use std::{collections::HashSet, mem::size_of};
+use std::mem::size_of;
 
 use super::LanguageModelGeneratorContext;
 use crate::backends::metal::{
-    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject,
-    Retained,
+    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject, Retained,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
 };
 
@@ -82,7 +81,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         &self,
         context: &mut LanguageModelGeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_attention_bias_fill_windows: &HashSet<Option<usize>>,
+        skip_attention_bias_fill: bool,
     ) -> ForwardPassState {
         ForwardPassState::new_llm(
             context.mtl_context.clone(),
@@ -101,7 +100,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             self.is_prefilling,
             external_bias_fn,
             false,
-            skip_attention_bias_fill_windows,
+            skip_attention_bias_fill,
             None,
             None,
         )

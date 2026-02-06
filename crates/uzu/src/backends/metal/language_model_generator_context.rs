@@ -115,9 +115,12 @@ impl AsyncBuffers {
         }
     }
 
-    /// Reset event counter before async generation
-    pub fn reset_counter(&self) {
+    pub fn reset_counter(
+        &mut self,
+        device: &ProtocolObject<dyn MTLDevice>,
+    ) {
         self.counter.set(0);
+        self.event = device.new_event().expect("Failed to create event");
     }
 
     /// Read sampled token from results buffer at given pass index

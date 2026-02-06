@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-};
+use std::{cell::RefCell, collections::HashMap};
 
 use super::{
     super::{MTLContext, MetalArray},
@@ -266,7 +263,6 @@ impl CacheLayers {
         suffix_length: usize,
         context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_fill_windows: &HashSet<Option<usize>>,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
@@ -279,11 +275,6 @@ impl CacheLayers {
                         ..
                     } => Some(*window_length),
                 };
-
-                // Skip filling this window size if requested
-                if skip_fill_windows.contains(&key) {
-                    continue;
-                }
 
                 if let Some(array) = dst.get_mut(&key) {
                     layer.fill_attention_bias(

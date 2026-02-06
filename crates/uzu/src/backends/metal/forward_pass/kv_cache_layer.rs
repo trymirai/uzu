@@ -343,8 +343,18 @@ impl KVCacheLayer {
 
         match self.state {
             KVCacheLayerState::Full {
-                ..
-            } => None,
+                prefix_len,
+            } => {
+                if prefix_len > 0 {
+                    Some(AttentionBiasUpdate {
+                        key: None,
+                        unmask_col: (prefix_len - 1) as i32,
+                        mask_col: -1,
+                    })
+                } else {
+                    None
+                }
+            },
             KVCacheLayerState::Windowed {
                 ring_offset,
                 ring_length,
