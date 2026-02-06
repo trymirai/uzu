@@ -2,40 +2,41 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
-};
-
-use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     Array, DataType,
+    backends::common::{
+        Backend, Context, Kernels,
+        kernel::mlp::{MlpGateKernel, MlpActivationType},
+    },
     backends::metal::{
-        MTLContext,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        MTLContext, MTLError, ProtocolObject, Retained,
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            mlp::{MlpActivationType, MlpGateActMulEncodable},
             mlp_fused::{MlpFusedArguments, MlpFusedKernel},
             quant_matmul::{
                 MlpFusedQmmArguments, MlpFusedQmmKernel, MlpFusedQmvArguments,
                 MlpFusedQmvKernel,
+                QuantizationType,
             },
         },
+        Metal,
     },
-    config::Activation,
+    config::{Activation, QuantizationMode},
+    encodable_block::{EncodableBlock, EncodingParameters},
 };
 
-pub struct MlpBlock {
-    up: Box<dyn EncodableBlock<Metal>>,
-    gate: MlpGateActMulEncodable,
-    down: Box<dyn EncodableBlock<Metal>>,
+pub struct MlpBlock<B: Backend> {
+    up: Box<dyn EncodableBlock<B>>,
+    gate: MlpGateKernel<B>,
+    down: Box<dyn EncodableBlock<B>>,
 }
 
-impl MlpBlock {
+impl<B: Backend> MlpBlock<B> {
     pub fn new(
-        up: Box<dyn EncodableBlock<Metal>>,
-        gate: MlpGateActMulEncodable,
-        down: Box<dyn EncodableBlock<Metal>>,
+        up: Box<dyn EncodableBlock<B>>,
+        gate: MlpGateKernel<B>,
+        down: Box<dyn EncodableBlock<B>>,
     ) -> Self {
         Self {
             up,
@@ -45,12 +46,12 @@ impl MlpBlock {
     }
 }
 
-impl EncodableBlock<Metal> for MlpBlock {
+impl EncodableBlock<Metal> for MlpBlock<Metal> {
     fn encode(
         &self,
         state: &mut ForwardPassState,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -99,7 +100,7 @@ impl EncodableBlock<Metal> for MlpBlock {
         &self,
         state: &mut ForwardPassState,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         // Up
         self.up.encode_with_shared_encoder(state, encoder, params);
@@ -124,26 +125,25 @@ impl EncodableBlock<Metal> for MlpBlock {
 
 /// MLP Fused Up Projection Variant
 /// Selects between full precision and quantized fused kernels
-pub enum MlpFusedUpKernel {
+pub enum MlpFusedUpKernel<B: Backend> {
     FullPrecision {
-        kernel: RefCell<MlpFusedKernel>,
+        kernel: RefCell<<B::Kernels as Kernels>::MlpFusedKernel>,
     },
     Quantized {
-        qmv: MlpFusedQmvKernel,
-        qmm: MlpFusedQmmKernel,
+        qmv: <B::Kernels as Kernels>::MlpFusedQmvKernel,
+        qmm: <B::Kernels as Kernels>::MlpFusedQmmKernel,
     },
 }
 
 /// MLP block with fused up projection and activation
 /// Combines up * activation(gate) into a single kernel call
-pub struct MlpFusedBlock {
-    context: Rc<MTLContext>,
-    fused_up: MlpFusedUpKernel,
-    down: Box<dyn EncodableBlock<Metal>>,
-    weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
-    scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
-    zero_points_or_biases_buffer:
-        Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+pub struct MlpFusedBlock<B: Backend> {
+    context: B::Context,
+    fused_up: MlpFusedUpKernel<B>,
+    down: Box<dyn EncodableBlock<B>>,
+    weights_buffer: B::NativeBuffer,
+    scales_buffer: Option<B::NativeBuffer>,
+    zero_points_or_biases_buffer: Option<B::NativeBuffer>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -151,7 +151,7 @@ pub struct MlpFusedBlock {
     hidden_array_id: ArrayId,
 }
 
-impl MlpFusedBlock {
+impl MlpFusedBlock<Metal> {
     /// Create MLP fused block with full precision weights
     pub fn new_full_precision(
         context: Rc<MTLContext>,
@@ -163,7 +163,7 @@ impl MlpFusedBlock {
         down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
-    ) -> Result<Self, crate::backends::metal::MTLError> {
+    ) -> Result<Self, MTLError> {
         let kernel = MlpFusedKernel::new(data_type, true)?; // Weights transposed
 
         Ok(Self {
@@ -193,13 +193,13 @@ impl MlpFusedBlock {
         input_dim: usize,
         hidden_dim: usize,
         group_size: usize,
-        mode: crate::config::QuantizationMode,
-        quantization_type: crate::backends::metal::kernel::quant_matmul::QuantizationType,
+        mode: QuantizationMode,
+        quantization_type: QuantizationType,
         activation: &Activation,
         down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
-    ) -> Result<Self, crate::backends::metal::MTLError> {
+    ) -> Result<Self, MTLError> {
         let qmv = MlpFusedQmvKernel::new(
             &context,
             data_type,
@@ -208,7 +208,7 @@ impl MlpFusedBlock {
             quantization_type,
         )
         .map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("{:?}", e))
+            MTLError::Generic(format!("{:?}", e))
         })?;
 
         let qmm = MlpFusedQmmKernel::new(
@@ -219,7 +219,7 @@ impl MlpFusedBlock {
             quantization_type,
         )
         .map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("{:?}", e))
+            MTLError::Generic(format!("{:?}", e))
         })?;
 
         Ok(Self {
@@ -314,12 +314,12 @@ impl MlpFusedBlock {
     }
 }
 
-impl EncodableBlock<Metal> for MlpFusedBlock {
+impl EncodableBlock<Metal> for MlpFusedBlock<Metal> {
     fn encode(
         &self,
         state: &mut ForwardPassState,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -363,7 +363,7 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
         &self,
         state: &mut ForwardPassState,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         // Fused up + activation
         let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);

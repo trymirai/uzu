@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use crate::{
     DataType,
     backends::{
-        common::kernel::MlpGateActMulKernel,
+        common::kernel::{MlpGateActMulKernel, mlp::MlpActivationType},
         metal::{
             MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType,
             MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
@@ -18,28 +18,6 @@ use crate::{
 pub const MLP_FUSED_FC_INDEX: u64 = 50;
 pub const MLP_HIDDEN_DIM_FC_INDEX: u64 = 51;
 pub const MLP_ACTIVATION_FC_INDEX: u64 = 52;
-
-/// MLP activation type for fused kernels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u32)]
-pub enum MlpActivationType {
-    SiLU = 0,
-    Gelu = 1,
-}
-
-impl From<&Activation> for MlpActivationType {
-    fn from(act: &Activation) -> Self {
-        match act {
-            Activation::SiLU {
-                ..
-            } => MlpActivationType::SiLU,
-            Activation::Gelu => MlpActivationType::Gelu,
-            Activation::Identity => {
-                panic!("Identity activation not supported for MLP fusion")
-            },
-        }
-    }
-}
 
 /// Configuration for MLP fused matmul epilogue
 #[derive(Debug, Clone, Copy)]

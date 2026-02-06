@@ -3,9 +3,54 @@ use crate::backends::{
     metal::ForwardPassState,
 };
 
-mod sampling;
+pub use crate::backends::metal::Metal;
+pub use crate::backends::metal::ForwardPassState;
 
+mod activation;
+mod attention;
+mod classifier_layer;
+mod decoder;
+mod embedding;
+mod layer;
+mod linear;
+mod mamba_mixer;
+mod mlp;
+mod moe_block;
+mod normalization;
+mod pooling;
+mod prediction_head;
+mod rope;
+mod sampling;
+mod short_conv_mixer;
+mod tensor_add_swap;
+mod tensor_copy;
+pub mod transformer_layer;
+
+pub use activation::Activation;
+pub use attention::Attention;
+pub use classifier_layer::ClassifierLayer;
+pub use decoder::Decoder;
+pub use embedding::{
+    EmbeddingError, FullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout,
+};
+pub use layer::LayerExecutables;
+pub use linear::{FullPrecisionLinear, QuantizedLinear};
+pub(crate) use mamba_mixer::MambaMixer;
+pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
+pub use moe_block::{MoeBlock, SharedMoeWeights};
+pub use normalization::{
+    LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm,
+};
+pub use pooling::Pooling;
+pub use prediction_head::PredictionHead;
+pub use rope::Rope;
+pub(crate) use short_conv_mixer::ShortConvMixer;
 pub use sampling::Sampling;
+pub use tensor_add_swap::TensorAddSwap;
+pub use tensor_copy::TensorCopy;
+pub use transformer_layer::TransformerLayer;
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a, B: Backend> {
