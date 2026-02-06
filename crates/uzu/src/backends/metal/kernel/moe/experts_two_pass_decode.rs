@@ -11,7 +11,7 @@ use crate::{
             MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel,
         },
         metal::{
-            MTLContext, MTLError,
+            KernelDataType, MTLContext, MTLError,
             kernel::{
                 MoeExpertsTwoPassArguments,
                 dsl::{
@@ -22,14 +22,17 @@ use crate::{
                     MoePassARowMapArguments, MoePassATileBuildArguments,
                     MoePassATileCountsArguments, MoePassATileDispatchArguments,
                     MoePassATileKernels, MoePassATileScanArguments,
-                    dtype_index,
                 },
             },
         },
     },
 };
 
-static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
+static DTYPES: [KernelDataType; 3] = [
+    KernelDataType::Float16,
+    KernelDataType::BFloat16,
+    KernelDataType::Float32,
+];
 
 pub struct MoeExpertsTwoPassDecodeKernels {
     pass_a_tile: MoePassATileKernels,
@@ -43,8 +46,11 @@ impl MoeExpertsTwoPassDecodeKernels {
         for gate in 0u32..4u32 {
             let mut kernels = vec![];
             for dtype in &DTYPES {
-                let kernel =
-                    MoeExpertsDecodePassAMetalKernel::new(ctx, *dtype, gate)?;
+                let kernel = MoeExpertsDecodePassAMetalKernel::new(
+                    ctx,
+                    (*dtype).into(),
+                    gate,
+                )?;
                 kernels.push(kernel);
             }
             pass_a_indirect.push(kernels);
@@ -54,7 +60,7 @@ impl MoeExpertsTwoPassDecodeKernels {
         for dtype in &DTYPES {
             let kernel = MoeExpertsDecodeDownFused2DMetalKernel::new(
                 ctx,
-                *dtype,
+                (*dtype).into(),
                 DataType::F32,
             )?;
             fused_down.push(kernel);
@@ -128,7 +134,10 @@ impl MoeExpertsTwoPassDecodeKernels {
 
         // pass a
         let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx = dtype_index(args.data_type);
+        let dtype_idx = DTYPES
+            .iter()
+            .position(|&t| t == args.data_type)
+            .expect("Invalid dtype index");
         let pass_a_encoder = command_buffer
             .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");

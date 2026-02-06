@@ -8,7 +8,7 @@ use uzu::backends::metal::{
     kernel::moe::{
         MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
         MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-        MoeExpertsTwoPassPrefillKernel,
+        MoeExpertsTwoPassPrefillKernels,
     },
 };
 
@@ -250,7 +250,7 @@ fn run_two_pass_prefill_case(
         .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
         .collect();
 
-    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(ctx)
+    let experts_kernel = MoeExpertsTwoPassPrefillKernels::new(ctx)
         .expect("experts prefill kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
@@ -307,9 +307,7 @@ fn run_two_pass_prefill_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass prefill encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -321,9 +319,7 @@ fn run_two_pass_prefill_case(
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass prefill encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);

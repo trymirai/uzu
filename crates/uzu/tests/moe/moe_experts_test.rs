@@ -15,7 +15,7 @@ use uzu::backends::metal::{
     KernelDataType,
     kernel::moe::{
         MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
-        MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel,
+        MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernels,
     },
 };
 
@@ -725,44 +725,42 @@ fn test_two_pass_prefill_correctness() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel =
-        MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("kernel");
+        MoeExpertsTwoPassPrefillKernels::new(&ctx).expect("kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
         .expect("Failed to create command buffer");
-    experts_kernel
-        .encode(
-            &cb,
-            MoeExpertsTwoPassArguments {
-                x_perm_buffer: &x_perm_buf,
-                expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
-                hidden_buffer: &hidden_buf,
-                output_buffer: &y_partial_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
-                total_rows: sum_k,
-                d_model,
-                d_ff,
-                e,
-                num_tiles_k: ((d_ff + 63) / 64) as u32,
-                gating_code,
-                gate_clip_min: f32::NEG_INFINITY,
-                gate_clip_max: f32::INFINITY,
-                up_clip_min: f32::NEG_INFINITY,
-                up_clip_max: f32::INFINITY,
-                silu_alpha,
-                data_type: KernelDataType::BFloat16,
-            },
-        )
-        .expect("encode");
+    experts_kernel.encode(
+        &cb,
+        &MoeExpertsTwoPassArguments {
+            x_perm_buffer: &x_perm_buf,
+            expert_offsets: &offsets_buf,
+            row_expert_map: &row_expert_map_buf,
+            hidden_buffer: &hidden_buf,
+            output_buffer: &y_partial_buf,
+            w13_all: &w13_buf,
+            w2_all: &w2_buf,
+            up_biases: &up_biases_buf,
+            down_biases: &down_biases_buf,
+            tile_counts: &tile_counts_buf,
+            tile_offsets: &tile_offsets_buf,
+            tile_map: &tile_map_buf,
+            total_tiles: &total_tiles_buf,
+            dispatch_args: &dispatch_args_buf,
+            total_rows: sum_k,
+            d_model,
+            d_ff,
+            e,
+            num_tiles_k: ((d_ff + 63) / 64) as u32,
+            gating_code,
+            gate_clip_min: f32::NEG_INFINITY,
+            gate_clip_max: f32::INFINITY,
+            up_clip_min: f32::NEG_INFINITY,
+            up_clip_max: f32::INFINITY,
+            silu_alpha,
+            data_type: KernelDataType::BFloat16,
+        },
+    );
     cb.commit();
     cb.wait_until_completed();
 
