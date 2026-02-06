@@ -8,9 +8,9 @@ use uzu::backends::{
     metal::{
         MTLContext, ProtocolObject, Retained,
         kernel::{
-            KernelDataType,
-            dsl::MoeCountsOffsetsFusedMetalKernel,
-            moe::{MoeRouterTopKArguments, MoeRouterTopKKernelWrapper},
+	        KernelDataType,
+	        dsl::MoeCountsOffsetsFusedMetalKernel,
+	        moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
         },
     },
 };
@@ -81,7 +81,7 @@ fn gen_topk_ids_from_logits(
 
     // Use fused router+topk kernel
     let router_topk =
-        MoeRouterTopKKernelWrapper::new(ctx, KernelDataType::BFloat16)
+        MoeRouterTopKKernelBlock::new(ctx, KernelDataType::BFloat16)
             .expect("router_topk kernel");
     let cb = ctx
         .command_queue

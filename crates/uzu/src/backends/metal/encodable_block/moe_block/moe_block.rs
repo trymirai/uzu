@@ -22,12 +22,12 @@ use crate::{
                     MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
                 },
                 moe::{
-                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
-                    MoeExpertsTwoPassDecodeKernels,
-                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
-                    MoeRouterTopKArguments, MoeRouterTopKKernelWrapper,
-                    MoeScatterArguments, MoeScatterKernels,
-                    MoeScatterWithMapArguments,
+	                MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
+	                MoeExpertsTwoPassDecodeKernels,
+	                MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
+	                MoeRouterTopKArguments, MoeRouterTopKKernelBlock,
+	                MoeScatterArguments, MoeScatterKernels,
+	                MoeScatterWithMapArguments,
                 },
             },
         },
@@ -45,7 +45,7 @@ enum RouterBlock {
 pub struct MoeBlock {
     router: RouterBlock,
     router_renorm: bool,
-    router_topk_kernel: MoeRouterTopKKernelWrapper,
+    router_topk_kernel: MoeRouterTopKKernelBlock,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernels: MoeGatherKernels,
@@ -135,7 +135,7 @@ impl MoeBlock {
         };
 
         let router_topk_kernel =
-            MoeRouterTopKKernelWrapper::new(context, router_kernel_data_type)
+            MoeRouterTopKKernelBlock::new(context, router_kernel_data_type)
                 .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
                     "RouterTopK fused kernel error: {:?}",

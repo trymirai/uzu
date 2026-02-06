@@ -10,10 +10,10 @@ use uzu::backends::{
         kernel::{
             dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
             moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-                MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
-                MoeRouterTopKKernelWrapper, MoeScatterKernels,
-                MoeScatterWithMapArguments,
+	            MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
+	            MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+	            MoeRouterTopKKernelBlock, MoeScatterKernels,
+	            MoeScatterWithMapArguments,
             },
         },
     },
@@ -136,7 +136,7 @@ fn test_moe_e2e_decode_perf() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         let router_topk =
-            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+            MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
                 .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
@@ -212,7 +212,7 @@ fn test_moe_e2e_prefill_perf() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         let router_topk =
-            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+            MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
                 .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
@@ -358,7 +358,7 @@ fn test_moe_pipeline_breakdown_decode() {
         MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
             .expect("finalize");
     let router_topk_fused_kernel =
-        MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+        MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
             .expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)

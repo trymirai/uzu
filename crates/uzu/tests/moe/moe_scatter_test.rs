@@ -6,10 +6,10 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use uzu::backends::{
     common::kernel::MoeCountsOffsetsFusedKernel,
     metal::kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
-        MoeScatterKernels,
-        dsl::MoeCountsOffsetsFusedMetalKernel,
-        moe::{MoeRouterTopKArguments, MoeRouterTopKKernelWrapper},
+	    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
+	    MoeScatterKernels,
+	    dsl::MoeCountsOffsetsFusedMetalKernel,
+	    moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
     },
 };
 
@@ -85,7 +85,7 @@ fn test_scatter_buckets_parity() {
 
         // Use fused router+topk kernel
         let router_topk =
-            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+            MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
                 .expect("router_topk");
         let cb = ctx
             .command_queue

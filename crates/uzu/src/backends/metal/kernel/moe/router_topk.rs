@@ -39,11 +39,11 @@ pub struct MoeRouterTopKArguments<'a> {
     pub renorm: bool,
 }
 
-pub struct MoeRouterTopKKernelWrapper {
+pub struct MoeRouterTopKKernelBlock {
     kernel: MoeRouterTopKMetalKernel,
 }
 
-impl MoeRouterTopKKernelWrapper {
+impl MoeRouterTopKKernelBlock {
     pub fn new(
         ctx: &MTLContext,
         data_type: KernelDataType,

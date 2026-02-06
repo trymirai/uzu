@@ -21,7 +21,7 @@ pub use experts_single::{
 pub use experts_two_pass_decode::MoeExpertsTwoPassDecodeKernels;
 pub use gather::{MoeGatherArguments, MoeGatherKernels};
 pub use router_topk::{
-    MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernelWrapper,
+	MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernelBlock,
 };
 pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,

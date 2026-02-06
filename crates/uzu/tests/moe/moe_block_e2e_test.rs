@@ -12,7 +12,7 @@ use uzu::backends::{
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
                 MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
-                MoeRouterTopKKernelWrapper,
+                MoeRouterTopKKernelBlock,
             },
         },
     },
@@ -388,7 +388,7 @@ fn run_moe_parity_test_internal(
 
     // Router + TopK (fused kernel)
     let router_topk =
-        MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+        MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
             .expect("router+topk");
     router_topk
         .encode(
