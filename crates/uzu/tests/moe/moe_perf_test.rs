@@ -12,7 +12,7 @@ use uzu::backends::{
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
                 MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
-                MoeRouterTopKKernel, MoeScatterKernels,
+                MoeRouterTopKKernelWrapper, MoeScatterKernels,
                 MoeScatterWithMapArguments,
             },
         },
@@ -136,7 +136,8 @@ fn test_moe_e2e_decode_perf() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         let router_topk =
-            MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+                .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -147,8 +148,7 @@ fn test_moe_e2e_decode_perf() {
             router_topk
                 .encode(
                     &cb,
-                    KernelDataType::BFloat16,
-                    MoeRouterTopKArguments {
+                    &MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
                         bias_buffer: &router_b_buf,
@@ -212,7 +212,8 @@ fn test_moe_e2e_prefill_perf() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         let router_topk =
-            MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+                .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -223,8 +224,7 @@ fn test_moe_e2e_prefill_perf() {
             router_topk
                 .encode(
                     &cb,
-                    KernelDataType::BFloat16,
-                    MoeRouterTopKArguments {
+                    &MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
                         bias_buffer: &router_b_buf,
@@ -358,7 +358,8 @@ fn test_moe_pipeline_breakdown_decode() {
         MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
             .expect("finalize");
     let router_topk_fused_kernel =
-        MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
+        MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+            .expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf =
@@ -370,8 +371,7 @@ fn test_moe_pipeline_breakdown_decode() {
             router_topk_fused_kernel
                 .encode(
                     &cb,
-                    KernelDataType::BFloat16,
-                    MoeRouterTopKArguments {
+                    &MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
                         bias_buffer: &router_b_buf,
@@ -411,51 +411,50 @@ fn test_moe_pipeline_breakdown_decode() {
             cb.wait_until_completed();
         });
 
-    let scatter_perf = time_kernel("Scatter", 2, 5, || {
-        let cb = ctx
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer");
-        scatter_kernel
-            .encode_block_bases(
-                &cb,
-                uzu::backends::metal::kernel::moe::MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
+    let scatter_perf =
+        time_kernel("Scatter", 2, 5, || {
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
+            scatter_kernel
+                .encode_block_bases(
+                    &cb,
+                    uzu::backends::metal::kernel::moe::MoeBlockBasesArguments {
+                        partials_buffer: &partials_buf,
+                        block_bases_buffer: &block_bases_buf,
+                        block_alloc_buffer: &block_alloc_buf,
+                        e,
+                        num_blocks,
+                        num_tiles,
+                    },
+                )
+                .expect("block bases");
+            scatter_kernel.encode_scatter_with_map(
+            &cb,
+            MoeScatterWithMapArguments {
+                base:
+                uzu::backends::metal::kernel::moe::MoeScatterArguments {
+                    topk_ids_buffer: &topk_ids_buf,
+                    topk_probs_buffer: &topk_probs_buf,
+                    offsets_buffer: &offsets_buf,
                     block_bases_buffer: &block_bases_buf,
                     block_alloc_buffer: &block_alloc_buf,
+                    out_ids_buffer: &bucketed_ids_buf,
+                    out_probs_buffer: &bucketed_probs_buf,
+                    t,
                     e,
+                    k,
                     num_blocks,
                     num_tiles,
                 },
-            )
-            .expect("block bases");
-        scatter_kernel
-            .encode_scatter_with_map(
-                &cb,
-                MoeScatterWithMapArguments {
-                    base:
-                        uzu::backends::metal::kernel::moe::MoeScatterArguments {
-                            topk_ids_buffer: &topk_ids_buf,
-                            topk_probs_buffer: &topk_probs_buf,
-                            offsets_buffer: &offsets_buf,
-                            block_bases_buffer: &block_bases_buf,
-                            block_alloc_buffer: &block_alloc_buf,
-                            out_ids_buffer: &bucketed_ids_buf,
-                            out_probs_buffer: &bucketed_probs_buf,
-                            t,
-                            e,
-                            k,
-                            num_blocks,
-                            num_tiles,
-                        },
-                    tok2row_buffer: &tok2row_buf,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("scatter");
-        cb.commit();
-        cb.wait_until_completed();
-    });
+                tok2row_buffer: &tok2row_buf,
+            },
+            KernelDataType::BFloat16,
+        ).expect("scatter");
+            cb.commit();
+            cb.wait_until_completed();
+        });
 
     let gather_perf = time_kernel("Gather", 2, 5, || {
         let cb = ctx

@@ -35,7 +35,7 @@ pub use moe::{
     MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError,
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
     MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
-    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
+    MoeRouterTopKArguments, MoeRouterTopKKernelWrapper, MoeScatterArguments,
     MoeScatterError, MoeScatterKernels, MoeScatterWithMapArguments,
 };
 pub use rms_norm::{

@@ -12,7 +12,7 @@ use uzu::backends::{
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
                 MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
-                MoeRouterTopKKernel,
+                MoeRouterTopKKernelWrapper,
             },
         },
     },
@@ -387,12 +387,13 @@ fn run_moe_parity_test_internal(
         .expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
-    let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
+    let router_topk =
+        MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+            .expect("router+topk");
     router_topk
         .encode(
             &cb,
-            KernelDataType::BFloat16,
-            MoeRouterTopKArguments {
+            &MoeRouterTopKArguments {
                 input_buffer: &x_buf,
                 weight_buffer: &router_w_buf,
                 bias_buffer: &router_b_buf,

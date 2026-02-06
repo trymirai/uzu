@@ -1,18 +1,21 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
-use uzu::backends::metal::{
-    MTLContext, ProtocolObject, Retained,
-    kernel::{
-        KernelDataType,
-        dsl::MoeCountsOffsetsFusedMetalKernel,
-        moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+use uzu::backends::{
+    common::kernel::MoeCountsOffsetsFusedKernel,
+    metal::{
+        MTLContext, ProtocolObject, Retained,
+        kernel::{
+            KernelDataType,
+            dsl::MoeCountsOffsetsFusedMetalKernel,
+            moe::{MoeRouterTopKArguments, MoeRouterTopKKernelWrapper},
+        },
     },
 };
+
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(
     topk_ids: &[i32],
@@ -78,7 +81,8 @@ fn gen_topk_ids_from_logits(
 
     // Use fused router+topk kernel
     let router_topk =
-        MoeRouterTopKKernel::new(ctx).expect("router_topk kernel");
+        MoeRouterTopKKernelWrapper::new(ctx, KernelDataType::BFloat16)
+            .expect("router_topk kernel");
     let cb = ctx
         .command_queue
         .command_buffer()
@@ -95,9 +99,7 @@ fn gen_topk_ids_from_logits(
         k,
         renorm: true,
     };
-    router_topk
-        .encode(&cb, KernelDataType::BFloat16, args)
-        .expect("encode router_topk");
+    router_topk.encode(&cb, &args).expect("encode router_topk");
     cb.commit();
     cb.wait_until_completed();
 

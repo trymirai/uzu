@@ -1,17 +1,19 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{Rng, SeedableRng, rngs::StdRng};
+use uzu::backends::{
+    common::kernel::MoeCountsOffsetsFusedKernel,
+    metal::kernel::{
+        KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
+        MoeScatterKernels,
+        dsl::MoeCountsOffsetsFusedMetalKernel,
+        moe::{MoeRouterTopKArguments, MoeRouterTopKKernelWrapper},
+    },
+};
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
-use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
-    MoeScatterKernels,
-    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
-};
 
 fn cpu_expert_buckets(
     topk_ids: &[i32],
@@ -82,16 +84,17 @@ fn test_scatter_buckets_parity() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         // Use fused router+topk kernel
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
+        let router_topk =
+            MoeRouterTopKKernelWrapper::new(&ctx, KernelDataType::BFloat16)
+                .expect("router_topk");
         let cb = ctx
             .command_queue
             .command_buffer()
             .expect("Failed to create command buffer");
-        router_topk
+        let _ = router_topk
             .encode(
                 &cb,
-                KernelDataType::BFloat16,
-                MoeRouterTopKArguments {
+                &MoeRouterTopKArguments {
                     input_buffer: &input_buf,
                     weight_buffer: &weight_buf,
                     bias_buffer: &bias_buf,
