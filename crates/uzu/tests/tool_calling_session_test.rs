@@ -7,7 +7,7 @@ use uzu::{
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
-        types::{Input, Output},
+        types::{Input, Output, ParsedSection},
     },
     tool_calling::*,
 };
@@ -92,6 +92,22 @@ fn test_tool_calling_session_bash() {
     );
 }
 
+fn print_sections(
+    sections: &[ParsedSection],
+    prefix: String,
+) {
+    let names: Vec<&str> = sections
+        .iter()
+        .map(|section| match section {
+            ParsedSection::ChainOfThought(_) => "ChainOfThought",
+            ParsedSection::Response(_) => "Response",
+            ParsedSection::ToolCallCandidate(_) => "ToolCallCandidate",
+            ParsedSection::ToolCall(_) => "ToolCall",
+        })
+        .collect();
+    println!("{}: {}", prefix, names.join(", "));
+}
+
 fn run_with_tools_registry(
     prompt: String,
     tool_registry: ToolRegistry,
@@ -105,10 +121,32 @@ fn run_with_tools_registry(
         .run(
             input,
             RunConfig::default().tokens_limit(512),
-            Some(|_: Output| {
+            Some(|output: Output| {
+                print_sections(
+                    &output.text.parsed.sections,
+                    "Chunk".to_string(),
+                );
                 return true;
             }),
         )
         .unwrap();
-    println!("{}", output.text.original);
+    println!("-------------------------");
+    print_sections(&output.text.parsed.sections, "Final".to_string());
+    println!("-------------------------");
+    println!(
+        "Chain of thought: {}",
+        output.text.parsed.chain_of_thought().unwrap_or("None".to_string())
+    );
+    println!("-------------------------");
+    println!(
+        "Response: {}",
+        output.text.parsed.response().unwrap_or("None".to_string())
+    );
+    println!("-------------------------");
+    for tool_call in output.text.parsed.tool_calls() {
+        println!("Tool call: {:#?}", tool_call);
+        println!("-------------------------");
+    }
+    println!("Original: {}", output.text.original);
+    println!("-------------------------");
 }

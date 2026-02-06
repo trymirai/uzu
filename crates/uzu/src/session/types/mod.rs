@@ -11,4 +11,4 @@ pub use message::Message;
 pub use output::{FinishReason, Output};
 pub use role::Role;
 pub use stats::{RunStats, Stats, StepStats, TotalStats};
-pub use text::{ParsedText, Text};
+pub use text::{ParsedSection, ParsedText, Text};

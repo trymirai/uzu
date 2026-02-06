@@ -158,6 +158,10 @@ impl ChatSession {
                 .message_processor_config
                 .output_parser_regex
                 .clone(),
+            language_model_config
+                .message_processor_config
+                .tool_call_format
+                .clone(),
         )?;
 
         let llm = LanguageModelGenerator::new(&model_path, decoding_config)
@@ -185,6 +189,8 @@ impl ChatSession {
     where
         F: Fn(Output) -> bool,
     {
+        self.output_parser.reset();
+
         let context_mode = self
             .llm
             .as_ref()
@@ -339,6 +345,8 @@ impl ChatSession {
         )?;
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
+        self.output_parser
+            .append_token_ids(&self.tokenizer, &prefill_tokens)?;
         language_model_generator.clear_cache();
 
         let prefill_suffix_length = language_model_generator
@@ -373,8 +381,7 @@ impl ChatSession {
             )
         };
         let prefill_output = Self::build_output(
-            &self.tokenizer,
-            &self.output_parser,
+            &mut self.output_parser,
             &run_context,
             language_model_generator,
             &[],
@@ -409,7 +416,7 @@ impl ChatSession {
                 .resolve(&self.model_path);
             Self::run_async_batch(
                 &self.tokenizer,
-                &self.output_parser,
+                &mut self.output_parser,
                 &run_context,
                 language_model_generator,
                 sampling_method,
@@ -419,7 +426,7 @@ impl ChatSession {
         } else {
             Self::run_sync_generate(
                 &self.tokenizer,
-                &self.output_parser,
+                &mut self.output_parser,
                 &run_context,
                 language_model_generator,
                 compiled_grammar.as_mut(),
@@ -435,7 +442,7 @@ impl ChatSession {
 
     fn run_sync_generate<F>(
         tokenizer: &Tokenizer,
-        output_parser: &OutputParser,
+        output_parser: &mut OutputParser,
         run_context: &RunContext,
         language_model_generator: &mut LanguageModelGenerator,
         compiled_grammar: Option<&mut CompiledGrammar>,
@@ -459,6 +466,7 @@ impl ChatSession {
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
+            output_parser.append_token_ids(tokenizer, &generate_tokens)?;
 
             let grammar_terminated = compiled_grammar_mut
                 .as_ref()
@@ -475,7 +483,6 @@ impl ChatSession {
                 )
             };
             let generate_output = Self::build_output(
-                tokenizer,
                 output_parser,
                 run_context,
                 language_model_generator,
@@ -504,7 +511,7 @@ impl ChatSession {
 
     fn run_async_batch<F>(
         tokenizer: &Tokenizer,
-        output_parser: &OutputParser,
+        output_parser: &mut OutputParser,
         run_context: &RunContext,
         llm: &mut LanguageModelGenerator,
         sampling_method: super::parameter::SamplingMethod,
@@ -577,6 +584,7 @@ impl ChatSession {
                     forwardpass_duration: duration,
                 });
                 durations.push(duration);
+                output_parser.append_token_id(tokenizer, token)?;
 
                 let should_stop = if run_context.eos_tokens.contains(&token) {
                     finish_reason = FinishReason::Stop;
@@ -586,7 +594,6 @@ impl ChatSession {
                     true
                 } else if let Some(progress_fn) = progress {
                     let output = Self::build_output(
-                        tokenizer,
                         output_parser,
                         run_context,
                         llm,
@@ -620,7 +627,6 @@ impl ChatSession {
                         }
                     }
                     return Self::build_output(
-                        tokenizer,
                         output_parser,
                         run_context,
                         llm,
@@ -633,7 +639,6 @@ impl ChatSession {
         }
 
         Self::build_output(
-            tokenizer,
             output_parser,
             run_context,
             llm,
@@ -760,36 +765,15 @@ impl ChatSession {
         }
     }
 
-    fn decode_generated_tokens(
-        tokenizer: &Tokenizer,
-        prefill_tokens: &[u64],
-        generate_results: &[GenerateResult],
-    ) -> Result<String, Error> {
-        let generated_tokens: Vec<u32> = prefill_tokens
-            .iter()
-            .chain(generate_results.iter().flat_map(|r| r.tokens.iter()))
-            .map(|&v| v as u32)
-            .collect();
-        tokenizer
-            .decode(&generated_tokens, true)
-            .map_err(|_| Error::UnableToDecodeText)
-    }
-
     fn build_output(
-        tokenizer: &Tokenizer,
-        output_parser: &OutputParser,
+        output_parser: &mut OutputParser,
         run_context: &RunContext,
         language_model_generator: &LanguageModelGenerator,
         generate_results: &[GenerateResult],
         generate_durations: &[f64],
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
-        let text = Self::decode_generated_tokens(
-            tokenizer,
-            &run_context.prefill_result.tokens,
-            generate_results,
-        )?;
-        let parsed = output_parser.parse(text);
+        let parsed = output_parser.parse()?;
         let start_idx =
             run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens =
