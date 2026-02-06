@@ -1,4 +1,6 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -11,13 +13,13 @@ use super::{
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
-    Array,
+    Array, DeviceContext,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-        MTLCommandEncoder, MTLCommandQueue,
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
         forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
-            INVALID_POSITION,
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+            ForwardPassState, INVALID_POSITION,
         },
     },
     session::{
@@ -37,6 +39,13 @@ pub struct LanguageModelGenerator {
     encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager,
+}
+
+enum AttentionBiasUpdateContext {
+    SyncGeneration,
+    AsyncGeneration {
+        pass_id: u32,
+    },
 }
 
 impl LanguageModelGenerator {
@@ -234,7 +243,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
-                self.skip_attention_bias_fill(),
+                self.should_fill_attention_bias(),
             );
 
             if should_capture {
@@ -401,7 +410,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
-            self.skip_attention_bias_fill(),
+            self.should_fill_attention_bias(),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -434,16 +443,15 @@ impl LanguageModelGenerator {
         for (_, mask_buffer) in
             &self.context.scratch_buffers.attention_window_size_to_bias
         {
-            unsafe {
-                let ptr =
-                    mask_buffer.borrow().backend_buffer().contents().as_ptr()
-                        as *mut u8;
-                std::ptr::write_bytes(
-                    ptr,
-                    0,
-                    mask_buffer.borrow().backend_buffer().length() as usize,
-                );
-            }
+            let shape = mask_buffer.borrow().shape().to_vec();
+            let suffix_length = shape[0];
+            let prefix_segment_length = shape[1] - suffix_length;
+            self.context.mtl_context.fill_attention_bias(
+                &mut mask_buffer.borrow_mut(),
+                suffix_length,
+                prefix_segment_length,
+                |_, _| true,
+            );
         }
 
         self.context
@@ -509,8 +517,8 @@ impl LanguageModelGenerator {
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        let skip_attention_bias_fill =
-            pass_idx > 0 && self.skip_attention_bias_fill();
+        let should_fill_attention_bias =
+            pass_idx == 0 && self.should_fill_attention_bias();
 
         let skip_token_ids_copy = pass_idx > 0;
 
@@ -540,7 +548,7 @@ impl LanguageModelGenerator {
             task.is_prefilling,
             None,
             skip_token_ids_copy,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             async_positions,
             async_seeds,
         );
@@ -575,13 +583,10 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
-        let token_ids_buffer = self
-            .context
-            .scratch_buffers
-            .token_ids
-            .borrow()
-            .mtl_buffer_cloned();
+        let sampling_output_buffer =
+            sampling_output.borrow().mtl_buffer_cloned();
+        let token_ids_buffer =
+            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -898,14 +903,16 @@ impl LanguageModelGenerator {
         }
     }
 
-    fn skip_attention_bias_fill(&self) -> bool {
+    fn should_fill_attention_bias(&self) -> bool {
         let sliding_window_sizes =
             self.context.model_shape.sliding_window_length_per_layer.clone();
         let has_sliding_window =
             sliding_window_sizes.iter().any(|size| size.is_some());
         let has_speculative_suffix =
             self.decoding_config.generate_suffix_length() > 1;
-        let should_skip = !has_sliding_window && !has_speculative_suffix;
-        return should_skip;
+
+        // has_sliding_window || has_speculative_suffix
+
+        false
     }
 }

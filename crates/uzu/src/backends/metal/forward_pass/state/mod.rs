@@ -13,7 +13,9 @@ pub use array_id::ArrayId;
 pub use common_aux_buffers::CommonAuxBuffers;
 pub use hash_map_id::HashMapId;
 pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
-pub use mode::{ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState};
+pub use mode::{
+    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
+};
 pub use rope_buffers::RopeBuffers;
 pub use rope_type::RopeType;
 pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
@@ -24,8 +26,9 @@ use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     Array, DataType, DecoderConfig, DeviceContext,
     backends::metal::{
-        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext,
-        MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+        MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLContext, MTLDeviceExt, MTLResourceOptions, MetalArray,
+        ProtocolObject, Retained,
     },
     session::parameter::SamplingMethod,
 };
@@ -110,8 +113,11 @@ impl ForwardPassState {
         is_prefilling: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
-        skip_attention_bias_fill: bool,
-        async_positions: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        should_fill_attention_bias: bool,
+        async_positions: Option<(
+            &Retained<ProtocolObject<dyn MTLBuffer>>,
+            usize,
+        )>,
         async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
@@ -222,7 +228,7 @@ impl ForwardPassState {
             act_dtype,
             token_positions,
             external_bias_fn,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
         );
 
         // Common aux buffers
@@ -282,7 +288,7 @@ impl ForwardPassState {
         act_dtype: DataType,
         token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> HashMap<Option<usize>, ArrayCell> {
         let cache_ref = cache_layers.borrow();
         let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
@@ -309,7 +315,7 @@ impl ForwardPassState {
         // Use cache_layers' fill_attention_bias which properly handles
         // both causal masking and sliding window constraints
         // Skip fill for async decode passes after the first one (bias already set)
-        if !skip_fill {
+        if should_fill_attention_bias {
             cache_layers.borrow().fill_attention_bias(
                 &mut attention_bias_map,
                 token_positions,
