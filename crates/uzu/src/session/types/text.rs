@@ -23,6 +23,16 @@ impl ParsedText {
         })
     }
 
+    pub fn tool_call_candidates(&self) -> Vec<String> {
+        self.sections
+            .iter()
+            .filter_map(|section| match section {
+                ParsedSection::ToolCallCandidate(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn tool_calls(&self) -> Vec<&ToolCall> {
         self.sections
             .iter()

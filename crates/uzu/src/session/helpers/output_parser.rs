@@ -43,7 +43,7 @@ impl OutputParser {
             None => None,
         };
         let tool_call_parser =
-            tool_call_format.map(|format| create_parser(&format));
+            tool_call_format.and_then(|format| create_parser(&format));
         Ok(Self {
             regex,
             tokens: Vec::new(),

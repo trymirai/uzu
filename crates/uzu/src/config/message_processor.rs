@@ -9,6 +9,12 @@ pub enum ToolCallFormat {
         arguments_key: String,
         separator: Option<String>,
     },
+    #[serde(rename = "pythonic")]
+    Pythonic {
+        function_regex: String,
+        argument_separator: String,
+        string_token: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

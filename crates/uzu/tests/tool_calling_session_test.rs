@@ -87,7 +87,7 @@ fn test_tool_calling_session_bash() {
     let mut tool_registry = ToolRegistry::new();
     tool_registry.register(BashToolImplementation);
     run_with_tools_registry(
-        "Find desktop folder and list its contents".to_string(),
+        "Find the Desktop folder and list its contents".to_string(),
         tool_registry,
     );
 }
@@ -120,7 +120,7 @@ fn run_with_tools_registry(
     let output = session
         .run(
             input,
-            RunConfig::default().tokens_limit(512),
+            RunConfig::default().tokens_limit(2048),
             Some(|output: Output| {
                 print_sections(
                     &output.text.parsed.sections,
@@ -145,6 +145,10 @@ fn run_with_tools_registry(
     println!("-------------------------");
     for tool_call in output.text.parsed.tool_calls() {
         println!("Tool call: {:#?}", tool_call);
+        println!("-------------------------");
+    }
+    for tool_call_candidate in output.text.parsed.tool_call_candidates() {
+        println!("Tool call candidate: {}", tool_call_candidate);
         println!("-------------------------");
     }
     println!("Original: {}", output.text.original);
