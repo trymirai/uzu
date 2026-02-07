@@ -1,4 +1,6 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -13,11 +15,11 @@ use super::{
 use crate::{
     Array,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-        MTLCommandEncoder, MTLCommandQueue,
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
         forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters, ForwardPassState,
-            INVALID_POSITION,
+            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+            ForwardPassState, INVALID_POSITION,
         },
     },
     session::{
@@ -234,7 +236,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
-                self.skip_attention_bias_fill(),
+                self.should_fill_attention_bias(),
             );
 
             if should_capture {
@@ -401,7 +403,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
-            self.skip_attention_bias_fill(),
+            self.should_fill_attention_bias(),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -427,24 +429,20 @@ impl LanguageModelGenerator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
+        let first_decode_position = prefill_count.saturating_sub(1);
 
-        // Initialize attention bias buffers to zero for async mode
-        // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
-        // rather than garbage (which could be -inf and mask incorrectly)
-        for (_, mask_buffer) in
-            &self.context.scratch_buffers.attention_window_size_to_bias
-        {
-            unsafe {
-                let ptr =
-                    mask_buffer.borrow().backend_buffer().contents().as_ptr()
-                        as *mut u8;
-                std::ptr::write_bytes(
-                    ptr,
-                    0,
-                    mask_buffer.borrow().backend_buffer().length() as usize,
-                );
-            }
-        }
+        // Fill attention bias from KV cache state for the first decode position.
+        // Windowed buffers get the correct mask; GPU patches maintain it for subsequent passes.
+        // Full-attention buffers also get filled (masking beyond-prefix positions).
+        self.context
+            .cache_layers
+            .borrow()
+            .fill_attention_bias_scratch(
+                &self.context.scratch_buffers.attention_window_size_to_bias,
+                &[first_decode_position],
+                1,
+                &self.context.mtl_context,
+            );
 
         self.context
             .async_buffers
@@ -509,9 +507,7 @@ impl LanguageModelGenerator {
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        let skip_attention_bias_fill =
-            pass_idx > 0 && self.skip_attention_bias_fill();
-
+        let should_fill_attention_bias = false; // we fill it once in prepare
         let skip_token_ids_copy = pass_idx > 0;
 
         let is_first_decode = !is_continuation;
@@ -540,7 +536,7 @@ impl LanguageModelGenerator {
             task.is_prefilling,
             None,
             skip_token_ids_copy,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             async_positions,
             async_seeds,
         );
@@ -575,13 +571,10 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().mtl_buffer_cloned();
-        let token_ids_buffer = self
-            .context
-            .scratch_buffers
-            .token_ids
-            .borrow()
-            .mtl_buffer_cloned();
+        let sampling_output_buffer =
+            sampling_output.borrow().mtl_buffer_cloned();
+        let token_ids_buffer =
+            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -898,14 +891,14 @@ impl LanguageModelGenerator {
         }
     }
 
-    fn skip_attention_bias_fill(&self) -> bool {
+    fn should_fill_attention_bias(&self) -> bool {
         let sliding_window_sizes =
             self.context.model_shape.sliding_window_length_per_layer.clone();
         let has_sliding_window =
             sliding_window_sizes.iter().any(|size| size.is_some());
         let has_speculative_suffix =
             self.decoding_config.generate_suffix_length() > 1;
-        let should_skip = !has_sliding_window && !has_speculative_suffix;
-        return should_skip;
+
+        has_sliding_window || has_speculative_suffix
     }
 }
