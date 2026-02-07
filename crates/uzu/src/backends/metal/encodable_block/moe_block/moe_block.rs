@@ -22,12 +22,12 @@ use crate::{
                     MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
                 },
                 moe::{
-                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
-                    MoeExpertsTwoPassDecodeKernels,
-                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
-                    MoeRouterTopKArguments, MoeRouterTopKKernel,
-                    MoeScatterArguments, MoeScatterKernels,
-                    MoeScatterWithMapArguments,
+	                MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
+	                MoeExpertsTwoPassDecodeKernels,
+	                MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
+	                MoeRouterTopKArguments, MoeRouterTopKKernelBlock,
+	                MoeScatterArguments, MoeScatterKernels,
+	                MoeScatterWithMapArguments,
                 },
             },
         },
@@ -44,9 +44,8 @@ enum RouterBlock {
 
 pub struct MoeBlock {
     router: RouterBlock,
-    router_data_type: KernelDataType,
     router_renorm: bool,
-    router_topk_kernel: MoeRouterTopKKernel,
+    router_topk_kernel: MoeRouterTopKKernelBlock,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernels: MoeGatherKernels,
@@ -134,7 +133,8 @@ impl MoeBlock {
         };
 
         let router_topk_kernel =
-            MoeRouterTopKKernel::new(context).map_err(|e| {
+            MoeRouterTopKKernelBlock::new(context, router_kernel_data_type)
+                .map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
                     "RouterTopK fused kernel error: {:?}",
                     e
@@ -267,7 +267,6 @@ impl MoeBlock {
 
         Ok(Self {
             router,
-            router_data_type: router_kernel_data_type,
             router_renorm,
             router_topk_kernel,
             counts_offsets_kernel,
@@ -438,8 +437,7 @@ impl EncodableBlock<Metal> for MoeBlock {
                 self.router_topk_kernel
                     .encode(
                         root,
-                        self.router_data_type,
-                        MoeRouterTopKArguments {
+                        &MoeRouterTopKArguments {
                             input_buffer: &main_buf,
                             weight_buffer: weights_buf,
                             bias_buffer: biases_buf,
@@ -452,7 +450,7 @@ impl EncodableBlock<Metal> for MoeBlock {
                             renorm: self.router_renorm,
                         },
                     )
-                    .expect("MoE fused router+topk failed");
+                    .expect("moe router topk failed");
             },
         }
 
