@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use super::super::{MTLContext, MetalArray};
 use crate::{
     DeviceContext,
-    array::Array,
     backends::metal::{
         MTLCommandBuffer, ProtocolObject, Retained,
         kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
@@ -260,19 +259,19 @@ impl KVCacheLayer {
         }
 
         let key_buffer = {
-            let mut k = self.keys.borrow_mut();
+            let k = self.keys.borrow_mut();
             unsafe {
                 objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*k.mtl_buffer()) as *mut _,
+                    std::ptr::from_ref(&*k.buffer()) as *mut _
                 )
                 .unwrap()
             }
         };
         let value_buffer = {
-            let mut v = self.values.borrow_mut();
+            let v = self.values.borrow_mut();
             unsafe {
                 objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*v.mtl_buffer()) as *mut _,
+                    std::ptr::from_ref(&*v.buffer()) as *mut _
                 )
                 .unwrap()
             }

@@ -1,9 +1,15 @@
+use std::rc::Rc;
+
 use bytemuck::fill_zeroes;
 use half::{bf16, f16};
 use ndarray::{ArrayView, Dimension};
 use num_traits::Zero;
 
-use crate::{Array, ArrayElement, DataType};
+use crate::{
+    ArrayElement, DataType,
+    array::{Array, size_for_shape},
+    backends::common::{Backend, Context, NativeBuffer},
+};
 
 fn slice_index_to_array_index<const D: usize>(
     index: usize,
@@ -20,7 +26,7 @@ fn slice_index_to_array_index<const D: usize>(
 }
 
 pub trait DeviceContext {
-    type DeviceArray: Array;
+    type Backend: Backend;
 
     /// Allocate a new array with the given shape and data type, but doesn't initialize it.
     unsafe fn array_uninitialized(
@@ -28,7 +34,7 @@ pub trait DeviceContext {
         shape: &[usize],
         data_type: DataType,
         label: String,
-    ) -> Self::DeviceArray;
+    ) -> Array<Self::Backend>;
 
     /// Allocate a new array with the given shape and data type.
     /// The result is guaranteed to be zero-initialized.
@@ -37,10 +43,10 @@ pub trait DeviceContext {
         shape: &[usize],
         data_type: DataType,
         label: String,
-    ) -> Self::DeviceArray {
+    ) -> Array<Self::Backend> {
         unsafe {
             let mut result = self.array_uninitialized(shape, data_type, label);
-            fill_zeroes(result.buffer_mut());
+            fill_zeroes(result.as_bytes_mut());
             result
         }
     }
@@ -50,11 +56,11 @@ pub trait DeviceContext {
         &self,
         view: ArrayView<T, D>,
         label: String,
-    ) -> Self::DeviceArray {
+    ) -> Array<Self::Backend> {
         unsafe {
             let mut result =
                 self.array_uninitialized(view.shape(), T::data_type(), label);
-            let result_buffer = result.as_slice_mut().unwrap();
+            let result_buffer = result.as_slice_mut::<T>();
 
             // If the view data is contiguous, copy it directly, otherwise .
             if let Some(slice) = view.as_slice_memory_order() {
@@ -78,12 +84,12 @@ pub trait DeviceContext {
         shape: &[usize; D],
         label: String,
         mut f: F,
-    ) -> Self::DeviceArray {
+    ) -> Array<Self::Backend> {
         unsafe {
             let mut result =
                 self.array_uninitialized(shape, T::data_type(), label);
             for (slice_index, value) in
-                result.as_slice_mut().unwrap().iter_mut().enumerate()
+                result.as_slice_mut::<T>().iter_mut().enumerate()
             {
                 *value = f(&slice_index_to_array_index(slice_index, shape));
             }
@@ -97,11 +103,11 @@ pub trait DeviceContext {
         shape: &[usize],
         elem: T,
         label: String,
-    ) -> Self::DeviceArray {
+    ) -> Array<Self::Backend> {
         unsafe {
             let mut result =
                 self.array_uninitialized(shape, T::data_type(), label);
-            result.as_slice_mut().unwrap().fill(elem);
+            result.as_slice_mut::<T>().fill(elem);
             result
         }
     }
@@ -111,7 +117,7 @@ pub trait DeviceContext {
         &self,
         value: T,
         label: String,
-    ) -> Self::DeviceArray {
+    ) -> Array<Self::Backend> {
         self.array_from_elem(&[], value, label)
     }
 
@@ -123,7 +129,7 @@ pub trait DeviceContext {
         prefix_length: usize,
         data_type: DataType,
         mut should_be_neg_inf: F,
-    ) -> Self::DeviceArray
+    ) -> Array<Self::Backend>
     where
         F: FnMut(usize, usize) -> bool,
     {
@@ -179,14 +185,13 @@ pub trait DeviceContext {
     /// The destination buffer must have enough capacity to hold the view element count.
     fn copy_from_view<T: ArrayElement, D: Dimension>(
         &self,
-        dst: &mut Self::DeviceArray,
+        dst: &mut Array<Self::Backend>,
         view: ArrayView<T, D>,
     ) {
         // Ensure data types match
         assert_eq!(dst.data_type(), T::data_type());
 
-        let dst_slice =
-            dst.as_slice_mut::<T>().expect("Destination slice not accessible");
+        let dst_slice = dst.as_slice_mut::<T>();
 
         if let Some(src_slice) = view.as_slice_memory_order() {
             assert!(src_slice.len() <= dst_slice.len());
@@ -203,7 +208,7 @@ pub trait DeviceContext {
     /// TODO: Create an DeviceBuffer entity that has slice access to data, but doesn't have shape or type
     fn fill_attention_bias<F>(
         &self,
-        dst: &mut Self::DeviceArray,
+        dst: &mut Array<Self::Backend>,
         suffix_length: usize,
         prefix_segment_length: usize,
         mut should_be_neg_inf: F,
@@ -268,5 +273,39 @@ pub trait DeviceContext {
             },
             _ => panic!("Unsupported data type for attention bias fill"),
         }
+    }
+}
+
+impl<C: Context> DeviceContext for C {
+    type Backend = C::Backend;
+
+    unsafe fn array_uninitialized(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: String,
+    ) -> Array<C::Backend> {
+        unsafe {
+            let buffer_size_bytes = size_for_shape(shape, data_type);
+
+            let buffer = self
+                .create_buffer(buffer_size_bytes)
+                .expect("Failed to create buffer");
+            buffer.set_label(Some(&label));
+            Array::from_parts(buffer, 0, shape, data_type)
+        }
+    }
+}
+
+impl<C: Context> DeviceContext for Rc<C> {
+    type Backend = C::Backend;
+
+    unsafe fn array_uninitialized(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: String,
+    ) -> Array<C::Backend> {
+        unsafe { self.as_ref().array_uninitialized(shape, data_type, label) }
     }
 }

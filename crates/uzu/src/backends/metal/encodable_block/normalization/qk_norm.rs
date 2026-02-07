@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
         MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
@@ -60,7 +60,7 @@ impl QKNorm {
                     ))
                 })?;
 
-            let scales_data = scales_param.buffer();
+            let scales_data = scales_param.as_bytes();
             let scales_buffer = context.device.new_buffer_with_data(
                 scales_data,
                 MTLResourceOptions::STORAGE_MODE_SHARED,
@@ -106,7 +106,7 @@ impl QKNorm {
                     ))
                 })?;
 
-            let scales_data = scales_param.buffer();
+            let scales_data = scales_param.as_bytes();
             let scales_buffer = context.device.new_buffer_with_data(
                 scales_data,
                 MTLResourceOptions::STORAGE_MODE_SHARED,
@@ -191,8 +191,8 @@ impl EncodableBlock<Metal> for QKNorm {
             qkv_array.shape().to_vec()
         };
 
-        let mut qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
+        let qkv_array = qkv_binding[0].borrow_mut();
+        let qkv_buffer = qkv_array.buffer();
 
         let batch_size = qkv_shape[0] as i32;
         let head_dim = self.head_dim as i32;

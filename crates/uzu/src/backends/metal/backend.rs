@@ -4,7 +4,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use super::{MTLContext, MTLError, MetalKernels};
 use crate::backends::common::Backend;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Metal;
 
 impl Backend for Metal {

@@ -10,7 +10,7 @@ use super::{
     EmbeddingError,
 };
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLContext, MTLError,
         forward_pass::{ArrayId, ForwardPassState},
@@ -39,7 +39,7 @@ impl FullPrecisionEmbeddingReadout {
             return Err(EmbeddingError::UnsupportedDataType(data_type));
         }
 
-        let mut weights = match parameter_tree.leaf("weights") {
+        let weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
                 EmbeddingError::MetalError(MTLError::Generic(format!(
@@ -70,7 +70,7 @@ impl FullPrecisionEmbeddingReadout {
             )));
         }
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
+        let weights_buffer = weights.buffer().to_owned();
 
         let mut kernel =
             MatmulKernel::new(data_type).map_err(EmbeddingError::MetalError)?;
@@ -120,12 +120,12 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingReadout {
             return;
         }
         let sampling_start = state.sampling_start();
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
         let elem_size = input_array_mut.data_type().size_in_bytes();
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
         let a_offset = (sampling_start * self.model_dim * elem_size) as u64;
 
         let args = MatmulArguments {

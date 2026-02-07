@@ -13,7 +13,6 @@ use super::{
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
-    Array,
     backends::{
         common::kernel::MaskUpdateKernel,
         metal::{
@@ -440,13 +439,12 @@ impl LanguageModelGenerator {
             &self.context.scratch_buffers.attention_window_size_to_bias
         {
             unsafe {
-                let ptr =
-                    mask_buffer.borrow().backend_buffer().contents().as_ptr()
-                        as *mut u8;
+                let ptr = mask_buffer.borrow().buffer().contents().as_ptr()
+                    as *mut u8;
                 std::ptr::write_bytes(
                     ptr,
                     0,
-                    mask_buffer.borrow().backend_buffer().length() as usize,
+                    mask_buffer.borrow().buffer().length() as usize,
                 );
             }
         }
@@ -582,10 +580,9 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer =
-            sampling_output.borrow().mtl_buffer_cloned();
+        let sampling_output_buffer = sampling_output.borrow().buffer().clone();
         let token_ids_buffer =
-            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
+            self.context.scratch_buffers.token_ids.borrow().buffer().clone();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -636,7 +633,7 @@ impl LanguageModelGenerator {
                 {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
-                            mask_buffer.borrow().backend_buffer(),
+                            mask_buffer.borrow().buffer(),
                             update.unmask_col,
                             update.mask_col,
                             &encoder,
@@ -829,9 +826,7 @@ impl LanguageModelGenerator {
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer
-            .as_view::<u32>()
-            .map_err(|_| Error::SamplingFailed)?;
+        let output_view = output_buffer.as_view::<u32>();
         let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);

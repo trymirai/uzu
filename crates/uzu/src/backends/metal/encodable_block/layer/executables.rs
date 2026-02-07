@@ -3,9 +3,10 @@
 use crate::backends::metal::Metal;
 use std::rc::Rc;
 
+#[cfg(not(feature = "tracing"))]
+use crate::backends::metal::MTLCommandEncoder;
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained,
 };
 use objc2::rc::autoreleasepool;
 

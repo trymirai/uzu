@@ -6,7 +6,8 @@ use crate::{
     config::{DecoderConfig, MLPConfig},
 };
 
-type Array<Context> = RefCell<<Context as DeviceContext>::DeviceArray>;
+type Array<Context> =
+    RefCell<crate::array::Array<<Context as DeviceContext>::Backend>>;
 
 pub struct ScratchBuffers<Context: DeviceContext> {
     // 1-D

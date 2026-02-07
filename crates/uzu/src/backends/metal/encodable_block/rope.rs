@@ -6,13 +6,10 @@ use crate::backends::metal::{
 };
 
 use super::{EncodableBlock, EncodingParameters, Metal};
-use crate::{
-    Array,
-    backends::metal::{
-        KernelDataType, MTLContext,
-        forward_pass::{ArrayId, ForwardPassState, RopeType},
-        kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
-    },
+use crate::backends::metal::{
+    KernelDataType, MTLContext,
+    forward_pass::{ArrayId, ForwardPassState, RopeType},
+    kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
 };
 
 pub struct Rope {
@@ -87,41 +84,37 @@ impl EncodableBlock<Metal> for Rope {
         };
 
         let qkv_buffer_binding = state.arrays(&[ArrayId::QKV]);
-        let mut qkv = qkv_buffer_binding[0].borrow_mut();
+        let qkv = qkv_buffer_binding[0].borrow_mut();
 
         let token_positions_binding = state.arrays(&[ArrayId::TokenPositions]);
-        let mut token_positions = token_positions_binding[0].borrow_mut();
+        let token_positions = token_positions_binding[0].borrow_mut();
 
         let query_buffer_binding = state.arrays(&[ArrayId::RotatedQueries]);
-        let mut rotated_queries = query_buffer_binding[0].borrow_mut();
+        let rotated_queries = query_buffer_binding[0].borrow_mut();
 
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
-        let mut rotated_keys = rotated_keys_binding[0].borrow_mut();
+        let rotated_keys = rotated_keys_binding[0].borrow_mut();
 
         let cos_buffer_binding =
             state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
-        let mut rope_cosines = cos_buffer_binding[0].borrow_mut();
+        let rope_cosines = cos_buffer_binding[0].borrow_mut();
 
         let sin_buffer_binding =
             state.arrays(&[ArrayId::RopeSines(self.rope_type)]);
-        let mut rope_sines = sin_buffer_binding[0].borrow_mut();
+        let rope_sines = sin_buffer_binding[0].borrow_mut();
 
-        let token_positions_offset = token_positions.buffer_offset();
+        let token_positions_offset = token_positions.offset();
 
         self.kernel.encode(
             compute_encoder,
             RopeKernelArguments {
-                qkv_buffer: unsafe { &qkv.mtl_buffer() },
-                cosines_buffer: unsafe { &rope_cosines.mtl_buffer() },
-                sines_buffer: unsafe { &rope_sines.mtl_buffer() },
-                token_positions_buffer: unsafe {
-                    &token_positions.mtl_buffer()
-                },
+                qkv_buffer: &qkv.buffer(),
+                cosines_buffer: &rope_cosines.buffer(),
+                sines_buffer: &rope_sines.buffer(),
+                token_positions_buffer: &token_positions.buffer(),
                 token_positions_offset,
-                rotated_queries_buffer: unsafe {
-                    &rotated_queries.mtl_buffer()
-                },
-                rotated_keys_buffer: unsafe { &rotated_keys.mtl_buffer() },
+                rotated_queries_buffer: &rotated_queries.buffer(),
+                rotated_keys_buffer: &rotated_keys.buffer(),
                 head_dim,
                 num_heads,
                 num_groups,

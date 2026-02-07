@@ -253,7 +253,7 @@ impl MetalImagePreprocessor {
         };
         self.extract_patches_kernel.encode_internal(
             intermediate_texture,
-            unsafe { final_output_buffer_array_ref.mtl_buffer() },
+            final_output_buffer_array_ref.buffer(),
             &patch_params as *const _ as *const std::ffi::c_void,
             command_buffer,
         );
@@ -275,5 +275,5 @@ fn data_to_mtl_tensor<T: Copy>(
     let buffer = device
         .new_buffer_with_data(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    unsafe { Ok(MetalArray::new(buffer, &shape, data_type)) }
+    unsafe { Ok(MetalArray::from_parts(buffer, 0, &shape, data_type)) }
 }

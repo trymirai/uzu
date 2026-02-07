@@ -105,23 +105,21 @@ impl MoeBlock {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let mut weights_arr =
-                    router_tree.leaf("weights").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router weights error: {:?}",
-                            e
-                        ))
-                    })?;
-                let weights_buf = unsafe { weights_arr.mtl_buffer() };
+                let weights_arr = router_tree.leaf("weights").map_err(|e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Router weights error: {:?}",
+                        e
+                    ))
+                })?;
+                let weights_buf = weights_arr.buffer();
 
-                let mut biases_arr =
-                    router_tree.leaf("biases").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router biases error: {:?}",
-                            e
-                        ))
-                    })?;
-                let biases_buf = unsafe { biases_arr.mtl_buffer() };
+                let biases_arr = router_tree.leaf("biases").map_err(|e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Router biases error: {:?}",
+                        e
+                    ))
+                })?;
+                let biases_buf = biases_arr.buffer();
 
                 RouterBlock::Metal {
                     weights_buf: weights_buf.into(),
@@ -207,7 +205,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w13_buf = w13_arr.mtl_buffer_cloned();
+        let w13_buf = w13_arr.buffer().clone();
 
         let w2_arr = experts_tree
             .subtree("down_projection")
@@ -224,7 +222,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w2_buf = w2_arr.mtl_buffer_cloned();
+        let w2_buf = w2_arr.buffer().clone();
 
         let up_biases_arr = experts_tree
             .subtree("up_projection")
@@ -241,7 +239,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let up_biases_buf = up_biases_arr.mtl_buffer_cloned();
+        let up_biases_buf = up_biases_arr.buffer().clone();
 
         let down_biases_arr = experts_tree
             .subtree("down_projection")
@@ -258,7 +256,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let down_biases_buf = down_biases_arr.mtl_buffer_cloned();
+        let down_biases_buf = down_biases_arr.buffer().clone();
 
         let shared_weights = SharedMoeWeights {
             w13_buf: Rc::new(w13_buf),
@@ -331,9 +329,7 @@ impl EncodableBlock<Metal> for MoeBlock {
         ]);
 
         let clone_buffer = |array: &RefCell<MetalArray>| -> Retained<ProtocolObject<dyn MTLBuffer>> {
-            let mut borrow = array.borrow_mut();
-            let buffer = unsafe { borrow.mtl_buffer().to_owned().into() };
-            buffer
+            array.borrow().buffer().to_owned().into()
         };
 
         let mut array_iter = arrays.iter();

@@ -159,7 +159,7 @@ pub fn mlp_fused_block(
                         |error| MTLError::Generic(format!("{:?}", error)),
                     )?;
 
-                let mut up_projection_weights =
+                let up_projection_weights =
                     up_projection_tree.leaf("weights").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up weights: {:?}",
@@ -167,9 +167,9 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer().into() };
+                    up_projection_weights.buffer().into();
 
-                let mut up_projection_scales =
+                let up_projection_scales =
                     up_projection_tree.leaf("scales").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up scales: {:?}",
@@ -177,24 +177,18 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_scales_buffer =
-                    unsafe { up_projection_scales.mtl_buffer().into() };
+                    up_projection_scales.buffer().into();
 
                 // Load zero_points or biases depending on quantization type
                 let (
                     up_projection_zero_points_or_biases_buffer,
                     quantization_type,
-                ) = if let Ok(mut biases) = up_projection_tree.leaf("biases") {
-                    (
-                        unsafe { biases.mtl_buffer().into() },
-                        QuantizationType::Mlx,
-                    )
-                } else if let Ok(mut zero_points) =
+                ) = if let Ok(biases) = up_projection_tree.leaf("biases") {
+                    (biases.buffer().into(), QuantizationType::Mlx)
+                } else if let Ok(zero_points) =
                     up_projection_tree.leaf("zero_points")
                 {
-                    (
-                        unsafe { zero_points.mtl_buffer().into() },
-                        QuantizationType::ZeroPoint,
-                    )
+                    (zero_points.buffer().into(), QuantizationType::ZeroPoint)
                 } else {
                     return Err(MTLError::Generic(
                             "Missing zero_points or biases for quantized up_projection"
@@ -244,7 +238,7 @@ pub fn mlp_fused_block(
                         |error| MTLError::Generic(format!("{:?}", error)),
                     )?;
 
-                let mut up_projection_weights =
+                let up_projection_weights =
                     up_projection_tree.leaf("weights").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up weights: {:?}",
@@ -252,7 +246,7 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer().into() };
+                    up_projection_weights.buffer().into();
 
                 // Create down projection as separate linear
                 let down_projection = FullPrecisionLinear::new(

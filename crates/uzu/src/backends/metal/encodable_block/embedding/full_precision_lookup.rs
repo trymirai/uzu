@@ -3,7 +3,7 @@ use super::{
     EmbeddingError,
 };
 use crate::{
-    Array, DataType,
+    DataType,
     backends::{
         common::kernel::FullPrecisionEmbeddingLookupKernel,
         metal::{
@@ -40,7 +40,7 @@ impl FullPrecisionEmbeddingLookup {
             data_type.into(),
         )?;
 
-        let mut weights = match parameter_tree.leaf("weights") {
+        let weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("input_weights").map_err(|e| {
                 EmbeddingError::MetalError(MTLError::Generic(format!(
@@ -72,7 +72,7 @@ impl FullPrecisionEmbeddingLookup {
             )));
         }
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned() };
+        let weights_buffer = weights.buffer().to_owned();
 
         Ok(Self {
             kernel,
@@ -115,11 +115,11 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingLookup {
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
-        let mut token_ids_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let token_ids_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let token_ids_buffer = token_ids_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         self.kernel.encode(
             token_ids_buffer,

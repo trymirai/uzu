@@ -12,7 +12,6 @@ use super::{
 };
 use crate::{
     DeviceContext,
-    array::Array,
     backends::metal::{
         MTLCommandBuffer, ProtocolObject, Retained, kernel::KVCacheUpdate,
     },

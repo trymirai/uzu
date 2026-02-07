@@ -10,7 +10,7 @@ use super::safetensors_metadata::{
     HashMetadata as STMetadata, HeaderLoadingError,
     read_metadata as read_st_metadata,
 };
-use crate::{Array, DataType, DeviceContext};
+use crate::{DataType, DeviceContext, array::Array};
 
 pub struct ParameterMetadata {
     shape: Box<[usize]>,
@@ -94,7 +94,7 @@ where
     pub fn get(
         &self,
         key: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
+    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
         let metadata_entry = self
             .index
             .get(key)
@@ -107,7 +107,7 @@ where
             metadata_entry.data_type,
             array_label,
         );
-        let expected_size = array.size_in_bytes();
+        let expected_size = array.size();
         if expected_size != size {
             return Err(ParameterLoaderError::SizeMismatch {
                 data_type: metadata_entry.data_type,
@@ -116,7 +116,7 @@ where
                 actual_size: size,
             });
         }
-        self.file.read_exact_at(array.buffer_mut(), offset as u64)?;
+        self.file.read_exact_at(array.as_bytes_mut(), offset as u64)?;
         Ok(array)
     }
 
@@ -194,7 +194,7 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
     pub fn leaf(
         &self,
         name: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
+    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
         self.loader.get(&self.join_prefix(name))
     }
 
