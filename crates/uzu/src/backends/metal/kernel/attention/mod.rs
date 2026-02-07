@@ -9,8 +9,7 @@ use crate::backends::metal::{
     MTLFunctionConstantValues, MTLSize, ProtocolObject,
 };
 
-mod gemm_types;
-use gemm_types::{AttnMaskParams, AttnParams};
+use crate::backends::common::gpu_types::{AttnMaskParams, AttnParams};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionKernelVariant {

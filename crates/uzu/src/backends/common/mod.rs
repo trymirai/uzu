@@ -4,6 +4,7 @@ mod buffer;
 mod buffer_lifetime;
 mod command_buffer;
 mod context;
+pub mod gpu_types;
 pub mod kernel;
 mod native_buffer;
 

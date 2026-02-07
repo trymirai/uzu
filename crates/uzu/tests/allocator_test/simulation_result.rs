@@ -9,6 +9,7 @@ pub struct SimulationResult {
     pub stats: AllocationStats,
     pub peak_memory_bytes: usize,
     pub cache_memory_bytes: usize,
+    #[allow(dead_code)]
     pub final_prefix_len: usize,
     pub snapshots: Vec<MemorySnapshot>,
 }

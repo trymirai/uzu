@@ -60,6 +60,7 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
+cbindgen.workspace = true
 
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }
