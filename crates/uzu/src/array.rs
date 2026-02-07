@@ -1,4 +1,4 @@
-use std::{ops::Range, os::raw::c_void, ptr::NonNull};
+use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull};
 
 use ndarray::{ArrayView, IxDyn};
 
@@ -54,6 +54,20 @@ impl<B: Backend> Array<B> {
             offset,
             shape: shape.into(),
             data_type,
+        }
+    }
+
+    pub fn view(
+        &self,
+        shape: &[usize],
+    ) -> Self {
+        unsafe {
+            Self::from_parts(
+                self.buffer.clone(),
+                self.offset,
+                shape,
+                self.data_type,
+            )
         }
     }
 
@@ -193,5 +207,21 @@ impl<B: Backend> Array<B> {
             let dst_slice = &mut dst_buf[dst_start..dst_start + copy_bytes];
             dst_slice.copy_from_slice(src_slice);
         }
+    }
+}
+
+pub trait ArrayCellExt<B: Backend> {
+    fn view(
+        &self,
+        shape: &[usize],
+    ) -> RefCell<Array<B>>;
+}
+
+impl<B: Backend> ArrayCellExt<B> for RefCell<Array<B>> {
+    fn view(
+        &self,
+        shape: &[usize],
+    ) -> RefCell<Array<B>> {
+        RefCell::new(self.borrow().view(shape))
     }
 }

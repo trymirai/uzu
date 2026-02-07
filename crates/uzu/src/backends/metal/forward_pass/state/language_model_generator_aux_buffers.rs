@@ -2,7 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use super::super::{ModelShape, ScratchBuffers};
 use crate::{
-    DataType, DecoderConfig,
+    DecoderConfig,
+    array::ArrayCellExt,
     backends::metal::{MTLContext, MetalArray},
     config::MLPConfig,
 };
@@ -48,445 +49,144 @@ impl LanguageModelGeneratorAuxBuffers {
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
-        let act_dtype = model_shape.activation_data_type();
+        let moe = match &decoder_config.layer_config.mlp_config {
+            MLPConfig::MixtureOfExperts(moe) => Some(moe),
+            _ => None,
+        };
+        let num_experts_per_token = moe.map(|moe| moe.num_experts_per_token);
+        let mixture_size = moe.map(|moe| moe.mixture_size);
+        let max_routed = num_experts_per_token.map(|k| suffix_length * k);
+        let num_blocks = suffix_length.div_ceil(256).max(1);
+        let scatter_entries =
+            mixture_size.map(|e| num_blocks * e.div_ceil(512).max(1) * 512);
+        let block_alloc_entries =
+            mixture_size.map(|e| num_blocks * e.div_ceil(512).max(1));
 
-        unsafe {
-            Self {
-                ssm_inproj: match (
-                    scratch.ssm_inproj.as_ref(),
-                    model_shape.ssm_inproj_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
+        Self {
+            ssm_inproj: scratch
+                .ssm_inproj
+                .as_ref()
+                .zip(model_shape.ssm_inproj_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_packed: scratch
+                .ssm_packed
+                .as_ref()
+                .zip(model_shape.ssm_packed_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_conv_padded: scratch
+                .ssm_conv_padded
+                .as_ref()
+                .zip(model_shape.ssm_conv_padded_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            short_conv_padded: scratch
+                .short_conv_padded
+                .as_ref()
+                .zip(model_shape.short_conv_padded_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_x: scratch
+                .ssm_x
+                .as_ref()
+                .zip(model_shape.ssm_x_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_b: scratch
+                .ssm_b
+                .as_ref()
+                .zip(model_shape.ssm_bc_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_c: scratch
+                .ssm_c
+                .as_ref()
+                .zip(model_shape.ssm_bc_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_dt: scratch
+                .ssm_dt
+                .as_ref()
+                .zip(model_shape.ssm_dt_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ssm_z: scratch
+                .ssm_z
+                .as_ref()
+                .zip(model_shape.ssm_z_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            moe_topk_ids: num_experts_per_token
+                .zip(scratch.moe_topk_ids.as_ref())
+                .map(|(k, buf)| {
+                    buf.view(&model_shape.moe_topk_ids_shape(suffix_length, k))
+                }),
+            moe_topk_probs: num_experts_per_token
+                .zip(scratch.moe_topk_probs.as_ref())
+                .map(|(k, buf)| {
+                    buf.view(
+                        &model_shape.moe_topk_probs_shape(suffix_length, k),
+                    )
+                }),
+            moe_offsets: mixture_size
+                .zip(scratch.moe_offsets.as_ref())
+                .map(|(e, buf)| buf.view(&model_shape.moe_offsets_shape(e))),
+            moe_sumk: moe
+                .and(scratch.moe_sumk.as_ref())
+                .map(|buf| buf.view(&model_shape.moe_sumk_shape())),
+            moe_bucketed_token_ids: max_routed
+                .zip(scratch.moe_bucketed_token_ids.as_ref())
+                .map(|(max_routed, buf)| {
+                    buf.view(
+                        &model_shape.moe_bucketed_token_ids_shape(max_routed),
+                    )
+                }),
+            moe_bucketed_probs: max_routed
+                .zip(scratch.moe_bucketed_probs.as_ref())
+                .map(|(max_routed, buf)| {
+                    buf.view(&model_shape.moe_bucketed_probs_shape(max_routed))
+                }),
+            moe_x_perm: max_routed.zip(scratch.moe_x_perm.as_ref()).map(
+                |(max_routed, buf)| {
+                    buf.view(&model_shape.moe_x_perm_shape(max_routed))
                 },
-                ssm_packed: match (
-                    scratch.ssm_packed.as_ref(),
-                    model_shape.ssm_packed_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
+            ),
+            moe_tok2row: num_experts_per_token
+                .zip(scratch.moe_tok2row.as_ref())
+                .map(|(k, buf)| {
+                    buf.view(&model_shape.moe_tok2row_shape(suffix_length, k))
+                }),
+            moe_y_partial: max_routed.zip(scratch.moe_y_partial.as_ref()).map(
+                |(max_routed, buf)| {
+                    buf.view(&model_shape.moe_y_partial_shape(max_routed))
                 },
-                ssm_conv_padded: match (
-                    scratch.ssm_conv_padded.as_ref(),
-                    model_shape.ssm_conv_padded_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
+            ),
+            moe_hidden: max_routed.zip(scratch.moe_hidden.as_ref()).map(
+                |(max_routed, buf)| {
+                    buf.view(&model_shape.moe_hidden_shape(max_routed))
                 },
-                short_conv_padded: match (
-                    scratch.short_conv_padded.as_ref(),
-                    model_shape.short_conv_padded_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
+            ),
+            moe_two_pass_row_expert_map: max_routed
+                .zip(scratch.moe_two_pass_row_expert_map.as_ref())
+                .map(|(max_routed, buf)| buf.view(&[max_routed])),
+            moe_tile_counts: mixture_size
+                .zip(scratch.moe_tile_counts.as_ref())
+                .map(|(e, buf)| buf.view(&model_shape.moe_counts_shape(e))),
+            moe_tile_offsets: mixture_size
+                .zip(scratch.moe_tile_offsets.as_ref())
+                .map(|(e, buf)| buf.view(&model_shape.moe_offsets_shape(e))),
+            moe_tile_map: max_routed.zip(scratch.moe_tile_map.as_ref()).map(
+                |(max_routed, buf)| {
+                    buf.view(&model_shape.moe_tile_map_shape(max_routed))
                 },
-                ssm_x: match (
-                    scratch.ssm_x.as_ref(),
-                    model_shape.ssm_x_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
-                },
-                ssm_b: match (
-                    scratch.ssm_b.as_ref(),
-                    model_shape.ssm_bc_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
-                },
-                ssm_c: match (
-                    scratch.ssm_c.as_ref(),
-                    model_shape.ssm_bc_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
-                },
-                ssm_dt: match (
-                    scratch.ssm_dt.as_ref(),
-                    model_shape.ssm_dt_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
-                },
-                ssm_z: match (
-                    scratch.ssm_z.as_ref(),
-                    model_shape.ssm_z_shape(suffix_length),
-                ) {
-                    (Some(buf), Some(shape)) => {
-                        Some(RefCell::new(MetalArray::from_parts(
-                            buf.borrow().buffer().clone(),
-                            0,
-                            &shape,
-                            act_dtype,
-                        )))
-                    },
-                    _ => None,
-                },
-                moe_topk_ids: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_topk_ids.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_topk_ids_shape(
-                                    suffix_length,
-                                    moe.num_experts_per_token,
-                                ),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_topk_probs: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_topk_probs.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_topk_probs_shape(
-                                    suffix_length,
-                                    moe.num_experts_per_token,
-                                ),
-                                act_dtype,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_offsets: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_offsets.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape
-                                    .moe_offsets_shape(moe.mixture_size),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_sumk: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(_) => {
-                        scratch.moe_sumk.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_sumk_shape(),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_bucketed_token_ids: match &decoder_config
-                    .layer_config
-                    .mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_bucketed_token_ids.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape
-                                    .moe_bucketed_token_ids_shape(max_routed),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_bucketed_probs: match &decoder_config
-                    .layer_config
-                    .mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_bucketed_probs.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape
-                                    .moe_bucketed_probs_shape(max_routed),
-                                act_dtype,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_x_perm: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_x_perm.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_x_perm_shape(max_routed),
-                                DataType::F16,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_tok2row: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_tok2row.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_tok2row_shape(
-                                    suffix_length,
-                                    moe.num_experts_per_token,
-                                ),
-                                DataType::I32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_y_partial: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_y_partial.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_y_partial_shape(max_routed),
-                                DataType::F16,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_hidden: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_hidden.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_hidden_shape(max_routed),
-                                DataType::F32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_two_pass_row_expert_map: match &decoder_config
-                    .layer_config
-                    .mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_two_pass_row_expert_map.as_ref().map(
-                            |buf| {
-                                RefCell::new(MetalArray::from_parts(
-                                    buf.borrow().buffer().clone(),
-                                    0,
-                                    &[max_routed],
-                                    DataType::U32,
-                                ))
-                            },
-                        )
-                    },
-                    _ => None,
-                },
-                moe_tile_counts: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_tile_counts.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_counts_shape(moe.mixture_size),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_tile_offsets: match &decoder_config.layer_config.mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_tile_offsets.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape
-                                    .moe_offsets_shape(moe.mixture_size),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_tile_map: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        let max_routed =
-                            suffix_length * moe.num_experts_per_token;
-                        scratch.moe_tile_map.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_tile_map_shape(max_routed),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_total_tiles: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(_) => {
-                        scratch.moe_total_tiles.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_total_tiles_shape(),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_dispatch_args: match &decoder_config.layer_config.mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(_) => {
-                        scratch.moe_dispatch_args.as_ref().map(|buf| {
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &model_shape.moe_dispatch_args_shape(),
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_scatter_partials: match &decoder_config
-                    .layer_config
-                    .mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_scatter_partials.as_ref().map(|buf| {
-                            let num_blocks =
-                                ((suffix_length + 255) / 256).max(1);
-                            let num_tiles =
-                                ((moe.mixture_size + 512 - 1) / 512).max(1);
-                            let entries = num_blocks * num_tiles * 512;
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &[entries],
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_scatter_block_bases: match &decoder_config
-                    .layer_config
-                    .mlp_config
-                {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_scatter_block_bases.as_ref().map(|buf| {
-                            let num_blocks =
-                                ((suffix_length + 255) / 256).max(1);
-                            let num_tiles =
-                                ((moe.mixture_size + 512 - 1) / 512).max(1);
-                            let entries = num_blocks * num_tiles * 512;
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &[entries],
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-                moe_block_alloc: match &decoder_config.layer_config.mlp_config {
-                    MLPConfig::MixtureOfExperts(moe) => {
-                        scratch.moe_block_alloc.as_ref().map(|buf| {
-                            let num_blocks =
-                                ((suffix_length + 255) / 256).max(1);
-                            let num_tiles =
-                                ((moe.mixture_size + 512 - 1) / 512).max(1);
-                            let entries = num_blocks * num_tiles;
-                            RefCell::new(MetalArray::from_parts(
-                                buf.borrow().buffer().clone(),
-                                0,
-                                &[entries],
-                                DataType::U32,
-                            ))
-                        })
-                    },
-                    _ => None,
-                },
-            }
+            ),
+            moe_total_tiles: moe
+                .and(scratch.moe_total_tiles.as_ref())
+                .map(|buf| buf.view(&model_shape.moe_total_tiles_shape())),
+            moe_dispatch_args: moe
+                .and(scratch.moe_dispatch_args.as_ref())
+                .map(|buf| buf.view(&model_shape.moe_dispatch_args_shape())),
+            moe_scatter_partials: scatter_entries
+                .zip(scratch.moe_scatter_partials.as_ref())
+                .map(|(entries, buf)| buf.view(&[entries])),
+            moe_scatter_block_bases: scatter_entries
+                .zip(scratch.moe_scatter_block_bases.as_ref())
+                .map(|(entries, buf)| buf.view(&[entries])),
+            moe_block_alloc: block_alloc_entries
+                .zip(scratch.moe_block_alloc.as_ref())
+                .map(|(entries, buf)| buf.view(&[entries])),
         }
     }
 }
