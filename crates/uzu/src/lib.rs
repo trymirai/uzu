@@ -1,3 +1,4 @@
+pub mod array;
 pub mod backends;
 pub mod classifier;
 pub mod config;

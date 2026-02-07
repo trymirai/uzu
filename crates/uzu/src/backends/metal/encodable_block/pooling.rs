@@ -2,7 +2,7 @@
 
 use super::{EncodableBlock, EncodingParameters, Metal};
 #[cfg(feature = "tracing")]
-use crate::Array;
+use crate::backends::metal::MTLBlitCommandEncoder;
 use crate::{
     backends::{
         common::kernel::{PoolingClsKernel, PoolingMeanKernel},
@@ -87,18 +87,17 @@ impl EncodableBlock<Metal> for Pooling {
         #[cfg(feature = "tracing")]
         {
             let batch_size = 1;
-            let data_type = {
-                Array::data_type(&*state.arrays(&[ArrayId::Main])[0].borrow())
-            };
+            let data_type =
+                { state.arrays(&[ArrayId::Main])[0].borrow().data_type() };
 
             let arrays = state.arrays(&[ArrayId::ClassifierPooling]);
             let pooling_array = arrays[0].borrow();
-            let output_buffer = pooling_array.backend_buffer();
+            let output_buffer = pooling_array.buffer();
 
             let traces_rc = state.traces().clone();
             let traces_ref = traces_rc.borrow();
             let trace_arr = traces_ref.output_pooling().borrow();
-            let dst_buf = trace_arr.backend_buffer();
+            let dst_buf = trace_arr.buffer();
 
             let blit = command_buffer
                 .new_blit_command_encoder()
@@ -133,11 +132,11 @@ impl EncodableBlock<Metal> for Pooling {
         let seq_len = state.aux_buffers_suffix_length();
 
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::ClassifierPooling]);
-        let mut main_array = arrays[0].borrow_mut();
-        let input_buffer = unsafe { main_array.mtl_buffer() };
+        let main_array = arrays[0].borrow_mut();
+        let input_buffer = main_array.buffer();
 
-        let mut pooling_array = arrays[1].borrow_mut();
-        let output_buffer = unsafe { pooling_array.mtl_buffer().to_owned() };
+        let pooling_array = arrays[1].borrow_mut();
+        let output_buffer = pooling_array.buffer().to_owned();
 
         self.pooling_kernel.encode(
             input_buffer,

@@ -9,13 +9,10 @@ use crate::backends::{
 };
 
 use super::{EncodableBlock, EncodingParameters, Metal};
-use crate::{
-    Array,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::TensorAddSwapMetalKernel,
-    },
+use crate::backends::metal::{
+    MTLContext, MTLError,
+    forward_pass::{ArrayId, ForwardPassState},
+    kernel::dsl::TensorAddSwapMetalKernel,
 };
 
 pub struct TensorAddSwap {
@@ -71,10 +68,10 @@ impl EncodableBlock<Metal> for TensorAddSwap {
 
         let length = arrays[0].borrow().num_elements();
 
-        let mut skip_array = arrays[0].borrow_mut();
-        let mut main_array = arrays[1].borrow_mut();
-        let skip_mtl_buffer = unsafe { skip_array.mtl_buffer() };
-        let main_mtl_buffer = unsafe { main_array.mtl_buffer() };
+        let skip_array = arrays[0].borrow_mut();
+        let main_array = arrays[1].borrow_mut();
+        let skip_mtl_buffer = skip_array.buffer();
+        let main_mtl_buffer = main_array.buffer();
 
         self.kernel.encode(
             &skip_mtl_buffer,

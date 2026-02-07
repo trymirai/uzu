@@ -24,7 +24,7 @@ pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
 use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
-    Array, DataType, DecoderConfig, DeviceContext,
+    DataType, DecoderConfig, DeviceContext,
     backends::{
         common::Context,
         metal::{
@@ -62,8 +62,9 @@ impl ForwardPassState {
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
         let mut token_ids_array = unsafe {
-            MetalArray::new(
-                scratch.token_ids.borrow().mtl_buffer_cloned(),
+            MetalArray::from_parts(
+                scratch.token_ids.borrow().buffer().clone(),
+                0,
                 &[suffix_length],
                 DataType::U64,
             )
@@ -79,8 +80,9 @@ impl ForwardPassState {
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
         let mut token_positions_array = unsafe {
-            MetalArray::new(
-                scratch.token_positions.borrow().mtl_buffer_cloned(),
+            MetalArray::from_parts(
+                scratch.token_positions.borrow().buffer().clone(),
+                0,
                 &[suffix_length],
                 DataType::I32,
             )
@@ -137,8 +139,9 @@ impl ForwardPassState {
         // Token IDs - optionally skip copy for async path
         let token_ids_cell = if skip_token_ids_copy {
             RefCell::new(unsafe {
-                MetalArray::new(
-                    scratch.token_ids.borrow().mtl_buffer_cloned(),
+                MetalArray::from_parts(
+                    scratch.token_ids.borrow().buffer().clone(),
+                    0,
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -151,11 +154,11 @@ impl ForwardPassState {
         let token_positions_cell =
             if let Some((async_buf, offset)) = async_positions {
                 let array = unsafe {
-                    MetalArray::new_with_offset(
+                    MetalArray::from_parts(
                         async_buf.clone(),
+                        offset * std::mem::size_of::<i32>(),
                         &[suffix_length],
                         DataType::I32,
-                        offset * std::mem::size_of::<i32>(),
                     )
                 };
                 RefCell::new(array)
@@ -167,15 +170,14 @@ impl ForwardPassState {
         let token_bitmask_cell = token_bitmask.map(|bitmask| {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
             let mut bitmask_array = unsafe {
-                MetalArray::new(
-                    scratch.token_bitmask.borrow().mtl_buffer_cloned(),
+                MetalArray::from_parts(
+                    scratch.token_bitmask.borrow().buffer().clone(),
+                    0,
                     &bitmask_shape,
                     DataType::U32,
                 )
             };
-            if let Ok(dst) = bitmask_array.as_slice_mut::<u32>() {
-                dst.fill(0);
-            }
+            bitmask_array.as_slice_mut::<u32>().fill(0);
             context.copy_from_view(&mut bitmask_array, bitmask.into());
             RefCell::new(bitmask_array)
         });
@@ -183,18 +185,19 @@ impl ForwardPassState {
         // Token seeds - use async buffer if provided
         let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
             let array = unsafe {
-                MetalArray::new_with_offset(
+                MetalArray::from_parts(
                     async_buf.clone(),
+                    offset * std::mem::size_of::<u64>(),
                     &[suffix_length],
                     DataType::U64,
-                    offset * std::mem::size_of::<u64>(),
                 )
             };
             RefCell::new(array)
         } else {
             let mut token_seeds_array = unsafe {
-                MetalArray::new(
-                    scratch.token_seeds.borrow().mtl_buffer_cloned(),
+                MetalArray::from_parts(
+                    scratch.token_seeds.borrow().buffer().clone(),
+                    0,
                     &[suffix_length],
                     DataType::U64,
                 )
@@ -205,8 +208,9 @@ impl ForwardPassState {
 
         // Logits
         let logits_cell = RefCell::new(unsafe {
-            MetalArray::new(
-                scratch.logits.borrow().mtl_buffer_cloned(),
+            MetalArray::from_parts(
+                scratch.logits.borrow().buffer().clone(),
+                0,
                 &model_shape.logits_shape(suffix_length),
                 model_shape.activation_data_type(),
             )
@@ -214,8 +218,9 @@ impl ForwardPassState {
 
         // Sampling output
         let sampling_output = Some(RefCell::new(unsafe {
-            MetalArray::new(
-                scratch.sampling_output.borrow().mtl_buffer_cloned(),
+            MetalArray::from_parts(
+                scratch.sampling_output.borrow().buffer().clone(),
+                0,
                 &[suffix_length],
                 DataType::U32,
             )
@@ -304,8 +309,9 @@ impl ForwardPassState {
                     let attention_bias_shape =
                         [suffix_length, suffix_length + prefix_length];
                     let array = unsafe {
-                        MetalArray::new(
-                            buffer.borrow().mtl_buffer_cloned(),
+                        MetalArray::from_parts(
+                            buffer.borrow().buffer().clone(),
+                            0,
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -409,8 +415,9 @@ impl ForwardPassState {
                 .map(|(window_size, buffer)| {
                     let attention_bias_shape = [suffix_length, suffix_length];
                     let array = unsafe {
-                        MetalArray::new(
-                            buffer.borrow().mtl_buffer_cloned(),
+                        MetalArray::from_parts(
+                            buffer.borrow().buffer().clone(),
+                            0,
                             &attention_bias_shape,
                             act_dtype,
                         )
@@ -473,8 +480,9 @@ impl ForwardPassState {
                 .create_buffer(buffer_size)
                 .expect("Failed to create buffer");
             RefCell::new(unsafe {
-                MetalArray::new(
+                MetalArray::from_parts(
                     buffer,
+                    0,
                     &[batch_size, size / batch_size],
                     data_type,
                 )
@@ -492,8 +500,9 @@ impl ForwardPassState {
                     .create_buffer(buffer_size)
                     .expect("Failed to create buffer");
                 RefCell::new(unsafe {
-                    MetalArray::new(
+                    MetalArray::from_parts(
                         buffer,
+                        0,
                         &[batch_size, num_labels],
                         data_type,
                     )
@@ -525,7 +534,9 @@ impl ForwardPassState {
             let buffer = context
                 .create_buffer(buffer_size)
                 .expect("Failed to create buffer");
-            RefCell::new(unsafe { MetalArray::new(buffer, dims, data_type) })
+            RefCell::new(unsafe {
+                MetalArray::from_parts(buffer, 0, dims, data_type)
+            })
         };
 
         ClassifierModeState {
@@ -989,14 +1000,11 @@ impl ForwardPassState {
         let src_borrow = source_ref.borrow();
         let dst_borrow = destination_array.borrow();
 
-        let src_buf = src_borrow.mtl_buffer_cloned();
-        let dst_buf = dst_borrow.mtl_buffer_cloned();
+        let src_buf = src_borrow.buffer().clone();
+        let dst_buf = dst_borrow.buffer().clone();
 
-        let copy_size_bytes = dst_borrow.size_in_bytes();
-        debug_assert_eq!(
-            dst_borrow.size_in_bytes(),
-            src_borrow.size_in_bytes()
-        );
+        let copy_size_bytes = dst_borrow.size();
+        debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
         let blit_encoder = command_buffer
             .new_blit_command_encoder()

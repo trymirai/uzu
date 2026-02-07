@@ -2,11 +2,11 @@
 
 use std::path::PathBuf;
 
-use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
-use uzu::{Array, DataType, backends::metal::MetalArray};
+use uzu::{DataType, backends::metal::MetalArray};
 use xgrammar::{
     DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
     TokenizerInfo,
@@ -83,12 +83,12 @@ fn person_schema_metal_bitmask() {
     let buffer = device
         .new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let mut metal_bitmask =
-        unsafe { MetalArray::new(buffer, &shape, DataType::I32) };
+    let metal_bitmask =
+        unsafe { MetalArray::from_parts(buffer, 0, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {
-        data: unsafe { metal_bitmask.mtl_buffer().contents().as_ptr() },
+        data: metal_bitmask.cpu_ptr().as_ptr(),
         device: DLDevice {
             device_type: DLDeviceType::kDLCPU,
             device_id,
@@ -103,5 +103,5 @@ fn person_schema_metal_bitmask() {
     let _ok = matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
 
     assert_eq!(metal_bitmask.shape(), &shape);
-    assert_eq!(metal_bitmask.as_slice::<i32>().unwrap().len(), elems);
+    assert_eq!(metal_bitmask.as_slice::<i32>().len(), elems);
 }

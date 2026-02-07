@@ -16,11 +16,10 @@ use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
-    Array, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::metal::{
         CacheLayers, KVCacheUpdate, KernelDataType, MTLCommandBuffer,
         MTLCommandQueue, MTLContext, MetalArray,
-        encodable_block::Sampling,
         forward_pass::{
             ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
             ScratchBuffers, traces::ActivationTrace,
@@ -28,6 +27,7 @@ use crate::{
     },
     classifier::Classifier,
     config::ModelMetadata,
+    encodable_block::Sampling,
     language_model::{
         LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -759,8 +759,8 @@ impl TraceValidator {
         produced_array: &Ref<MetalArray>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
-        let expected_view = expected_array.as_view::<Precision>().unwrap();
-        let produced_view = produced_array.as_view::<Precision>().unwrap();
+        let expected_view = expected_array.as_view::<Precision>();
+        let produced_view = produced_array.as_view::<Precision>();
 
         let (mut expected_data, mut produced_data) = match transform {
             Some(ArrayTransform::KVCacheSlice) => {
@@ -956,7 +956,7 @@ impl TraceValidator {
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();
-        let slice = array.as_slice::<SourcePrecision>().unwrap();
+        let slice = array.as_slice::<SourcePrecision>();
         slice.iter().map(|x| NumCast::from(*x).unwrap()).collect()
     }
 
@@ -1030,8 +1030,8 @@ impl TraceValidator {
         );
 
         context.gpu_sampler = Sampling::new(
-            &context.mtl_context,
-            kernel_dtype,
+            context.mtl_context.as_ref(),
+            intermediate_dtype,
             desired_suffix_length,
             decoder_config.vocab_size,
         )
@@ -1058,6 +1058,6 @@ impl TraceValidator {
         logits: &MetalArray
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
-        sampler.sample(logits.as_view::<Precision>().unwrap())
+        sampler.sample(logits.as_view::<Precision>())
     }
 }

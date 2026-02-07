@@ -9,7 +9,7 @@ use crate::backends::metal::{
 
 use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLContext,
         forward_pass::{ArrayId, ForwardPassState},
@@ -66,11 +66,11 @@ impl EncodableBlock<Metal> for MlpBlock {
             {
                 let arrays =
                     state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-                let mut fused = arrays[0].borrow_mut();
-                let mut hidden = arrays[1].borrow_mut();
+                let fused = arrays[0].borrow_mut();
+                let hidden = arrays[1].borrow_mut();
                 let m = fused.shape()[0] as i32;
-                let fused_buf = unsafe { fused.mtl_buffer() };
-                let hidden_buf = unsafe { hidden.mtl_buffer() };
+                let fused_buf = fused.buffer();
+                let hidden_buf = hidden.buffer();
 
                 let encoder = command_buffer
                     .new_compute_command_encoder()
@@ -106,11 +106,11 @@ impl EncodableBlock<Metal> for MlpBlock {
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-        let mut fused = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
+        let fused = arrays[0].borrow_mut();
+        let hidden = arrays[1].borrow_mut();
         let m = fused.shape()[0] as i32;
-        let fused_buf = unsafe { fused.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
+        let fused_buf = fused.buffer();
+        let hidden_buf = hidden.buffer();
         self.gate
             .encode(encoder, fused_buf, hidden_buf, m)
             .expect("Failed to encode MLP activation/mul kernel");
@@ -332,11 +332,11 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
             {
                 let arrays =
                     state.arrays(&[self.input_array_id, self.hidden_array_id]);
-                let mut input = arrays[0].borrow_mut();
-                let mut hidden = arrays[1].borrow_mut();
+                let input = arrays[0].borrow_mut();
+                let hidden = arrays[1].borrow_mut();
                 let batch = input.shape()[0] as i32;
-                let input_buf = unsafe { input.mtl_buffer() };
-                let hidden_buf = unsafe { hidden.mtl_buffer() };
+                let input_buf = input.buffer();
+                let hidden_buf = hidden.buffer();
 
                 let encoder = command_buffer
                     .new_compute_command_encoder()
@@ -367,11 +367,11 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
     ) {
         // Fused up + activation
         let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);
-        let mut input = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
+        let input = arrays[0].borrow_mut();
+        let hidden = arrays[1].borrow_mut();
         let batch = input.shape()[0] as i32;
-        let input_buf = unsafe { input.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
+        let input_buf = input.buffer();
+        let hidden_buf = hidden.buffer();
 
         self.encode_fused_up(encoder, input_buf, 0, hidden_buf, batch);
 

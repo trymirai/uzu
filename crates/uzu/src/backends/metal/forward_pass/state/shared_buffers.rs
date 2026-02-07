@@ -4,7 +4,7 @@ use half::{bf16, f16};
 
 use super::{super::ModelShape, RopeBuffers};
 use crate::{
-    Array, DataType, DeviceContext,
+    DataType, DeviceContext,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
 };
@@ -107,15 +107,15 @@ impl SharedBuffers {
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf("sinks").unwrap();
                 let mut dst = sink_cell.borrow_mut();
-                let dst_slice = dst.as_slice_mut::<f32>().unwrap();
+                let dst_slice = dst.as_slice_mut::<f32>();
 
                 match sinks_arr.data_type() {
                     DataType::F32 => {
-                        let src = sinks_arr.as_slice::<f32>().unwrap();
+                        let src = sinks_arr.as_slice::<f32>();
                         dst_slice.copy_from_slice(src);
                     },
                     DataType::BF16 => {
-                        let src = sinks_arr.as_slice::<bf16>().unwrap();
+                        let src = sinks_arr.as_slice::<bf16>();
                         for (dst_val, src_val) in
                             dst_slice.iter_mut().zip(src.iter())
                         {
@@ -123,7 +123,7 @@ impl SharedBuffers {
                         }
                     },
                     DataType::F16 => {
-                        let src = sinks_arr.as_slice::<f16>().unwrap();
+                        let src = sinks_arr.as_slice::<f16>();
                         for (dst_val, src_val) in
                             dst_slice.iter_mut().zip(src.iter())
                         {

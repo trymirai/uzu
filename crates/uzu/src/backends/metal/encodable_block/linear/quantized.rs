@@ -24,7 +24,6 @@ use crate::{
         },
     },
     config::QuantizationConfig,
-    device::array::Array,
     parameters::ParameterTree,
 };
 
@@ -64,7 +63,7 @@ impl QuantizedLinear {
             )));
         }
 
-        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
+        let weights = parameter_tree.leaf("weights").map_err(|e| {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
@@ -79,7 +78,7 @@ impl QuantizedLinear {
             )));
         }
 
-        let mut scales = parameter_tree.leaf("scales").map_err(|e| {
+        let scales = parameter_tree.leaf("scales").map_err(|e| {
             MTLError::Generic(format!("Failed to load scales: {:?}", e))
         })?;
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
@@ -100,7 +99,7 @@ impl QuantizedLinear {
                 )));
             }
             match parameter_tree.leaf("deq_biases") {
-                Ok(mut deq_biases) => {
+                Ok(deq_biases) => {
                     let db_shape = deq_biases.shape();
                     if !(w_shape == [output_dim, input_dim / packing_divisor]
                         && s_shape == [output_dim, k_g]
@@ -119,13 +118,13 @@ impl QuantizedLinear {
                         )));
                     }
                     let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(scales.mtl_buffer()
-                            as *const _
-                            as *mut _)
+                        objc2::rc::Retained::retain(
+                            scales.buffer() as *const _ as *mut _
+                        )
                         .unwrap()
                     };
                     let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(deq_biases.mtl_buffer()
+                        objc2::rc::Retained::retain(deq_biases.buffer()
                             as *const _
                             as *mut _)
                         .unwrap()
@@ -133,7 +132,7 @@ impl QuantizedLinear {
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
-                    let mut zero_points =
+                    let zero_points =
                         parameter_tree.leaf("zero_points").map_err(|e| {
                             MTLError::Generic(format!(
                                 "Failed to load zero_points: {:?}",
@@ -165,14 +164,14 @@ impl QuantizedLinear {
                         )));
                     }
                     let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(scales.mtl_buffer()
-                            as *const _
-                            as *mut _)
+                        objc2::rc::Retained::retain(
+                            scales.buffer() as *const _ as *mut _
+                        )
                         .unwrap()
                     };
                     let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
                         objc2::rc::Retained::retain(std::ptr::from_ref(
-                            &*zero_points.mtl_buffer(),
+                            &*zero_points.buffer(),
                         )
                             as *mut _)
                         .unwrap()
@@ -183,12 +182,12 @@ impl QuantizedLinear {
         };
 
         let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            unsafe { weights.mtl_buffer() }.to_owned().into();
+            weights.buffer().to_owned().into();
 
         // Optional trainable bias support
         let (bias_add_kernel, biases_buffer) =
             match parameter_tree.leaf("biases") {
-                Ok(mut biases) => {
+                Ok(biases) => {
                     if biases.shape() != [output_dim] {
                         return Err(MTLError::Generic(format!(
                             "Bias shape mismatch: got {:?}, expected [{:?}]",
@@ -208,7 +207,7 @@ impl QuantizedLinear {
                         kernel_data_type,
                     )?);
                     let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { biases.mtl_buffer() }.to_owned().into();
+                        biases.buffer().to_owned().into();
                     (bias_add_kernel, Some(biases_buffer))
                 },
                 Err(_) => (None, None),
@@ -255,11 +254,11 @@ impl EncodableBlock<Metal> for QuantizedLinear {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -318,11 +317,11 @@ impl EncodableBlock<Metal> for QuantizedLinear {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,

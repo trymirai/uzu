@@ -1,10 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::super::{ModelShape, ScratchBuffers};
-use crate::{
-    Array,
-    backends::metal::{MTLContext, MetalArray},
-};
+use crate::backends::metal::{MTLContext, MetalArray};
 
 type ArrayCell = RefCell<MetalArray>;
 
@@ -34,68 +31,80 @@ impl CommonAuxBuffers {
         unsafe {
             Self {
                 suffix_length,
-                main: RefCell::new(MetalArray::new(
-                    scratch.main.borrow_mut().mtl_buffer().into(),
+                main: RefCell::new(MetalArray::from_parts(
+                    scratch.main.borrow_mut().buffer().into(),
+                    0,
                     &model_shape.main_shape(suffix_length),
                     act_dtype,
                 )),
-                shortcut: RefCell::new(MetalArray::new(
-                    scratch.shortcut.borrow_mut().mtl_buffer().into(),
+                shortcut: RefCell::new(MetalArray::from_parts(
+                    scratch.shortcut.borrow_mut().buffer().into(),
+                    0,
                     &model_shape.main_shape(suffix_length),
                     act_dtype,
                 )),
-                qkv: RefCell::new(MetalArray::new(
-                    scratch.qkv.borrow_mut().mtl_buffer().into(),
+                qkv: RefCell::new(MetalArray::from_parts(
+                    scratch.qkv.borrow_mut().buffer().into(),
+                    0,
                     &model_shape.qkv_shape(suffix_length),
                     act_dtype,
                 )),
-                attention_output: RefCell::new(MetalArray::new(
-                    scratch.attention_output.borrow().mtl_buffer_cloned(),
+                attention_output: RefCell::new(MetalArray::from_parts(
+                    scratch.attention_output.borrow().buffer().clone(),
+                    0,
                     &model_shape.attention_output_shape(suffix_length),
                     act_dtype,
                 )),
-                mlp_fused_up: RefCell::new(MetalArray::new(
-                    scratch.mlp_fused_up.borrow().mtl_buffer_cloned(),
+                mlp_fused_up: RefCell::new(MetalArray::from_parts(
+                    scratch.mlp_fused_up.borrow().buffer().clone(),
+                    0,
                     &model_shape.mlp_fused_up_shape(suffix_length),
                     act_dtype,
                 )),
-                mlp_hidden: RefCell::new(MetalArray::new(
-                    scratch.mlp_hidden.borrow().mtl_buffer_cloned(),
+                mlp_hidden: RefCell::new(MetalArray::from_parts(
+                    scratch.mlp_hidden.borrow().buffer().clone(),
+                    0,
                     &model_shape.mlp_hidden_shape(suffix_length),
                     act_dtype,
                 )),
-                rotated_queries: RefCell::new(MetalArray::new(
-                    scratch.rotated_queries.borrow().mtl_buffer_cloned(),
+                rotated_queries: RefCell::new(MetalArray::from_parts(
+                    scratch.rotated_queries.borrow().buffer().clone(),
+                    0,
                     &model_shape.rotated_queries_shape(suffix_length),
                     act_dtype,
                 )),
-                rotated_keys: RefCell::new(MetalArray::new(
-                    scratch.rotated_keys.borrow().mtl_buffer_cloned(),
+                rotated_keys: RefCell::new(MetalArray::from_parts(
+                    scratch.rotated_keys.borrow().buffer().clone(),
+                    0,
                     &model_shape.rotated_keys_shape(suffix_length),
                     act_dtype,
                 )),
-                extracted_values: RefCell::new(MetalArray::new(
-                    scratch.extracted_values.borrow().mtl_buffer_cloned(),
+                extracted_values: RefCell::new(MetalArray::from_parts(
+                    scratch.extracted_values.borrow().buffer().clone(),
+                    0,
                     &model_shape.extracted_values_shape(suffix_length),
                     act_dtype,
                 )),
-                attention_partials: RefCell::new(MetalArray::new(
+                attention_partials: RefCell::new(MetalArray::from_parts(
                     scratch
                         .attention_partials
                         .borrow_mut()
-                        .backend_buffer()
+                        .buffer()
                         .to_owned()
                         .into(),
+                    0,
                     &model_shape.attention_partials_shape(suffix_length),
                     act_dtype,
                 )),
-                attention_sums: RefCell::new(MetalArray::new(
-                    scratch.attention_sums.borrow().mtl_buffer_cloned(),
+                attention_sums: RefCell::new(MetalArray::from_parts(
+                    scratch.attention_sums.borrow().buffer().clone(),
+                    0,
                     &model_shape.attention_sums_shape(suffix_length),
                     act_dtype,
                 )),
-                attention_maxs: RefCell::new(MetalArray::new(
-                    scratch.attention_maxs.borrow().mtl_buffer_cloned(),
+                attention_maxs: RefCell::new(MetalArray::from_parts(
+                    scratch.attention_maxs.borrow().buffer().clone(),
+                    0,
                     &model_shape.attention_maxs_shape(suffix_length),
                     act_dtype,
                 )),
