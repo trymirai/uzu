@@ -25,6 +25,7 @@ use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     DataType, DecoderConfig, DeviceContext,
+    array::ArrayCellExt,
     backends::{
         common::Context,
         metal::{
@@ -61,16 +62,12 @@ impl ForwardPassState {
         token_ids: &[u64],
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
-        let mut token_ids_array = unsafe {
-            MetalArray::from_parts(
-                scratch.token_ids.borrow().buffer().clone(),
-                0,
-                &[suffix_length],
-                DataType::U64,
-            )
-        };
-        context.copy_from_view(&mut token_ids_array, token_ids.into());
-        RefCell::new(token_ids_array)
+        let token_ids_array = scratch.token_ids.view(&[suffix_length]);
+        context.copy_from_view(
+            &mut token_ids_array.borrow_mut(),
+            token_ids.into(),
+        );
+        token_ids_array
     }
 
     fn init_token_positions(
@@ -79,21 +76,15 @@ impl ForwardPassState {
         token_positions: &[usize],
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
-        let mut token_positions_array = unsafe {
-            MetalArray::from_parts(
-                scratch.token_positions.borrow().buffer().clone(),
-                0,
-                &[suffix_length],
-                DataType::I32,
-            )
-        };
+        let token_positions_array =
+            scratch.token_positions.view(&[suffix_length]);
         let token_positions_i32: Box<[i32]> =
             token_positions.iter().map(|p| *p as i32).collect();
         context.copy_from_view(
-            &mut token_positions_array,
+            &mut token_positions_array.borrow_mut(),
             token_positions_i32.as_ref().into(),
         );
-        RefCell::new(token_positions_array)
+        token_positions_array
     }
 
     // ========================================================================
@@ -138,14 +129,7 @@ impl ForwardPassState {
 
         // Token IDs - optionally skip copy for async path
         let token_ids_cell = if skip_token_ids_copy {
-            RefCell::new(unsafe {
-                MetalArray::from_parts(
-                    scratch.token_ids.borrow().buffer().clone(),
-                    0,
-                    &[suffix_length],
-                    DataType::U64,
-                )
-            })
+            scratch.token_ids.view(&[suffix_length])
         } else {
             Self::init_token_ids(&context, scratch, token_ids)
         };
@@ -169,17 +153,13 @@ impl ForwardPassState {
         // Token bitmask
         let token_bitmask_cell = token_bitmask.map(|bitmask| {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
-            let mut bitmask_array = unsafe {
-                MetalArray::from_parts(
-                    scratch.token_bitmask.borrow().buffer().clone(),
-                    0,
-                    &bitmask_shape,
-                    DataType::U32,
-                )
-            };
-            bitmask_array.as_slice_mut::<u32>().fill(0);
-            context.copy_from_view(&mut bitmask_array, bitmask.into());
-            RefCell::new(bitmask_array)
+            let bitmask_array = scratch.token_bitmask.view(&bitmask_shape);
+            bitmask_array.borrow_mut().as_slice_mut::<u32>().fill(0);
+            context.copy_from_view(
+                &mut bitmask_array.borrow_mut(),
+                bitmask.into(),
+            );
+            bitmask_array
         });
 
         // Token seeds - use async buffer if provided
@@ -194,46 +174,28 @@ impl ForwardPassState {
             };
             RefCell::new(array)
         } else {
-            let mut token_seeds_array = unsafe {
-                MetalArray::from_parts(
-                    scratch.token_seeds.borrow().buffer().clone(),
-                    0,
-                    &[suffix_length],
-                    DataType::U64,
-                )
-            };
-            context.copy_from_view(&mut token_seeds_array, token_seeds.into());
-            RefCell::new(token_seeds_array)
+            let token_seeds_array = scratch.token_seeds.view(&[suffix_length]);
+            context.copy_from_view(
+                &mut token_seeds_array.borrow_mut(),
+                token_seeds.into(),
+            );
+            token_seeds_array
         };
 
         // Logits
-        let logits_cell = RefCell::new(unsafe {
-            MetalArray::from_parts(
-                scratch.logits.borrow().buffer().clone(),
-                0,
-                &model_shape.logits_shape(suffix_length),
-                model_shape.activation_data_type(),
-            )
-        });
+        let logits_cell =
+            scratch.logits.view(&model_shape.logits_shape(suffix_length));
 
         // Sampling output
-        let sampling_output = Some(RefCell::new(unsafe {
-            MetalArray::from_parts(
-                scratch.sampling_output.borrow().buffer().clone(),
-                0,
-                &[suffix_length],
-                DataType::U32,
-            )
-        }));
+        let sampling_output =
+            Some(scratch.sampling_output.view(&[suffix_length]));
 
         // Attention bias (causal + sliding window)
-        let act_dtype = model_shape.activation_data_type();
         let attention_bias = Self::init_llm_attention_bias(
             &context,
             scratch,
             &cache_layers,
             suffix_length,
-            act_dtype,
             token_positions,
             external_bias_fn,
             skip_attention_bias_fill,
@@ -293,7 +255,6 @@ impl ForwardPassState {
         scratch: &ScratchBuffers<Rc<MTLContext>>,
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
-        act_dtype: DataType,
         token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_fill: bool,
@@ -308,14 +269,7 @@ impl ForwardPassState {
                         window_size.unwrap_or(cache_ref.max_prefix_length());
                     let attention_bias_shape =
                         [suffix_length, suffix_length + prefix_length];
-                    let array = unsafe {
-                        MetalArray::from_parts(
-                            buffer.borrow().buffer().clone(),
-                            0,
-                            &attention_bias_shape,
-                            act_dtype,
-                        )
-                    };
+                    let array = buffer.borrow().view(&attention_bias_shape);
                     (*window_size, array)
                 })
                 .collect();
@@ -363,12 +317,10 @@ impl ForwardPassState {
             Self::init_token_positions(&context, scratch, token_positions);
 
         // Attention bias (bidirectional or causal)
-        let act_dtype = model_shape.activation_data_type();
         let attention_bias = Self::init_classifier_attention_bias(
             &context,
             scratch,
             suffix_length,
-            act_dtype,
             bidirectional_attention,
         );
 
@@ -405,7 +357,6 @@ impl ForwardPassState {
         context: &MTLContext,
         scratch: &ScratchBuffers<Rc<MTLContext>>,
         suffix_length: usize,
-        act_dtype: DataType,
         bidirectional_attention: bool,
     ) -> HashMap<Option<usize>, ArrayCell> {
         let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
@@ -414,14 +365,7 @@ impl ForwardPassState {
                 .iter()
                 .map(|(window_size, buffer)| {
                     let attention_bias_shape = [suffix_length, suffix_length];
-                    let array = unsafe {
-                        MetalArray::from_parts(
-                            buffer.borrow().buffer().clone(),
-                            0,
-                            &attention_bias_shape,
-                            act_dtype,
-                        )
-                    };
+                    let array = buffer.borrow().view(&attention_bias_shape);
                     (*window_size, array)
                 })
                 .collect();
