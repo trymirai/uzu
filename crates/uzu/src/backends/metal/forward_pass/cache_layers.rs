@@ -264,22 +264,34 @@ impl CacheLayers {
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
-                let key: Option<usize> = match &layer.state {
-                    KVCacheLayerState::Full {
-                        ..
-                    } => None,
-                    KVCacheLayerState::Windowed {
-                        window_length,
-                        ..
-                    } => Some(*window_length),
-                };
-
-                if let Some(array) = dst.get_mut(&key) {
+                if let Some(array) = dst.get_mut(&layer.window_length()) {
                     layer.fill_attention_bias(
                         array,
                         suffix_token_positions,
                         suffix_length,
                         external_bias_fn,
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn fill_attention_bias_scratch(
+        &self,
+        dst: &HashMap<Option<usize>, RefCell<MetalArray>>,
+        suffix_token_positions: &[usize],
+        suffix_length: usize,
+        context: &MTLContext,
+    ) {
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(layer) = layer {
+                if let Some(cell) = dst.get(&layer.window_length()) {
+                    layer.fill_attention_bias(
+                        &mut cell.borrow_mut(),
+                        suffix_token_positions,
+                        suffix_length,
+                        context,
+                        None,
                     );
                 }
             }
