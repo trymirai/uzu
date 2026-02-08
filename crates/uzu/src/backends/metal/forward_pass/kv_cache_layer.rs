@@ -118,7 +118,6 @@ impl KVCacheLayer {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let prefix_segment_length = self.prefix_segment_length();
-
         fill_attention_bias(
             dst,
             suffix_length,
@@ -250,31 +249,15 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {
             return;
         }
 
-        let key_buffer = {
-            let k = self.keys.borrow_mut();
-            unsafe {
-                objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*k.buffer()) as *mut _
-                )
-                .unwrap()
-            }
-        };
-        let value_buffer = {
-            let v = self.values.borrow_mut();
-            unsafe {
-                objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*v.buffer()) as *mut _
-                )
-                .unwrap()
-            }
-        };
+        let key_buffer = self.keys.borrow().buffer().clone();
+        let value_buffer = self.values.borrow().buffer().clone();
 
         let k_shape = self.keys.borrow().shape().to_vec();
         let v_shape = self.values.borrow().shape().to_vec();
@@ -286,15 +269,11 @@ impl KVCacheLayer {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let cmd_buf = unsafe {
-            objc2::rc::Retained::retain(command_buffer as *const _ as *mut _)
-                .unwrap()
-        };
         let _ = kv_cache_update.encode(
             &[layer_data],
             source_indices,
             destination_indices,
-            &cmd_buf,
+            command_buffer,
         );
     }
 

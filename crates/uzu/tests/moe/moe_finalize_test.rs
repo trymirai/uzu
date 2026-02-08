@@ -3,7 +3,7 @@
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::common::kernel::MoeFinalizeKernel;
 use uzu::backends::metal::{
     KernelDataType, kernel::dsl::MoeFinalizeMetalKernel,

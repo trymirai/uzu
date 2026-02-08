@@ -143,7 +143,7 @@ fn create_test_data(
     head_dim: usize,
     seed: u64,
 ) -> (Array4<f32>, Array4<f32>, Array4<f32>, Array3<f32>) {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let mut rng = StdRng::seed_from_u64(seed);
 

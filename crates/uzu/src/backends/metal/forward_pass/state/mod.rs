@@ -104,7 +104,7 @@ impl ForwardPassState {
         is_prefilling: bool,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
         async_positions: Option<(
             &Retained<ProtocolObject<dyn MTLBuffer>>,
             usize,
@@ -224,7 +224,6 @@ impl ForwardPassState {
                 is_prefilling,
             },
         );
-
         Self {
             context,
             token_ids: token_ids_cell,

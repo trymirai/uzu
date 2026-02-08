@@ -431,7 +431,7 @@ impl LanguageModelGenerator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
-        let first_decode_position = prefill_count.saturating_sub(1);
+        let _first_decode_position = prefill_count.saturating_sub(1);
 
         // Initialize attention bias buffers to zero for async mode
         // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
@@ -723,7 +723,7 @@ impl LanguageModelGenerator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default(), false);
+            self.run_model(task, true, false, SamplingMethod::default(), true);
     }
 
     fn run_model(
@@ -732,7 +732,7 @@ impl LanguageModelGenerator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
@@ -740,7 +740,7 @@ impl LanguageModelGenerator {
             let mut state = task.create_state(
                 &mut self.context,
                 None,
-                skip_attention_bias_fill,
+                should_fill_attention_bias,
             );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);

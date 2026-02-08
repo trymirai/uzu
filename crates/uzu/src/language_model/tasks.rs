@@ -84,7 +84,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         &self,
         context: &mut LanguageModelGeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> ForwardPassState {
         ForwardPassState::new_llm(
             context.mtl_context.clone(),
@@ -103,7 +103,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             self.is_prefilling,
             external_bias_fn,
             false,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             None,
             None,
         )

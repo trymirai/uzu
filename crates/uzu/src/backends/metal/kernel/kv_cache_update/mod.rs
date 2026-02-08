@@ -83,7 +83,7 @@ impl KVCacheUpdate {
         in_place_data: &[KVLayerData],
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) -> Result<(), KVCacheUpdateError> {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()

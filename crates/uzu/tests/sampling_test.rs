@@ -4,7 +4,7 @@ use metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
     MTLDeviceExt, MTLResourceOptions,
 };
-use rand::{Rng, seq::SliceRandom};
+use rand::{RngExt, seq::SliceRandom};
 // for Vec::shuffle
 use uzu::{
     DataType,
@@ -373,7 +373,7 @@ fn test_topp_sampling_match_large() {
 
 #[test]
 fn test_topp_sampling_statistical_large() {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ===== 1. Create Metal context =====
     let context = match MTLContext::new() {
@@ -515,7 +515,7 @@ fn test_topp_sampling_statistical_large() {
 fn perf_topp_128k_vocab() {
     use std::time::Instant;
 
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
     let context = match MTLContext::new() {
@@ -635,7 +635,7 @@ fn perf_topp_128k_vocab() {
 fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use std::time::Instant;
 
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
     let context = match MTLContext::new() {
@@ -919,7 +919,7 @@ fn test_categorical_sampling() {
 
 #[test]
 fn test_categorical_sampling_statistical() {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let context = match MTLContext::new() {
         Ok(ctx) => ctx,
@@ -1070,7 +1070,7 @@ fn test_categorical_sampling_statistical() {
 fn perf_categorical_128k_vocab() {
     use std::time::Instant;
 
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let context = match MTLContext::new() {
         Ok(ctx) => ctx,
@@ -1449,7 +1449,7 @@ fn test_topp_gpu_cpu_match() {
 
 #[test]
 fn test_minp_gpu_cpu_match() {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let context = match MTLContext::new() {
         Ok(ctx) => ctx,

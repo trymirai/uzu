@@ -33,7 +33,7 @@ bitflags = "2.10"
 minijinja = "2.15"
 minijinja-contrib = { version = "2.15", features = ["pycompat"] }
 clap = { version = "4.5", features = ["derive"] }
-rand = "0.9"
+rand = "0.10"
 sysinfo = "0.38"
 itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }

@@ -281,7 +281,7 @@ impl CacheLayers {
         dst: &HashMap<Option<usize>, RefCell<MetalArray>>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
+        _context: &MTLContext,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
@@ -290,7 +290,6 @@ impl CacheLayers {
                         &mut cell.borrow_mut(),
                         suffix_token_positions,
                         suffix_length,
-                        context,
                         None,
                     );
                 }
