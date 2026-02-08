@@ -16,7 +16,6 @@ use crate::{
     },
     parameters::ParameterTree,
 };
-use std::rc::Rc;
 
 pub struct FullPrecisionEmbeddingLookup {
     kernel: FullPrecisionEmbeddingLookupMetalKernel,
@@ -33,7 +32,7 @@ impl FullPrecisionEmbeddingLookup {
         vocab_size: usize,
         model_dim: usize,
         input_scale: Option<f32>,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         let kernel = FullPrecisionEmbeddingLookupMetalKernel::new(
             mtl_context,

@@ -10,7 +10,11 @@ use super::safetensors_metadata::{
     HashMetadata as STMetadata, HeaderLoadingError,
     read_metadata as read_st_metadata,
 };
-use crate::{DataType, DeviceContext, array::Array};
+use crate::{
+    DataType,
+    array::{Array, ArrayContextExt},
+    backends::common::Context,
+};
 
 pub struct ParameterMetadata {
     shape: Box<[usize]>,
@@ -61,7 +65,7 @@ pub enum ParameterLoaderError {
     ArrayLoadingError(#[from] std::io::Error),
 }
 
-pub struct ParameterLoader<'context, 'file, C: DeviceContext>
+pub struct ParameterLoader<'context, 'file, C: Context>
 where
     'file: 'context,
 {
@@ -70,7 +74,7 @@ where
     file: &'file File,
 }
 
-impl<'file, 'context, C: DeviceContext> ParameterLoader<'file, 'context, C>
+impl<'file, 'context, C: Context> ParameterLoader<'file, 'context, C>
 where
     'file: 'context,
 {
@@ -102,10 +106,10 @@ where
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
         let array_key = key.replace(".", "_");
         let array_label = format!("parameter_loader_{array_key}");
-        let mut array = self.context.array(
+        let mut array = self.context.create_array(
             &metadata_entry.shape,
             metadata_entry.data_type,
-            array_label,
+            &array_label,
         );
         let expected_size = array.size();
         if expected_size != size {
@@ -145,12 +149,12 @@ where
     }
 }
 
-pub struct ParameterTree<'loader, C: DeviceContext> {
+pub struct ParameterTree<'loader, C: Context> {
     loader: &'loader ParameterLoader<'loader, 'loader, C>,
     prefix: Option<String>,
 }
 
-impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
+impl<'loader, C: Context> ParameterTree<'loader, C> {
     pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, C>) -> Self {
         Self {
             loader,

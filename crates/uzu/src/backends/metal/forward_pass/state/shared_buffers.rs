@@ -1,10 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use half::{bf16, f16};
 
 use super::{super::ModelShape, RopeBuffers};
 use crate::{
-    DataType, DeviceContext,
+    DataType,
+    array::ArrayContextExt,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
 };
@@ -58,11 +59,11 @@ impl SharedBuffers {
                 let num_heads = decoder_config.num_heads;
                 Some(
                     (0..decoder_config.num_layers)
-                        .map(|_| unsafe {
-                            RefCell::new(context.array_uninitialized(
+                        .map(|_| {
+                            RefCell::new(context.create_array_uninitialized(
                                 &[num_heads],
                                 DataType::F32,
-                                String::from("shared_buffers_attention_sinks"),
+                                "shared_buffers_attention_sinks",
                             ))
                         })
                         .collect(),
@@ -84,19 +85,17 @@ impl SharedBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) {
         let transformer_tree = parameter_tree
             .subtree("transformer")
             .expect("transformer subtree not found");
 
         if let Some(global_rope) = &mut self.global_rope {
-            global_rope
-                .update_data(&transformer_tree, String::from("global_rope"));
+            global_rope.update_data(&transformer_tree, "global_rope");
         }
         if let Some(local_rope) = &mut self.local_rope {
-            local_rope
-                .update_data(&transformer_tree, String::from("local_rope"));
+            local_rope.update_data(&transformer_tree, "local_rope");
         }
 
         if let Some(sinks_vec) = &mut self.attention_sinks {

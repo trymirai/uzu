@@ -54,7 +54,7 @@ impl MambaMixer {
         num_heads: usize,
         head_dim: usize,
         num_groups: usize,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         let _ = (num_heads, head_dim, num_groups);
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
@@ -572,9 +572,9 @@ impl EncodableBlock<Metal> for MambaMixer {
 }
 
 fn resolve_subtree<'tree>(
-    loader: &'tree ParameterTree<Rc<MTLContext>>,
+    loader: &'tree ParameterTree<MTLContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, Rc<MTLContext>> {
+) -> ParameterTree<'tree, MTLContext> {
     for candidate in candidates {
         if let Ok(tree) = loader.subtree(candidate) {
             return tree;

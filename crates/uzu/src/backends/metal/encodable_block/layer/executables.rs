@@ -56,7 +56,7 @@ impl LayerExecutables {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
         rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
     ) -> Self {
         autoreleasepool(|_| {

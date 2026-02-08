@@ -33,7 +33,7 @@ impl Decoder {
     pub fn new(
         mtl_context: Rc<MTLContext>,
         decoder_config: Rc<DecoderConfig>,
-        root_weight_loader: &ParameterTree<Rc<MTLContext>>,
+        root_weight_loader: &ParameterTree<MTLContext>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader

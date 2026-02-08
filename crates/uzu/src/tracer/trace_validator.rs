@@ -261,7 +261,7 @@ impl TraceValidator {
         let traces_file =
             File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_loader =
-            ParameterLoader::new(&traces_file, &ctx.mtl_context)
+            ParameterLoader::new(&traces_file, ctx.mtl_context.as_ref())
                 .map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
@@ -467,8 +467,9 @@ impl TraceValidator {
         let traces_file =
             File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let mtl_context = classifier.context.mtl_context.clone();
-        let traces_loader = ParameterLoader::new(&traces_file, &mtl_context)
-            .map_err(|_| Error::UnableToLoadWeights)?;
+        let traces_loader =
+            ParameterLoader::new(&traces_file, mtl_context.as_ref())
+                .map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
         let has_token_ids =
@@ -514,7 +515,7 @@ impl TraceValidator {
     }
 
     fn handle_missing_tokens(
-        traces_view: &ParameterTree<Rc<MTLContext>>
+        traces_view: &ParameterTree<MTLContext>
     ) -> TracerValidationResults {
         if let Ok(expected_logits) = traces_view.leaf("logits") {
             let reference_shape = expected_logits.shape().to_vec();
@@ -561,7 +562,7 @@ impl TraceValidator {
 
     fn validate_layer_traces(
         traces: &Rc<RefCell<ActivationTrace>>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -676,7 +677,7 @@ impl TraceValidator {
 
     fn validate_classifier_traces(
         traces: &Rc<RefCell<ActivationTrace>>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -746,7 +747,7 @@ impl TraceValidator {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         expected_array_path: &str,
         produced_array: &Ref<MetalArray>,
     ) -> TracerValidationMetrics {
@@ -952,7 +953,7 @@ impl TraceValidator {
         SourcePrecision: ArrayElement,
         TargetPrecision: NumCast,
     >(
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();

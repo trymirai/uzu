@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use super::super::{ModelShape, ScratchBuffers};
 use crate::{
@@ -44,7 +44,7 @@ pub struct LanguageModelGeneratorAuxBuffers {
 
 impl LanguageModelGeneratorAuxBuffers {
     pub fn new(
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,

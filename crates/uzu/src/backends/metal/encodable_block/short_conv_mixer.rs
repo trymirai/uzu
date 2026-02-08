@@ -33,9 +33,9 @@ pub(crate) struct ShortConvMixer {
 }
 
 fn resolve_subtree<'tree>(
-    tree: &'tree ParameterTree<Rc<MTLContext>>,
+    tree: &'tree ParameterTree<MTLContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, Rc<MTLContext>> {
+) -> ParameterTree<'tree, MTLContext> {
     for candidate in candidates {
         if let Ok(subtree) = tree.subtree(candidate) {
             return subtree;
@@ -53,7 +53,7 @@ impl ShortConvMixer {
         _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!(

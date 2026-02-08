@@ -1,5 +1,5 @@
 use crate::backends::metal::Metal;
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use crate::{
     DataType,
@@ -30,7 +30,7 @@ impl FullPrecisionLinear {
         precision: DataType,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {

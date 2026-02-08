@@ -4,8 +4,6 @@ mod layer_norm;
 mod qk_norm;
 mod rms_norm;
 
-use std::rc::Rc;
-
 pub use layer_norm::LayerNorm;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
@@ -48,7 +46,7 @@ impl Normalization {
         config: NormalizationConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, NormalizationError> {
         if config.subtract_mean {
             // Use LayerNorm (subtract mean before normalization)

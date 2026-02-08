@@ -1,7 +1,5 @@
 //! QK Normalization encodable.
 
-use std::rc::Rc;
-
 use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     DataType,
@@ -39,7 +37,7 @@ impl QKNorm {
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
         qkv_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
         num_q_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
