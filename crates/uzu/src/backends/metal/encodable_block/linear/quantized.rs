@@ -116,18 +116,10 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(
-                            scales.buffer() as *const _ as *mut _
-                        )
-                        .unwrap()
-                    };
-                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(deq_biases.buffer()
-                            as *const _
-                            as *mut _)
-                        .unwrap()
-                    };
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        scales.buffer().clone();
+                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        deq_biases.buffer().clone();
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
@@ -162,19 +154,10 @@ impl QuantizedLinear {
                             storage_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(
-                            scales.buffer() as *const _ as *mut _
-                        )
-                        .unwrap()
-                    };
-                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> = unsafe {
-                        objc2::rc::Retained::retain(std::ptr::from_ref(
-                            &*zero_points.buffer(),
-                        )
-                            as *mut _)
-                        .unwrap()
-                    };
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        scales.buffer().clone();
+                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
+                        zero_points.buffer().clone();
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }

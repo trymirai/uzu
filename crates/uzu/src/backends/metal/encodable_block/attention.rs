@@ -241,15 +241,7 @@ impl EncodableBlock<Metal> for Attention {
                 eprintln!("Failed to prepare rotated values buffer: {:?}", e);
             }
 
-            (
-                unsafe {
-                    objc2::rc::Retained::retain(
-                        rotated_keys_buffer as *const _ as *mut _,
-                    )
-                    .unwrap()
-                },
-                extracted_values_buf,
-            )
+            (rotated_keys_buffer.clone(), extracted_values_buf)
         };
 
         let queries_array = rotated_queries_binding[0].borrow_mut();

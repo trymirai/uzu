@@ -237,12 +237,7 @@ impl MambaMixer {
         let c_arr = arrays[4].borrow_mut();
 
         let input_buf = conv_inputs.buffer().to_owned();
-        let state_buf = unsafe {
-            objc2::rc::Retained::retain(std::ptr::from_ref(
-                &*conv_state.buffer(),
-            ) as *mut _)
-        }
-        .unwrap();
+        let state_buf = conv_state.buffer().clone();
         let x_buf = x_arr.buffer().to_owned();
         let b_buf = b_arr.buffer().to_owned();
         let c_buf = c_arr.buffer().to_owned();
@@ -289,12 +284,7 @@ impl MambaMixer {
                     .conv_padded_buffer()
                     .expect("Missing conv padded buffer");
                 let borrow = array.borrow_mut();
-                let buf = unsafe {
-                    objc2::rc::Retained::retain(std::ptr::from_ref(
-                        &*borrow.buffer(),
-                    ) as *mut _)
-                }
-                .unwrap();
+                let buf = borrow.buffer().clone();
                 drop(borrow);
 
                 self.conv_scan
