@@ -114,7 +114,7 @@ pub struct MetalToolchain {
     std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
-    include_dirs: Box<[PathBuf]>,
+    include_dirs: Option<Box<[PathBuf]>>,
 }
 
 impl MetalToolchain {
@@ -146,15 +146,17 @@ impl MetalToolchain {
                 sdk.os(),
                 std.min_os()
             )),
+            // NOTE: Previous build.rs script didn't forward metal compiler warnings to cargo warnings, the new one does.
+            // This is temporary to avoid warning spam without modifying unrelated things in the same pull request as introducing the dsl and converting kernels
             OsString::from("-Wno-sign-compare"),
             OsString::from("-Wno-macro-redefined"),
             OsString::from("-Wno-unused-variable"),
         ]);
 
         let include_dirs = if include_dir.as_os_str().is_empty() {
-            Box::new([]) as Box<[PathBuf]>
+            None
         } else {
-            Box::new([include_dir])
+            Some(Box::<[PathBuf]>::from([include_dir]))
         };
 
         Ok(Self {
@@ -176,8 +178,10 @@ impl MetalToolchain {
         &self,
         cmd: &mut Command,
     ) {
-        for dir in self.include_dirs.iter() {
-            cmd.arg("-I").arg(dir);
+        if let Some(include_dirs) = self.include_dirs.as_ref() {
+            for dir in include_dirs.iter() {
+                cmd.arg("-I").arg(dir);
+            }
         }
     }
 
