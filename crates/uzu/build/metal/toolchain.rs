@@ -114,12 +114,12 @@ pub struct MetalToolchain {
     std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
-    include_dirs: Option<Box<[PathBuf]>>,
+    include_dirs: Box<[PathBuf]>,
 }
 
 impl MetalToolchain {
     pub fn from_env_with_include_dir(
-        include_dir: PathBuf
+        include_dir: Option<PathBuf>
     ) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::default();
@@ -153,11 +153,7 @@ impl MetalToolchain {
             OsString::from("-Wno-unused-variable"),
         ]);
 
-        let include_dirs = if include_dir.as_os_str().is_empty() {
-            None
-        } else {
-            Some(Box::<[PathBuf]>::from([include_dir]))
-        };
+        let include_dirs = include_dir.into_iter().collect();
 
         Ok(Self {
             sdk,
@@ -178,10 +174,8 @@ impl MetalToolchain {
         &self,
         cmd: &mut Command,
     ) {
-        if let Some(include_dirs) = self.include_dirs.as_ref() {
-            for dir in include_dirs.iter() {
-                cmd.arg("-I").arg(dir);
-            }
+        for dir in self.include_dirs.iter() {
+            cmd.arg("-I").arg(dir);
         }
     }
 

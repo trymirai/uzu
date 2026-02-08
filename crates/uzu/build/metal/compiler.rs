@@ -130,8 +130,9 @@ impl MetalCompiler {
             format!("cannot create {}", build_dir.display())
         })?;
 
-        let toolchain = MetalToolchain::from_env_with_include_dir(include_dir)
-            .context("cannot create toolchain")?;
+        let toolchain =
+            MetalToolchain::from_env_with_include_dir(Some(include_dir))
+                .context("cannot create toolchain")?;
 
         Ok(Self {
             src_dir,
