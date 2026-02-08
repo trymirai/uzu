@@ -1,3 +1,4 @@
+pub mod attention;
 pub mod device;
 pub mod env_utils;
 pub mod model_size;

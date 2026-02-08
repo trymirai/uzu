@@ -24,7 +24,7 @@ pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
 use super::traces::ActivationTrace;
 use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
-    DataType, DecoderConfig, DeviceContext,
+    DataType, DecoderConfig,
     array::ArrayCellExt,
     backends::{
         common::Context,
@@ -35,6 +35,7 @@ use crate::{
         },
     },
     session::parameter::SamplingMethod,
+    utils::attention::fill_attention_bias,
 };
 
 pub type ArrayCell = RefCell<MetalArray>;
@@ -57,22 +58,17 @@ impl ForwardPassState {
     // ========================================================================
 
     fn init_token_ids(
-        context: &MTLContext,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         token_ids: &[u64],
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
         let token_ids_array = scratch.token_ids.view(&[suffix_length]);
-        context.copy_from_view(
-            &mut token_ids_array.borrow_mut(),
-            token_ids.into(),
-        );
+        token_ids_array.borrow_mut().copy_from_view(token_ids.into());
         token_ids_array
     }
 
     fn init_token_positions(
-        context: &MTLContext,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         token_positions: &[usize],
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
@@ -80,10 +76,9 @@ impl ForwardPassState {
             scratch.token_positions.view(&[suffix_length]);
         let token_positions_i32: Box<[i32]> =
             token_positions.iter().map(|p| *p as i32).collect();
-        context.copy_from_view(
-            &mut token_positions_array.borrow_mut(),
-            token_positions_i32.as_ref().into(),
-        );
+        token_positions_array
+            .borrow_mut()
+            .copy_from_view(token_positions_i32.as_ref().into());
         token_positions_array
     }
 
@@ -96,7 +91,7 @@ impl ForwardPassState {
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         cache_layers: Rc<RefCell<CacheLayers>>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
@@ -131,7 +126,7 @@ impl ForwardPassState {
         let token_ids_cell = if skip_token_ids_copy {
             scratch.token_ids.view(&[suffix_length])
         } else {
-            Self::init_token_ids(&context, scratch, token_ids)
+            Self::init_token_ids(scratch, token_ids)
         };
 
         // Token positions - use async buffer if provided
@@ -147,7 +142,7 @@ impl ForwardPassState {
                 };
                 RefCell::new(array)
             } else {
-                Self::init_token_positions(&context, scratch, token_positions)
+                Self::init_token_positions(scratch, token_positions)
             };
 
         // Token bitmask
@@ -155,10 +150,7 @@ impl ForwardPassState {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
             let bitmask_array = scratch.token_bitmask.view(&bitmask_shape);
             bitmask_array.borrow_mut().as_slice_mut::<u32>().fill(0);
-            context.copy_from_view(
-                &mut bitmask_array.borrow_mut(),
-                bitmask.into(),
-            );
+            bitmask_array.borrow_mut().copy_from_view(bitmask.into());
             bitmask_array
         });
 
@@ -175,10 +167,7 @@ impl ForwardPassState {
             RefCell::new(array)
         } else {
             let token_seeds_array = scratch.token_seeds.view(&[suffix_length]);
-            context.copy_from_view(
-                &mut token_seeds_array.borrow_mut(),
-                token_seeds.into(),
-            );
+            token_seeds_array.borrow_mut().copy_from_view(token_seeds.into());
             token_seeds_array
         };
 
@@ -192,7 +181,6 @@ impl ForwardPassState {
 
         // Attention bias (causal + sliding window)
         let attention_bias = Self::init_llm_attention_bias(
-            &context,
             scratch,
             &cache_layers,
             suffix_length,
@@ -251,8 +239,7 @@ impl ForwardPassState {
     }
 
     fn init_llm_attention_bias(
-        context: &MTLContext,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
         token_positions: &[usize],
@@ -283,7 +270,6 @@ impl ForwardPassState {
                 &mut attention_bias_map,
                 token_positions,
                 suffix_length,
-                context,
                 external_bias_fn,
             );
         }
@@ -302,7 +288,7 @@ impl ForwardPassState {
     pub fn new_classifier(
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         shared_buffers: Rc<RefCell<SharedBuffers>>,
         token_ids: &[u64],
         token_positions: &[usize],
@@ -312,13 +298,12 @@ impl ForwardPassState {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len());
 
-        let token_ids_cell = Self::init_token_ids(&context, scratch, token_ids);
+        let token_ids_cell = Self::init_token_ids(scratch, token_ids);
         let token_positions_cell =
-            Self::init_token_positions(&context, scratch, token_positions);
+            Self::init_token_positions(scratch, token_positions);
 
         // Attention bias (bidirectional or causal)
         let attention_bias = Self::init_classifier_attention_bias(
-            &context,
             scratch,
             suffix_length,
             bidirectional_attention,
@@ -354,8 +339,7 @@ impl ForwardPassState {
     }
 
     fn init_classifier_attention_bias(
-        context: &MTLContext,
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         suffix_length: usize,
         bidirectional_attention: bool,
     ) -> HashMap<Option<usize>, ArrayCell> {
@@ -374,7 +358,7 @@ impl ForwardPassState {
             if bidirectional_attention {
                 if let Some(window_size) = window {
                     let half_window = (window_size / 2) as isize;
-                    context.fill_attention_bias(
+                    fill_attention_bias(
                         bias_array,
                         suffix_length,
                         0,
@@ -384,7 +368,7 @@ impl ForwardPassState {
                         },
                     );
                 } else {
-                    context.fill_attention_bias(
+                    fill_attention_bias(
                         bias_array,
                         suffix_length,
                         0,
@@ -392,7 +376,7 @@ impl ForwardPassState {
                     );
                 }
             } else {
-                context.fill_attention_bias(
+                fill_attention_bias(
                     bias_array,
                     suffix_length,
                     0,

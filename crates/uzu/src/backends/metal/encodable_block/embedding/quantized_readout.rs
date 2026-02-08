@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
@@ -40,7 +38,7 @@ impl QuantizedEmbeddingReadout {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -63,7 +61,7 @@ impl QuantizedEmbeddingReadout {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -89,7 +87,7 @@ impl QuantizedEmbeddingReadout {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
         let weights = parameter_tree.leaf(weights_name).map_err(|e| {

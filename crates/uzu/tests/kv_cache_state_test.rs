@@ -2,7 +2,8 @@
 
 use metal::{MTLCommandBuffer, MTLCommandQueue};
 use uzu::{
-    DataType, DeviceContext,
+    DataType,
+    array::ArrayContextExt,
     backends::{
         common::Context,
         metal::{
@@ -48,15 +49,15 @@ fn make_test_layer(
     };
     let shape = [1, total_len.max(1), 1];
 
-    let keys = std::cell::RefCell::new(context.array(
+    let keys = std::cell::RefCell::new(context.create_array(
         &shape,
         DataType::F32,
-        "kv_cache_keys".to_string(),
+        "kv_cache_keys",
     ));
-    let values = std::cell::RefCell::new(context.array(
+    let values = std::cell::RefCell::new(context.create_array(
         &shape,
         DataType::F32,
-        "kv_cache_values".to_string(),
+        "kv_cache_values",
     ));
 
     let prefix_token_positions = match &state {

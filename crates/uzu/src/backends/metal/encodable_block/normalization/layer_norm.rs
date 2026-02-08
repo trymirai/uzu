@@ -1,7 +1,5 @@
 //! LayerNorm encodable.
 
-use std::rc::Rc;
-
 use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
     DataType,
@@ -34,7 +32,7 @@ impl LayerNorm {
         config: NormalizationConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {

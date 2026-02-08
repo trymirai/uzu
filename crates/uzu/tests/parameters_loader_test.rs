@@ -15,7 +15,8 @@ fn test_parameter_loader_basic() {
     let file = std::fs::File::open(&weights_path)
         .expect("Weights file not found; run download script");
 
-    let loader = ParameterLoader::new(&file, &*context).expect("create loader");
+    let loader =
+        ParameterLoader::new(&file, context.as_ref()).expect("create loader");
     let embeddings =
         loader.get("embedding.weights").expect("weights embeddings");
     let view = embeddings.as_view::<bf16>();

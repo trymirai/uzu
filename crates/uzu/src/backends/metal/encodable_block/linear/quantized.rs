@@ -1,5 +1,4 @@
 use crate::backends::metal::Metal;
-use std::rc::Rc;
 
 use crate::backends::{
     common::kernel::TensorAddBiasKernel,
@@ -47,7 +46,7 @@ impl QuantizedLinear {
         config: &QuantizationConfig,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {

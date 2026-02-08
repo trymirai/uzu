@@ -24,7 +24,7 @@ pub fn linear_block<const N: usize>(
     input_dimension: usize,
     output_dimensions: [usize; N],
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 ) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
@@ -71,7 +71,7 @@ pub fn mlp_block(
     model_dimension: usize,
     hidden_dimension: usize,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
 ) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType =
@@ -144,7 +144,7 @@ pub fn mlp_fused_block(
     model_dimension: usize,
     hidden_dimension: usize,
     context: Rc<MTLContext>,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
 ) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         match &dense_config.linear_config {
@@ -304,7 +304,7 @@ pub fn mlp_fused_block(
 pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
 ) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
@@ -460,7 +460,7 @@ pub fn embed_block(
 pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
 ) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {

@@ -53,7 +53,7 @@ impl ClassifierLayer {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        layer_loader: &ParameterTree<Rc<MTLContext>>,
+        layer_loader: &ParameterTree<MTLContext>,
         rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     ) -> Self {
         autoreleasepool(|_| {

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
@@ -41,7 +39,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -66,7 +64,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -94,7 +92,7 @@ impl QuantizedEmbeddingLookup {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 

@@ -1,8 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use super::super::ModelShape;
 use crate::{
-    DeviceContext,
+    array::ArrayContextExt,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
 };
@@ -21,32 +21,30 @@ impl RopeBuffers {
         context: &MTLContext,
         model_shape: &ModelShape,
     ) -> Self {
-        unsafe {
-            let rotated_queries_shape = model_shape.rotated_queries_shape(1);
-            let head_dim = rotated_queries_shape[2];
-            let rope_max_sequence_length = model_shape.context_length();
+        let rotated_queries_shape = model_shape.rotated_queries_shape(1);
+        let head_dim = rotated_queries_shape[2];
+        let rope_max_sequence_length = model_shape.context_length();
 
-            Self {
-                cosines: RefCell::new(context.array_uninitialized(
-                    &[rope_max_sequence_length, head_dim],
-                    model_shape.activation_data_type(),
-                    String::from("rope_buffers_cosines"),
-                )),
-                sines: RefCell::new(context.array_uninitialized(
-                    &[rope_max_sequence_length, head_dim],
-                    model_shape.activation_data_type(),
-                    String::from("rope_buffers_sines"),
-                )),
-            }
+        Self {
+            cosines: RefCell::new(context.create_array_uninitialized(
+                &[rope_max_sequence_length, head_dim],
+                model_shape.activation_data_type(),
+                "rope_buffers_cosines",
+            )),
+            sines: RefCell::new(context.create_array_uninitialized(
+                &[rope_max_sequence_length, head_dim],
+                model_shape.activation_data_type(),
+                "rope_buffers_sines",
+            )),
         }
     }
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
-        rope_name: String,
+        parameter_tree: &ParameterTree<MTLContext>,
+        rope_name: &str,
     ) {
-        let Ok(rope_tree) = parameter_tree.subtree(rope_name.as_str()) else {
+        let Ok(rope_tree) = parameter_tree.subtree(rope_name) else {
             return;
         };
 

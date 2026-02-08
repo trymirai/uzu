@@ -66,7 +66,7 @@ impl MoeBlock {
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         hidden_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, crate::backends::metal::MTLError> {
         let activation_data_type: DataType = moe_config
             .expert_config

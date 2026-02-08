@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use crate::backends::metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
@@ -32,7 +32,7 @@ impl FullPrecisionEmbeddingReadout {
         data_type: DataType,
         vocab_size: usize,
         model_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
         {

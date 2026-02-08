@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use super::super::{ModelShape, ScratchBuffers};
 use crate::{
@@ -26,7 +26,7 @@ pub struct CommonAuxBuffers {
 
 impl CommonAuxBuffers {
     pub fn new(
-        scratch: &ScratchBuffers<Rc<MTLContext>>,
+        scratch: &ScratchBuffers<MTLContext>,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {

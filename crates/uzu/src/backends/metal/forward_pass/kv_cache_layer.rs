@@ -2,11 +2,12 @@ use std::cell::RefCell;
 
 use super::super::{MTLContext, MetalArray};
 use crate::{
-    DeviceContext,
+    array::ArrayContextExt,
     backends::metal::{
         MTLCommandBuffer, ProtocolObject, Retained,
         kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
     },
+    utils::attention::fill_attention_bias,
 };
 
 pub type ArrayCell = RefCell<MetalArray>;
@@ -114,12 +115,11 @@ impl KVCacheLayer {
         dst: &mut MetalArray,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let prefix_segment_length = self.prefix_segment_length();
 
-        context.fill_attention_bias(
+        fill_attention_bias(
             dst,
             suffix_length,
             prefix_segment_length,
@@ -127,12 +127,11 @@ impl KVCacheLayer {
                 if let Some(bias_fn) = external_bias_fn {
                     bias_fn(row_index, column_index)
                 } else {
-                    let result = self.bias_should_be_neg_inf(
+                    self.bias_should_be_neg_inf(
                         row_index,
                         column_index,
                         suffix_token_positions,
-                    );
-                    result
+                    )
                 }
             },
         );
@@ -401,15 +400,15 @@ impl KVCacheLayer {
                 let dtype = keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys = context.array(
+                let mut slice_keys = context.create_array(
                     &slice_shape,
                     dtype,
-                    String::from("kv_cache_layer_slice_keys"),
+                    "kv_cache_layer_slice_keys",
                 );
-                let mut slice_values = context.array(
+                let mut slice_values = context.create_array(
                     &slice_shape,
                     dtype,
-                    String::from("kv_cache_layer_slice_values"),
+                    "kv_cache_layer_slice_values",
                 );
 
                 let slots: Vec<usize> = (range.start..range.end)

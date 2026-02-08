@@ -1,10 +1,10 @@
 use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull};
 
-use ndarray::{ArrayView, IxDyn};
+use ndarray::{ArrayView, Dimension, IxDyn};
 
 use crate::{
     ArrayElement, DataType,
-    backends::common::{Backend, NativeBuffer},
+    backends::common::{Backend, Context, NativeBuffer},
 };
 
 #[derive(Debug, Clone)]
@@ -208,6 +208,25 @@ impl<B: Backend> Array<B> {
             dst_slice.copy_from_slice(src_slice);
         }
     }
+
+    pub fn copy_from_view<T: ArrayElement, D: Dimension>(
+        &mut self,
+        view: ArrayView<T, D>,
+    ) {
+        assert_eq!(self.data_type(), T::data_type());
+
+        let dst_slice = self.as_slice_mut::<T>();
+
+        if let Some(src_slice) = view.as_slice_memory_order() {
+            assert!(src_slice.len() <= dst_slice.len());
+            dst_slice[..src_slice.len()].copy_from_slice(src_slice);
+        } else {
+            assert!(view.len() <= dst_slice.len());
+            for (d, s) in dst_slice.iter_mut().zip(view.iter()) {
+                *d = *s;
+            }
+        }
+    }
 }
 
 pub trait ArrayCellExt<B: Backend> {
@@ -223,5 +242,48 @@ impl<B: Backend> ArrayCellExt<B> for RefCell<Array<B>> {
         shape: &[usize],
     ) -> RefCell<Array<B>> {
         RefCell::new(self.borrow().view(shape))
+    }
+}
+
+pub trait ArrayContextExt {
+    type Backend: Backend;
+
+    fn create_array_uninitialized(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: &str,
+    ) -> Array<Self::Backend>;
+
+    fn create_array(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: &str,
+    ) -> Array<Self::Backend> {
+        let mut array =
+            self.create_array_uninitialized(shape, data_type, label);
+        array.as_bytes_mut().fill(0);
+        array
+    }
+}
+
+impl<C: Context> ArrayContextExt for C {
+    type Backend = C::Backend;
+
+    fn create_array_uninitialized(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: &str,
+    ) -> Array<Self::Backend> {
+        let buffer_size_bytes = size_for_shape(shape, data_type);
+
+        let buffer = self
+            .create_buffer(buffer_size_bytes)
+            .expect("Failed to create buffer");
+        buffer.set_label(Some(label));
+
+        unsafe { Array::from_parts(buffer, 0, shape, data_type) }
     }
 }
