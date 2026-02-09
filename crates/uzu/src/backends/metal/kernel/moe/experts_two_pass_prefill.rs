@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 
 use metal::{
-    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandBuffer, MTLCommandEncoder,
     MTLComputeCommandEncoder, MTLComputePipelineState, MTLDataType,
     MTLFunctionConstantValues, MTLSize,
 };
@@ -9,7 +9,6 @@ use objc2::{
     __framework_prelude::{ProtocolObject, Retained},
     Message,
 };
-use objc2_foundation::NSRange;
 
 use crate::backends::metal::kernel::moe::dtype_suffix;
 use crate::backends::{
@@ -118,20 +117,6 @@ impl MoeExpertsTwoPassPrefillKernels {
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx =
             DTYPES.iter().position(|&t| t == args.data_type.into()).unwrap();
-        let dtype_size = match args.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-        let hidden_bytes = args.total_rows * args.d_ff * dtype_size;
-        let blit_encoder = command_buffer
-            .new_blit_command_encoder()
-            .expect("Failed to create blit command encoder");
-        blit_encoder.fill_buffer_range_value(
-            args.hidden_buffer,
-            NSRange::new(0, hidden_bytes),
-            0,
-        );
-        blit_encoder.end_encoding();
 
         self.tile_map.encode_counts(
             command_buffer,

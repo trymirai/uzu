@@ -68,7 +68,8 @@ inline void pass_a_impl(
     threadgroup T* Wk_up,           // [BN,BK]
     threadgroup T* Wk_gate,         // [BN,BK]
     threadgroup float* bias_up,     // [BN]
-    threadgroup float* bias_gate    // [BN]
+    threadgroup float* bias_gate,   // [BN]
+    const uint gating_sel
 ) {
   using StageVec4 = metal::vec<T, 4>;
 
@@ -120,7 +121,7 @@ inline void pass_a_impl(
   metal::simdgroup_float8x8 OutGate[TEMP];
   for (uint i = 0; i < TEMP; ++i) {
     OutUp[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
-    if (GATING_SEL > 1u) {
+    if (gating_sel > 1u) {
       OutGate[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
     }
   }
@@ -206,7 +207,7 @@ inline void pass_a_impl(
               up_dst[j] = (col_base + j < valid_k)
                               ? static_cast<T>(float(W13_all[up_base + j]))
                               : static_cast<T>(0.0f);
-              if (GATING_SEL > 1u) {
+              if (gating_sel > 1u) {
                 gt_dst[j] = (col_base + j < valid_k)
                                 ? static_cast<T>(float(W13_all[gate_base + j]))
                                 : static_cast<T>(0.0f);
@@ -217,7 +218,7 @@ inline void pass_a_impl(
             UZU_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
               up_dst[j] = static_cast<T>(0.0f);
-              if (GATING_SEL > 1u)
+              if (gating_sel > 1u)
                 gt_dst[j] = static_cast<T>(0.0f);
             }
           }
@@ -255,7 +256,7 @@ inline void pass_a_impl(
               OutUp[tile]
           );
 
-          if (GATING_SEL > 1u) {
+          if (gating_sel > 1u) {
             metal::simdgroup_matrix<T, 8, 8> rhs_gate;
             simdgroup_load(
                 rhs_gate,
@@ -282,7 +283,7 @@ inline void pass_a_impl(
     const uint c_global = col_tg_off + c_local;
     bias_up[c_local] =
         (c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
-    if (GATING_SEL > 1u) {
+    if (gating_sel > 1u) {
       bias_gate[c_local] = (c_global < d_ff)
                                ? float(up_biases[bias_base + d_ff + c_global])
                                : 0.0f;
@@ -321,7 +322,7 @@ inline void pass_a_impl(
       const auto up_frag = OutUp[tile].thread_elements();
       float gate_frag_0 = 0.0f;
       float gate_frag_1 = 0.0f;
-      if (GATING_SEL > 1u) {
+      if (gating_sel > 1u) {
         const auto gate_frag = OutGate[tile].thread_elements();
         gate_frag_0 = gate_frag[0];
         gate_frag_1 = gate_frag[1];
@@ -335,16 +336,16 @@ inline void pass_a_impl(
         float up_v =
             clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
         float out_val;
-        if (GATING_SEL <= 1u) {
+        if (gating_sel <= 1u) {
           out_val =
-              (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+              (gating_sel == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_0 + bias_gate[col0],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (GATING_SEL == 2u) ? silu(gate_v, silu_alpha)
+          const float gate_act = (gating_sel == 2u) ? silu(gate_v, silu_alpha)
                                                     : gelu_approx(gate_v);
           out_val = gate_act * up_v;
         }
@@ -356,16 +357,16 @@ inline void pass_a_impl(
         float up_v =
             clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
         float out_val;
-        if (GATING_SEL <= 1u) {
+        if (gating_sel <= 1u) {
           out_val =
-              (GATING_SEL == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+              (gating_sel == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_1 + bias_gate[col1],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (GATING_SEL == 2u) ? silu(gate_v, silu_alpha)
+          const float gate_act = (gating_sel == 2u) ? silu(gate_v, silu_alpha)
                                                     : gelu_approx(gate_v);
           out_val = gate_act * up_v;
         }
@@ -402,7 +403,8 @@ inline void pass_a_indirect_impl(
     threadgroup T* Wk_up,
     threadgroup T* Wk_gate,
     threadgroup float* bias_up,
-    threadgroup float* bias_gate
+    threadgroup float* bias_gate,
+    const uint gating_sel
 ) {
   constexpr uint ROW_TILE = PASSA_BM;
   const uint base = row_tile_idx * 3u;
@@ -438,7 +440,8 @@ inline void pass_a_indirect_impl(
       Wk_up,
       Wk_gate,
       bias_up,
-      bias_gate
+      bias_gate,
+      gating_sel
   );
 }
 
@@ -493,7 +496,8 @@ inline void pass_a_indirect_impl(
         Wk_up,                                                                 \
         Wk_gate,                                                               \
         bias_up,                                                               \
-        bias_gate                                                              \
+        bias_gate,                                                             \
+        GATING_SEL                                                             \
     );                                                                         \
   }
 
@@ -529,10 +533,10 @@ MOE_PASS_A_INDIRECT_KERNEL(float, f32)
 //    const uint GATING_SEL SPECIALIZE,
 //    const uint tg_pos_x GROUPS(INDIRECT),
 //    const uint tg_pos_y GROUPS(INDIRECT),
-//    const uint threads_per_tg_x THREADS(THREADS_PER_TG)
+//    const uint tid_x THREADS(THREADS_PER_TG)
 //) {
-//  const uint sg_id = threads_per_tg_x / SIMD_WIDTH;
-//  const uint3 local_tid = uint3(threads_per_tg_x, 1, 1);
+//  const uint sg_id = tid_x / SIMD_WIDTH;
+//  const uint3 local_tid = uint3(tid_x, 1, 1);
 //  const uint3 threads_per_tg = uint3(THREADS_PER_TG, 1, 1);
 //  pass_a_indirect_impl<T>(
 //    x_perm,
