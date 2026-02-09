@@ -51,7 +51,8 @@ KERNEL(QuantizedEmbeddingLookup) (
     }
   } else if (quant_mode == QUANT_INT8) {
     const uint elem_idx = token_id * weights_stride + dim_idx;
-    const device int8_t* weights_i8 = reinterpret_cast<const device int8_t*>(weights);
+    const device int8_t* weights_i8 =
+        reinterpret_cast<const device int8_t*>(weights);
     quantized_value = int(weights_i8[elem_idx]);
   } else {
     const uint elem_idx = token_id * weights_stride + dim_idx;

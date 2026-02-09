@@ -131,15 +131,15 @@ KERNEL(LayerNorm) (
 ) {
   const uint input_offset = batch_idx * model_dim;
   layer_norm_core<IN, SC, OUT, ACC>(
-    input + input_offset,
-    scales,
-    output + input_offset,
-    model_dim,
-    epsilon,
-    scale_offset,
-    shared_mean,
-    shared_variance,
-    thread_in_row,
-    full_layer
+      input + input_offset,
+      scales,
+      output + input_offset,
+      model_dim,
+      epsilon,
+      scale_offset,
+      shared_mean,
+      shared_variance,
+      thread_in_row,
+      full_layer
   );
 }

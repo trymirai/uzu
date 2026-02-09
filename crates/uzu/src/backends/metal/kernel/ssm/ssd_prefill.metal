@@ -183,8 +183,8 @@ KERNEL(SSDPrefill)(
 #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
       const int idx = chunk * int(simd_width) + int(lane_idx);
-      const uint cb_idx = cb_group_base + uint(idx) * cb_state_stride +
-                            token * cb_token_stride;
+      const uint cb_idx =
+          cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
       const float new_state =
           decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
       lane_states[chunk] = new_state;
@@ -234,7 +234,8 @@ KERNEL(SSDPrefillSequential)(
                         size_t(dh_idx) * state_strides[1];
 
   for (uint token = 0; token < suffix_len; ++token) {
-    const uint x_idx = token * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
+    const uint x_idx =
+        token * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
     const uint dt_idx = token * dt_strides[0] + h_idx * dt_strides[1];
     const uint cb_base = token * cb_strides[0] + group_idx * cb_strides[1];
 

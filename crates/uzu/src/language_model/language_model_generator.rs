@@ -436,15 +436,12 @@ impl LanguageModelGenerator {
         // Fill attention bias from KV cache state for the first decode position.
         // Windowed buffers get the correct mask; GPU patches maintain it for subsequent passes.
         // Full-attention buffers also get filled (masking beyond-prefix positions).
-        self.context
-            .cache_layers
-            .borrow()
-            .fill_attention_bias_scratch(
-                &self.context.scratch_buffers.attention_window_size_to_bias,
-                &[first_decode_position],
-                1,
-                &self.context.mtl_context,
-            );
+        self.context.cache_layers.borrow().fill_attention_bias_scratch(
+            &self.context.scratch_buffers.attention_window_size_to_bias,
+            &[first_decode_position],
+            1,
+            &self.context.mtl_context,
+        );
 
         self.context
             .async_buffers

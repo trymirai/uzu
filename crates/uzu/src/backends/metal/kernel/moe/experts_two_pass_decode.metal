@@ -72,14 +72,16 @@ KERNEL(MoeExpertsDecodePassA)(
     uint base_idx = i * 128 + simd_lid * 4;
 
     device const T* x_vec = reinterpret_cast<device const T*>(x_ptr + base_idx);
-    device const T* w_up_vec = reinterpret_cast<device const T*>(w_up_row + base_idx);
+    device const T* w_up_vec =
+        reinterpret_cast<device const T*>(w_up_row + base_idx);
     acc_up += float(x_vec[0]) * float(w_up_vec[0]);
     acc_up += float(x_vec[1]) * float(w_up_vec[1]);
     acc_up += float(x_vec[2]) * float(w_up_vec[2]);
     acc_up += float(x_vec[3]) * float(w_up_vec[3]);
 
     if (gating_sel > 1) {
-      device const T* w_gate_vec = reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      device const T* w_gate_vec =
+          reinterpret_cast<device const T*>(w_gate_row + base_idx);
       acc_gate += float(x_vec[0]) * float(w_gate_vec[0]);
       acc_gate += float(x_vec[1]) * float(w_gate_vec[1]);
       acc_gate += float(x_vec[2]) * float(w_gate_vec[2]);
@@ -110,11 +112,13 @@ KERNEL(MoeExpertsDecodePassA)(
 
     float activated;
     if (gating_sel <= 1) {
-      activated = (gating_sel == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+      activated =
+          (gating_sel == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
     } else {
       float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
       gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
-      float gate_act = (gating_sel == 2) ? silu(gate_val, silu_alpha) : gelu_approx(gate_val);
+      float gate_act = (gating_sel == 2) ? silu(gate_val, silu_alpha)
+                                         : gelu_approx(gate_val);
       activated = gate_act * up_val;
     }
 
@@ -184,14 +188,22 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
     const AccumT h7 = hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD];
 
     // W2: lane-coalesced
-    const AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
-    const AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
-    const AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
-    const AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
-    const AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
-    const AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
-    const AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
-    const AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+    const AccumT w0 =
+        AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+    const AccumT w1 =
+        AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+    const AccumT w2 =
+        AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+    const AccumT w3 =
+        AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+    const AccumT w4 =
+        AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+    const AccumT w5 =
+        AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+    const AccumT w6 =
+        AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+    const AccumT w7 =
+        AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
 
     // dual trees for ILP
     acc0 = fma(h0, w0, acc0);

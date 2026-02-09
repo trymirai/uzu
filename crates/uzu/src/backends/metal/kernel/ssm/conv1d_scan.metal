@@ -69,11 +69,12 @@ template <typename T>
 void conv1d_scan_kernel(
     device const T* padded [[buffer(0)]], // (prefix+suffix, channels)
     device const T* w [[buffer(1)]],      // (channels, kernel)
-    device const T* b [[buffer(2), function_constant(has_bias)]], // optional (channels)
-    device T* x_out [[buffer(3)]],        // (suffix, inner_dim)
-    device T* b_out [[buffer(4)]],        // (suffix, proj_dim)
-    device T* c_out [[buffer(5)]],        // (suffix, proj_dim)
-    device T* state_out [[buffer(6)]],    // (channels, kernel-1)
+    device const T* b
+    [[buffer(2), function_constant(has_bias)]], // optional (channels)
+    device T* x_out [[buffer(3)]],              // (suffix, inner_dim)
+    device T* b_out [[buffer(4)]],              // (suffix, proj_dim)
+    device T* c_out [[buffer(5)]],              // (suffix, proj_dim)
+    device T* state_out [[buffer(6)]],          // (channels, kernel-1)
     constant const size_t& suffix_len [[buffer(7)]],
     constant const int& kernel_size [[buffer(8)]],
     constant const size_t& row_stride [[buffer(9)]],
