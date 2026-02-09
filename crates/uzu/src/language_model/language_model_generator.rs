@@ -431,24 +431,20 @@ impl LanguageModelGenerator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
-        let _first_decode_position = prefill_count.saturating_sub(1);
+        let first_decode_position = prefill_count.saturating_sub(1);
 
-        // Initialize attention bias buffers to zero for async mode
-        // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
-        // rather than garbage (which could be -inf and mask incorrectly)
-        for (_, mask_buffer) in
-            &self.context.scratch_buffers.attention_window_size_to_bias
-        {
-            unsafe {
-                let ptr = mask_buffer.borrow().buffer().contents().as_ptr()
-                    as *mut u8;
-                std::ptr::write_bytes(
-                    ptr,
-                    0,
-                    mask_buffer.borrow().buffer().length() as usize,
-                );
-            }
-        }
+        // Fill attention bias from KV cache state for the first decode position.
+        // Windowed buffers get the correct mask; GPU patches maintain it for subsequent passes.
+        // Full-attention buffers also get filled (masking beyond-prefix positions).
+        self.context
+            .cache_layers
+            .borrow()
+            .fill_attention_bias_scratch(
+                &self.context.scratch_buffers.attention_window_size_to_bias,
+                &[first_decode_position],
+                1,
+                &self.context.mtl_context,
+            );
 
         self.context
             .async_buffers
@@ -723,7 +719,7 @@ impl LanguageModelGenerator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default(), true);
+            self.run_model(task, true, false, SamplingMethod::default(), false);
     }
 
     fn run_model(
