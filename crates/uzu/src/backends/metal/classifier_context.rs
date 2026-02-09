@@ -2,7 +2,7 @@ use crate::backends::metal::Metal;
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, ModelShape,
+    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext,
     ProtocolObject, Retained,
     compilation_parameters::CompilationConfig,
     encodable_block::{
@@ -10,9 +10,7 @@ use super::{
         Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
-    forward_pass::{
-        ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
-    },
+    forward_pass::{ArrayId, EncodableBlock, RopeType},
     kernel::dsl::SigmoidMetalKernel,
 };
 use crate::{
@@ -22,6 +20,10 @@ use crate::{
         metal::error::ClassifierError,
     },
     config::{ClassifierModelConfig, ModelMetadata},
+    forward_pass::{
+        model_shape::ModelShape, scratch_buffers::ScratchBuffers,
+        state::SharedBuffers,
+    },
     parameters::ParameterLoader,
     session::types::Error,
 };
@@ -30,8 +32,8 @@ pub struct ClassifierContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
-    pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers<MTLContext>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+    pub scratch_buffers: ScratchBuffers<Metal>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
@@ -93,7 +95,7 @@ impl ClassifierContext {
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
-            &context,
+            context.as_ref(),
             &decoder_config,
             &model_shape,
         )));

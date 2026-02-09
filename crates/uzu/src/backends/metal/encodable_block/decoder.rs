@@ -10,12 +10,13 @@ use crate::{
     DataType, DecoderConfig,
     backends::metal::{
         KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext,
-        ModelShape, ProtocolObject, Retained,
+        ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
         forward_pass::{ArrayId, ForwardPassState, RopeType},
     },
     config::{DecoderLayerType, MixerConfig},
+    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 

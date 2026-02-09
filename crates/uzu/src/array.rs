@@ -229,21 +229,27 @@ impl<B: Backend> Array<B> {
     }
 }
 
+// Array extends RefCell to have .view on RefCell<Array> (aka ArrayCell)
+
+pub type ArrayCell<B> = RefCell<Array<B>>;
+
 pub trait ArrayCellExt<B: Backend> {
     fn view(
         &self,
         shape: &[usize],
-    ) -> RefCell<Array<B>>;
+    ) -> ArrayCell<B>;
 }
 
-impl<B: Backend> ArrayCellExt<B> for RefCell<Array<B>> {
+impl<B: Backend> ArrayCellExt<B> for ArrayCell<B> {
     fn view(
         &self,
         shape: &[usize],
-    ) -> RefCell<Array<B>> {
+    ) -> ArrayCell<B> {
         RefCell::new(self.borrow().view(shape))
     }
 }
+
+// Array extends Context with helper functions to create arrays from context
 
 pub trait ArrayContextExt {
     type Backend: Backend;

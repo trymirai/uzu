@@ -1,24 +1,22 @@
 use std::cell::RefCell;
 
-use super::super::ModelShape;
 use crate::{
-    array::ArrayContextExt,
-    backends::metal::{MTLContext, MetalArray},
+    array::{ArrayCell, ArrayContextExt},
+    backends::common::Backend,
+    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
-type ArrayCell = RefCell<MetalArray>;
-
-pub struct RopeBuffers {
+pub struct RopeBuffers<B: Backend> {
     /// [rope_max_sequence_length, head_dim]
-    pub cosines: ArrayCell,
+    pub cosines: ArrayCell<B>,
     /// [rope_max_sequence_length, head_dim]
-    pub sines: ArrayCell,
+    pub sines: ArrayCell<B>,
 }
 
-impl RopeBuffers {
+impl<B: Backend> RopeBuffers<B> {
     pub fn new(
-        context: &MTLContext,
+        context: &B::Context,
         model_shape: &ModelShape,
     ) -> Self {
         let rotated_queries_shape = model_shape.rotated_queries_shape(1);
@@ -41,7 +39,7 @@ impl RopeBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<MTLContext>,
+        parameter_tree: &ParameterTree<B::Context>,
         rope_name: &str,
     ) {
         let Ok(rope_tree) = parameter_tree.subtree(rope_name) else {

@@ -8,10 +8,7 @@ use std::{
 
 use super::{
     CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
-    ModelShape,
-    compilation_parameters::CompilationConfig,
-    forward_pass::{ScratchBuffers, SharedBuffers},
-    kernel::TokenCopyKernel,
+    compilation_parameters::CompilationConfig, kernel::TokenCopyKernel,
 };
 use crate::{
     DataType,
@@ -25,6 +22,10 @@ use crate::{
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::Sampling,
+    forward_pass::{
+        model_shape::ModelShape, scratch_buffers::ScratchBuffers,
+        state::SharedBuffers,
+    },
     language_model::rng::PRng,
     parameters::ParameterLoader,
     session::{
@@ -136,8 +137,8 @@ pub struct LanguageModelGeneratorContext {
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub cache_layers: Rc<RefCell<CacheLayers>>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers<MTLContext>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+    pub scratch_buffers: ScratchBuffers<Metal>,
 
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,
@@ -211,7 +212,7 @@ impl LanguageModelGeneratorContext {
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
-            &context,
+            context.as_ref(),
             &decoder_config,
             &model_shape,
         )));

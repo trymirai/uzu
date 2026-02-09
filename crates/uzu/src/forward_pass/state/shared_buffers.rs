@@ -2,78 +2,68 @@ use std::cell::RefCell;
 
 use half::{bf16, f16};
 
-use super::{super::ModelShape, RopeBuffers};
 use crate::{
     DataType,
-    array::ArrayContextExt,
-    backends::metal::{MTLContext, MetalArray},
+    array::{ArrayCell, ArrayContextExt},
+    backends::common::Backend,
+    config::{DecoderConfig, MLPConfig},
+    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
-type ArrayCell = RefCell<MetalArray>;
+use super::RopeBuffers;
 
-pub struct MoeExpertWeights {
-    pub w1: ArrayCell,
-    pub w2: ArrayCell,
-    pub w3: ArrayCell,
+pub struct MoeExpertWeights<B: Backend> {
+    pub w1: ArrayCell<B>,
+    pub w2: ArrayCell<B>,
+    pub w3: ArrayCell<B>,
 }
 
-pub struct SharedBuffers {
-    pub global_rope: Option<RopeBuffers>,
-    pub local_rope: Option<RopeBuffers>,
-    pub moe_expert_weights: Option<Vec<MoeExpertWeights>>,
-    pub attention_sinks: Option<Vec<ArrayCell>>,
+pub struct SharedBuffers<B: Backend> {
+    pub global_rope: Option<RopeBuffers<B>>,
+    pub local_rope: Option<RopeBuffers<B>>,
+    pub moe_expert_weights: Option<Vec<MoeExpertWeights<B>>>,
+    pub attention_sinks: Option<Vec<ArrayCell<B>>>,
 }
 
-impl SharedBuffers {
+impl<B: Backend> SharedBuffers<B> {
     pub fn new(
-        context: &MTLContext,
-        decoder_config: &crate::config::DecoderConfig,
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let global_rope = if decoder_config.global_rope_config.is_some() {
-            Some(RopeBuffers::new(context, model_shape))
-        } else {
-            None
-        };
+        let global_rope = decoder_config
+            .global_rope_config
+            .is_some()
+            .then(|| RopeBuffers::new(context, model_shape));
 
-        let local_rope = if decoder_config.local_rope_config.is_some() {
-            Some(RopeBuffers::new(context, model_shape))
-        } else {
-            None
-        };
+        let local_rope = decoder_config
+            .local_rope_config
+            .is_some()
+            .then(|| RopeBuffers::new(context, model_shape));
 
-        let moe_expert_weights = if matches!(
+        let moe_expert_weights = matches!(
             decoder_config.layer_config.mlp_config,
-            crate::config::MLPConfig::MixtureOfExperts(_)
-        ) {
-            Some(Vec::new())
-        } else {
-            None
-        };
+            MLPConfig::MixtureOfExperts(_)
+        )
+        .then(Vec::new);
 
-        let attention_sinks = if let Some(attention_config) =
-            decoder_config.layer_config.attention_config()
-        {
-            if attention_config.has_sinks {
+        let attention_sinks = decoder_config
+            .layer_config
+            .attention_config()
+            .is_some_and(|c| c.has_sinks)
+            .then(|| {
                 let num_heads = decoder_config.num_heads;
-                Some(
-                    (0..decoder_config.num_layers)
-                        .map(|_| {
-                            RefCell::new(context.create_array_uninitialized(
-                                &[num_heads],
-                                DataType::F32,
-                                "shared_buffers_attention_sinks",
-                            ))
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+                (0..decoder_config.num_layers)
+                    .map(|_| {
+                        RefCell::new(context.create_array_uninitialized(
+                            &[num_heads],
+                            DataType::F32,
+                            "shared_buffers_attention_sinks",
+                        ))
+                    })
+                    .collect()
+            });
 
         Self {
             global_rope,
@@ -85,7 +75,7 @@ impl SharedBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<MTLContext>,
+        parameter_tree: &ParameterTree<B::Context>,
     ) {
         let transformer_tree = parameter_tree
             .subtree("transformer")

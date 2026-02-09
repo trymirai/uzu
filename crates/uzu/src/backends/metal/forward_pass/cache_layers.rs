@@ -6,7 +6,6 @@ use super::{
         AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
         KVSlice,
     },
-    model_shape::ModelShape,
     short_conv_layer::ShortConvLayer,
     ssm_layer::SSMLayer,
 };
@@ -16,6 +15,7 @@ use crate::{
         MTLCommandBuffer, ProtocolObject, Retained, kernel::KVCacheUpdate,
     },
     config::DecoderLayerType,
+    forward_pass::model_shape::ModelShape,
 };
 
 #[derive(Debug)]
