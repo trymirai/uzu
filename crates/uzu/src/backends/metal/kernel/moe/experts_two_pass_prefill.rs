@@ -302,40 +302,5 @@ impl MoeExpertsTwoPassPrefillKernels {
             &encoder_b,
         );
         encoder_b.end_encoding();
-
-        // let pass_b_pipeline = &self.pass_b_indirect[dtype_idx];
-        // let encoder_b = command_buffer
-        //     .new_compute_command_encoder()
-        //     .expect("Failed to create compute command encoder");
-        // encoder_b.set_compute_pipeline_state(pass_b_pipeline);
-        // encoder_b.set_buffer(Some(args.hidden_buffer), 0, 0);
-        // encoder_b.set_buffer(Some(args.expert_offsets), 0, 1);
-        // encoder_b.set_buffer(Some(args.w2_all), 0, 2);
-        // encoder_b.set_buffer(Some(args.down_biases), 0, 3);
-        // encoder_b.set_buffer(Some(args.output_buffer), 0, 4);
-        // unsafe {
-        //     encoder_b.set_bytes(
-        //         NonNull::new_unchecked(&d_model_u32 as *const _ as *mut _),
-        //         size_of::<u32>(),
-        //         5,
-        //     );
-        //     encoder_b.set_bytes(
-        //         NonNull::new_unchecked(&d_ff_u32 as *const _ as *mut _),
-        //         size_of::<u32>(),
-        //         6,
-        //     );
-        //     encoder_b.set_bytes(
-        //         NonNull::new_unchecked(&e_u32 as *const _ as *mut _),
-        //         size_of::<u32>(),
-        //         7,
-        //     );
-        // }
-        // encoder_b.set_buffer(Some(args.tile_map), 0, 8);
-        // encoder_b.dispatch_threadgroups_indirect(
-        //     args.dispatch_args,
-        //     0,
-        //     MTLSize::new(THREADS_PER_TG as usize, 1, 1),
-        // );
-        // encoder_b.end_encoding();
     }
 }
