@@ -6,6 +6,7 @@ use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     SharedMoeWeights,
 };
+use crate::backends::metal::kernel::MoeExpertsTwoPassPrefillKernels;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
@@ -23,8 +24,7 @@ use crate::{
                 },
                 moe::{
                     MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
-                    MoeExpertsTwoPassDecodeKernels,
-                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
+                    MoeExpertsTwoPassDecodeKernels, MoeGatherArguments,
                     MoeRouterTopKArguments, MoeRouterTopKKernel,
                     MoeScatterArguments, MoeScatterKernels,
                     MoeScatterWithMapArguments,
@@ -51,7 +51,7 @@ pub struct MoeBlock {
     scatter_kernels: MoeScatterKernels,
     gather_kernels: MoeGatherKernels,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernels,
-    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
+    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernels,
     finalize_kernel: MoeFinalizeMetalKernel,
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
@@ -167,7 +167,7 @@ impl MoeBlock {
                 ))
             })?;
         let experts_two_pass_prefill_kernel =
-            MoeExpertsTwoPassPrefillKernel::new(context).map_err(|e| {
+            MoeExpertsTwoPassPrefillKernels::new(context).map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
                     "Experts two-pass prefill kernel error: {:?}",
                     e
@@ -580,39 +580,37 @@ impl EncodableBlock<Metal> for MoeBlock {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
-            self.experts_two_pass_prefill_kernel
-                .encode(
-                    root,
-                    MoeExpertsTwoPassArguments {
-                        x_perm_buffer: &x_perm_buf,
-                        expert_offsets: &offsets_buf,
-                        row_expert_map: &row_expert_map_buf,
-                        hidden_buffer: &hidden_buf,
-                        output_buffer: &y_partial_buf,
-                        w13_all: &self.shared_weights.w13_buf,
-                        w2_all: &self.shared_weights.w2_buf,
-                        up_biases: &self.shared_weights.up_biases_buf,
-                        down_biases: &self.shared_weights.down_biases_buf,
-                        tile_counts: &tile_counts_buf,
-                        tile_offsets: &tile_offsets_buf,
-                        tile_map: &tile_map_buf,
-                        total_tiles: &total_tiles_buf,
-                        dispatch_args: &dispatch_args_buf,
-                        total_rows,
-                        d_model: self.model_dim,
-                        d_ff: self.hidden_dim,
-                        e,
-                        num_tiles_k,
-                        gating_code,
-                        gate_clip_min,
-                        gate_clip_max,
-                        up_clip_min,
-                        up_clip_max,
-                        silu_alpha,
-                        data_type: self.data_type,
-                    },
-                )
-                .expect("MoE experts two-pass prefill failed");
+            self.experts_two_pass_prefill_kernel.encode(
+                root,
+                &MoeExpertsTwoPassArguments {
+                    x_perm_buffer: &x_perm_buf,
+                    expert_offsets: &offsets_buf,
+                    row_expert_map: &row_expert_map_buf,
+                    hidden_buffer: &hidden_buf,
+                    output_buffer: &y_partial_buf,
+                    w13_all: &self.shared_weights.w13_buf,
+                    w2_all: &self.shared_weights.w2_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
+                    tile_counts: &tile_counts_buf,
+                    tile_offsets: &tile_offsets_buf,
+                    tile_map: &tile_map_buf,
+                    total_tiles: &total_tiles_buf,
+                    dispatch_args: &dispatch_args_buf,
+                    total_rows,
+                    d_model: self.model_dim,
+                    d_ff: self.hidden_dim,
+                    e,
+                    num_tiles_k,
+                    gating_code,
+                    gate_clip_min,
+                    gate_clip_max,
+                    up_clip_min,
+                    up_clip_max,
+                    silu_alpha,
+                    data_type: self.data_type,
+                },
+            );
         }
 
         {
