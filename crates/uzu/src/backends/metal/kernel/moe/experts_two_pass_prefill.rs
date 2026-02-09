@@ -1,11 +1,17 @@
 use std::ptr::NonNull;
-use metal::{MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLDataType, MTLFunctionConstantValues, MTLSize};
+
+use metal::{
+    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDataType,
+    MTLFunctionConstantValues, MTLSize,
+};
 use objc2::{
     __framework_prelude::{ProtocolObject, Retained},
     Message,
 };
 use objc2_foundation::NSRange;
 
+use crate::backends::metal::kernel::moe::dtype_suffix;
 use crate::backends::{
     common::kernel::{
         // MoeTwoPassPrefillPassAIndirectKernel,
@@ -27,7 +33,6 @@ use crate::backends::{
         },
     },
 };
-use crate::backends::metal::kernel::moe::dtype_suffix;
 
 static DTYPES: [KernelDataType; 3] = [
     KernelDataType::Float16,
@@ -38,8 +43,9 @@ static DTYPES: [KernelDataType; 3] = [
 pub struct MoeExpertsTwoPassPrefillKernels {
     tile_map: MoeTileMapKernels,
     // passes_a: Vec<Vec<MoeTwoPassPrefillPassAIndirectMetalKernel>>,  // [gate][dtype]
-    pass_a_indirect: Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
-    passes_b: Vec<MoeTwoPassPrefillPassBIndirectMetalKernel>,       // [dtype]
+    pass_a_indirect:
+        Vec<Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>>, // [gate][dtype]
+    passes_b: Vec<MoeTwoPassPrefillPassBIndirectMetalKernel>, // [dtype]
 }
 
 impl MoeExpertsTwoPassPrefillKernels {

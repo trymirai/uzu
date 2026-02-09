@@ -10,9 +10,7 @@ pub mod tiles_map;
 pub mod tiles_pass_a;
 
 // Re-export public items from submodules
-pub use experts::{
-    MoeExpertsTwoPassArguments
-};
+pub use experts::MoeExpertsTwoPassArguments;
 pub use experts_single::{
     MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
 };
@@ -31,6 +29,7 @@ pub use tiles_pass_a::{
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
     MoePassATileKernels, MoePassATileScanArguments,
 };
+
 use crate::backends::metal::KernelDataType;
 
 // Common utility functions

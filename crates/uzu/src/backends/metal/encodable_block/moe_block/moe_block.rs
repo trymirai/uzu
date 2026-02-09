@@ -6,7 +6,6 @@ use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     SharedMoeWeights,
 };
-use crate::backends::metal::kernel::MoeExpertsTwoPassPrefillKernels;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
@@ -18,7 +17,7 @@ use crate::{
             MetalArray, NSRange, ProtocolObject, Retained,
             forward_pass::{ArrayId, ForwardPassState},
             kernel::{
-                MoeGatherKernels,
+                MoeExpertsTwoPassPrefillKernels, MoeGatherKernels,
                 dsl::{
                     MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
                 },
