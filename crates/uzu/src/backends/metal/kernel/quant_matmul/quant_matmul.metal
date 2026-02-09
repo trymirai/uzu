@@ -4198,16 +4198,16 @@ qmm_transposed<bfloat, 128, 4, true, 128, 32, 64>(
 
 template <typename U>
 static inline U extract_zp(
-    const device uint8_t* zps, 
-    int row_offset, 
-    int zp_stride, 
-    int bits, 
+    const device uint8_t* zps,
+    int row_offset,
+    int zp_stride,
+    int bits,
     bool high_nibble
 ) {
   uint8_t zp_byte = zps[row_offset * zp_stride];
-  return bits == 4 
-    ? static_cast<U>(high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F))
-    : static_cast<U>(zp_byte);
+  return bits == 4
+             ? static_cast<U>(high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F))
+             : static_cast<U>(zp_byte);
 };
 
 // MLP fused QMV kernel for decode path (M=1).

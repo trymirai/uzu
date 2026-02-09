@@ -201,7 +201,8 @@ gemm_splitk_mlp_fused(
 ///////////////////////////////////////////////////////////////////////////////
 
 template <typename AccT, typename OutT>
-[[kernel, max_total_threads_per_threadgroup(256)]] void gemm_splitk_mlp_fused_accum(
+[[kernel, max_total_threads_per_threadgroup(256)]] void
+gemm_splitk_mlp_fused_accum(
     const device AccT* C_split [[buffer(0)]],
     device OutT* D [[buffer(1)]],
     const constant int& k_partitions [[buffer(2)]],

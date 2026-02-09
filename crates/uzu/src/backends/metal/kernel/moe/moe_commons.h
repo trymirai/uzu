@@ -13,7 +13,11 @@ static inline float gelu_approx(float x) {
 
   const float GELU_APPROX_K0 = 0.7978845608f; // sqrt(2/pi)
   const float GELU_APPROX_K1 = 0.044715f;
-  float t = metal::clamp(GELU_APPROX_K0 * (x + GELU_APPROX_K1 * x * x * x), -10.0f, 10.0f);
+  float t = metal::clamp(
+      GELU_APPROX_K0 * (x + GELU_APPROX_K1 * x * x * x),
+      -10.0f,
+      10.0f
+  );
   return 0.5f * x * (1.0f + metal::tanh(t));
 }
 

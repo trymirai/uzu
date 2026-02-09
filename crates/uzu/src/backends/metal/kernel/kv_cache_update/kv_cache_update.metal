@@ -35,7 +35,7 @@ void updateKVCache(
 #define outerArguments(T)                                                      \
   (device T * inPlaceKeys [[buffer(0)]],                                       \
    device T * inPlaceValues [[buffer(1)]],                                     \
-   const constant int2 * swaps [[buffer(2)]],                                  \
+   const constant int2* swaps [[buffer(2)]],                                   \
    const constant int& swapCount [[buffer(3)]],                                \
    const constant int& numHeads [[buffer(4)]],                                 \
    const constant int& maxSequenceLength [[buffer(5)]],                        \

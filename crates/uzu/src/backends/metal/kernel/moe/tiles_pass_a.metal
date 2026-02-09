@@ -119,8 +119,9 @@ KERNEL(MoePassABuildTileMap)(
 // Write dispatch args for indirect dispatch (reusable from tiled version)
 KERNEL(MoePassAWriteDispatchArgs)(
     device const uint* total_tiles, // [1]
-    device uint* dispatch_args,     // [3] - MTLDispatchThreadgroupsIndirectArguments
-    constant uint& num_tiles_y,     // usually 1 for Pass A
+    device uint*
+        dispatch_args, // [3] - MTLDispatchThreadgroupsIndirectArguments
+    constant uint& num_tiles_y, // usually 1 for Pass A
     uint tid AXIS(1, 1)
 ) {
   dispatch_args[0] = total_tiles[0]; // x dimension = total tiles

@@ -34,10 +34,14 @@ KERNEL(SSDUpdate)(
     const uint h_idx AXIS(h_size, 32),
     const uint dh_idx AXIS(dh_size, 1)
 ) {
-  const uint cb_start_idx = b_idx * cb_strides[0] + (h_idx / group_size) * cb_strides[1];
-  const uint x_idx = b_idx * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
+  const uint cb_start_idx =
+      b_idx * cb_strides[0] + (h_idx / group_size) * cb_strides[1];
+  const uint x_idx =
+      b_idx * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
   const uint dt_idx = b_idx * dt_strides[0] + h_idx * dt_strides[1];
-  const uint state_start_idx = b_idx * state_strides[0] + h_idx * state_strides[1] + dh_idx * state_strides[2];
+  const uint state_start_idx = b_idx * state_strides[0] +
+                               h_idx * state_strides[1] +
+                               dh_idx * state_strides[2];
 
   // load data
   T this_x = x[x_idx];
@@ -54,7 +58,8 @@ KERNEL(SSDUpdate)(
   for (uint i = 0; i < state_size; ++i) {
     uint cb_idx = cb_start_idx + i;
     uint state_idx = state_start_idx + i;
-    T this_new_state = state[state_idx] * this_decay + b[cb_idx] * dt_scaled_input;
+    T this_new_state =
+        state[state_idx] * this_decay + b[cb_idx] * dt_scaled_input;
     next_state[state_idx] = this_new_state;
     temp = temp + this_new_state * c[cb_idx];
   }

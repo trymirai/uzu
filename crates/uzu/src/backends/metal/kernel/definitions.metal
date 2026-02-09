@@ -462,9 +462,9 @@ static T threadgroup_cooperative_reduce_min(
 
 // warning: constexpr if is a C++17 extension [-Wc++17-extensions]
 #if defined(__cpp_if_constexpr)
-  #define IF_CONSTEXPR(cond) if constexpr (cond)
+#define IF_CONSTEXPR(cond) if constexpr (cond)
 #else
-  #define IF_CONSTEXPR(cond) if (cond)
+#define IF_CONSTEXPR(cond) if (cond)
 #endif
 
 // MARK: - DSL Annotation Helpers
@@ -478,7 +478,8 @@ static T threadgroup_cooperative_reduce_min(
 #define DSL_STR(X) #X
 #define DSL_XSTR(X) DSL_STR(X)
 
-#define VARIANTS(TYPENAME, ...) DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
+#define VARIANTS(TYPENAME, ...)                                                \
+  DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 
 #define SPECIALIZE DSL_META("dsl.specialize")
@@ -489,12 +490,26 @@ static T threadgroup_cooperative_reduce_min(
 
 // MARK: - Generate Template Kernels
 
-#define generateKernel(max_threads, functionName, scalarType, outerArgs, innerArgs) \
+#define generateKernel(                                                        \
+    max_threads,                                                               \
+    functionName,                                                              \
+    scalarType,                                                                \
+    outerArgs,                                                                 \
+    innerArgs                                                                  \
+)                                                                              \
   [[max_total_threads_per_threadgroup(max_threads)]]                           \
-  kernel void functionName##_##scalarType outerArgs { functionName innerArgs; }
+  kernel void functionName##_##scalarType outerArgs {                          \
+    functionName innerArgs;                                                    \
+  }
 
 #define generateKernels(max_threads, functionName)                             \
-  generateKernel(max_threads, functionName, float, outerArguments(float), innerArguments);  \
+  generateKernel(                                                              \
+      max_threads,                                                             \
+      functionName,                                                            \
+      float,                                                                   \
+      outerArguments(float),                                                   \
+      innerArguments                                                           \
+  );                                                                           \
   generateKernel(                                                              \
       max_threads,                                                             \
       functionName,                                                            \
@@ -502,6 +517,12 @@ static T threadgroup_cooperative_reduce_min(
       outerArguments(bfloat),                                                  \
       innerArguments                                                           \
   );                                                                           \
-  generateKernel(max_threads, functionName, half, outerArguments(half), innerArguments);
+  generateKernel(                                                              \
+      max_threads,                                                             \
+      functionName,                                                            \
+      half,                                                                    \
+      outerArguments(half),                                                    \
+      innerArguments                                                           \
+  );
 
 #endif /* definitions_metal */

@@ -95,9 +95,10 @@ KERNEL(MoeBuildTileMap)(
 // Write MTLDispatchThreadgroupsIndirectArguments {x, y, z} where:
 //  x = num_tiles_n (computed on CPU and passed in), y = total_tiles, z = 1
 KERNEL(MoeWriteDispatchArgs)(
-    device const uint* total_tiles_buf, // [>=1], total_tiles_buf[0] = total_rows
-    device uint* dispatch_args,         // [3] u32
-    constant uint& num_tiles_n,         // x dimension
+    device const uint*
+        total_tiles_buf,        // [>=1], total_tiles_buf[0] = total_rows
+    device uint* dispatch_args, // [3] u32
+    constant uint& num_tiles_n, // x dimension
     uint gid AXIS(1, 1)
 ) {
   const uint total_rows = total_tiles_buf[0];

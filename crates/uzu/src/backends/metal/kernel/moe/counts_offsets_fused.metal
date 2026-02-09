@@ -12,14 +12,16 @@ KERNEL(MoeCountsOffsetsFused)(
     device const int* topk_ids,
     device uint* offsets,   // output: exclusive scan [E+1]
     device uint* sum_k_out, // output: total count [1]
-    device uint* partials,  // output: partials [num_tiles * TILE_E] (for block_bases)
+    device uint*
+        partials, // output: partials [num_tiles * TILE_E] (for block_bases)
     constant uint& t_input,
     constant uint& e_input,
     constant uint& k_input,
     threadgroup _atomic<uint> tg_hist[TILE_E],
     threadgroup uint scan_shared[BLOCK_SIZE],
     threadgroup uint reduce_shared[BLOCK_SIZE],
-    threadgroup uint counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
+    threadgroup uint
+        counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
     threadgroup uint& carry,
     const uint lid THREADS(128)
 ) {
