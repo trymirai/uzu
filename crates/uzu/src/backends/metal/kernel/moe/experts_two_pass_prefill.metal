@@ -772,101 +772,6 @@ inline void pass_b_impl(
 
 // Indirect variant
 template <typename T>
-inline void pass_b_indirect_impl(
-    device const float* hidden,
-    device const uint* expert_offsets,
-    device const T* W2_all,
-    device const T* down_biases,
-    device T* output,
-    device const uint* tile_map,
-    uint d_model,
-    uint d_ff,
-    uint E,
-    uint row_tile_idx,
-    uint n_tile_idx,
-    uint sg_id,
-    uint simd_lid,
-    uint lin,
-    threadgroup float* Hs,
-    threadgroup T* Wk,
-    threadgroup float* bias_tile
-) {
-  constexpr uint ROW_TILE = PASSB_BM;
-  const uint base = row_tile_idx * 3u;
-  const uint expert_idx = tile_map[base + 0u];
-  if (expert_idx >= E)
-    return;
-  const uint row_off_elems = tile_map[base + 2u];
-  const uint tile_m = row_off_elems / ROW_TILE;
-
-  pass_b_impl<T>(
-      hidden,
-      expert_offsets,
-      W2_all,
-      down_biases,
-      output,
-      d_model,
-      d_ff,
-      E,
-      expert_idx,
-      tile_m,
-      n_tile_idx,
-      sg_id,
-      simd_lid,
-      lin,
-      Hs,
-      Wk,
-      bias_tile
-  );
-}
-
-#define MOE_PASS_B_INDIRECT_KERNEL(DTYPE, SUFFIX)                              \
-  [[max_total_threads_per_threadgroup(128)]]                                   \
-  kernel void moe_two_pass_prefill_pass_b_indirect_##SUFFIX(                   \
-      device const float* hidden [[buffer(0)]],                                \
-      device const uint* expert_offsets [[buffer(1)]],                         \
-      device const DTYPE* W2_all [[buffer(2)]],                                \
-      device const DTYPE* down_biases [[buffer(3)]],                           \
-      device DTYPE* output [[buffer(4)]],                                      \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& d_ff [[buffer(6)]],                                       \
-      constant uint& E [[buffer(7)]],                                          \
-      device const uint* tile_map [[buffer(8)]],                               \
-      uint sg_id [[simdgroup_index_in_threadgroup]],                           \
-      uint simd_lid [[thread_index_in_simdgroup]],                             \
-      uint3 tg_pos [[threadgroup_position_in_grid]],                           \
-      uint3 local_tid [[thread_position_in_threadgroup]]                       \
-  ) {                                                                          \
-    threadgroup float Hs[PASSB_BM * (PASSB_BK + PASSB_TG_PAD)];                \
-    threadgroup DTYPE Wk[PASSB_BN * (PASSB_BK + PASSB_TG_PAD)];                \
-    threadgroup float bias[PASSB_BN];                                          \
-    const uint lin = local_tid.x;                                              \
-    pass_b_indirect_impl<DTYPE>(                                               \
-        hidden,                                                                \
-        expert_offsets,                                                        \
-        W2_all,                                                                \
-        down_biases,                                                           \
-        output,                                                                \
-        tile_map,                                                              \
-        d_model,                                                               \
-        d_ff,                                                                  \
-        E,                                                                     \
-        tg_pos.y,                                                              \
-        tg_pos.x,                                                              \
-        sg_id,                                                                 \
-        simd_lid,                                                              \
-        lin,                                                                   \
-        Hs,                                                                    \
-        Wk,                                                                    \
-        bias                                                                   \
-    );                                                                         \
-  }
-
-MOE_PASS_B_INDIRECT_KERNEL(bfloat, bf16)
-MOE_PASS_B_INDIRECT_KERNEL(half, f16)
-MOE_PASS_B_INDIRECT_KERNEL(float, f32)
-
-template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(MoeTwoPassPrefillPassBIndirect)(
     device const float* hidden,
@@ -885,27 +790,39 @@ KERNEL(MoeTwoPassPrefillPassBIndirect)(
     const uint tg_pos_y GROUPS(INDIRECT),
     const uint tid THREADS(THREADS_PER_TG)
 ) {
+  const uint row_tile_idx = tg_pos_y;
+  const uint base = row_tile_idx * 3u;
+  const uint expert_idx = tile_map[base + 0u];
+  if (expert_idx >= e)
+    return;
+
   const uint lin = tid;
   const uint3 threads_per_tg = uint3(THREADS_PER_TG, 1, 1);
   const uint sg_id = tid / SIMD_WIDTH;
   const uint simd_lid = tid % SIMD_WIDTH;
-  pass_b_indirect_impl<T>(
-    hidden,
-    expert_offsets,
-    w2_all,
-    down_biases,
-    output,
-    tile_map,
-    d_model,
-    d_ff,
-    e,
-    tg_pos_y,
-    tg_pos_x,
-    sg_id,
-    simd_lid,
-    lin,
-    hs,
-    wk,
-    bias
+  
+  const uint n_tile_idx = tg_pos_x;
+  constexpr uint ROW_TILE = PASSB_BM;
+  const uint row_off_elems = tile_map[base + 2u];
+  const uint tile_m = row_off_elems / ROW_TILE;
+
+  pass_b_impl<T>(
+      hidden,
+      expert_offsets,
+      w2_all,
+      down_biases,
+      output,
+      d_model,
+      d_ff,
+      e,
+      expert_idx,
+      tile_m,
+      n_tile_idx,
+      sg_id,
+      simd_lid,
+      lin,
+      hs,
+      wk,
+      bias
   );
 }
