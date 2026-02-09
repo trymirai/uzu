@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
 };
 use crate::{
-    Array, DataType,
+    DataType,
     backends::{
         common::{Context, kernel::QuantizedEmbeddingLookupKernel},
         metal::{
@@ -41,7 +39,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -66,7 +64,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -94,7 +92,7 @@ impl QuantizedEmbeddingLookup {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
@@ -104,7 +102,7 @@ impl QuantizedEmbeddingLookup {
         )?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
-        let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
+        let weights = parameter_tree.leaf(weights_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load weights: {:?}",
                 e
@@ -122,7 +120,7 @@ impl QuantizedEmbeddingLookup {
         }
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
+        let scales = parameter_tree.leaf(scales_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load scales: {:?}",
                 e
@@ -160,7 +158,7 @@ impl QuantizedEmbeddingLookup {
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
         let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
             match parameter_tree.leaf(biases_name) {
-                Ok(mut deq_biases) => {
+                Ok(deq_biases) => {
                     if deq_biases.shape() != [vocab_size, num_groups] {
                         return Err(EmbeddingError::MetalError(
                             MTLError::Generic(format!(
@@ -176,7 +174,7 @@ impl QuantizedEmbeddingLookup {
                             deq_biases.data_type(),
                         ));
                     }
-                    unsafe { deq_biases.mtl_buffer().to_owned().into() }
+                    deq_biases.buffer().to_owned().into()
                 },
                 Err(_) => {
                     let elem_size: usize = match data_type {
@@ -203,8 +201,8 @@ impl QuantizedEmbeddingLookup {
                 },
             };
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
-        let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };
+        let weights_buffer = weights.buffer().to_owned().into();
+        let scales_buffer = scales.buffer().to_owned().into();
 
         Ok(Self {
             kernel,
@@ -251,8 +249,8 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
-        let mut token_ids_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let token_ids_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
         let quant_mode = match self.mode {
             QuantizationMode::UInt4 => 0,
@@ -260,11 +258,11 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
             QuantizationMode::UInt8 => 2,
         };
         self.kernel.encode(
-            unsafe { token_ids_array_mut.mtl_buffer() },
+            token_ids_array_mut.buffer(),
             &self.weights_buffer,
             &self.scales_buffer,
             &self.biases_buffer,
-            unsafe { output_array_mut.mtl_buffer() },
+            output_array_mut.buffer(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,

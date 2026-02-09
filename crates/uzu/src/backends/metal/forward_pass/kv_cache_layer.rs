@@ -2,12 +2,12 @@ use std::cell::RefCell;
 
 use super::super::{MTLContext, MetalArray};
 use crate::{
-    DeviceContext,
-    array::Array,
+    array::ArrayContextExt,
     backends::metal::{
         MTLCommandBuffer, ProtocolObject, Retained,
         kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
     },
+    utils::attention::fill_attention_bias,
 };
 
 pub type ArrayCell = RefCell<MetalArray>;
@@ -115,12 +115,10 @@ impl KVCacheLayer {
         dst: &mut MetalArray,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let prefix_segment_length = self.prefix_segment_length();
-
-        context.fill_attention_bias(
+        fill_attention_bias(
             dst,
             suffix_length,
             prefix_segment_length,
@@ -128,12 +126,11 @@ impl KVCacheLayer {
                 if let Some(bias_fn) = external_bias_fn {
                     bias_fn(row_index, column_index)
                 } else {
-                    let result = self.bias_should_be_neg_inf(
+                    self.bias_should_be_neg_inf(
                         row_index,
                         column_index,
                         suffix_token_positions,
-                    );
-                    result
+                    )
                 }
             },
         );
@@ -252,31 +249,15 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         if source_indices == destination_indices {
             return;
         }
 
-        let key_buffer = {
-            let mut k = self.keys.borrow_mut();
-            unsafe {
-                objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*k.mtl_buffer()) as *mut _,
-                )
-                .unwrap()
-            }
-        };
-        let value_buffer = {
-            let mut v = self.values.borrow_mut();
-            unsafe {
-                objc2::rc::Retained::retain(
-                    std::ptr::from_ref(&*v.mtl_buffer()) as *mut _,
-                )
-                .unwrap()
-            }
-        };
+        let key_buffer = self.keys.borrow().buffer().clone();
+        let value_buffer = self.values.borrow().buffer().clone();
 
         let k_shape = self.keys.borrow().shape().to_vec();
         let v_shape = self.values.borrow().shape().to_vec();
@@ -288,15 +269,11 @@ impl KVCacheLayer {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let cmd_buf = unsafe {
-            objc2::rc::Retained::retain(command_buffer as *const _ as *mut _)
-                .unwrap()
-        };
         let _ = kv_cache_update.encode(
             &[layer_data],
             source_indices,
             destination_indices,
-            &cmd_buf,
+            command_buffer,
         );
     }
 
@@ -402,15 +379,15 @@ impl KVCacheLayer {
                 let dtype = keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys = context.array(
+                let mut slice_keys = context.create_array(
                     &slice_shape,
                     dtype,
-                    String::from("kv_cache_layer_slice_keys"),
+                    "kv_cache_layer_slice_keys",
                 );
-                let mut slice_values = context.array(
+                let mut slice_values = context.create_array(
                     &slice_shape,
                     dtype,
-                    String::from("kv_cache_layer_slice_values"),
+                    "kv_cache_layer_slice_values",
                 );
 
                 let slots: Vec<usize> = (range.start..range.end)

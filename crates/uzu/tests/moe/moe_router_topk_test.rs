@@ -2,10 +2,10 @@
 
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::{
-	KernelDataType, MTLContext,
-	kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
+    KernelDataType, MTLContext,
+    kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -128,13 +128,13 @@ pub fn cpu_topk_select_f32(
 }
 
 fn run_router_topk_once(
-	ctx: &MTLContext,
-	kernel: &MoeRouterTopKKernelBlock,
-	t: usize,
-	d_model: usize,
-	e: usize,
-	k: usize,
-	renorm: bool,
+    ctx: &MTLContext,
+    kernel: &MoeRouterTopKKernelBlock,
+    t: usize,
+    d_model: usize,
+    e: usize,
+    k: usize,
+    renorm: bool,
 ) {
     let mut rng = StdRng::seed_from_u64(1234);
     let input_f32: Vec<f32> =
@@ -234,9 +234,8 @@ fn run_router_topk_once(
 #[test]
 fn test_router_topk_fused_matches_reference() {
     let ctx = create_ctx();
-    let kernel =
-        MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
-            .expect("kernel");
+    let kernel = MoeRouterTopKKernelBlock::new(&ctx, KernelDataType::BFloat16)
+        .expect("kernel");
 
     let configs = [
         (1usize, 64usize, 32usize, 4usize),

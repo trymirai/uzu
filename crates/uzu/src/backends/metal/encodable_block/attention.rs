@@ -95,25 +95,24 @@ impl EncodableBlock<Metal> for Attention {
             num_groups,
             max_sequence_length,
         ) = {
-            use crate::Array;
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
-            let suffix_length = Array::shape(&*qkv_array)[0];
+            let suffix_length = qkv_array.shape()[0];
 
             let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
             let queries_array = queries_binding[0].borrow();
-            let num_heads = Array::shape(&*queries_array)[0];
-            let head_dim = Array::shape(&*queries_array)[2];
+            let num_heads = queries_array.shape()[0];
+            let head_dim = queries_array.shape()[2];
 
             let keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
             let keys_array = keys_binding[0].borrow();
-            let num_groups = Array::shape(&*keys_array)[0];
+            let num_groups = keys_array.shape()[0];
 
             let max_sequence_length = if let Some(_kv) = state.cache_layers() {
                 let key_cache_binding =
                     state.arrays(&[ArrayId::Keys(self.layer_index)]);
                 let key_cache_array = key_cache_binding[0].borrow();
-                Array::shape(&*key_cache_array)[1]
+                key_cache_array.shape()[1]
             } else {
                 // For classifiers without KV cache, max_sequence_length is just suffix_length
                 suffix_length
@@ -193,11 +192,11 @@ impl EncodableBlock<Metal> for Attention {
             None
         };
 
-        let mut rotated_keys_array = rotated_keys_binding[0].borrow_mut();
-        let rotated_keys_buffer = unsafe { rotated_keys_array.mtl_buffer() };
+        let rotated_keys_array = rotated_keys_binding[0].borrow_mut();
+        let rotated_keys_buffer = rotated_keys_array.buffer();
 
-        let mut qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = unsafe { qkv_array.mtl_buffer() };
+        let qkv_array = qkv_binding[0].borrow_mut();
+        let qkv_buffer = qkv_array.buffer();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
@@ -208,10 +207,10 @@ impl EncodableBlock<Metal> for Attention {
                 state.arrays(&[ArrayId::Values(self.layer_index)]);
 
             let key_cache_array = key_cache_binding[0].borrow_mut();
-            let key_cache_buf = key_cache_array.mtl_buffer_cloned();
+            let key_cache_buf = key_cache_array.buffer().clone();
 
             let value_cache_array = value_cache_binding[0].borrow_mut();
-            let value_cache_buf = value_cache_array.mtl_buffer_cloned();
+            let value_cache_buf = value_cache_array.buffer().clone();
 
             (key_cache_buf, value_cache_buf)
         } else {
@@ -221,8 +220,7 @@ impl EncodableBlock<Metal> for Attention {
                 state.arrays(&[ArrayId::ExtractedValues]);
             let extracted_values_array =
                 extracted_values_binding[0].borrow_mut();
-            let extracted_values_buf =
-                extracted_values_array.mtl_buffer_cloned();
+            let extracted_values_buf = extracted_values_array.buffer().clone();
 
             // Reuse the KV cache update kernel to write values into extracted_values_buf.
             if let Err(e) = self.kernel.encode_kv_cache_update(
@@ -243,24 +241,14 @@ impl EncodableBlock<Metal> for Attention {
                 eprintln!("Failed to prepare rotated values buffer: {:?}", e);
             }
 
-            (
-                unsafe {
-                    objc2::rc::Retained::retain(
-                        rotated_keys_buffer as *const _ as *mut _,
-                    )
-                    .unwrap()
-                },
-                extracted_values_buf,
-            )
+            (rotated_keys_buffer.clone(), extracted_values_buf)
         };
 
-        let mut queries_array = rotated_queries_binding[0].borrow_mut();
-        let queries_buffer = unsafe { queries_array.mtl_buffer() };
+        let queries_array = rotated_queries_binding[0].borrow_mut();
+        let queries_buffer = queries_array.buffer();
 
-        let mut attention_output_array =
-            attention_output_binding[0].borrow_mut();
-        let attention_output_buffer =
-            unsafe { attention_output_array.mtl_buffer() };
+        let attention_output_array = attention_output_binding[0].borrow_mut();
+        let attention_output_buffer = attention_output_array.buffer();
 
         let attention_bias_buffer = if use_mask {
             let attention_bias_map = attention_bias_binding[0].clone();
@@ -269,7 +257,7 @@ impl EncodableBlock<Metal> for Attention {
                     .get(&window_length)
                     .map(|array| {
                         let array_ref = array.borrow();
-                        array_ref.mtl_buffer_cloned()
+                        array_ref.buffer().clone()
                     })
                     .unwrap_or_else(|| {
                         panic!(
@@ -286,18 +274,18 @@ impl EncodableBlock<Metal> for Attention {
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
         let maxs_binding = state.arrays(&[ArrayId::AttentionMaxs]);
 
-        let mut partials_array = partials_binding[0].borrow_mut();
-        let partials_buffer = unsafe { partials_array.mtl_buffer() };
+        let partials_array = partials_binding[0].borrow_mut();
+        let partials_buffer = partials_array.buffer();
 
-        let mut sums_array = sums_binding[0].borrow_mut();
-        let sums_buffer = unsafe { sums_array.mtl_buffer() };
+        let sums_array = sums_binding[0].borrow_mut();
+        let sums_buffer = sums_array.buffer();
 
-        let mut maxs_array = maxs_binding[0].borrow_mut();
-        let maxs_buffer = unsafe { maxs_array.mtl_buffer() };
+        let maxs_array = maxs_binding[0].borrow_mut();
+        let maxs_buffer = maxs_array.buffer();
 
         let sinks_buffer = sinks_binding
             .as_ref()
-            .map(|binding| binding[0].borrow().mtl_buffer_cloned());
+            .map(|binding| binding[0].borrow().buffer().clone());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {

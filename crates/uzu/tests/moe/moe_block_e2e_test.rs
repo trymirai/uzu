@@ -1,6 +1,6 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::{
     common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
     metal::{

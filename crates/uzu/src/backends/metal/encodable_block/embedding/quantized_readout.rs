@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use super::{
     super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
 };
 use crate::{
-    Array, DataType,
+    DataType,
     backends::{
         common::Context,
         metal::{
@@ -40,7 +38,7 @@ impl QuantizedEmbeddingReadout {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -63,7 +61,7 @@ impl QuantizedEmbeddingReadout {
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -89,10 +87,10 @@ impl QuantizedEmbeddingReadout {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
-        let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
+        let weights = parameter_tree.leaf(weights_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load weights: {:?}",
                 e
@@ -100,7 +98,7 @@ impl QuantizedEmbeddingReadout {
         })?;
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
+        let scales = parameter_tree.leaf(scales_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load scales: {:?}",
                 e
@@ -143,7 +141,7 @@ impl QuantizedEmbeddingReadout {
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
         let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
             match parameter_tree.leaf(biases_name) {
-                Ok(mut deq_biases) => {
+                Ok(deq_biases) => {
                     if deq_biases.shape() != [vocab_size, num_groups] {
                         return Err(EmbeddingError::MetalError(
                             MTLError::Generic(format!(
@@ -159,7 +157,7 @@ impl QuantizedEmbeddingReadout {
                             deq_biases.data_type(),
                         ));
                     }
-                    unsafe { deq_biases.mtl_buffer().to_owned().into() }
+                    deq_biases.buffer().to_owned().into()
                 },
                 Err(_) => {
                     // Allocate zero-initialized biases buffer
@@ -187,8 +185,8 @@ impl QuantizedEmbeddingReadout {
                 },
             };
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
-        let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };
+        let weights_buffer = weights.buffer().to_owned().into();
+        let scales_buffer = scales.buffer().to_owned().into();
 
         let kernel = QuantizedMatmulKernel::new(
             mtl_context,
@@ -253,12 +251,12 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
             return;
         }
         let sampling_start = state.sampling_start();
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
         let elem_size = input_array_mut.data_type().size_in_bytes();
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
         let a_offset = (sampling_start * self.model_dim * elem_size) as u64;
 
         let args = QuantizedMatmulArguments {

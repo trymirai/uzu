@@ -2,9 +2,7 @@
 
 use super::{EncodableBlock, EncodingParameters, Metal};
 #[cfg(feature = "tracing")]
-use crate::Array;
-#[cfg(feature = "tracing")]
-use crate::backends::metal::forward_pass::ArrayId;
+use crate::backends::metal::{MTLBlitCommandEncoder, forward_pass::ArrayId};
 use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
     ProtocolObject, Retained, forward_pass::ForwardPassState,
@@ -63,13 +61,13 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
             let logits_arrays =
                 state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
             let logits_array_ref = logits_arrays[0].borrow();
-            let linear_output_buffer = logits_array_ref.backend_buffer();
-            let data_type = Array::data_type(&*logits_array_ref);
-            let batch_size = Array::shape(&*logits_array_ref)[0];
+            let linear_output_buffer = logits_array_ref.buffer();
+            let data_type = logits_array_ref.data_type();
+            let batch_size = logits_array_ref.shape()[0];
 
             let traces_ref = traces_rc.borrow();
             let trace_logits = traces_ref.logits.borrow();
-            let dst_trace_buf = trace_logits.backend_buffer();
+            let dst_trace_buf = trace_logits.buffer();
 
             let copy_size_bytes =
                 batch_size * self.num_labels * data_type.size_in_bytes();

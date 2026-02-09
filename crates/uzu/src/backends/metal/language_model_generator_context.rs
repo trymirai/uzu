@@ -137,7 +137,7 @@ pub struct LanguageModelGeneratorContext {
 
     pub cache_layers: Rc<RefCell<CacheLayers>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
+    pub scratch_buffers: ScratchBuffers<MTLContext>,
 
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,
@@ -206,7 +206,7 @@ impl LanguageModelGeneratorContext {
         }
         let weights_file = File::open(&weights_path)
             .map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, &context)
+        let loader = ParameterLoader::new(&weights_file, context.as_ref())
             .map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
@@ -218,7 +218,7 @@ impl LanguageModelGeneratorContext {
         shared_buffers.borrow_mut().update_data(&root_loader_view);
 
         let scratch_buffers = ScratchBuffers::new(
-            &context,
+            context.as_ref(),
             &decoder_config,
             &model_shape,
             max_prefix_length,

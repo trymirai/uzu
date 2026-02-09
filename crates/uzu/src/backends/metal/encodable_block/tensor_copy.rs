@@ -9,13 +9,10 @@ use crate::backends::{
 };
 
 use super::{EncodableBlock, EncodingParameters, Metal};
-use crate::{
-    Array,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::TensorCopyMetalKernel,
-    },
+use crate::backends::metal::{
+    MTLContext, MTLError,
+    forward_pass::{ArrayId, ForwardPassState},
+    kernel::dsl::TensorCopyMetalKernel,
 };
 
 pub struct TensorCopy {
@@ -71,10 +68,10 @@ impl EncodableBlock<Metal> for TensorCopy {
 
         let length = arrays[0].borrow().num_elements();
 
-        let mut source_array = arrays[0].borrow_mut();
-        let mut destination_array = arrays[1].borrow_mut();
-        let source_mtl_buffer = unsafe { source_array.mtl_buffer() };
-        let destination_mtl_buffer = unsafe { destination_array.mtl_buffer() };
+        let source_array = arrays[0].borrow_mut();
+        let destination_array = arrays[1].borrow_mut();
+        let source_mtl_buffer = source_array.buffer();
+        let destination_mtl_buffer = destination_array.buffer();
 
         self.kernel.encode(
             &source_mtl_buffer,

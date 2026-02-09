@@ -2,7 +2,7 @@
 
 #include "loader.h"
 #include "mma.h"
-#include "shared_types.h"
+#include "matmul.h"
 
 using namespace metal;
 

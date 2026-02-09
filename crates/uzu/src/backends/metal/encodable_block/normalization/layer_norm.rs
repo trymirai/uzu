@@ -1,10 +1,8 @@
 //! LayerNorm encodable.
 
-use std::rc::Rc;
-
 use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::{
         common::kernel::LayerNormKernel,
         metal::{
@@ -34,7 +32,7 @@ impl LayerNorm {
         config: NormalizationConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
@@ -46,7 +44,7 @@ impl LayerNorm {
             )
         })?;
 
-        let scales_data = scales_param.buffer();
+        let scales_data = scales_param.as_bytes();
         let scales_buffer = context
             .device
             .new_buffer_with_data(
@@ -113,11 +111,11 @@ impl EncodableBlock<Metal> for LayerNorm {
             input_array.shape().to_vec()
         };
 
-        let mut input_array = input_binding[0].borrow_mut();
-        let mut output_array = output_binding[0].borrow_mut();
+        let input_array = input_binding[0].borrow_mut();
+        let output_array = output_binding[0].borrow_mut();
 
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
+        let input_buffer = input_array.buffer();
+        let output_buffer = output_array.buffer();
 
         let batch_size = input_shape[0] as u32;
         let model_dim = input_shape[1] as u32;

@@ -3,9 +3,10 @@
 use crate::backends::metal::Metal;
 use std::rc::Rc;
 
+#[cfg(not(feature = "tracing"))]
+use crate::backends::metal::MTLCommandEncoder;
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained,
 };
 use objc2::rc::autoreleasepool;
 
@@ -55,7 +56,7 @@ impl LayerExecutables {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
         rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
     ) -> Self {
         autoreleasepool(|_| {

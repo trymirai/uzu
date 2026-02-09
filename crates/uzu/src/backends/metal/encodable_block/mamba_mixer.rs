@@ -54,7 +54,7 @@ impl MambaMixer {
         num_heads: usize,
         head_dim: usize,
         num_groups: usize,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         let _ = (num_heads, head_dim, num_groups);
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
@@ -185,17 +185,17 @@ impl MambaMixer {
             ArrayId::SsmZ(self.layer_index),
             ArrayId::SsmDt(self.layer_index),
         ]);
-        let mut in_proj = arrays[0].borrow_mut();
-        let mut conv_inputs = arrays[1].borrow_mut();
-        let mut gate = arrays[2].borrow_mut();
-        let mut dt = arrays[3].borrow_mut();
+        let in_proj = arrays[0].borrow_mut();
+        let conv_inputs = arrays[1].borrow_mut();
+        let gate = arrays[2].borrow_mut();
+        let dt = arrays[3].borrow_mut();
 
-        let input_buf = unsafe { in_proj.mtl_buffer().to_owned() };
-        let conv_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
-        let gate_buf = unsafe { gate.mtl_buffer().to_owned() };
-        let dt_buf = unsafe { dt.mtl_buffer().to_owned() };
-        let mut gate_bias = self.gate_bias.clone();
-        let bias_buf = unsafe { gate_bias.mtl_buffer().to_owned() };
+        let input_buf = in_proj.buffer().to_owned();
+        let conv_buf = conv_inputs.buffer().to_owned();
+        let gate_buf = gate.buffer().to_owned();
+        let dt_buf = dt.buffer().to_owned();
+        let gate_bias = self.gate_bias.clone();
+        let bias_buf = gate_bias.buffer().to_owned();
 
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
@@ -230,28 +230,23 @@ impl MambaMixer {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
         ]);
-        let mut conv_inputs = arrays[0].borrow_mut();
-        let mut conv_state = arrays[1].borrow_mut();
-        let mut x_arr = arrays[2].borrow_mut();
-        let mut b_arr = arrays[3].borrow_mut();
-        let mut c_arr = arrays[4].borrow_mut();
+        let conv_inputs = arrays[0].borrow_mut();
+        let conv_state = arrays[1].borrow_mut();
+        let x_arr = arrays[2].borrow_mut();
+        let b_arr = arrays[3].borrow_mut();
+        let c_arr = arrays[4].borrow_mut();
 
-        let input_buf = unsafe { conv_inputs.mtl_buffer().to_owned() };
-        let state_buf = unsafe {
-            objc2::rc::Retained::retain(std::ptr::from_ref(
-                &*conv_state.mtl_buffer(),
-            ) as *mut _)
-            .unwrap()
-        };
-        let x_buf = unsafe { x_arr.mtl_buffer().to_owned() };
-        let b_buf = unsafe { b_arr.mtl_buffer().to_owned() };
-        let c_buf = unsafe { c_arr.mtl_buffer().to_owned() };
+        let input_buf = conv_inputs.buffer().to_owned();
+        let state_buf = conv_state.buffer().clone();
+        let x_buf = x_arr.buffer().to_owned();
+        let b_buf = b_arr.buffer().to_owned();
+        let c_buf = c_arr.buffer().to_owned();
 
         let weight_storage = self.conv_weight.clone();
-        let weight_buf = weight_storage.mtl_buffer_cloned();
+        let weight_buf = weight_storage.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|arr| {
             let storage = arr.clone();
-            storage.mtl_buffer_cloned()
+            storage.buffer().clone()
         });
 
         let conv_dim = self.config.conv_dim();
@@ -288,13 +283,8 @@ impl MambaMixer {
                 let array = state
                     .conv_padded_buffer()
                     .expect("Missing conv padded buffer");
-                let mut borrow = array.borrow_mut();
-                let buf = unsafe {
-                    objc2::rc::Retained::retain(std::ptr::from_ref(
-                        &*borrow.mtl_buffer(),
-                    ) as *mut _)
-                    .unwrap()
-                };
+                let borrow = array.borrow_mut();
+                let buf = borrow.buffer().clone();
                 drop(borrow);
 
                 self.conv_scan
@@ -359,29 +349,29 @@ impl MambaMixer {
             ArrayId::AttentionOutput,
         ]);
         let x = base_arrays[0].borrow();
-        let x_buf = x.mtl_buffer_cloned();
+        let x_buf = x.buffer().clone();
         drop(x);
         let b = base_arrays[1].borrow();
-        let b_buf = b.mtl_buffer_cloned();
+        let b_buf = b.buffer().clone();
         drop(b);
         let c = base_arrays[2].borrow();
-        let c_buf = c.mtl_buffer_cloned();
+        let c_buf = c.buffer().clone();
         drop(c);
         let dt = base_arrays[3].borrow();
-        let dt_buf = dt.mtl_buffer_cloned();
+        let dt_buf = dt.buffer().clone();
         drop(dt);
         let z = base_arrays[4].borrow();
-        let z_buf = z.mtl_buffer_cloned();
+        let z_buf = z.buffer().clone();
         drop(z);
         let state_buf = base_arrays[5].borrow();
-        let state_raw = state_buf.mtl_buffer_cloned();
+        let state_raw = state_buf.buffer().clone();
         drop(state_buf);
         let out = base_arrays[6].borrow();
-        let out_buf = out.mtl_buffer_cloned();
+        let out_buf = out.buffer().clone();
         drop(out);
 
         let skip_weights = self.skip_connection_weight.clone();
-        let skip = skip_weights.mtl_buffer_cloned();
+        let skip = skip_weights.buffer().clone();
 
         self.ssd_prefill.encode(
             encoder,
@@ -437,27 +427,27 @@ impl MambaMixer {
             ArrayId::AttentionOutput,
         ]);
         let x = arrays[0].borrow();
-        let x_buf = x.mtl_buffer_cloned();
+        let x_buf = x.buffer().clone();
         drop(x);
         let b = arrays[1].borrow();
-        let b_buf = b.mtl_buffer_cloned();
+        let b_buf = b.buffer().clone();
         drop(b);
         let c = arrays[2].borrow();
-        let c_buf = c.mtl_buffer_cloned();
+        let c_buf = c.buffer().clone();
         drop(c);
         let dt = arrays[3].borrow();
-        let dt_buf = dt.mtl_buffer_cloned();
+        let dt_buf = dt.buffer().clone();
         drop(dt);
         let z = arrays[4].borrow();
-        let z_buf = z.mtl_buffer_cloned();
+        let z_buf = z.buffer().clone();
         drop(z);
         let state_arr = arrays[5].borrow();
-        let state_buf = state_arr.mtl_buffer_cloned();
+        let state_buf = state_arr.buffer().clone();
         drop(state_arr);
         let y = arrays[6].borrow();
-        let y_buf = y.mtl_buffer_cloned();
+        let y_buf = y.buffer().clone();
         let skip_weights = self.skip_connection_weight.clone();
-        let skip_buf = skip_weights.mtl_buffer_cloned();
+        let skip_buf = skip_weights.buffer().clone();
 
         let h = self.config.num_heads as u32;
         let g = self.config.num_groups as u32;
@@ -572,9 +562,9 @@ impl EncodableBlock<Metal> for MambaMixer {
 }
 
 fn resolve_subtree<'tree>(
-    loader: &'tree ParameterTree<Rc<MTLContext>>,
+    loader: &'tree ParameterTree<MTLContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, Rc<MTLContext>> {
+) -> ParameterTree<'tree, MTLContext> {
     for candidate in candidates {
         if let Ok(tree) = loader.subtree(candidate) {
             return tree;

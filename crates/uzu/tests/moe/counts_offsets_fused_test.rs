@@ -2,15 +2,15 @@
 
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::{
     common::kernel::MoeCountsOffsetsFusedKernel,
     metal::{
         MTLContext, ProtocolObject, Retained,
         kernel::{
-	        KernelDataType,
-	        dsl::MoeCountsOffsetsFusedMetalKernel,
-	        moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
+            KernelDataType,
+            dsl::MoeCountsOffsetsFusedMetalKernel,
+            moe::{MoeRouterTopKArguments, MoeRouterTopKKernelBlock},
         },
     },
 };

@@ -4,19 +4,13 @@ use metal::{MTLBuffer, MTLCommandBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    Metal, MetalArray, error::MTLError, kernel,
-    metal_extensions::LibraryPipelineExtensions,
+    Metal, error::MTLError, kernel, metal_extensions::LibraryPipelineExtensions,
 };
-use crate::{
-    DataType, DeviceContext,
-    array::array_size_in_bytes,
-    backends::{
-        common::{Allocator, Context},
-        metal::{
-            MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-            MTLFunctionConstantValues, MTLLibrary, MTLResourceExt,
-            MTLResourceOptions,
-        },
+use crate::backends::{
+    common::{Allocator, Context},
+    metal::{
+        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+        MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
     },
 };
 
@@ -262,39 +256,5 @@ impl Context for MTLContext {
         self.command_queue
             .command_buffer()
             .ok_or(MTLError::Generic("cannot create command buffer".into()))
-    }
-}
-
-impl DeviceContext for MTLContext {
-    type DeviceArray = MetalArray;
-
-    unsafe fn array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-        label: String,
-    ) -> MetalArray {
-        unsafe {
-            let buffer_size_bytes = array_size_in_bytes(shape, data_type);
-
-            let buffer = self
-                .create_buffer(buffer_size_bytes)
-                .expect("Failed to create buffer");
-            buffer.set_label(Some(&label));
-            MetalArray::new(buffer, shape, data_type)
-        }
-    }
-}
-
-impl DeviceContext for Rc<MTLContext> {
-    type DeviceArray = MetalArray;
-
-    unsafe fn array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-        label: String,
-    ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type, label) }
     }
 }

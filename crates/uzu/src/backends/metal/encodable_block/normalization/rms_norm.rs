@@ -1,10 +1,8 @@
 //! RMS Normalization encodable.
 
-use std::rc::Rc;
-
 use super::super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
         MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
@@ -34,7 +32,7 @@ impl RMSNorm {
         config: NormalizationConfig,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, RMSNormError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
@@ -47,7 +45,7 @@ impl RMSNorm {
         })?;
 
         // TODO: Don't create buffers dynamically, we need to use forward pass storage for thing like this
-        let scales_data = scales_param.buffer();
+        let scales_data = scales_param.as_bytes();
         let scales_buffer = context
             .device
             .new_buffer_with_data(
@@ -136,14 +134,14 @@ impl EncodableBlock<Metal> for RMSNorm {
             input_array.shape().to_vec()
         };
 
-        let mut input_array = input_binding[0].borrow_mut();
-        let mut output_array = output_binding[0].borrow_mut();
+        let input_array = input_binding[0].borrow_mut();
+        let output_array = output_binding[0].borrow_mut();
 
         let suffix_length = input_shape[0];
         let input_elem_size = input_array.data_type().size_in_bytes();
         let output_elem_size = output_array.data_type().size_in_bytes();
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
+        let input_buffer = input_array.buffer();
+        let output_buffer = output_array.buffer();
 
         let (batch_start, batch_len) = if self.use_sampling_range {
             (state.sampling_start(), state.sampling_length())

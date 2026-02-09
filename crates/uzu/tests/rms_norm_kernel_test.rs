@@ -824,7 +824,7 @@ fn perf_rms_norm_with_size(
 ) {
     use std::time::Instant;
 
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
     let mtl_context = match MTLContext::new() {

@@ -3,7 +3,7 @@
 #include "../matmul/common/loader.h"
 #include "../matmul/common/mma.h"
 #include "../definitions.metal"
-#include "gemm_types.h"
+#include "attention.h"
 
 using namespace metal;
 using namespace uzu::matmul;

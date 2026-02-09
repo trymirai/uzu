@@ -116,7 +116,7 @@ pub struct MetalCompiler {
 }
 
 impl MetalCompiler {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new_with_include_dir(include_dir: PathBuf) -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(
             env::var("CARGO_MANIFEST_DIR")
                 .context("missing CARGO_MANIFEST_DIR")?,
@@ -131,7 +131,8 @@ impl MetalCompiler {
         })?;
 
         let toolchain =
-            MetalToolchain::from_env().context("cannot create toolchain")?;
+            MetalToolchain::from_env_with_include_dir(Some(include_dir))
+                .context("cannot create toolchain")?;
 
         Ok(Self {
             src_dir,
@@ -171,7 +172,6 @@ impl MetalCompiler {
         let objectinfo_path =
             build_dir.join(&source_file_name).with_extension("objectinfo");
 
-        // Check cache
         if build_dir.exists() {
             if let Ok(contents) = tokio::fs::read(&objectinfo_path).await
                 && let Ok(cached) =
@@ -206,7 +206,6 @@ impl MetalCompiler {
             format!("cannot create build directory {}", build_dir.display())
         })?;
 
-        // Analyze source
         let (metal_kernel_infos, dependencies) =
             self.toolchain.analyze(&source_path).await.with_context(|| {
                 format!("cannot analyze {}", source_path_display)
@@ -222,7 +221,6 @@ impl MetalCompiler {
             footer.push_str(wrapper);
         }
 
-        // Compile
         let object_path =
             build_dir.join(&source_file_name).with_extension("air");
 

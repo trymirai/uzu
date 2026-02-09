@@ -13,7 +13,6 @@ use super::{
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
-    Array,
     backends::{
         common::kernel::MaskUpdateKernel,
         metal::{
@@ -239,7 +238,7 @@ impl LanguageModelGenerator {
                 false,
                 self.allow_pre_encode(),
                 sampling_method,
-                self.skip_attention_bias_fill(),
+                self.should_fill_attention_bias(),
             );
 
             if should_capture {
@@ -406,7 +405,7 @@ impl LanguageModelGenerator {
             false,
             self.allow_pre_encode(),
             sampling_method,
-            self.skip_attention_bias_fill(),
+            self.should_fill_attention_bias(),
         );
 
         let sampled_tokens = self.sample(&mut state)?;
@@ -432,6 +431,7 @@ impl LanguageModelGenerator {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
+        let _first_decode_position = prefill_count.saturating_sub(1);
 
         // Initialize attention bias buffers to zero for async mode
         // This ensures unwritten columns (beyond what pass 0 fills) are 0 (attend)
@@ -440,13 +440,12 @@ impl LanguageModelGenerator {
             &self.context.scratch_buffers.attention_window_size_to_bias
         {
             unsafe {
-                let ptr =
-                    mask_buffer.borrow().backend_buffer().contents().as_ptr()
-                        as *mut u8;
+                let ptr = mask_buffer.borrow().buffer().contents().as_ptr()
+                    as *mut u8;
                 std::ptr::write_bytes(
                     ptr,
                     0,
-                    mask_buffer.borrow().backend_buffer().length() as usize,
+                    mask_buffer.borrow().buffer().length() as usize,
                 );
             }
         }
@@ -516,9 +515,7 @@ impl LanguageModelGenerator {
         let async_positions = Some((&async_positions_buffer, pass_idx));
         let async_seeds = Some((&async_seeds_buffer, pass_idx));
 
-        let skip_attention_bias_fill =
-            pass_idx > 0 && self.skip_attention_bias_fill();
-
+        let should_fill_attention_bias = false; // we fill it once in prepare
         let skip_token_ids_copy = pass_idx > 0;
 
         let is_first_decode = !is_continuation;
@@ -547,7 +544,7 @@ impl LanguageModelGenerator {
             task.is_prefilling,
             None,
             skip_token_ids_copy,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             async_positions,
             async_seeds,
         );
@@ -582,10 +579,9 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer =
-            sampling_output.borrow().mtl_buffer_cloned();
+        let sampling_output_buffer = sampling_output.borrow().buffer().clone();
         let token_ids_buffer =
-            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
+            self.context.scratch_buffers.token_ids.borrow().buffer().clone();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -636,7 +632,7 @@ impl LanguageModelGenerator {
                 {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
-                            mask_buffer.borrow().backend_buffer(),
+                            mask_buffer.borrow().buffer(),
                             update.unmask_col,
                             update.mask_col,
                             &encoder,
@@ -727,7 +723,7 @@ impl LanguageModelGenerator {
         };
 
         let (_, _) =
-            self.run_model(task, true, false, SamplingMethod::default(), false);
+            self.run_model(task, true, false, SamplingMethod::default(), true);
     }
 
     fn run_model(
@@ -736,7 +732,7 @@ impl LanguageModelGenerator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
@@ -744,7 +740,7 @@ impl LanguageModelGenerator {
             let mut state = task.create_state(
                 &mut self.context,
                 None,
-                skip_attention_bias_fill,
+                should_fill_attention_bias,
             );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
@@ -829,9 +825,7 @@ impl LanguageModelGenerator {
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer
-            .as_view::<u32>()
-            .map_err(|_| Error::SamplingFailed)?;
+        let output_view = output_buffer.as_view::<u32>();
         let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);
@@ -902,14 +896,14 @@ impl LanguageModelGenerator {
         }
     }
 
-    fn skip_attention_bias_fill(&self) -> bool {
+    fn should_fill_attention_bias(&self) -> bool {
         let sliding_window_sizes =
             self.context.model_shape.sliding_window_length_per_layer.clone();
         let has_sliding_window =
             sliding_window_sizes.iter().any(|size| size.is_some());
         let has_speculative_suffix =
             self.decoding_config.generate_suffix_length() > 1;
-        let should_skip = !has_sliding_window && !has_speculative_suffix;
-        return should_skip;
+
+        has_sliding_window || has_speculative_suffix
     }
 }

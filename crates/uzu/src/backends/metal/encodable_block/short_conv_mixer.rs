@@ -33,9 +33,9 @@ pub(crate) struct ShortConvMixer {
 }
 
 fn resolve_subtree<'tree>(
-    tree: &'tree ParameterTree<Rc<MTLContext>>,
+    tree: &'tree ParameterTree<MTLContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, Rc<MTLContext>> {
+) -> ParameterTree<'tree, MTLContext> {
     for candidate in candidates {
         if let Ok(subtree) = tree.subtree(candidate) {
             return subtree;
@@ -53,7 +53,7 @@ impl ShortConvMixer {
         _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!(
@@ -188,15 +188,15 @@ impl ShortConvMixer {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.mtl_buffer_cloned();
-        let state_buf = conv_state.mtl_buffer_cloned();
-        let out_buf = out.mtl_buffer_cloned();
+        let in_proj_buf = in_proj.buffer().clone();
+        let state_buf = conv_state.buffer().clone();
+        let out_buf = out.buffer().clone();
 
         let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let weight_buf = conv_weight.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|b| {
             let b = b.clone();
-            b.mtl_buffer_cloned()
+            b.buffer().clone()
         });
 
         let kernel_size = self.config.kernel_size;
@@ -262,15 +262,15 @@ impl ShortConvMixer {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.mtl_buffer_cloned();
-        let state_buf = conv_state.mtl_buffer_cloned();
-        let out_buf = out.mtl_buffer_cloned();
+        let in_proj_buf = in_proj.buffer().clone();
+        let state_buf = conv_state.buffer().clone();
+        let out_buf = out.buffer().clone();
 
         let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let weight_buf = conv_weight.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|b| {
             let b = b.clone();
-            b.mtl_buffer_cloned()
+            b.buffer().clone()
         });
 
         let kernel_size = self.config.kernel_size;

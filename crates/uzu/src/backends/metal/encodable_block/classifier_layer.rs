@@ -1,9 +1,10 @@
 use crate::backends::metal::Metal;
 use std::rc::Rc;
 
+#[cfg(not(feature = "tracing"))]
+use crate::backends::metal::MTLCommandEncoder;
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+    MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained,
 };
 use objc2::rc::autoreleasepool;
 
@@ -52,7 +53,7 @@ impl ClassifierLayer {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        layer_loader: &ParameterTree<Rc<MTLContext>>,
+        layer_loader: &ParameterTree<MTLContext>,
         rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     ) -> Self {
         autoreleasepool(|_| {

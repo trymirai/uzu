@@ -1,10 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use half::{bf16, f16};
 
 use super::{super::ModelShape, RopeBuffers};
 use crate::{
-    Array, DataType, DeviceContext,
+    DataType,
+    array::ArrayContextExt,
     backends::metal::{MTLContext, MetalArray},
     parameters::ParameterTree,
 };
@@ -58,11 +59,11 @@ impl SharedBuffers {
                 let num_heads = decoder_config.num_heads;
                 Some(
                     (0..decoder_config.num_layers)
-                        .map(|_| unsafe {
-                            RefCell::new(context.array_uninitialized(
+                        .map(|_| {
+                            RefCell::new(context.create_array_uninitialized(
                                 &[num_heads],
                                 DataType::F32,
-                                String::from("shared_buffers_attention_sinks"),
+                                "shared_buffers_attention_sinks",
                             ))
                         })
                         .collect(),
@@ -84,19 +85,17 @@ impl SharedBuffers {
 
     pub fn update_data(
         &mut self,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) {
         let transformer_tree = parameter_tree
             .subtree("transformer")
             .expect("transformer subtree not found");
 
         if let Some(global_rope) = &mut self.global_rope {
-            global_rope
-                .update_data(&transformer_tree, String::from("global_rope"));
+            global_rope.update_data(&transformer_tree, "global_rope");
         }
         if let Some(local_rope) = &mut self.local_rope {
-            local_rope
-                .update_data(&transformer_tree, String::from("local_rope"));
+            local_rope.update_data(&transformer_tree, "local_rope");
         }
 
         if let Some(sinks_vec) = &mut self.attention_sinks {
@@ -107,15 +106,15 @@ impl SharedBuffers {
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf("sinks").unwrap();
                 let mut dst = sink_cell.borrow_mut();
-                let dst_slice = dst.as_slice_mut::<f32>().unwrap();
+                let dst_slice = dst.as_slice_mut::<f32>();
 
                 match sinks_arr.data_type() {
                     DataType::F32 => {
-                        let src = sinks_arr.as_slice::<f32>().unwrap();
+                        let src = sinks_arr.as_slice::<f32>();
                         dst_slice.copy_from_slice(src);
                     },
                     DataType::BF16 => {
-                        let src = sinks_arr.as_slice::<bf16>().unwrap();
+                        let src = sinks_arr.as_slice::<bf16>();
                         for (dst_val, src_val) in
                             dst_slice.iter_mut().zip(src.iter())
                         {
@@ -123,7 +122,7 @@ impl SharedBuffers {
                         }
                     },
                     DataType::F16 => {
-                        let src = sinks_arr.as_slice::<f16>().unwrap();
+                        let src = sinks_arr.as_slice::<f16>();
                         for (dst_val, src_val) in
                             dst_slice.iter_mut().zip(src.iter())
                         {

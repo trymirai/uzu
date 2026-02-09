@@ -31,7 +31,7 @@ pub struct ClassifierContext {
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
+    pub scratch_buffers: ScratchBuffers<MTLContext>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
@@ -88,7 +88,7 @@ impl ClassifierContext {
         }
         let weights_file = File::open(&weights_path)
             .map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, &context)
+        let loader = ParameterLoader::new(&weights_file, context.as_ref())
             .map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
@@ -107,14 +107,10 @@ impl ClassifierContext {
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
             if let Some(global_rope) = &mut shared_bufs.global_rope {
-                global_rope.update_data(
-                    &transformer_tree,
-                    String::from("global_rope"),
-                );
+                global_rope.update_data(&transformer_tree, "global_rope");
             }
             if let Some(local_rope) = &mut shared_bufs.local_rope {
-                local_rope
-                    .update_data(&transformer_tree, String::from("local_rope"));
+                local_rope.update_data(&transformer_tree, "local_rope");
             }
         }
 
@@ -239,7 +235,7 @@ impl ClassifierContext {
         let context_length =
             classifier_model_config.model_config.context_length;
         let scratch_buffers = ScratchBuffers::new(
-            &context,
+            context.as_ref(),
             &decoder_config,
             &model_shape,
             context_length,

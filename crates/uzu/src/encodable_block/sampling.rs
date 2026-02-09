@@ -71,12 +71,9 @@ impl EncodableBlock<Metal> for Sampling<Metal> {
         );
 
         let logits_binding = state.arrays(&[ArrayId::Logits]);
-        let mut logits = logits_binding[0].borrow_mut();
+        let logits = logits_binding[0].borrow();
 
-        let logits_shape = {
-            use crate::Array;
-            logits.shape()
-        };
+        let logits_shape = logits.shape();
         let batch_size = state.sampling_length();
         if batch_size == 0 {
             return;
@@ -85,35 +82,31 @@ impl EncodableBlock<Metal> for Sampling<Metal> {
         let vocab_size = logits_shape[1];
 
         let seeds_binding = state.arrays(&[ArrayId::TokenSeeds]);
-        let mut seeds = seeds_binding[0].borrow_mut();
+        let seeds = seeds_binding[0].borrow();
 
-        let mut output_buffer_ref =
-            state.sampling_output().unwrap().borrow_mut();
+        let output_buffer_ref = state.sampling_output().unwrap().borrow();
 
         let sampling_method = state.sampling_method().unwrap();
         let seeds_offset =
-            seeds.buffer_offset() + sampling_start * std::mem::size_of::<u64>();
+            seeds.offset() + sampling_start * std::mem::size_of::<u64>();
 
         let (bitmask_buffer, bitmask_offset) =
             state.token_bitmask().map_or((None, 0usize), |cell| {
-                let bitmask = cell.borrow_mut();
-                let bitmask_row_len = {
-                    use crate::Array;
-                    bitmask.shape()[1]
-                };
-                let bitmask_offset = bitmask.buffer_offset()
+                let bitmask = cell.borrow();
+                let bitmask_row_len = bitmask.shape()[1];
+                let bitmask_offset = bitmask.offset()
                     + sampling_start
                         * bitmask_row_len
                         * std::mem::size_of::<u32>();
-                (Some(bitmask.mtl_buffer_cloned()), bitmask_offset)
+                (Some(bitmask.buffer().clone()), bitmask_offset)
             });
         if let Err(e) = self.kernel.encode_with_encoder(
-            unsafe { &logits.mtl_buffer() },
-            unsafe { Some(&seeds.mtl_buffer()) },
+            logits.buffer(),
+            Some(seeds.buffer()),
             seeds_offset,
             bitmask_buffer.as_ref(),
             bitmask_offset,
-            unsafe { &output_buffer_ref.mtl_buffer() },
+            output_buffer_ref.buffer(),
             sampling_method,
             batch_size,
             vocab_size,

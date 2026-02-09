@@ -2,7 +2,8 @@
 
 use metal::{MTLCommandBuffer, MTLCommandQueue};
 use uzu::{
-    Array, DataType, DeviceContext,
+    DataType,
+    array::ArrayContextExt,
     backends::{
         common::Context,
         metal::{
@@ -48,15 +49,15 @@ fn make_test_layer(
     };
     let shape = [1, total_len.max(1), 1];
 
-    let keys = std::cell::RefCell::new(context.array(
+    let keys = std::cell::RefCell::new(context.create_array(
         &shape,
         DataType::F32,
-        "kv_cache_keys".to_string(),
+        "kv_cache_keys",
     ));
-    let values = std::cell::RefCell::new(context.array(
+    let values = std::cell::RefCell::new(context.create_array(
         &shape,
         DataType::F32,
-        "kv_cache_values".to_string(),
+        "kv_cache_values",
     ));
 
     let prefix_token_positions = match &state {
@@ -81,7 +82,7 @@ fn make_test_layer(
 fn fill_arrays(layer: &mut KVCacheLayer) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let mut keys_ref = layer.keys.borrow_mut();
-        let slice = keys_ref.as_slice_mut::<f32>().unwrap();
+        let slice = keys_ref.as_slice_mut::<f32>();
         for (idx, value) in slice.iter_mut().enumerate() {
             *value = 1_000.0 + idx as f32;
         }
@@ -90,7 +91,7 @@ fn fill_arrays(layer: &mut KVCacheLayer) -> (Vec<f32>, Vec<f32>) {
 
     let initial_values = {
         let mut values_ref = layer.values.borrow_mut();
-        let slice = values_ref.as_slice_mut::<f32>().unwrap();
+        let slice = values_ref.as_slice_mut::<f32>();
         for (idx, value) in slice.iter_mut().enumerate() {
             *value = 2_000.0 + idx as f32;
         }
@@ -239,7 +240,7 @@ fn run_scenario(
 
     let actual_keys = {
         let keys_ref = layer.keys.borrow();
-        keys_ref.as_slice::<f32>().unwrap().to_vec()
+        keys_ref.as_slice::<f32>().to_vec()
     };
     assert_eq!(
         actual_keys, expected_keys,
@@ -249,7 +250,7 @@ fn run_scenario(
 
     let actual_values = {
         let values_ref = layer.values.borrow();
-        values_ref.as_slice::<f32>().unwrap().to_vec()
+        values_ref.as_slice::<f32>().to_vec()
     };
     assert_eq!(
         actual_values, expected_values,
@@ -458,10 +459,10 @@ fn kv_cache_slice_apply_contiguous_window() {
         layer.prefix_token_positions[1] = 998;
         let mut keys = layer.keys.borrow_mut();
         let mut values = layer.values.borrow_mut();
-        keys.as_slice_mut::<f32>().unwrap()[0] = -1.0;
-        keys.as_slice_mut::<f32>().unwrap()[1] = -2.0;
-        values.as_slice_mut::<f32>().unwrap()[0] = -3.0;
-        values.as_slice_mut::<f32>().unwrap()[1] = -4.0;
+        keys.as_slice_mut::<f32>()[0] = -1.0;
+        keys.as_slice_mut::<f32>()[1] = -2.0;
+        values.as_slice_mut::<f32>()[0] = -3.0;
+        values.as_slice_mut::<f32>()[1] = -4.0;
     }
 
     layer.apply_slice(&slice, None);
@@ -472,9 +473,8 @@ fn kv_cache_slice_apply_contiguous_window() {
         "positions restored for contiguous slice"
     );
 
-    let keys_after = layer.keys.borrow().as_slice::<f32>().unwrap().to_vec();
-    let values_after =
-        layer.values.borrow().as_slice::<f32>().unwrap().to_vec();
+    let keys_after = layer.keys.borrow().as_slice::<f32>().to_vec();
+    let values_after = layer.values.borrow().as_slice::<f32>().to_vec();
     assert_eq!(
         keys_after[0..4],
         initial_keys[0..4],
@@ -513,10 +513,10 @@ fn kv_cache_slice_apply_wrap_window() {
         layer.prefix_token_positions[3] = 778;
         let mut keys = layer.keys.borrow_mut();
         let mut values = layer.values.borrow_mut();
-        keys.as_slice_mut::<f32>().unwrap()[2] = -11.0;
-        keys.as_slice_mut::<f32>().unwrap()[3] = -12.0;
-        values.as_slice_mut::<f32>().unwrap()[2] = -13.0;
-        values.as_slice_mut::<f32>().unwrap()[3] = -14.0;
+        keys.as_slice_mut::<f32>()[2] = -11.0;
+        keys.as_slice_mut::<f32>()[3] = -12.0;
+        values.as_slice_mut::<f32>()[2] = -13.0;
+        values.as_slice_mut::<f32>()[3] = -14.0;
     }
 
     layer.apply_slice(&slice, None);
@@ -527,9 +527,8 @@ fn kv_cache_slice_apply_wrap_window() {
         "positions restored for wrapped slice"
     );
 
-    let keys_after = layer.keys.borrow().as_slice::<f32>().unwrap().to_vec();
-    let values_after =
-        layer.values.borrow().as_slice::<f32>().unwrap().to_vec();
+    let keys_after = layer.keys.borrow().as_slice::<f32>().to_vec();
+    let values_after = layer.values.borrow().as_slice::<f32>().to_vec();
     assert_eq!(
         keys_after[0..4],
         initial_keys[0..4],
