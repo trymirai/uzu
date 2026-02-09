@@ -3,25 +3,23 @@ use std::time::Instant;
 use bytemuck;
 use half::{bf16, f16};
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
     MTLDeviceExt, MTLResourceOptions,
 };
 use uzu::{
     DataType,
-    backends::metal::{
-        MTLContext, ProtocolObject, Retained,
-        kernel::quant_matmul::{
-            QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel,
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext, ProtocolObject, Retained,
+            kernel::quant_matmul::{
+                QuantizationType, QuantizedMatmulArguments,
+                QuantizedMatmulKernel,
+            },
         },
     },
     config::QuantizationMode,
 };
-
-fn create_test_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
-}
 
 fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity((values.len() + 3) / 4 * 2);
@@ -526,11 +524,7 @@ fn execute_quantized_matmul(
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx
-        .device
-        .new_buffer(
-            batch * output_dim * data_type.size_in_bytes() ,
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .create_buffer(batch * output_dim * data_type.size_in_bytes())
         .expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernel::new(
@@ -747,9 +741,9 @@ fn run_kernel_test(
 
 #[test]
 fn test_quant_gmv() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
             println!("Metal not available — skipping QMV test");
             return;
         },
@@ -793,9 +787,9 @@ fn test_quant_gmv() {
 
 #[test]
 fn test_quant_qvm() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
             println!("Metal not available — skipping QVM test");
             return;
         },
@@ -839,9 +833,9 @@ fn test_quant_qvm() {
 
 #[test]
 fn test_quant_gmm() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
             println!("Metal not available — skipping QMM test");
             return;
         },
@@ -885,9 +879,9 @@ fn test_quant_gmm() {
 
 #[test]
 fn test_quant_gmm_transposed() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
             println!("Metal not available — skipping QMM transposed test");
             return;
         },
@@ -932,9 +926,9 @@ fn test_quant_gmm_transposed() {
 #[test]
 #[ignore]
 fn test_quant_matmul_perf() {
-    let ctx = match create_test_context() {
-        Some(c) => c,
-        None => {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
             println!("Metal not available — skipping Perf test");
             return;
         },

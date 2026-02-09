@@ -1,5 +1,6 @@
 //! Decoder executables - combines embedding, layers, normalization, and readout.
 
+use crate::backends::metal::Metal;
 use std::rc::Rc;
 
 use super::{
@@ -8,8 +9,8 @@ use super::{
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLContext, ModelShape,
-        ProtocolObject,
+        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext,
+        ModelShape, ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
         forward_pass::{ArrayId, ForwardPassState, RopeType},
@@ -20,19 +21,19 @@ use crate::{
 
 /// Full decoder executable with all layers and components.
 pub struct Decoder {
-    pub embed: Box<dyn EncodableBlock>,
+    pub embed: Box<dyn EncodableBlock<Metal>>,
     pub layers: Box<[LayerExecutables]>,
-    pub norm: Box<dyn EncodableBlock>,
-    pub readout: Box<dyn EncodableBlock>,
-    pub global_rope: Option<Rc<Box<dyn EncodableBlock>>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock>>>,
+    pub norm: Box<dyn EncodableBlock<Metal>>,
+    pub readout: Box<dyn EncodableBlock<Metal>>,
+    pub global_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
+    pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
 }
 
 impl Decoder {
     pub fn new(
         mtl_context: Rc<MTLContext>,
         decoder_config: Rc<DecoderConfig>,
-        root_weight_loader: &ParameterTree<Rc<MTLContext>>,
+        root_weight_loader: &ParameterTree<MTLContext>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader
@@ -145,7 +146,7 @@ impl Decoder {
             })
             .collect::<Vec<_>>();
 
-        let norm_block: Box<dyn EncodableBlock> = Box::new(
+        let norm_block: Box<dyn EncodableBlock<Metal>> = Box::new(
             RMSNorm::new(
                 &mtl_context,
                 norm_data_type,
@@ -172,8 +173,8 @@ impl Decoder {
         mtl_context: &MTLContext,
         kernel_data_type: KernelDataType,
         rope_type: RopeType,
-    ) -> Rc<Box<dyn EncodableBlock>> {
-        let rotation: Box<dyn EncodableBlock> = Box::new(
+    ) -> Rc<Box<dyn EncodableBlock<Metal>>> {
+        let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
             Rope::new(mtl_context, kernel_data_type, rope_type)
                 .expect("Failed to create Rope"),
         );
@@ -197,11 +198,20 @@ impl Decoder {
     }
 }
 
-impl EncodableBlock for Decoder {
+impl EncodableBlock<Metal> for Decoder {
+    fn encode_with_shared_encoder(
+        &self,
+        _state: &mut ForwardPassState,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        _parameters: &EncodingParameters,
+    ) {
+        unimplemented!("Decoder does not support shared encoder")
+    }
+
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         self.embed.encode(state, command_buffer, parameters);

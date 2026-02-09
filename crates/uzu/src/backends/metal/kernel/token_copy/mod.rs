@@ -1,6 +1,6 @@
 use crate::backends::metal::{
-    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLSize,
-    ProtocolObject, Retained,
+    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLError, MTLSize, ProtocolObject, Retained,
 };
 
 /// Kernel for copying sampled tokens in async pipeline.
@@ -14,8 +14,10 @@ pub struct TokenCopyKernel {
 
 impl TokenCopyKernel {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
-        let copy_to_token_ids = context.compute_pipeline_state("copy_sampled_token", None)?;
-        let copy_to_results = context.compute_pipeline_state("copy_token_to_results", None)?;
+        let copy_to_token_ids =
+            context.compute_pipeline_state("copy_sampled_token", None)?;
+        let copy_to_results =
+            context.compute_pipeline_state("copy_token_to_results", None)?;
 
         Ok(Self {
             copy_to_token_ids,
@@ -27,8 +29,8 @@ impl TokenCopyKernel {
     /// For next forward pass to read the token.
     pub fn encode_to_token_ids(
         &self,
-        sampling_output: &ProtocolObject<dyn MTLBuffer>,
-        token_ids: &ProtocolObject<dyn MTLBuffer>,
+        sampling_output: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        token_ids: &Retained<ProtocolObject<dyn MTLBuffer>>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         encoder.set_compute_pipeline_state(&self.copy_to_token_ids);
@@ -41,8 +43,8 @@ impl TokenCopyKernel {
     /// For callback to read without race condition.
     pub fn encode_to_results(
         &self,
-        sampling_output: &ProtocolObject<dyn MTLBuffer>,
-        results: &ProtocolObject<dyn MTLBuffer>,
+        sampling_output: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        results: &Retained<ProtocolObject<dyn MTLBuffer>>,
         pass_idx: usize,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {

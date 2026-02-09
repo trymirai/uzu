@@ -1,13 +1,16 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDeviceExt,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
     MTLResourceOptions,
 };
 use ndarray::{Array, Array3, s};
-use uzu::backends::metal::{
-    KVCacheUpdate, KernelDataType, MTLContext,
-    kernel::kv_cache_update::{KVLayerData, Swap, create_swaps_direct},
+use uzu::backends::{
+    common::Context,
+    metal::{
+        KVCacheUpdate, KernelDataType, MTLContext,
+        kernel::kv_cache_update::{KVLayerData, Swap, create_swaps_direct},
+    },
 };
 
 fn apply_swaps_3d<T: Clone>(
@@ -31,11 +34,7 @@ fn apply_swaps_3d<T: Clone>(
 
 #[test]
 fn test_kv_cache_update_kernel() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let metal_context = match MTLContext::new(device, command_queue) {
+    let metal_context = match MTLContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Failed to create MetalContext: {:?}. Skipping test.", e);

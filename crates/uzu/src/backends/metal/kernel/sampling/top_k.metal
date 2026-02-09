@@ -5,7 +5,9 @@
 #define BLOCK_SIZE_IN_SIMDS (BLOCK_SIZE / 32)
 #define MAX_ITERS 16
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(TopK) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(TopK) (
     device const T* logits,
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],

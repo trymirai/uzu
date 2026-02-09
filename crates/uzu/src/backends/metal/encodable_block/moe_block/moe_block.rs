@@ -2,28 +2,34 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, NSRange, ProtocolObject, Retained,
-};
-
 use super::{
-    super::{EncodableBlock, EncodingParameters},
+    super::{EncodableBlock, EncodingParameters, Metal},
     SharedMoeWeights,
 };
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig,
     RoutingFunctionConfig,
-    backends::metal::{
-        KernelDataType, MTLContext, MetalArray,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::moe::{
-            MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-            MoeCountsOffsetsFusedKernel, MoeExpertsTwoPassArguments,
-            MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-            MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-            MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-            MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+    backends::{
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        metal::{
+            KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
+            MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
+            MetalArray, NSRange, ProtocolObject, Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::{
+                MoeGatherKernels,
+                dsl::{
+                    MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
+                },
+                moe::{
+                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
+                    MoeExpertsTwoPassDecodeKernels,
+                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments,
+                    MoeRouterTopKArguments, MoeRouterTopKKernel,
+                    MoeScatterArguments, MoeScatterKernels,
+                    MoeScatterWithMapArguments,
+                },
+            },
         },
     },
     parameters::ParameterTree,
@@ -41,12 +47,12 @@ pub struct MoeBlock {
     router_data_type: KernelDataType,
     router_renorm: bool,
     router_topk_kernel: MoeRouterTopKKernel,
-    counts_offsets_kernel: MoeCountsOffsetsFusedKernel,
+    counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
-    gather_kernel: MoeGatherKernel,
-    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernel,
+    gather_kernels: MoeGatherKernels,
+    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernels,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
-    finalize_kernel: MoeFinalizeKernel,
+    finalize_kernel: MoeFinalizeMetalKernel,
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
     hidden_dim: usize,
@@ -60,7 +66,7 @@ impl MoeBlock {
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         hidden_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, crate::backends::metal::MTLError> {
         let activation_data_type: DataType = moe_config
             .expert_config
@@ -99,23 +105,21 @@ impl MoeBlock {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let mut weights_arr =
-                    router_tree.leaf("weights").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router weights error: {:?}",
-                            e
-                        ))
-                    })?;
-                let weights_buf = unsafe { weights_arr.mtl_buffer() };
+                let weights_arr = router_tree.leaf("weights").map_err(|e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Router weights error: {:?}",
+                        e
+                    ))
+                })?;
+                let weights_buf = weights_arr.buffer();
 
-                let mut biases_arr =
-                    router_tree.leaf("biases").map_err(|e| {
-                        crate::backends::metal::MTLError::Generic(format!(
-                            "Router biases error: {:?}",
-                            e
-                        ))
-                    })?;
-                let biases_buf = unsafe { biases_arr.mtl_buffer() };
+                let biases_arr = router_tree.leaf("biases").map_err(|e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Router biases error: {:?}",
+                        e
+                    ))
+                })?;
+                let biases_buf = biases_arr.buffer();
 
                 RouterBlock::Metal {
                     weights_buf: weights_buf.into(),
@@ -149,14 +153,14 @@ impl MoeBlock {
                 e
             ))
         })?;
-        let gather_kernel = MoeGatherKernel::new(context).map_err(|e| {
+        let gather_kernel = MoeGatherKernels::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
                 "Gather kernel error: {:?}",
                 e
             ))
         })?;
         let experts_two_pass_decode_kernel =
-            MoeExpertsTwoPassDecodeKernel::new(context).map_err(|e| {
+            MoeExpertsTwoPassDecodeKernels::new(context).map_err(|e| {
                 crate::backends::metal::MTLError::Generic(format!(
                     "Experts two-pass decode kernel error: {:?}",
                     e
@@ -169,12 +173,15 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let finalize_kernel = MoeFinalizeKernel::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!(
-                "Finalize kernel error: {:?}",
-                e
-            ))
-        })?;
+        let finalize_kernel =
+            MoeFinalizeMetalKernel::new(context, data_type.into()).map_err(
+                |e| {
+                    crate::backends::metal::MTLError::Generic(format!(
+                        "Finalize kernel error: {:?}",
+                        e
+                    ))
+                },
+            )?;
 
         let experts_tree = parameter_tree.subtree("experts").map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!(
@@ -198,7 +205,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w13_buf = w13_arr.mtl_buffer_cloned();
+        let w13_buf = w13_arr.buffer().clone();
 
         let w2_arr = experts_tree
             .subtree("down_projection")
@@ -215,7 +222,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let w2_buf = w2_arr.mtl_buffer_cloned();
+        let w2_buf = w2_arr.buffer().clone();
 
         let up_biases_arr = experts_tree
             .subtree("up_projection")
@@ -232,7 +239,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let up_biases_buf = up_biases_arr.mtl_buffer_cloned();
+        let up_biases_buf = up_biases_arr.buffer().clone();
 
         let down_biases_arr = experts_tree
             .subtree("down_projection")
@@ -249,7 +256,7 @@ impl MoeBlock {
                     e
                 ))
             })?;
-        let down_biases_buf = down_biases_arr.mtl_buffer_cloned();
+        let down_biases_buf = down_biases_arr.buffer().clone();
 
         let shared_weights = SharedMoeWeights {
             w13_buf: Rc::new(w13_buf),
@@ -265,7 +272,7 @@ impl MoeBlock {
             router_topk_kernel,
             counts_offsets_kernel,
             scatter_kernels,
-            gather_kernel,
+            gather_kernels: gather_kernel,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
             finalize_kernel,
@@ -290,11 +297,11 @@ impl MoeBlock {
     }
 }
 
-impl EncodableBlock for MoeBlock {
+impl EncodableBlock<Metal> for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let suffix_length = state.active_suffix_length();
@@ -322,9 +329,7 @@ impl EncodableBlock for MoeBlock {
         ]);
 
         let clone_buffer = |array: &RefCell<MetalArray>| -> Retained<ProtocolObject<dyn MTLBuffer>> {
-            let mut borrow = array.borrow_mut();
-            let buffer = unsafe { borrow.mtl_buffer().to_owned().into() };
-            buffer
+            array.borrow().buffer().to_owned().into()
         };
 
         let mut array_iter = arrays.iter();
@@ -353,8 +358,7 @@ impl EncodableBlock for MoeBlock {
         let e = self.moe_config.mixture_size;
         let k = self.moe_config.num_experts_per_token;
 
-        let mtl_command_buffer = command_buffer.to_owned();
-        let root = &*mtl_command_buffer;
+        let root = command_buffer;
         let k_tile = 128;
 
         // Clear internal MoE buffers
@@ -433,7 +437,7 @@ impl EncodableBlock for MoeBlock {
                 // Use the fused router+topk kernel
                 self.router_topk_kernel
                     .encode(
-                        &root,
+                        root,
                         self.router_data_type,
                         MoeRouterTopKArguments {
                             input_buffer: &main_buf,
@@ -452,27 +456,29 @@ impl EncodableBlock for MoeBlock {
             },
         }
 
-        self.counts_offsets_kernel
-            .encode(
-                &root,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t: suffix_length,
-                    e,
-                    k,
-                },
-            )
-            .expect("MoE counts+offsets failed");
+        {
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
+            self.counts_offsets_kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sumk_buf,
+                &partials_buf,
+                suffix_length as u32,
+                e as u32,
+                k as u32,
+                &encoder,
+            );
+            encoder.end_encoding();
+        }
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
 
         self.scatter_kernels
             .encode_block_bases(
-                &root,
+                root,
                 MoeBlockBasesArguments {
                     partials_buffer: &partials_buf,
                     block_bases_buffer: &block_bases_buf,
@@ -486,7 +492,7 @@ impl EncodableBlock for MoeBlock {
 
         self.scatter_kernels
             .encode_scatter_with_map(
-                &root,
+                root,
                 MoeScatterWithMapArguments {
                     base: MoeScatterArguments {
                         topk_ids_buffer: &topk_ids_buf,
@@ -508,21 +514,19 @@ impl EncodableBlock for MoeBlock {
             )
             .expect("MoE scatter failed");
 
-        self.gather_kernel
-            .encode(
-                &root,
-                self.data_type,
-                MoeGatherArguments {
-                    x_buffer: &main_buf,
-                    bucketed_ids_buffer: &bucketed_ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t: suffix_length,
-                    k,
-                    d_model: self.model_dim,
-                },
-            )
-            .expect("MoE gather failed");
+        self.gather_kernels.encode(
+            root,
+            self.data_type,
+            &MoeGatherArguments {
+                x_buffer: &main_buf,
+                bucketed_ids_buffer: &bucketed_ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t: suffix_length,
+                k,
+                d_model: self.model_dim,
+            },
+        );
 
         let gating_code = Self::gating_code_from_activation(
             &self.moe_config.expert_config.activation,
@@ -541,46 +545,44 @@ impl EncodableBlock for MoeBlock {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
-            self.experts_two_pass_decode_kernel
-                .encode(
-                    &root,
-                    MoeExpertsTwoPassArguments {
-                        x_perm_buffer: &x_perm_buf,
-                        expert_offsets: &offsets_buf,
-                        row_expert_map: &row_expert_map_buf,
-                        hidden_buffer: &hidden_buf,
-                        output_buffer: &y_partial_buf,
-                        w13_all: &self.shared_weights.w13_buf,
-                        w2_all: &self.shared_weights.w2_buf,
-                        up_biases: &self.shared_weights.up_biases_buf,
-                        down_biases: &self.shared_weights.down_biases_buf,
-                        tile_counts: &tile_counts_buf,
-                        tile_offsets: &tile_offsets_buf,
-                        tile_map: &tile_map_buf,
-                        total_tiles: &total_tiles_buf,
-                        dispatch_args: &dispatch_args_buf,
-                        total_rows,
-                        d_model: self.model_dim,
-                        d_ff: self.hidden_dim,
-                        e,
-                        num_tiles_k,
-                        gating_code,
-                        gate_clip_min,
-                        gate_clip_max,
-                        up_clip_min,
-                        up_clip_max,
-                        silu_alpha,
-                        data_type: self.data_type,
-                    },
-                )
-                .expect("MoE experts two-pass failed");
+            self.experts_two_pass_decode_kernel.encode(
+                root,
+                &MoeExpertsTwoPassArguments {
+                    x_perm_buffer: &x_perm_buf,
+                    expert_offsets: &offsets_buf,
+                    row_expert_map: &row_expert_map_buf,
+                    hidden_buffer: &hidden_buf,
+                    output_buffer: &y_partial_buf,
+                    w13_all: &self.shared_weights.w13_buf,
+                    w2_all: &self.shared_weights.w2_buf,
+                    up_biases: &self.shared_weights.up_biases_buf,
+                    down_biases: &self.shared_weights.down_biases_buf,
+                    tile_counts: &tile_counts_buf,
+                    tile_offsets: &tile_offsets_buf,
+                    tile_map: &tile_map_buf,
+                    total_tiles: &total_tiles_buf,
+                    dispatch_args: &dispatch_args_buf,
+                    total_rows,
+                    d_model: self.model_dim,
+                    d_ff: self.hidden_dim,
+                    e,
+                    num_tiles_k,
+                    gating_code,
+                    gate_clip_min,
+                    gate_clip_max,
+                    up_clip_min,
+                    up_clip_max,
+                    silu_alpha,
+                    data_type: self.data_type,
+                },
+            );
         } else {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_prefill_kernel
                 .encode(
-                    &root,
+                    root,
                     MoeExpertsTwoPassArguments {
                         x_perm_buffer: &x_perm_buf,
                         expert_offsets: &offsets_buf,
@@ -613,21 +615,22 @@ impl EncodableBlock for MoeBlock {
                 .expect("MoE experts two-pass prefill failed");
         }
 
-        self.finalize_kernel
-            .encode(
-                &root,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &main_buf,
-                    t: suffix_length,
-                    d_model: self.model_dim,
-                    k,
-                },
-                self.data_type,
-            )
-            .expect("MoE finalize failed");
+        {
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
+            self.finalize_kernel.encode(
+                &tok2row_buf,
+                &topk_probs_buf,
+                &y_partial_buf,
+                &main_buf,
+                suffix_length as u32,
+                self.model_dim as u32,
+                k as u32,
+                &encoder,
+            );
+            encoder.end_encoding();
+        }
 
         if parameters.wait_until_completed {
             command_buffer.commit();

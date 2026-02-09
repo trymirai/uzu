@@ -1,9 +1,9 @@
 use std::ptr::NonNull;
 
 use crate::backends::metal::{
-    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues,
-    MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType,
+    MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -12,12 +12,13 @@ pub enum ShortConvKernelError {
     MetalError(#[from] MTLError),
 }
 
-
 fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
+fn make_function_constants(
+    has_bias: bool
+) -> Retained<MTLFunctionConstantValues> {
     let function_constants = MTLFunctionConstantValues::new();
     function_constants.set_constant_value_type_at_index(
         NonNull::from(&has_bias).cast(),
@@ -29,10 +30,14 @@ fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues
 
 pub struct ShortConvKernel {
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {

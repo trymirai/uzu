@@ -1,19 +1,21 @@
-use crate::backends::metal::{ProtocolObject,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+use crate::backends::metal::{
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal,
+    ProtocolObject, Retained,
 };
 
 use super::{
     super::{
         MTLContext, MTLError,
         forward_pass::{ArrayId, ForwardPassState},
-        kernel::activation::ActivationKernel,
+        kernel::dsl::ActivationMetalKernel,
     },
     EncodableBlock, EncodingParameters,
 };
-use crate::{Array, DataType, config::Activation as ActivationConfig};
+use crate::backends::common::kernel::ActivationKernel;
+use crate::{DataType, config::Activation as ActivationConfig};
 
 pub struct Activation {
-    kernel: ActivationKernel,
+    kernel: ActivationMetalKernel,
     config: ActivationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -27,7 +29,7 @@ impl Activation {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
-        let kernel = ActivationKernel::new(context, data_type)?;
+        let kernel = ActivationMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             config,
@@ -37,28 +39,18 @@ impl Activation {
     }
 }
 
-impl EncodableBlock for Activation {
+impl EncodableBlock<Metal> for Activation {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters,
     ) {
-        let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let mut input_array = arrays[0].borrow_mut();
-        let mut output_array = arrays[1].borrow_mut();
-
-        let n = input_array.shape().iter().product();
-
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
-
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
 
-        self.kernel
-            .encode(&encoder, &self.config, input_buffer, output_buffer, n)
-            .expect("Failed to encode activation kernel");
+        self.encode_with_shared_encoder(state, &encoder, _parameters);
 
         encoder.end_encoding();
     }
@@ -74,16 +66,30 @@ impl EncodableBlock for Activation {
         _parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let mut input_array = arrays[0].borrow_mut();
-        let mut output_array = arrays[1].borrow_mut();
+        let input_array = arrays[0].borrow_mut();
+        let output_array = arrays[1].borrow_mut();
 
-        let n = input_array.shape().iter().product();
+        let n = input_array.shape().iter().product::<usize>();
 
-        let input_buffer = unsafe { input_array.mtl_buffer() };
-        let output_buffer = unsafe { output_array.mtl_buffer() };
+        let input_buffer = input_array.buffer();
+        let output_buffer = output_array.buffer();
 
-        self.kernel
-            .encode(encoder, &self.config, input_buffer, output_buffer, n)
-            .expect("Failed to encode activation kernel");
+        let act_type = match self.config {
+            ActivationConfig::SiLU {
+                ..
+            } => 0,
+            ActivationConfig::Gelu => 1,
+            ActivationConfig::Identity => {
+                panic!("Identity activation is not supported for kernel")
+            },
+        };
+
+        self.kernel.encode(
+            input_buffer,
+            output_buffer,
+            n as u32,
+            act_type,
+            encoder,
+        );
     }
 }

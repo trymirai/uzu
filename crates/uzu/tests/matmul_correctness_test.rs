@@ -3,23 +3,20 @@
 use bytemuck;
 use half::bf16;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
     MTLDeviceExt, MTLResourceOptions,
 };
 use ndarray::Array2;
 use uzu::{
     DataType,
-    backends::metal::{
-        MTLContext,
-        kernel::{MatmulArguments, MatmulKernel},
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext,
+            kernel::{MatmulArguments, MatmulKernel},
+        },
     },
 };
-
-fn create_test_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
-}
 
 fn run_metal_matmul(
     ctx: &MTLContext,
@@ -294,7 +291,7 @@ fn compare_results(
 #[test]
 #[ignore]
 fn matmul_correctness_comprehensive() {
-    let Some(ctx) = create_test_context() else {
+    let Some(ctx) = MTLContext::new().ok() else {
         eprintln!("No Metal device available, skipping test");
         return;
     };

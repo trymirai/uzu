@@ -1,6 +1,8 @@
+mod allocator;
 mod array;
-mod buffer_allocator;
+mod backend;
 mod classifier_context;
+mod command_buffer;
 pub mod compilation_parameters;
 mod context;
 pub mod encodable_block;
@@ -13,12 +15,8 @@ pub mod media_utils;
 pub mod metal_extensions;
 pub mod placement_analysis;
 pub mod utils;
-
-pub use metal::prelude::*;
-
 pub use array::MetalArray;
-pub use metal_extensions::ComputeEncoderSetValue;
-pub use buffer_allocator::BufferAllocator;
+pub use backend::Metal;
 pub use classifier_context::ClassifierContext;
 pub use context::{
     DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext,
@@ -26,10 +24,14 @@ pub use context::{
 pub use encodable_block::Decoder;
 pub use error::MTLError;
 pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
-pub use kernel::{KVCacheUpdate, KernelDataType, RopeKernel};
+pub use kernel::{
+    KVCacheUpdate, KernelDataType, RopeKernel, dsl::MetalKernels,
+};
 pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{
     ImagePreprocessingParams, ImagePreprocessingRequirements,
     MetalImagePreprocessor,
 };
+pub use metal::prelude::*;
+pub use metal_extensions::ComputeEncoderSetValue;
 pub use placement_analysis::PlacementAnalysis;

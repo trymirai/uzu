@@ -4,12 +4,12 @@ use objc2::rc::Retained;
 use thiserror::Error;
 
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-    MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
+    KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
+    MTLFunctionConstantValues, MTLSize, ProtocolObject,
 };
 
-mod gemm_types;
-use gemm_types::{AttnMaskParams, AttnParams};
+use crate::backends::common::gpu_types::{AttnMaskParams, AttnParams};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionKernelVariant {
@@ -20,10 +20,18 @@ pub enum AttentionKernelVariant {
 type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
-    single_pass: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    two_pass_1: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    two_pass_2: HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    kv_cache_update: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    single_pass: HashMap<
+        PipelineKey,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
+    two_pass_1: HashMap<
+        PipelineKey,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
+    two_pass_2:
+        HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    kv_cache_update:
+        Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 pub struct AttentionKernel {
@@ -190,7 +198,10 @@ impl AttentionKernel {
 
                     for &head_dim in &supported_head_dims {
                         if let Ok(pipeline) = context.compute_pipeline_state(
-                            &format!("attention_single_pass_{}_{}", data_suffix, head_dim),
+                            &format!(
+                                "attention_single_pass_{}_{}",
+                                data_suffix, head_dim
+                            ),
                             Some(&function_constants),
                         ) {
                             single_pass.insert(
@@ -205,7 +216,10 @@ impl AttentionKernel {
                         }
 
                         if let Ok(pipeline) = context.compute_pipeline_state(
-                            &format!("attention_2pass_1_{}_{}", data_suffix, head_dim),
+                            &format!(
+                                "attention_2pass_1_{}_{}",
+                                data_suffix, head_dim
+                            ),
                             Some(&function_constants),
                         ) {
                             two_pass_1.insert(
@@ -220,10 +234,15 @@ impl AttentionKernel {
                         }
 
                         if !two_pass_2.contains_key(&head_dim) {
-                            if let Ok(pipeline) = context.compute_pipeline_state(
-                                &format!("attention_2pass_2_{}_{}", data_suffix, head_dim),
-                                Some(&function_constants),
-                            ) {
+                            if let Ok(pipeline) = context
+                                .compute_pipeline_state(
+                                    &format!(
+                                        "attention_2pass_2_{}_{}",
+                                        data_suffix, head_dim
+                                    ),
+                                    Some(&function_constants),
+                                )
+                            {
                                 two_pass_2.insert(head_dim, pipeline);
                             }
                         }
@@ -233,7 +252,10 @@ impl AttentionKernel {
         }
 
         let kv_cache_update = context
-            .compute_pipeline_state(&format!("update_kv_cache_{}", data_suffix), None)
+            .compute_pipeline_state(
+                &format!("update_kv_cache_{}", data_suffix),
+                None,
+            )
             .ok();
 
         Ok(Self {
@@ -862,7 +884,11 @@ impl AttentionKernel {
         );
 
         let pipeline = context
-            .compute_pipeline_state_cached(&cache_key, &function_name, Some(&fcv))
+            .compute_pipeline_state_cached(
+                &cache_key,
+                &function_name,
+                Some(&fcv),
+            )
             .map_err(AttentionError::MetalError)?;
 
         MTLComputeCommandEncoder::set_compute_pipeline_state(

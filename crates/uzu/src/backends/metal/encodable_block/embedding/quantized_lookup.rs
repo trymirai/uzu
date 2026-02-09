@@ -1,18 +1,17 @@
-use std::rc::Rc;
-
-
 use super::{
-    super::{EncodableBlock, EncodingParameters},
+    super::{EncodableBlock, EncodingParameters, Metal},
     EmbeddingError,
 };
 use crate::{
-    Array, DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::embedding::{
-            QuantizedEmbeddingLookupArguments, QuantizedEmbeddingLookupKernel,
+    DataType,
+    backends::{
+        common::{Context, kernel::QuantizedEmbeddingLookupKernel},
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::dsl::QuantizedEmbeddingLookupMetalKernel,
         },
     },
     config::QuantizationMode,
@@ -20,10 +19,11 @@ use crate::{
 };
 
 pub struct QuantizedEmbeddingLookup {
-    kernel: QuantizedEmbeddingLookupKernel,
+    kernel: QuantizedEmbeddingLookupMetalKernel,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    mode: QuantizationMode,
     input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
@@ -39,7 +39,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -64,7 +64,7 @@ impl QuantizedEmbeddingLookup {
         group_size: usize,
         mode: QuantizationMode,
         input_scale: f32,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -92,15 +92,17 @@ impl QuantizedEmbeddingLookup {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
-        let kernel =
-            QuantizedEmbeddingLookupKernel::new(mtl_context, data_type, mode)?;
+        let kernel = QuantizedEmbeddingLookupMetalKernel::new(
+            mtl_context,
+            data_type.into(),
+        )?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
-        let mut weights = parameter_tree.leaf(weights_name).map_err(|e| {
+        let weights = parameter_tree.leaf(weights_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load weights: {:?}",
                 e
@@ -118,7 +120,7 @@ impl QuantizedEmbeddingLookup {
         }
 
         // Load scales [vocab_size, num_groups]
-        let mut scales = parameter_tree.leaf(scales_name).map_err(|e| {
+        let scales = parameter_tree.leaf(scales_name).map_err(|e| {
             EmbeddingError::MetalError(MTLError::Generic(format!(
                 "Failed to load scales: {:?}",
                 e
@@ -154,60 +156,60 @@ impl QuantizedEmbeddingLookup {
         }
 
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
-        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
-            Ok(mut deq_biases) => {
-                if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(MTLError::Generic(
-                        format!(
-                            "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
-                            deq_biases.shape(),
-                            vocab_size,
-                            num_groups
-                        ),
-                    )));
-                }
-                if deq_biases.data_type() != data_type {
-                    return Err(EmbeddingError::UnsupportedDataType(
-                        deq_biases.data_type(),
-                    ));
-                }
-                unsafe { deq_biases.mtl_buffer().to_owned().into() }
-            },
-            Err(_) => {
-                let elem_size: usize = match data_type {
-                    DataType::F16 | DataType::BF16 => 2,
-                    DataType::F32 => 4,
-                    other => {
-                        return Err(EmbeddingError::UnsupportedDataType(other));
-                    },
-                };
-                let size_bytes = (vocab_size * num_groups * elem_size) as u64;
-                let buf = mtl_context
-                    .device
-                    .new_buffer(
-                        size_bytes.try_into().unwrap(),
-                        MTLResourceOptions::STORAGE_MODE_SHARED,
-                    )
-                    .expect("Failed to allocate buffer");
-                unsafe {
-                    std::ptr::write_bytes(
-                        metal::MTLBuffer::contents(&*buf).as_ptr(),
-                        0,
-                        size_bytes as usize,
-                    );
-                }
-                buf
-            },
-        };
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
+            match parameter_tree.leaf(biases_name) {
+                Ok(deq_biases) => {
+                    if deq_biases.shape() != [vocab_size, num_groups] {
+                        return Err(EmbeddingError::MetalError(
+                            MTLError::Generic(format!(
+                                "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
+                                deq_biases.shape(),
+                                vocab_size,
+                                num_groups
+                            )),
+                        ));
+                    }
+                    if deq_biases.data_type() != data_type {
+                        return Err(EmbeddingError::UnsupportedDataType(
+                            deq_biases.data_type(),
+                        ));
+                    }
+                    deq_biases.buffer().to_owned().into()
+                },
+                Err(_) => {
+                    let elem_size: usize = match data_type {
+                        DataType::F16 | DataType::BF16 => 2,
+                        DataType::F32 => 4,
+                        other => {
+                            return Err(EmbeddingError::UnsupportedDataType(
+                                other,
+                            ));
+                        },
+                    };
+                    let size_bytes = vocab_size * num_groups * elem_size;
+                    let buf = mtl_context
+                        .create_buffer(size_bytes)
+                        .expect("Failed to allocate buffer");
+                    unsafe {
+                        std::ptr::write_bytes(
+                            metal::MTLBuffer::contents(&*buf).as_ptr(),
+                            0,
+                            size_bytes as usize,
+                        );
+                    }
+                    buf
+                },
+            };
 
-        let weights_buffer = unsafe { weights.mtl_buffer().to_owned().into() };
-        let scales_buffer = unsafe { scales.mtl_buffer().to_owned().into() };
+        let weights_buffer = weights.buffer().to_owned().into();
+        let scales_buffer = scales.buffer().to_owned().into();
 
         Ok(Self {
             kernel,
             weights_buffer,
             scales_buffer,
             biases_buffer,
+            mode,
             input_scale,
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
@@ -216,11 +218,11 @@ impl QuantizedEmbeddingLookup {
     }
 }
 
-impl EncodableBlock for QuantizedEmbeddingLookup {
+impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let encoder = command_buffer
@@ -247,27 +249,27 @@ impl EncodableBlock for QuantizedEmbeddingLookup {
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
-        let mut token_ids_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let token_ids_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let token_ids_buffer = unsafe { token_ids_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
-
-        let args = QuantizedEmbeddingLookupArguments {
-            token_ids_buffer,
-            weights_buffer: &self.weights_buffer,
-            scales_buffer: &self.scales_buffer,
-            biases_buffer: &self.biases_buffer,
-            output_buffer,
-            batch_size: batch_size as u32,
-            vocab_size: self.vocab_size,
-            model_dim: self.model_dim,
-            group_size: self.group_size,
-            input_scale: self.input_scale,
+        let quant_mode = match self.mode {
+            QuantizationMode::UInt4 => 0,
+            QuantizationMode::Int8 => 1,
+            QuantizationMode::UInt8 => 2,
         };
-
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized embedding lookup kernel");
+        self.kernel.encode(
+            token_ids_array_mut.buffer(),
+            &self.weights_buffer,
+            &self.scales_buffer,
+            &self.biases_buffer,
+            output_array_mut.buffer(),
+            batch_size as u32,
+            self.vocab_size,
+            self.model_dim,
+            self.group_size,
+            self.input_scale,
+            quant_mode,
+            encoder,
+        )
     }
 }

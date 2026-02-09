@@ -3,10 +3,10 @@
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::metal::kernel::{
     KernelDataType,
-    moe::{MoeGatherArguments, MoeGatherKernel},
+    moe::{MoeGatherArguments, MoeGatherKernels},
 };
 
 use super::test_utils::{
@@ -81,23 +81,24 @@ fn test_gather_correctness() {
         let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
 
         // Execute gather kernel using kernel struct
-        let gather = MoeGatherKernel::new(&ctx).expect("MoeGatherKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        gather
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeGatherArguments {
-                    x_buffer: &x_buf,
-                    bucketed_ids_buffer: &ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t: t,
-                    k: sum_k / t, // Decompose sum_k into k per token
-                    d_model,
-                },
-            )
-            .expect("encode gather");
+        let gather = MoeGatherKernels::new(&ctx).expect("MoeGatherKernel::new");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        gather.encode(
+            &cb,
+            KernelDataType::BFloat16,
+            &MoeGatherArguments {
+                x_buffer: &x_buf,
+                bucketed_ids_buffer: &ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t: t,
+                k: sum_k / t, // Decompose sum_k into k per token
+                d_model,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
 

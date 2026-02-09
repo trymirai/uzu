@@ -3,8 +3,8 @@ use super::{
     device_extensions_features::{DeviceFeatures, Feature},
 };
 use crate::backends::metal::{
-    MTLCommandEncoderExt, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
-    ProtocolObject,
+    MTLCommandEncoderExt, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLSize, ProtocolObject,
 };
 
 /// Extensions for MTLComputeCommandEncoder to simplify dispatch operations
@@ -89,8 +89,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
-        let tg_width =
-            threadgroup_width.unwrap_or(state.thread_execution_width() as usize);
+        let tg_width = threadgroup_width
+            .unwrap_or(state.thread_execution_width() as usize);
         let tg_size = MTLSize {
             width: tg_width,
             height: 1,
@@ -114,7 +114,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         threadgroup_width: Option<usize>,
     ) {
         let tg_size = MTLSize {
-            width: threadgroup_width.unwrap_or(state.thread_execution_width() as usize),
+            width: threadgroup_width
+                .unwrap_or(state.thread_execution_width() as usize),
             height: 1,
             depth: 1,
         };
@@ -151,7 +152,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size =
+            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         let count = MTLSize {
             width: (size.width + tg_size.width - 1) / tg_size.width,
@@ -169,7 +171,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size =
+            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(size, tg_size);
@@ -196,7 +199,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size =
+            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         let count = MTLSize {
             width: (size.width + tg_size.width - 1) / tg_size.width,
@@ -214,7 +218,8 @@ impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size =
+            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(size, tg_size);

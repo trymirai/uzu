@@ -1,19 +1,26 @@
+use crate::backends::metal::Metal;
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, MTLDevice, MTLDeviceExt,
-    ModelShape, ProtocolObject, Retained,
+    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, ModelShape,
+    ProtocolObject, Retained,
     compilation_parameters::CompilationConfig,
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
+        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization,
+        Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
-    forward_pass::{ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers},
-    kernel::{PoolingKernel, SigmoidKernel},
+    forward_pass::{
+        ArrayId, EncodableBlock, RopeType, ScratchBuffers, SharedBuffers,
+    },
+    kernel::dsl::SigmoidMetalKernel,
 };
 use crate::{
     DataType,
-    backends::metal::error::ClassifierError,
+    backends::{
+        common::Context, common::kernel::SigmoidKernel,
+        metal::error::ClassifierError,
+    },
     config::{ClassifierModelConfig, ModelMetadata},
     parameters::ParameterLoader,
     session::types::Error,
@@ -24,35 +31,32 @@ pub struct ClassifierContext {
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    pub scratch_buffers: ScratchBuffers<Rc<MTLContext>>,
+    pub scratch_buffers: ScratchBuffers<MTLContext>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
 
-    pub embed: Box<dyn EncodableBlock>,
+    pub embed: Box<dyn EncodableBlock<Metal>>,
     pub embedding_norm: Normalization,
     pub layers: Box<[ClassifierLayer]>,
     pub output_norm: Normalization,
-    pub global_rope: Rc<Box<dyn EncodableBlock>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock>>>,
+    pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
+    pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
 
-    pub pooling: Box<dyn EncodableBlock>,
-    pub prediction_head: Box<dyn EncodableBlock>,
+    pub pooling: Box<dyn EncodableBlock<Metal>>,
+    pub prediction_head: Box<dyn EncodableBlock<Metal>>,
 
-    pub sigmoid_kernel: SigmoidKernel,
+    pub sigmoid_kernel: SigmoidMetalKernel,
 }
 
 impl ClassifierContext {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let mtl_device = <dyn MTLDevice>::system_default()
-            .ok_or(Error::UnableToCreateMetalContext)?;
-        let mtl_command_queue = mtl_device
-            .new_command_queue_with_max_command_buffer_count(1024)
-            .ok_or(Error::UnableToCreateMetalContext)?;
+        let context =
+            MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = mtl_command_queue
-            .command_buffer()
-            .ok_or(Error::UnableToCreateMetalContext)?;
+        let command_buffer = context
+            .create_command_buffer()
+            .map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -77,11 +81,6 @@ impl ClassifierContext {
         );
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let mtl_context = Rc::new(
-            MTLContext::new(mtl_device, mtl_command_queue)
-                .map_err(|_| Error::UnableToCreateMetalContext)?,
-        );
-
         let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
@@ -89,12 +88,12 @@ impl ClassifierContext {
         }
         let weights_file = File::open(&weights_path)
             .map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, &mtl_context)
+        let loader = ParameterLoader::new(&weights_file, context.as_ref())
             .map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
-            &mtl_context,
+            &context,
             &decoder_config,
             &model_shape,
         )));
@@ -108,14 +107,10 @@ impl ClassifierContext {
         {
             let mut shared_bufs = shared_buffers.borrow_mut();
             if let Some(global_rope) = &mut shared_bufs.global_rope {
-                global_rope.update_data(
-                    &transformer_tree,
-                    String::from("global_rope"),
-                );
+                global_rope.update_data(&transformer_tree, "global_rope");
             }
             if let Some(local_rope) = &mut shared_bufs.local_rope {
-                local_rope
-                    .update_data(&transformer_tree, String::from("local_rope"));
+                local_rope.update_data(&transformer_tree, "local_rope");
             }
         }
 
@@ -128,11 +123,10 @@ impl ClassifierContext {
             .activation_precision()
             .into();
 
-        let embed =
-            embed_block(&decoder_config, &mtl_context, &root_loader_view);
+        let embed = embed_block(&decoder_config, &context, &root_loader_view);
 
         let global_rope =
-            Self::create_rope_block(&mtl_context, data_type, RopeType::Global)
+            Self::create_rope_block(&context, data_type, RopeType::Global)
                 .map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
             .model_config
@@ -140,11 +134,7 @@ impl ClassifierContext {
             .local_rope_config
             .as_ref()
             .map(|_| {
-                Self::create_rope_block(
-                    &mtl_context,
-                    data_type,
-                    RopeType::Local,
-                )
+                Self::create_rope_block(&context, data_type, RopeType::Local)
             })
             .transpose()
             .map_err(Error::Classifier)?;
@@ -196,7 +186,7 @@ impl ClassifierContext {
                     })?;
 
                 Ok(ClassifierLayer::new(
-                    mtl_context.clone(),
+                    context.clone(),
                     layer_config,
                     compilation_config.clone(),
                     layer_index,
@@ -224,7 +214,7 @@ impl ClassifierContext {
                 ))
             })?;
         let output_norm = Normalization::new(
-            &mtl_context,
+            &context,
             data_type,
             classifier_model_config
                 .model_config
@@ -245,7 +235,7 @@ impl ClassifierContext {
         let context_length =
             classifier_model_config.model_config.context_length;
         let scratch_buffers = ScratchBuffers::new(
-            &mtl_context,
+            context.as_ref(),
             &decoder_config,
             &model_shape,
             context_length,
@@ -259,7 +249,7 @@ impl ClassifierContext {
                 ))
             })?;
         let embedding_norm = Normalization::new(
-            &mtl_context,
+            &context,
             data_type,
             classifier_model_config.model_config.embedding_norm_config.clone(),
             ArrayId::Main,
@@ -298,7 +288,7 @@ impl ClassifierContext {
             prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
-            &mtl_context,
+            &context,
             &prediction_head_dense_tree,
             ArrayId::ClassifierPooling,
             ArrayId::ClassifierPredictionHeadDense,
@@ -306,7 +296,7 @@ impl ClassifierContext {
 
         let prediction_head_activation = Box::new(
             Activation::new(
-                &mtl_context,
+                &context,
                 prediction_head_data_type,
                 prediction_head_config.activation.clone(),
                 ArrayId::ClassifierPredictionHeadDense,
@@ -326,7 +316,7 @@ impl ClassifierContext {
                 ))
             })?;
         let prediction_head_norm = Normalization::new(
-            &mtl_context,
+            &context,
             prediction_head_data_type,
             prediction_head_config.normalization_config.clone(),
             ArrayId::ClassifierPredictionHeadDense,
@@ -351,7 +341,7 @@ impl ClassifierContext {
             true,
             model_dim,
             [num_labels],
-            &mtl_context,
+            &context,
             &prediction_head_readout_tree,
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
@@ -363,22 +353,26 @@ impl ClassifierContext {
             )))
         })?;
 
-        let pooling_kernel = PoolingKernel::new(&mtl_context, data_type)
-            .map_err(|e| {
-                eprintln!("Failed to create pooling kernel: {:?}", e);
-                Error::UnableToCreateMetalContext
-            })?;
-        let sigmoid_kernel = SigmoidKernel::new(&mtl_context, data_type)
-            .map_err(|e| {
-                eprintln!("Failed to create sigmoid kernel: {:?}", e);
-                Error::UnableToCreateMetalContext
-            })?;
+        let sigmoid_kernel =
+            SigmoidMetalKernel::new(&context, data_type.into()).map_err(
+                |e| {
+                    eprintln!("Failed to create sigmoid kernel: {:?}", e);
+                    Error::UnableToCreateMetalContext
+                },
+            )?;
 
-        let pooling = Box::new(Pooling::new(
-            pooling_kernel,
-            classifier_model_config.model_config.classifier_pooling.clone(),
-            model_dim,
-        ));
+        let pooling = Box::new(
+            Pooling::new(
+                &context,
+                data_type.into(),
+                classifier_model_config.model_config.classifier_pooling.clone(),
+                model_dim,
+            )
+            .map_err(|e| {
+                eprintln!("Failed to create pooling: {:?}", e);
+                Error::UnableToCreateMetalContext
+            })?,
+        );
 
         let prediction_head = Box::new(ClassifierPredictionHead::new(
             prediction_head_dense.map_err(|e| {
@@ -393,7 +387,7 @@ impl ClassifierContext {
         ));
 
         Ok(Self {
-            mtl_context,
+            mtl_context: context,
             command_buffer,
             shared_buffers,
             scratch_buffers,
@@ -415,10 +409,10 @@ impl ClassifierContext {
         mtl_context: &MTLContext,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Result<Rc<Box<dyn EncodableBlock>>, ClassifierError> {
+    ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {
         let kernel_data_type: KernelDataType = data_type.into();
 
-        let rotation: Box<dyn EncodableBlock> = Box::new(
+        let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
             Rope::new(mtl_context, kernel_data_type, rope_type).map_err(
                 |e| {
                     ClassifierError::KernelCreationFailed(format!(

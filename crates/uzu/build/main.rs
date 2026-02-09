@@ -4,13 +4,12 @@ use anyhow::Context;
 use futures::future::try_join_all;
 
 mod common;
-mod shared_types;
+mod gpu_types;
 
 #[cfg(feature = "metal")]
 mod metal;
 
-use common::compiler::Compiler;
-use common::envs;
+use common::{compiler::Compiler, envs, traitgen::traitgen_all};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -38,14 +37,25 @@ async fn main() -> anyhow::Result<()> {
         debug_log!("cleaned caches");
     }
 
+    let gpu_types_compiler = gpu_types::GpuTypesCompiler::new()?;
+    let generated_header_dir =
+        gpu_types_compiler.generated_header_dir().clone();
+    gpu_types_compiler.build().await?;
+    debug_log!("gpu_types build done");
+
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    compilers.push(Box::new(shared_types::SharedTypesCompiler::new()?));
-
     #[cfg(feature = "metal")]
-    compilers.push(Box::new(metal::MetalCompiler::new()?));
+    compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(
+        generated_header_dir,
+    )?));
 
-    try_join_all(compilers.iter().map(|c| c.build())).await?;
+    let backends_kernels =
+        try_join_all(compilers.iter().map(|c| c.build())).await?;
+
+    debug_log!("backend build end");
+
+    traitgen_all(backends_kernels)?;
 
     debug_log!("build script ended");
 

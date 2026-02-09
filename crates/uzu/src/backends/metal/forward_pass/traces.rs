@@ -1,11 +1,37 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    DeviceContext,
+    DataType,
+    array::ArrayContextExt,
     backends::metal::{MTLContext, MetalArray, ModelShape},
 };
 
 type ArrayCell = RefCell<MetalArray>;
+
+fn create_trace_array(
+    context: &MTLContext,
+    shape: &[usize],
+    data_type: DataType,
+    label: &str,
+) -> ArrayCell {
+    RefCell::new(context.create_array_uninitialized(shape, data_type, label))
+}
+
+fn create_layer_results(
+    context: &MTLContext,
+    model_shape: &ModelShape,
+    suffix_length: usize,
+) -> Vec<Rc<RefCell<LayerActivationTrace>>> {
+    (0..model_shape.num_layers)
+        .map(|_| {
+            Rc::new(RefCell::new(LayerActivationTrace::new(
+                context,
+                model_shape,
+                suffix_length,
+            )))
+        })
+        .collect()
+}
 
 pub struct LayerActivationTrace {
     pub inputs: ArrayCell,
@@ -25,54 +51,31 @@ impl LayerActivationTrace {
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
-        unsafe {
-            Self {
-                inputs: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_inputs"),
-                )),
-                pre_attention_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_pre_attention_norm"),
-                )),
-                attention: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_attention"),
-                )),
-                post_attention_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_post_attention_norm"),
-                )),
-                mlp_inputs: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_mlp_inputs"),
-                )),
-                pre_mlp_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_pre_mlp_norm"),
-                )),
-                mlp: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_mlp"),
-                )),
-                post_mlp_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_post_mlp_norm"),
-                )),
-                outputs: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("layer_activation_trace_outputs"),
-                )),
-            }
+        let main_shape = model_shape.main_shape(suffix_length);
+        let activation_data_type = model_shape.activation_data_type();
+        let main = |label| {
+            create_trace_array(
+                context,
+                &main_shape,
+                activation_data_type,
+                label,
+            )
+        };
+
+        Self {
+            inputs: main("layer_activation_trace_inputs"),
+            pre_attention_norm: main(
+                "layer_activation_trace_pre_attention_norm",
+            ),
+            attention: main("layer_activation_trace_attention"),
+            post_attention_norm: main(
+                "layer_activation_trace_post_attention_norm",
+            ),
+            mlp_inputs: main("layer_activation_trace_mlp_inputs"),
+            pre_mlp_norm: main("layer_activation_trace_pre_mlp_norm"),
+            mlp: main("layer_activation_trace_mlp"),
+            post_mlp_norm: main("layer_activation_trace_post_mlp_norm"),
+            outputs: main("layer_activation_trace_outputs"),
         }
     }
 }
@@ -91,31 +94,27 @@ impl ActivationTrace {
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
-        let layer_results = (0..model_shape.num_layers)
-            .map(|_| {
-                Rc::new(RefCell::new(LayerActivationTrace::new(
-                    context,
-                    model_shape,
-                    suffix_length,
-                )))
-            })
-            .collect();
-        unsafe {
-            Self {
-                embedding_norm: None,
-                layer_results,
-                output_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("activation_trace_output_norm"),
-                )),
-                output_pooling: None,
-                logits: RefCell::new(context.array_uninitialized(
-                    &model_shape.logits_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("activation_trace_logits"),
-                )),
-            }
+        let activation_data_type = model_shape.activation_data_type();
+        let main_shape = model_shape.main_shape(suffix_length);
+        let layer_results =
+            create_layer_results(context, model_shape, suffix_length);
+
+        Self {
+            embedding_norm: None,
+            layer_results,
+            output_norm: create_trace_array(
+                context,
+                &main_shape,
+                activation_data_type,
+                "activation_trace_output_norm",
+            ),
+            output_pooling: None,
+            logits: create_trace_array(
+                context,
+                &model_shape.logits_shape(suffix_length),
+                activation_data_type,
+                "activation_trace_logits",
+            ),
         }
     }
 
@@ -125,44 +124,38 @@ impl ActivationTrace {
         suffix_length: usize,
         num_labels: usize,
     ) -> Self {
-        let layer_results = (0..model_shape.num_layers)
-            .map(|_| {
-                Rc::new(RefCell::new(LayerActivationTrace::new(
-                    context,
-                    model_shape,
-                    suffix_length,
-                )))
-            })
-            .collect();
+        let activation_data_type = model_shape.activation_data_type();
+        let main_shape = model_shape.main_shape(suffix_length);
+        let layer_results =
+            create_layer_results(context, model_shape, suffix_length);
         let model_dim = model_shape.main_shape(1)[1];
-        unsafe {
-            Self {
-                embedding_norm: Some(RefCell::new(
-                    context.array_uninitialized(
-                        &model_shape.main_shape(suffix_length),
-                        model_shape.activation_data_type(),
-                        String::from("activation_trace_embedding_norm"),
-                    ),
-                )),
-                layer_results,
-                output_norm: RefCell::new(context.array_uninitialized(
-                    &model_shape.main_shape(suffix_length),
-                    model_shape.activation_data_type(),
-                    String::from("activation_trace_output_norm"),
-                )),
-                output_pooling: Some(RefCell::new(
-                    context.array_uninitialized(
-                        &[1, model_dim],
-                        model_shape.activation_data_type(),
-                        String::from("activation_trace_output_pooling"),
-                    ),
-                )),
-                logits: RefCell::new(context.array_uninitialized(
-                    &[1, num_labels],
-                    model_shape.activation_data_type(),
-                    String::from("activation_trace_logits"),
-                )),
-            }
+
+        Self {
+            embedding_norm: Some(create_trace_array(
+                context,
+                &main_shape,
+                activation_data_type,
+                "activation_trace_embedding_norm",
+            )),
+            layer_results,
+            output_norm: create_trace_array(
+                context,
+                &main_shape,
+                activation_data_type,
+                "activation_trace_output_norm",
+            ),
+            output_pooling: Some(create_trace_array(
+                context,
+                &[1, model_dim],
+                activation_data_type,
+                "activation_trace_output_pooling",
+            )),
+            logits: create_trace_array(
+                context,
+                &[1, num_labels],
+                activation_data_type,
+                "activation_trace_logits",
+            ),
         }
     }
 }

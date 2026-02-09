@@ -3,7 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use objc2_foundation::NSURL;
+use objc2_foundation::{NSURL, NSString};
 
 use crate::{
     backends::metal::{
@@ -83,7 +83,7 @@ impl GpuCaptureManager {
         let url_string = format!("file://{}", trace_path.display());
         unsafe {
             if let Some(url) = NSURL::URLWithString(
-                &objc2_foundation::NSString::from_str(&url_string),
+                &NSString::from_str(&url_string),
             ) {
                 capture_descriptor.set_output_url(Some(&url));
             }

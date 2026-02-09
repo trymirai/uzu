@@ -5,7 +5,7 @@
 #include <metal_simdgroup_matrix>
 
 #include "../../matmul/common/steel/gemm/gemm.h"
-#include "../../matmul/common/shared_types.h"
+#include "matmul.h"
 #include "../../common/mlp_epilogue.h"
 
 using namespace metal;

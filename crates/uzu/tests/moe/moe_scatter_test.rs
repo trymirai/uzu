@@ -1,16 +1,17 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
-
-use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-    MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
-    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
+use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
+use uzu::backends::metal::kernel::{
+    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments,
+    MoeScatterKernels,
+    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+};
 
 fn cpu_expert_buckets(
     topk_ids: &[i32],
@@ -82,7 +83,10 @@ fn test_scatter_buckets_parity() {
 
         // Use fused router+topk kernel
         let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         router_topk
             .encode(
                 &cb,
@@ -126,22 +130,23 @@ fn test_scatter_buckets_parity() {
         let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
         let fused_kernel =
-            MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        fused_kernel
-            .encode(
-                &cb,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t,
-                    e,
-                    k,
-                },
-            )
-            .expect("encode fused");
+            MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        fused_kernel.encode(
+            &topk_ids_buf,
+            &offsets_buf,
+            &sumk_buf,
+            &partials_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -152,7 +157,10 @@ fn test_scatter_buckets_parity() {
         let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
         let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
         scatter
             .encode_block_bases(
@@ -171,12 +179,18 @@ fn test_scatter_buckets_parity() {
         cb.wait_until_completed();
 
         let sumk = unsafe {
-            std::slice::from_raw_parts(sumk_buf.contents().as_ptr() as *const u32, 1)
+            std::slice::from_raw_parts(
+                sumk_buf.contents().as_ptr() as *const u32,
+                1,
+            )
         }[0] as usize;
         let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
         let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         scatter
             .encode_scatter(
                 &cb,

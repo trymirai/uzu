@@ -1,27 +1,25 @@
 use crate::backends::metal::KernelDataType;
 
 // Submodules
-mod counts_offsets_fused;
 mod experts;
-mod finalize;
+mod experts_single;
+mod experts_two_pass_decode;
 mod gather;
 mod router_topk;
 mod scatter;
-mod tiles;
+pub mod tiles_map;
+pub mod tiles_pass_a;
 
 // Re-export public items from submodules
-pub use counts_offsets_fused::{
-    MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedError,
-    MoeCountsOffsetsFusedKernel,
-};
 pub use experts::{
-    MoeExpertsArguments, MoeExpertsError, MoeExpertsSingleDecodeArguments,
-    MoeExpertsSingleDecodeKernel, MoeExpertsTwoPassArguments,
-    MoeExpertsTwoPassDecodeKernel, MoeExpertsTwoPassPrefillKernel,
-    MoeScatterError,
+    MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
+    MoeExpertsTwoPassPrefillKernel, MoeScatterError,
 };
-pub use finalize::{MoeFinalizeArguments, MoeFinalizeError, MoeFinalizeKernel};
-pub use gather::{MoeGatherArguments, MoeGatherError, MoeGatherKernel};
+pub use experts_single::{
+    MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels,
+};
+pub use experts_two_pass_decode::MoeExpertsTwoPassDecodeKernels;
+pub use gather::{MoeGatherArguments, MoeGatherKernels};
 pub use router_topk::{
     MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel,
 };
@@ -29,12 +27,10 @@ pub use scatter::{
     MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
-pub use tiles::{
+pub use tiles_pass_a::{
     MoePassARowMapArguments, MoePassATileBuildArguments,
     MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernel, MoePassATileScanArguments, MoeTileCountsArguments,
-    MoeTileDispatchArguments, MoeTileError, MoeTileMapBuildArguments,
-    MoeTileMapKernel, MoeTileScanArguments,
+    MoePassATileKernels, MoePassATileScanArguments,
 };
 
 // Common utility functions

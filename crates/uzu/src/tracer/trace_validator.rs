@@ -16,11 +16,10 @@ use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
-    Array, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::metal::{
         CacheLayers, KVCacheUpdate, KernelDataType, MTLCommandBuffer,
         MTLCommandQueue, MTLContext, MetalArray,
-        encodable_block::Sampling,
         forward_pass::{
             ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
             ScratchBuffers, traces::ActivationTrace,
@@ -28,6 +27,7 @@ use crate::{
     },
     classifier::Classifier,
     config::ModelMetadata,
+    encodable_block::Sampling,
     language_model::{
         LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -261,7 +261,7 @@ impl TraceValidator {
         let traces_file =
             File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_loader =
-            ParameterLoader::new(&traces_file, &ctx.mtl_context)
+            ParameterLoader::new(&traces_file, ctx.mtl_context.as_ref())
                 .map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
@@ -292,7 +292,7 @@ impl TraceValidator {
             false,
             None,
             false,
-            false,
+            true,
             None,
             None,
         );
@@ -467,8 +467,9 @@ impl TraceValidator {
         let traces_file =
             File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let mtl_context = classifier.context.mtl_context.clone();
-        let traces_loader = ParameterLoader::new(&traces_file, &mtl_context)
-            .map_err(|_| Error::UnableToLoadWeights)?;
+        let traces_loader =
+            ParameterLoader::new(&traces_file, mtl_context.as_ref())
+                .map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
         let has_token_ids =
@@ -514,7 +515,7 @@ impl TraceValidator {
     }
 
     fn handle_missing_tokens(
-        traces_view: &ParameterTree<Rc<MTLContext>>
+        traces_view: &ParameterTree<MTLContext>
     ) -> TracerValidationResults {
         if let Ok(expected_logits) = traces_view.leaf("logits") {
             let reference_shape = expected_logits.shape().to_vec();
@@ -561,7 +562,7 @@ impl TraceValidator {
 
     fn validate_layer_traces(
         traces: &Rc<RefCell<ActivationTrace>>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -676,7 +677,7 @@ impl TraceValidator {
 
     fn validate_classifier_traces(
         traces: &Rc<RefCell<ActivationTrace>>,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -746,7 +747,7 @@ impl TraceValidator {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         expected_array_path: &str,
         produced_array: &Ref<MetalArray>,
     ) -> TracerValidationMetrics {
@@ -759,8 +760,8 @@ impl TraceValidator {
         produced_array: &Ref<MetalArray>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
-        let expected_view = expected_array.as_view::<Precision>().unwrap();
-        let produced_view = produced_array.as_view::<Precision>().unwrap();
+        let expected_view = expected_array.as_view::<Precision>();
+        let produced_view = produced_array.as_view::<Precision>();
 
         let (mut expected_data, mut produced_data) = match transform {
             Some(ArrayTransform::KVCacheSlice) => {
@@ -952,11 +953,11 @@ impl TraceValidator {
         SourcePrecision: ArrayElement,
         TargetPrecision: NumCast,
     >(
-        traces_view: &ParameterTree<Rc<MTLContext>>,
+        traces_view: &ParameterTree<MTLContext>,
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();
-        let slice = array.as_slice::<SourcePrecision>().unwrap();
+        let slice = array.as_slice::<SourcePrecision>();
         slice.iter().map(|x| NumCast::from(*x).unwrap()).collect()
     }
 
@@ -1030,8 +1031,8 @@ impl TraceValidator {
         );
 
         context.gpu_sampler = Sampling::new(
-            &context.mtl_context,
-            kernel_dtype,
+            context.mtl_context.as_ref(),
+            intermediate_dtype,
             desired_suffix_length,
             decoder_config.vocab_size,
         )
@@ -1058,6 +1059,6 @@ impl TraceValidator {
         logits: &MetalArray
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
-        sampler.sample(logits.as_view::<Precision>().unwrap())
+        sampler.sample(logits.as_view::<Precision>())
     }
 }

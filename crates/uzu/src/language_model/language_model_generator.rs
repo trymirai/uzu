@@ -9,17 +9,19 @@ use super::{
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
     result::{GenerateResult, PrefillResult},
-    rng::DerivableSeed,
+    rng::PRng,
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
-    Array,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-        MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
-        forward_pass::{
-            AttentionBiasUpdate, EncodableBlock, EncodingParameters,
-            ForwardPassState, INVALID_POSITION,
+    backends::{
+        common::kernel::MaskUpdateKernel,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
+            MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
+            forward_pass::{
+                AttentionBiasUpdate, EncodableBlock, EncodingParameters,
+                ForwardPassState, INVALID_POSITION,
+            },
         },
     },
     session::{
@@ -96,7 +98,7 @@ impl LanguageModelGenerator {
         let suffix_length = prefill_size - tokens_length;
         let suffix_root = TrieNode::from_speculator(
             &tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -329,7 +331,7 @@ impl LanguageModelGenerator {
         let suffix_length = self.decoding_config.generate_suffix_length();
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
-            &mut self.context.next_seed,
+            &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -411,7 +413,7 @@ impl LanguageModelGenerator {
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
-        self.update_cache_layers(&accepted_token_indices[1..], None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false);
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -447,9 +449,11 @@ impl LanguageModelGenerator {
         self.context
             .async_buffers
             .prepare_positions(prefill_count, tokens_to_generate);
-        self.context
-            .async_buffers
-            .prepare_seeds(&mut self.context.next_seed, tokens_to_generate);
+        self.context.async_buffers.prepare_seeds(
+            &self.context.seed,
+            prefill_count,
+            tokens_to_generate,
+        );
         self.context.async_buffers.reset_counter();
     }
 
@@ -571,10 +575,9 @@ impl LanguageModelGenerator {
         let sampling_output = state
             .sampling_output()
             .expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer =
-            sampling_output.borrow().mtl_buffer_cloned();
+        let sampling_output_buffer = sampling_output.borrow().buffer().clone();
         let token_ids_buffer =
-            self.context.scratch_buffers.token_ids.borrow().mtl_buffer_cloned();
+            self.context.scratch_buffers.token_ids.borrow().buffer().clone();
 
         let encoder = root_command_buffer
             .new_compute_command_encoder()
@@ -625,10 +628,10 @@ impl LanguageModelGenerator {
                 {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
                         mask_update.encode(
-                            &encoder,
-                            mask_buffer.borrow().backend_buffer(),
+                            mask_buffer.borrow().buffer(),
                             update.unmask_col,
                             update.mask_col,
+                            &encoder,
                         );
                     }
                 }
@@ -686,8 +689,8 @@ impl LanguageModelGenerator {
         self.encoded_tasks.clear();
         self.gpu_capture.reset();
 
-        let base_seed = self.decoding_config.sampling_seed.resolve();
-        self.context.next_seed = DerivableSeed::new(base_seed);
+        let seed = self.decoding_config.sampling_seed.resolve();
+        self.context.seed = PRng::new(seed);
         self.context.async_buffers.reset_counter();
     }
 
@@ -725,7 +728,7 @@ impl LanguageModelGenerator {
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> (ForwardPassState, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
@@ -733,7 +736,7 @@ impl LanguageModelGenerator {
             let mut state = task.create_state(
                 &mut self.context,
                 None,
-                skip_attention_bias_fill,
+                should_fill_attention_bias,
             );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
@@ -818,9 +821,7 @@ impl LanguageModelGenerator {
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
         let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer
-            .as_view::<u32>()
-            .map_err(|_| Error::SamplingFailed)?;
+        let output_view = output_buffer.as_view::<u32>();
         let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);

@@ -1,9 +1,12 @@
 use std::mem::size_of;
 
 use super::LanguageModelGeneratorContext;
-use crate::backends::metal::{
-    BufferExt, MTLBuffer, MTLDeviceExt, MTLResourceOptions, ProtocolObject, Retained,
-    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
+use crate::backends::{
+    common::Context,
+    metal::{
+        BufferExt, MTLBuffer, ProtocolObject, Retained,
+        forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
+    },
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
@@ -81,7 +84,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         &self,
         context: &mut LanguageModelGeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_attention_bias_fill: bool,
+        should_fill_attention_bias: bool,
     ) -> ForwardPassState {
         ForwardPassState::new_llm(
             context.mtl_context.clone(),
@@ -100,7 +103,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             self.is_prefilling,
             external_bias_fn,
             false,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             None,
             None,
         )
@@ -119,11 +122,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             key,
             predicate_buffer: context
                 .mtl_context
-                .device
-                .new_buffer(
-                    size_of::<u32>(),
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .create_buffer(size_of::<u32>())
                 .expect("Failed to create predicate buffer"),
         }
     }

@@ -460,6 +460,13 @@ static T threadgroup_cooperative_reduce_min(
   return result;
 }
 
+// warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+#if defined(__cpp_if_constexpr)
+  #define IF_CONSTEXPR(cond) if constexpr (cond)
+#else
+  #define IF_CONSTEXPR(cond) if (cond)
+#endif
+
 // MARK: - DSL Annotation Helpers
 
 #ifdef DSL_ANALYZE
@@ -471,10 +478,10 @@ static T threadgroup_cooperative_reduce_min(
 #define DSL_STR(X) #X
 #define DSL_XSTR(X) DSL_STR(X)
 
-#define SPECIALIZE(TYPENAME, ...)                                              \
-  template <typename TYPENAME>                                                 \
-  DSL_META("dsl.specialize", #TYPENAME, #__VA_ARGS__)
+#define VARIANTS(TYPENAME, ...) DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
+
+#define SPECIALIZE DSL_META("dsl.specialize")
 
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))
 #define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))

@@ -8,10 +8,12 @@ use objc2::rc::autoreleasepool;
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLCommandBuffer,
-        forward_pass::{ArrayId, EncodableBlock, EncodingParameters, ForwardPassState},
+        forward_pass::{
+            ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
+        },
     },
     session::types::Error,
 };
@@ -246,9 +248,9 @@ impl Classifier {
         let logits_array = logits_arrays[0].borrow();
 
         let num_labels = self.context.model_config.model_config.num_labels;
-        let buffer = Array::buffer(&*logits_array);
+        let buffer = logits_array.as_bytes();
 
-        match Array::data_type(&*logits_array) {
+        match logits_array.data_type() {
             DataType::F32 => {
                 let slice: &[f32] = bytemuck::cast_slice(buffer);
                 Ok(slice[..num_labels].into())

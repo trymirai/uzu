@@ -1,8 +1,11 @@
-use std::rc::Rc;
+use crate::backends::metal::Metal;
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+use crate::backends::{
+    common::kernel::TensorAddBiasKernel,
+    metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, ProtocolObject, Retained,
+    },
 };
 
 use crate::{
@@ -12,7 +15,7 @@ use crate::{
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::{
-            KernelDataType, TensorAddBias,
+            dsl::TensorAddBiasMetalKernel,
             quant_matmul::{
                 QuantizationType, QuantizedMatmulArguments,
                 QuantizedMatmulKernel,
@@ -20,13 +23,12 @@ use crate::{
         },
     },
     config::QuantizationConfig,
-    device::array::Array,
     parameters::ParameterTree,
 };
 
 pub struct QuantizedLinear {
     kernel: QuantizedMatmulKernel,
-    bias_add_kernel: Option<TensorAddBias>,
+    bias_add_kernel: Option<TensorAddBiasMetalKernel>,
     biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
@@ -44,7 +46,7 @@ impl QuantizedLinear {
         config: &QuantizationConfig,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
@@ -60,7 +62,7 @@ impl QuantizedLinear {
             )));
         }
 
-        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
+        let weights = parameter_tree.leaf("weights").map_err(|e| {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
@@ -75,7 +77,7 @@ impl QuantizedLinear {
             )));
         }
 
-        let mut scales = parameter_tree.leaf("scales").map_err(|e| {
+        let scales = parameter_tree.leaf("scales").map_err(|e| {
             MTLError::Generic(format!("Failed to load scales: {:?}", e))
         })?;
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
@@ -96,7 +98,7 @@ impl QuantizedLinear {
                 )));
             }
             match parameter_tree.leaf("deq_biases") {
-                Ok(mut deq_biases) => {
+                Ok(deq_biases) => {
                     let db_shape = deq_biases.shape();
                     if !(w_shape == [output_dim, input_dim / packing_divisor]
                         && s_shape == [output_dim, k_g]
@@ -115,13 +117,13 @@ impl QuantizedLinear {
                         )));
                     }
                     let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
+                        scales.buffer().clone();
                     let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(deq_biases.mtl_buffer() as *const _ as *mut _).unwrap() };
+                        deq_biases.buffer().clone();
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
-                    let mut zero_points =
+                    let zero_points =
                         parameter_tree.leaf("zero_points").map_err(|e| {
                             MTLError::Generic(format!(
                                 "Failed to load zero_points: {:?}",
@@ -153,21 +155,21 @@ impl QuantizedLinear {
                         )));
                     }
                     let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(scales.mtl_buffer() as *const _ as *mut _).unwrap() };
+                        scales.buffer().clone();
                     let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { objc2::rc::Retained::retain(std::ptr::from_ref(&*zero_points.mtl_buffer()) as *mut _).unwrap() };
+                        zero_points.buffer().clone();
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }
         };
 
         let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            unsafe { weights.mtl_buffer() }.to_owned().into();
+            weights.buffer().to_owned().into();
 
         // Optional trainable bias support
         let (bias_add_kernel, biases_buffer) =
             match parameter_tree.leaf("biases") {
-                Ok(mut biases) => {
+                Ok(biases) => {
                     if biases.shape() != [output_dim] {
                         return Err(MTLError::Generic(format!(
                             "Bias shape mismatch: got {:?}, expected [{:?}]",
@@ -182,12 +184,12 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let bias_add_kernel = Some(TensorAddBias::new(
+                    let bias_add_kernel = Some(TensorAddBiasMetalKernel::new(
                         mtl_context,
-                        KernelDataType::from(kernel_data_type),
+                        kernel_data_type,
                     )?);
                     let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        unsafe { biases.mtl_buffer() }.to_owned().into();
+                        biases.buffer().to_owned().into();
                     (bias_add_kernel, Some(biases_buffer))
                 },
                 Err(_) => (None, None),
@@ -224,23 +226,24 @@ impl QuantizedLinear {
     }
 }
 
-impl EncodableBlock for QuantizedLinear {
+impl EncodableBlock<Metal> for QuantizedLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
 
         let args = QuantizedMatmulArguments {
@@ -266,14 +269,14 @@ impl EncodableBlock for QuantizedLinear {
             (&self.bias_add_kernel, &self.biases_buffer)
         {
             let total_len = batch_size * self.output_dim;
-            bias_add.encode_into_command_buffer(
+            bias_add.encode_if(
                 output_buffer,
                 &bias_buf,
                 output_buffer,
-                self.output_dim,
-                total_len,
-                command_buffer,
-                parameters.predicate.map(|v| &**v),
+                self.output_dim as u32,
+                total_len as u32,
+                &encoder,
+                parameters.predicate,
             );
         }
 
@@ -296,11 +299,11 @@ impl EncodableBlock for QuantizedLinear {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -323,14 +326,14 @@ impl EncodableBlock for QuantizedLinear {
             (&self.bias_add_kernel, &self.biases_buffer)
         {
             let total_len = batch_size * self.output_dim;
-            bias_add.encode_with_encoder(
+            bias_add.encode_if(
                 output_buffer,
                 &bias_buf,
                 output_buffer,
-                self.output_dim,
-                total_len,
+                self.output_dim as u32,
+                total_len as u32,
                 encoder,
-                parameters.predicate.map(|v| &**v),
+                parameters.predicate,
             );
         }
     }

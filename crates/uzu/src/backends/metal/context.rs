@@ -1,20 +1,16 @@
-const MTLB: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
-
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
+use metal::{MTLBuffer, MTLCommandBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    MetalArray, error::MTLError, metal_extensions::LibraryPipelineExtensions,
+    Metal, error::MTLError, kernel, metal_extensions::LibraryPipelineExtensions,
 };
-use crate::{
-    DataType, DeviceContext,
-    array::array_size_in_bytes,
-    backends::metal::{
-        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLResourceExt,
-        MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
-        MTLResourceOptions,
+use crate::backends::{
+    common::{Allocator, Context},
+    metal::{
+        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+        MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
     },
 };
 
@@ -140,34 +136,10 @@ pub struct MTLContext {
     pipeline_cache: RefCell<
         HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     >,
+    allocator: Allocator<Metal>,
 }
 
 impl MTLContext {
-    pub fn new(
-        device: Retained<ProtocolObject<dyn MTLDevice>>,
-        command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    ) -> Result<Self, MTLError> {
-        let library = match device.new_library_with_data(MTLB) {
-            Ok(lib) => lib,
-            Err(e) => {
-                return Err(MTLError::Generic(format!(
-                    "Failed to create Metal library: {}",
-                    e
-                )));
-            },
-        };
-
-        let architecture = DeviceArchitecture::from_device(&device);
-
-        Ok(Self {
-            device,
-            command_queue,
-            architecture,
-            library,
-            pipeline_cache: RefCell::new(HashMap::new()),
-        })
-    }
-
     /// Returns true if NAX kernels are available on this device.
     pub fn is_nax_available(&self) -> bool {
         cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
@@ -230,43 +202,59 @@ impl MTLContext {
 
         Ok(pipeline)
     }
-
 }
 
-impl DeviceContext for MTLContext {
-    type DeviceArray = MetalArray;
+impl Context for MTLContext {
+    type Backend = Metal;
 
-    unsafe fn array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-        label: String,
-    ) -> MetalArray {
-        unsafe {
-            let buffer_size_bytes = array_size_in_bytes(shape, data_type);
+    fn new() -> Result<Rc<Self>, MTLError> {
+        let device: Retained<ProtocolObject<dyn MTLDevice>> =
+            <dyn metal::MTLDevice>::system_default().ok_or(
+                MTLError::Generic("cannot open system default device".into()),
+            )?;
 
-            let buffer = self
-                .device
-                .new_buffer(
-                    buffer_size_bytes,
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
-                .expect("Failed to create buffer");
-            buffer.set_label(Some(&label));
-            MetalArray::new(buffer, shape, data_type)
-        }
+        let command_queue = device
+            .new_command_queue_with_max_command_buffer_count(1024)
+            .ok_or(MTLError::Generic("cannot create command queue".into()))?;
+
+        let library =
+            device.new_library_with_data(kernel::MTLB).map_err(|nserror| {
+                MTLError::Generic(format!(
+                    "Failed to create Metal library: {}",
+                    nserror
+                ))
+            })?;
+
+        let architecture = DeviceArchitecture::from_device(&device);
+
+        Ok(Rc::new_cyclic(|weak_self| Self {
+            device,
+            command_queue,
+            architecture,
+            library,
+            pipeline_cache: RefCell::new(HashMap::new()),
+            allocator: Allocator::new(weak_self.clone()),
+        }))
     }
-}
 
-impl DeviceContext for Rc<MTLContext> {
-    type DeviceArray = MetalArray;
+    fn allocator(&self) -> &Allocator<Metal> {
+        &self.allocator
+    }
 
-    unsafe fn array_uninitialized(
+    fn create_buffer(
         &self,
-        shape: &[usize],
-        data_type: DataType,
-        label: String,
-    ) -> MetalArray {
-        unsafe { (**self).array_uninitialized(shape, data_type, label) }
+        size: usize,
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MTLError> {
+        self.device
+            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MTLError::Generic("cannot create buffer".into()))
+    }
+
+    fn create_command_buffer(
+        &self
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
+        self.command_queue
+            .command_buffer()
+            .ok_or(MTLError::Generic("cannot create command buffer".into()))
     }
 }

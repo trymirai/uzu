@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use super::Metal;
 use super::{
     EncodableBlock, FullPrecisionEmbeddingLookup,
     FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock,
@@ -23,10 +24,10 @@ pub fn linear_block<const N: usize>(
     input_dimension: usize,
     output_dimensions: [usize; N],
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    parameter_tree: &ParameterTree<MTLContext>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
         LinearConfig::Quantized(quantization_config)
@@ -70,8 +71,8 @@ pub fn mlp_block(
     model_dimension: usize,
     hidden_dimension: usize,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+    parameter_tree: &ParameterTree<MTLContext>,
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType =
             dense_config.linear_config.activation_precision().into();
@@ -143,8 +144,8 @@ pub fn mlp_fused_block(
     model_dimension: usize,
     hidden_dimension: usize,
     context: Rc<MTLContext>,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+    parameter_tree: &ParameterTree<MTLContext>,
+) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         match &dense_config.linear_config {
             LinearConfig::Quantized(quantization_config)
@@ -158,7 +159,7 @@ pub fn mlp_fused_block(
                         |error| MTLError::Generic(format!("{:?}", error)),
                     )?;
 
-                let mut up_projection_weights =
+                let up_projection_weights =
                     up_projection_tree.leaf("weights").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up weights: {:?}",
@@ -166,9 +167,9 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer().into() };
+                    up_projection_weights.buffer().into();
 
-                let mut up_projection_scales =
+                let up_projection_scales =
                     up_projection_tree.leaf("scales").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up scales: {:?}",
@@ -176,24 +177,18 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_scales_buffer =
-                    unsafe { up_projection_scales.mtl_buffer().into() };
+                    up_projection_scales.buffer().into();
 
                 // Load zero_points or biases depending on quantization type
                 let (
                     up_projection_zero_points_or_biases_buffer,
                     quantization_type,
-                ) = if let Ok(mut biases) = up_projection_tree.leaf("biases") {
-                    (
-                        unsafe { biases.mtl_buffer().into() },
-                        QuantizationType::Mlx,
-                    )
-                } else if let Ok(mut zero_points) =
+                ) = if let Ok(biases) = up_projection_tree.leaf("biases") {
+                    (biases.buffer().into(), QuantizationType::Mlx)
+                } else if let Ok(zero_points) =
                     up_projection_tree.leaf("zero_points")
                 {
-                    (
-                        unsafe { zero_points.mtl_buffer().into() },
-                        QuantizationType::ZeroPoint,
-                    )
+                    (zero_points.buffer().into(), QuantizationType::ZeroPoint)
                 } else {
                     return Err(MTLError::Generic(
                             "Missing zero_points or biases for quantized up_projection"
@@ -243,7 +238,7 @@ pub fn mlp_fused_block(
                         |error| MTLError::Generic(format!("{:?}", error)),
                     )?;
 
-                let mut up_projection_weights =
+                let up_projection_weights =
                     up_projection_tree.leaf("weights").map_err(|error| {
                         MTLError::Generic(format!(
                             "Failed to load up weights: {:?}",
@@ -251,7 +246,7 @@ pub fn mlp_fused_block(
                         ))
                     })?;
                 let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer().into() };
+                    up_projection_weights.buffer().into();
 
                 // Create down projection as separate linear
                 let down_projection = FullPrecisionLinear::new(
@@ -309,8 +304,8 @@ pub fn mlp_fused_block(
 pub fn embed_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+    parameter_tree: &ParameterTree<MTLContext>,
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             common,
@@ -465,8 +460,8 @@ pub fn embed_block(
 pub fn readout_block(
     config: &DecoderConfig,
     context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+    parameter_tree: &ParameterTree<MTLContext>,
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
