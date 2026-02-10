@@ -52,6 +52,7 @@ pub struct ForwardPassState<B: Backend> {
     context: Rc<B::Context>,
     token_ids: ArrayCell<B>,
     token_positions: ArrayCell<B>,
+    token_parents: ArrayCell<B>,
     token_bitmask: Option<ArrayCell<B>>,
     attention_bias: HashMap<Option<usize>, ArrayCell<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -88,6 +89,57 @@ impl<B: Backend> ForwardPassState<B> {
             .borrow_mut()
             .copy_from_view(token_positions_i32.as_ref().into());
         token_positions_array
+    }
+
+    fn init_token_parents(
+        scratch: &ScratchBuffers<B>,
+        token_positions: &[usize],
+        sampling_start: usize,
+        sampling_length: usize,
+    ) -> ArrayCell<B> {
+        let suffix_length = token_positions.len();
+        let token_parents_array = scratch.token_parents.view(&[suffix_length]);
+        {
+            let mut token_parents = token_parents_array.borrow_mut();
+            let parents = token_parents.as_slice_mut::<i32>();
+            parents.fill(-1);
+
+            if sampling_length > 0 {
+                let root_pos =
+                    token_positions.get(sampling_start).copied().unwrap_or(0);
+
+                let mut stack: Vec<usize> = Vec::new();
+
+                for local_idx in 0..sampling_length {
+                    let abs_idx = sampling_start + local_idx;
+                    let Some(&pos) = token_positions.get(abs_idx) else {
+                        break;
+                    };
+                    let depth = pos.saturating_sub(root_pos);
+
+                    let parent_local: i32 = if depth == 0 {
+                        -1
+                    } else if let Some(&p) = stack.get(depth - 1) {
+                        p as i32
+                    } else {
+                        debug_assert!(
+                            false,
+                            "invalid trie depth ordering: depth={depth}, stack_len={}",
+                            stack.len()
+                        );
+                        -1
+                    };
+                    parents[abs_idx] = parent_local;
+
+                    if stack.len() <= depth {
+                        stack.resize(depth + 1, 0);
+                    }
+                    stack[depth] = local_idx;
+                    stack.truncate(depth + 1);
+                }
+            }
+        }
+        token_parents_array
     }
 
     // ========================================================================
@@ -149,6 +201,15 @@ impl<B: Backend> ForwardPassState<B> {
             } else {
                 Self::init_token_positions(scratch, token_positions)
             };
+
+        // Trie parent indices (relative, within the sampling segment).
+        // Only meaningful when sampling_length > 0.
+        let token_parents_cell = Self::init_token_parents(
+            scratch,
+            token_positions,
+            sampling_start,
+            sampling_length,
+        );
 
         // Token bitmask
         let token_bitmask_cell = token_bitmask.map(|bitmask| {
@@ -233,6 +294,7 @@ impl<B: Backend> ForwardPassState<B> {
             context,
             token_ids: token_ids_cell,
             token_positions: token_positions_cell,
+            token_parents: token_parents_cell,
             token_bitmask: token_bitmask_cell,
             attention_bias,
             shared_buffers,
@@ -304,6 +366,8 @@ impl<B: Backend> ForwardPassState<B> {
         let token_ids_cell = Self::init_token_ids(scratch, token_ids);
         let token_positions_cell =
             Self::init_token_positions(scratch, token_positions);
+        let token_parents_cell =
+            Self::init_token_parents(scratch, token_positions, 0, 0);
 
         // Attention bias (bidirectional or causal)
         let attention_bias = Self::init_classifier_attention_bias(
@@ -332,6 +396,7 @@ impl<B: Backend> ForwardPassState<B> {
             context,
             token_ids: token_ids_cell,
             token_positions: token_positions_cell,
+            token_parents: token_parents_cell,
             token_bitmask: None,
             attention_bias,
             shared_buffers,
@@ -530,6 +595,7 @@ impl<B: Backend> ForwardPassState<B> {
             // Common arrays
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
+            ArrayId::TokenParents => self.token_parents.clone(),
             ArrayId::TokenBitmask => {
                 self.token_bitmask.clone().expect("Token bitmask not available")
             },
@@ -642,6 +708,14 @@ impl<B: Backend> ForwardPassState<B> {
                     .as_short_conv()
                     .expect("Expected ShortConv layer")
                     .conv_state
+                    .clone()
+            },
+            ArrayId::ShortConvSuffixState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index]
+                    .as_short_conv()
+                    .expect("Expected ShortConv layer")
+                    .suffix_state
                     .clone()
             },
 

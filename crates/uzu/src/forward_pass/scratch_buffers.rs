@@ -15,6 +15,7 @@ pub struct ScratchBuffers<B: Backend> {
     // 1-D
     pub token_ids: ArrayCell<B>,
     pub token_positions: ArrayCell<B>,
+    pub token_parents: ArrayCell<B>,
     pub token_bitmask: ArrayCell<B>,
     pub token_seeds: ArrayCell<B>,
     pub sampling_output: ArrayCell<B>,
@@ -110,6 +111,11 @@ impl<B: Backend> ScratchBuffers<B> {
                 &[max_suffix_len],
                 DataType::I32,
                 "token_positions",
+            ),
+            token_parents: alloc(
+                &[max_suffix_len],
+                DataType::I32,
+                "token_parents",
             ),
             token_bitmask: alloc(
                 &model_shape.bitmask_shape(max_suffix_len),

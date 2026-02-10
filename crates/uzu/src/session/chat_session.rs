@@ -91,18 +91,22 @@ impl ChatSession {
             Error::UnableToLoadConfig
         })?;
 
-        let is_ssm = model_metadata
+        let (has_non_attention_mixer, has_mamba_mixer) = model_metadata
             .model_config
             .as_language_model()
             .and_then(|lm| lm.decoder_config().ok())
             .and_then(|dc| dc.layer_configs)
             .map(|layers| {
-                layers.iter().any(|layer| {
+                let has_non_attention = layers.iter().any(|layer| {
                     !matches!(layer.mixer_config, MixerConfig::Attention(_))
-                })
+                });
+                let has_mamba = layers.iter().any(|layer| {
+                    matches!(layer.mixer_config, MixerConfig::Mamba(_))
+                });
+                (has_non_attention, has_mamba)
             })
-            .unwrap_or(false);
-        if is_ssm {
+            .unwrap_or((false, false));
+        if has_non_attention_mixer {
             match decoding_config.context_mode {
                 ContextMode::None => {},
                 ContextMode::Static {
@@ -114,11 +118,12 @@ impl ChatSession {
                     return Err(Error::UnsupportedContextModeForModel);
                 },
             }
+        }
 
-            if decoding_config.speculator_config.number_of_speculated_tokens > 0
-            {
-                return Err(Error::UnsupportedSpeculatorConfigForModel);
-            }
+        if has_mamba_mixer
+            && decoding_config.speculator_config.number_of_speculated_tokens > 0
+        {
+            return Err(Error::UnsupportedSpeculatorConfigForModel);
         }
 
         let language_model_config = model_metadata

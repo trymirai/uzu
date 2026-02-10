@@ -30,14 +30,12 @@ fn make_function_constants(
 
 pub struct ShortConvKernel {
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {
@@ -78,6 +76,31 @@ pub struct ShortConvDecodeArguments<'a> {
     pub model_dim: usize,
 }
 
+pub struct ShortConvTrieArguments<'a> {
+    pub in_proj: &'a ProtocolObject<dyn MTLBuffer>,
+    /// Byte offset into `in_proj`.
+    pub in_proj_offset: usize,
+    pub w: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub base_state: &'a ProtocolObject<dyn MTLBuffer>,
+    /// Byte offset into `base_state`.
+    pub base_state_offset: usize,
+    pub parents: &'a ProtocolObject<dyn MTLBuffer>,
+    /// Byte offset into `parents`.
+    pub parents_offset: usize,
+    pub out: &'a ProtocolObject<dyn MTLBuffer>,
+    /// Byte offset into `out`.
+    pub out_offset: usize,
+    pub suffix_state: &'a ProtocolObject<dyn MTLBuffer>,
+    /// Byte offset into `suffix_state`.
+    pub suffix_state_offset: usize,
+    pub suffix_len: usize,
+    pub kernel_size: i32,
+    pub in_proj_stride: usize,
+    pub state_stride: usize,
+    pub model_dim: usize,
+}
+
 impl ShortConvKernel {
     pub fn new(
         context: &MTLContext,
@@ -89,6 +112,8 @@ impl ShortConvKernel {
             format!("short_conv_prefill_kernel_{}", fn_suffix(data_type));
         let decode_name =
             format!("short_conv_decode_kernel_{}", fn_suffix(data_type));
+        let trie_name =
+            format!("short_conv_trie_kernel_{}", fn_suffix(data_type));
 
         let pack_pipeline = context
             .compute_pipeline_state(&pack_name, None)
@@ -139,12 +164,37 @@ impl ShortConvKernel {
                 .map_err(ShortConvKernelError::MetalError)?
         };
 
+        let trie_pipeline_no_bias = {
+            let function_constants = make_function_constants(false);
+            let cache_key = format!("{}_has_bias_0", trie_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &trie_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
+        let trie_pipeline_with_bias = {
+            let function_constants = make_function_constants(true);
+            let cache_key = format!("{}_has_bias_1", trie_name);
+            context
+                .compute_pipeline_state_cached(
+                    &cache_key,
+                    &trie_name,
+                    Some(&function_constants),
+                )
+                .map_err(ShortConvKernelError::MetalError)?
+        };
+
         Ok(Self {
             pack_pipeline,
             prefill_pipeline_no_bias,
             prefill_pipeline_with_bias,
             decode_pipeline_no_bias,
             decode_pipeline_with_bias,
+            trie_pipeline_no_bias,
+            trie_pipeline_with_bias,
         })
     }
 
@@ -275,6 +325,66 @@ impl ShortConvKernel {
 
         compute_encoder.dispatch_threads(threadgroups, threads_per_threadgroup);
 
+        Ok(())
+    }
+
+    pub fn encode_trie(
+        &self,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        args: ShortConvTrieArguments,
+    ) -> Result<(), ShortConvKernelError> {
+        if args.model_dim == 0 || args.suffix_len == 0 {
+            return Ok(());
+        }
+
+        let has_bias = args.b.is_some();
+        let pipeline = if has_bias {
+            &self.trie_pipeline_with_bias
+        } else {
+            &self.trie_pipeline_no_bias
+        };
+        compute_encoder.set_compute_pipeline_state(pipeline);
+
+        compute_encoder.set_buffer(Some(args.in_proj), args.in_proj_offset, 0);
+        compute_encoder.set_buffer(Some(args.w), 0, 1);
+        if has_bias {
+            compute_encoder.set_buffer(args.b, 0, 2);
+        }
+        compute_encoder.set_buffer(
+            Some(args.base_state),
+            args.base_state_offset,
+            3,
+        );
+        compute_encoder.set_buffer(
+            Some(args.parents),
+            args.parents_offset,
+            4,
+        );
+        compute_encoder.set_buffer(Some(args.out), args.out_offset, 5);
+        compute_encoder.set_buffer(
+            Some(args.suffix_state),
+            args.suffix_state_offset,
+            6,
+        );
+
+        compute_encoder.set_value(&args.suffix_len, 7);
+        compute_encoder.set_value(&args.kernel_size, 8);
+        compute_encoder.set_value(&args.in_proj_stride, 9);
+        compute_encoder.set_value(&args.state_stride, 10);
+        compute_encoder.set_value(&(args.model_dim as u32), 11);
+
+        let threads_per_threadgroup = MTLSize {
+            width: 32,
+            height: 1,
+            depth: 1,
+        };
+        let threadgroups = MTLSize {
+            width: args.model_dim,
+            height: 1,
+            depth: 1,
+        };
+
+        compute_encoder.dispatch_threads(threadgroups, threads_per_threadgroup);
         Ok(())
     }
 }

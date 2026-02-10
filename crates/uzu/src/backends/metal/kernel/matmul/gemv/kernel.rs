@@ -31,11 +31,13 @@ fn gemv_kernel_name(
 
     let prefix = if config.transpose_matrix {
         "gemv_t"
+    } else if config.batch_pack > 1 {
+        "gemv_bp"
     } else {
         "gemv"
     };
 
-    Ok(format!(
+    let suffix = format!(
         "{prefix}_{dtype_name}_bm{}_bn{}_sm{}_sn{}_tm{}_tn{}_nc{}_axpby{}",
         config.threadgroup_rows,
         config.threadgroup_cols,
@@ -45,7 +47,13 @@ fn gemv_kernel_name(
         config.elements_per_thread_col,
         config.non_contiguous_batch as u8,
         config.do_axpby as u8,
-    ))
+    );
+
+    if config.batch_pack > 1 && !config.transpose_matrix {
+        Ok(format!("{suffix}_bp{}", config.batch_pack))
+    } else {
+        Ok(suffix)
+    }
 }
 
 pub struct Kernel {
@@ -87,6 +95,7 @@ impl Kernel {
                 transpose_a: false,
                 transpose_b: true,
                 transpose_matrix: false,
+                batch_pack: 1,
                 threadgroup_rows,
                 threadgroup_cols: 1,
                 threads_per_simdgroup_row: 1,
@@ -182,6 +191,9 @@ impl Kernel {
         encoder.set_slice(&descriptor.matrix_batch_stride, 12);
         encoder.set_slice(&descriptor.bias_batch_stride, 13);
         encoder.set_value(&descriptor.bias_stride, 14);
+        encoder.set_value(&descriptor.batch_rows, 15);
+        encoder.set_value(&descriptor.output_ld, 16);
+        encoder.set_value(&descriptor.vector_ld, 17);
 
         encoder.dispatch_threadgroups(
             descriptor.threadgroups,
