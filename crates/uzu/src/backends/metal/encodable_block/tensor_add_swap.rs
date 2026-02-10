@@ -74,8 +74,8 @@ impl EncodableBlock<Metal> for TensorAddSwap {
         let main_mtl_buffer = main_array.buffer();
 
         self.kernel.encode(
-            &skip_mtl_buffer,
-            &main_mtl_buffer,
+            skip_mtl_buffer,
+            main_mtl_buffer,
             length as u32,
             encoder,
         );

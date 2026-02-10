@@ -69,7 +69,7 @@ struct GEMVKernel {
   //   * The last thread that partially overlaps with the matrix is shifted
   //     inwards such that the thread block fits exactly in the matrix
 
-  MTL_CONST short tgp_mem_size = BN > 1 ? BN*(blockM + TM)*BP : 0;
+  MTL_CONST short tgp_mem_size = BN > 1 ? BN*(blockM + TM) * BP : 0;
   MTL_CONST bool needs_tgp_reduction = BN > 1;
 
   template <typename U = T>
@@ -236,8 +236,7 @@ struct GEMVKernel {
         MTL_PRAGMA_UNROLL
         for (int bp = 0; bp < BP; bp++) {
           threadgroup AccT* tgp_results =
-              tgp_memory + bp * (BN * (blockM + TM)) +
-              sgN * (blockM + TM) + bm;
+              tgp_memory + bp * (BN * (blockM + TM)) + sgN * (blockM + TM) + bm;
           MTL_PRAGMA_UNROLL
           for (int tm = 0; tm < TM; tm++) {
             tgp_results[tm] = result[bp][tm];
@@ -276,8 +275,7 @@ struct GEMVKernel {
                 static_cast<T>(alpha) * static_cast<T>(result[bp][tm]) +
                 static_cast<T>(beta) * bias[(out_row + tm) * bias_stride];
           } else {
-            out_row_ptr[out_row + tm] =
-                static_cast<T>(result[bp][tm]);
+            out_row_ptr[out_row + tm] = static_cast<T>(result[bp][tm]);
           }
         }
       }
@@ -573,8 +571,8 @@ template <
     bp                                                                         \
 )                                                                              \
   instantiate_kernel(                                                          \
-      "gemv_bp_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn                 \
-      "_tm" #tm "_tn4_nc" #nc "_axpby" #axpby "_bp" #bp,                       \
+      "gemv_bp_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn "_tm" #tm       \
+      "_tn4_nc" #nc "_axpby" #axpby "_bp" #bp,                                 \
       gemv_bp,                                                                 \
       itype,                                                                   \
       bm,                                                                      \
@@ -698,11 +696,32 @@ template <
   instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 0) \
   instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 1) // clang-format on
 
-#define instantiate_gemv_bp(name, itype, bm, bn, sm, sn, tm, bp)        \
-  instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 0, 0, bp) \
-  instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 0, 1, bp) \
-  instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 1, 0, bp) \
-  instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 1, 1, bp) // clang-format on
+#define instantiate_gemv_bp(name, itype, bm, bn, sm, sn, tm, bp)               \
+  instantiate_gemv_bp_helper(                                                  \
+      name,                                                                    \
+      itype,                                                                   \
+      bm,                                                                      \
+      bn,                                                                      \
+      sm,                                                                      \
+      sn,                                                                      \
+      tm,                                                                      \
+      0,                                                                       \
+      0,                                                                       \
+      bp                                                                       \
+  ) instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 0, 1, bp)      \
+      instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 1, 0, bp)    \
+          instantiate_gemv_bp_helper(                                          \
+              name,                                                            \
+              itype,                                                           \
+              bm,                                                              \
+              bn,                                                              \
+              sm,                                                              \
+              sn,                                                              \
+              tm,                                                              \
+              1,                                                               \
+              1,                                                               \
+              bp                                                               \
+          ) // clang-format on
 
 // clang-format off
 #define instantiate_gemv_blocks(name, itype) \
@@ -714,14 +733,23 @@ template <
   instantiate_gemv(name, itype, 4,  1, 1, 32, 4, 4) \
   instantiate_gemv(name, itype, 8,  1, 1, 32, 4, 4) // clang-format on
 
-#define instantiate_gemv_bp_blocks(name, itype, bp) \
-  instantiate_gemv_bp(name, itype, 1,  8, 1, 32, 4, bp) \
-  instantiate_gemv_bp(name, itype, 1,  8, 1, 32, 1, bp) \
-  instantiate_gemv_bp(name, itype, 1,  1, 8,  4, 4, bp) \
-  instantiate_gemv_bp(name, itype, 1,  1, 8,  4, 1, bp) \
-  instantiate_gemv_bp(name, itype, 4,  1, 1, 32, 1, bp) \
-  instantiate_gemv_bp(name, itype, 4,  1, 1, 32, 4, bp) \
-  instantiate_gemv_bp(name, itype, 8,  1, 1, 32, 4, bp) // clang-format on
+#define instantiate_gemv_bp_blocks(name, itype, bp)                            \
+  instantiate_gemv_bp(name, itype, 1, 8, 1, 32, 4, bp)                         \
+      instantiate_gemv_bp(name, itype, 1, 8, 1, 32, 1, bp)                     \
+          instantiate_gemv_bp(name, itype, 1, 1, 8, 4, 4, bp)                  \
+              instantiate_gemv_bp(name, itype, 1, 1, 8, 4, 1, bp)              \
+                  instantiate_gemv_bp(name, itype, 4, 1, 1, 32, 1, bp)         \
+                      instantiate_gemv_bp(name, itype, 4, 1, 1, 32, 4, bp)     \
+                          instantiate_gemv_bp(                                 \
+                              name,                                            \
+                              itype,                                           \
+                              8,                                               \
+                              1,                                               \
+                              1,                                               \
+                              32,                                              \
+                              4,                                               \
+                              bp                                               \
+                          ) // clang-format on
 
 instantiate_gemv_blocks(float32, float);
 instantiate_gemv_blocks(float16, half);
@@ -733,7 +761,6 @@ instantiate_gemv_bp_blocks(bfloat16, bfloat16_t, 2);
 instantiate_gemv_bp_blocks(float32, float, 4);
 instantiate_gemv_bp_blocks(float16, half, 4);
 instantiate_gemv_bp_blocks(bfloat16, bfloat16_t, 4);
-
 
 template <
     typename T,

@@ -1743,7 +1743,6 @@ fn test_gumbel_gpu_cpu_match() {
         &gumbel_logits_buffer,
         BATCH as u32,
         VOCAB as u32,
-        0,
         &compute_encoder,
     );
     compute_encoder.end_encoding();

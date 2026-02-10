@@ -349,14 +349,15 @@ impl ShortConvMixer {
         let state_stride = kernel_size.saturating_sub(1);
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset = in_proj.offset()
-            + sampling_start * in_proj_stride * elem_bytes;
-        let out_offset = out.offset() + sampling_start * self.model_dim * elem_bytes;
+        let in_proj_offset =
+            in_proj.offset() + sampling_start * in_proj_stride * elem_bytes;
+        let out_offset =
+            out.offset() + sampling_start * self.model_dim * elem_bytes;
         let suffix_state_offset = suffix_state.offset()
             + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.offset();
-        let parents_offset = parents.offset()
-            + sampling_start * std::mem::size_of::<i32>();
+        let parents_offset =
+            parents.offset() + sampling_start * std::mem::size_of::<i32>();
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.buffer().clone();

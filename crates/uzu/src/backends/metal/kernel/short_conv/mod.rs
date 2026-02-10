@@ -30,12 +30,18 @@ fn make_function_constants(
 
 pub struct ShortConvKernel {
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    trie_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    trie_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {
@@ -355,11 +361,7 @@ impl ShortConvKernel {
             args.base_state_offset,
             3,
         );
-        compute_encoder.set_buffer(
-            Some(args.parents),
-            args.parents_offset,
-            4,
-        );
+        compute_encoder.set_buffer(Some(args.parents), args.parents_offset, 4);
         compute_encoder.set_buffer(Some(args.out), args.out_offset, 5);
         compute_encoder.set_buffer(
             Some(args.suffix_state),
