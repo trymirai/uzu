@@ -1,0 +1,69 @@
+name: "Tests"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # For pipefail - https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference
+    shell: bash
+
+jobs:
+  linters:
+    name: Linters
+    runs-on: macos-26-xlarge
+
+    steps:
+      - uses: actions/checkout@v6
+      - id: setup
+        uses: ./.github/actions/setup
+
+      - name: Check Rust formatting
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: cargo fmt --check
+
+      - name: Check Metal formatting
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: ./scripts/clang-format.sh --check
+
+      - name: Check that Cargo.lock is consistent with Cargo.toml
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: |
+          cargo metadata --locked --format-version=1 > /dev/null
+          git diff --exit-code -- Cargo.lock
+
+  build:
+    name: Build${{ matrix.tracing && ' (tracing)' || '' }}
+    runs-on: macos-26-xlarge
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+
+    strategy:
+      matrix:
+        tracing: [false, true]
+
+    env:
+      CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      - name: Build crates
+        run: |
+          cargo build ${{ matrix.tracing && '--features tracing' || '' }}
+
+      - name: Build tests
+        run: |
+          cargo test ${{ matrix.tracing && '--features tracing' || '' }} --no-run
