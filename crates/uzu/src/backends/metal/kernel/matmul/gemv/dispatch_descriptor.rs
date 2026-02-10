@@ -114,10 +114,28 @@ impl DispatchDescriptor {
         } else {
             arguments.batch
         };
+
+        let mut batch_pack = 1;
+        if m == 4
+            && arguments.input_dim <= 2048
+            && (1536..=3072).contains(&output_dimension)
+        {
+            batch_pack = 2;
+        } else if m <= 8 {
+            batch_pack = if m >= 4 && m % 4 == 0 {
+                4
+            } else if m >= 2 && m % 2 == 0 {
+                2
+            } else {
+                1
+            };
+        }
+
         let pipeline_configuration = select_configuration(
             arguments.transpose_a,
             arguments.transpose_b,
             transpose_matrix,
+            batch_pack as u32,
             arguments.input_dim,
             output_dimension,
             false,
@@ -173,7 +191,7 @@ impl DispatchDescriptor {
         let threadgroup_count_z = batch_groups.max(1) as u64;
 
         let batch_rows = arguments.batch;
-        let threadgroup_count_y = batch_rows.max(1) as u64;
+        let threadgroup_count_y = (batch_rows / batch_pack).max(1) as u64;
 
         let threadgroups = MTLSize::new(
             threadgroup_count_x as usize,
