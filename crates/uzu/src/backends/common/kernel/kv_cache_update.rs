@@ -2,10 +2,7 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{
-        Backend, CommandBuffer, Kernels, gpu_types::Swap,
-        kernel::KVCacheUpdateKernel,
-    },
+    backends::common::{Backend, CommandBuffer, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
 pub struct KVLayerData<B: Backend> {
@@ -44,10 +41,8 @@ impl<B: Backend> KVCacheUpdate<B> {
         data_type: DataType,
         max_sequence_length: usize,
     ) -> Result<Self, KVCacheUpdateError<B>> {
-        let kernel = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(
-            context, data_type,
-        )
-        .map_err(KVCacheUpdateError::BackendError)?;
+        let kernel = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)
+            .map_err(KVCacheUpdateError::BackendError)?;
 
         Ok(Self {
             kernel,
@@ -63,12 +58,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         command_buffer: &B::CommandBuffer,
     ) -> Result<(), KVCacheUpdateError<B>> {
         command_buffer.with_compute_encoder(|encoder| {
-            self.encode_with_encoder(
-                in_place_data,
-                source_indices,
-                destination_indices,
-                encoder,
-            )
+            self.encode_with_encoder(in_place_data, source_indices, destination_indices, encoder)
         })
     }
 
@@ -92,18 +82,14 @@ impl<B: Backend> KVCacheUpdate<B> {
         // For small swap counts, use set_bytes to avoid shared buffer race in async mode.
         // Metal's set_bytes limit is 4KB; 32 swaps = 256 bytes, well under limit.
         let use_inline_bytes = swaps.len() <= 32;
-        assert!(
-            use_inline_bytes,
-            "non-inline is not supported yet (and is broken anyways due to a data race)"
-        );
+        assert!(use_inline_bytes, "non-inline is not supported yet (and is broken anyways due to a data race)");
 
         for layer_data in in_place_data {
             if layer_data.key_shape != layer_data.value_shape {
                 return Err(KVCacheUpdateError::ShapeMismatch);
             }
 
-            let [num_heads, max_sequence_length, head_dim] =
-                layer_data.key_shape;
+            let [num_heads, max_sequence_length, head_dim] = layer_data.key_shape;
 
             self.kernel.encode(
                 &layer_data.key_buffer,

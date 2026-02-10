@@ -1,9 +1,6 @@
 use objc2::msg_send;
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCompareFunction, MTLComputeCommandEncoder, ProtocolObject,
-    Retained,
-};
+use crate::backends::metal::{MTLBuffer, MTLCompareFunction, MTLComputeCommandEncoder, ProtocolObject, Retained};
 
 /// Low-level, unsafe conditional control of Metal encoders.
 /// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.
@@ -34,9 +31,7 @@ pub trait ComputeEncoderConditional {
         ElseBlock: FnOnce();
 }
 
-impl ComputeEncoderRawConditional
-    for ProtocolObject<dyn MTLComputeCommandEncoder>
-{
+impl ComputeEncoderRawConditional for ProtocolObject<dyn MTLComputeCommandEncoder> {
     fn encode_start_if(
         &self,
         predicate: &ProtocolObject<dyn MTLBuffer>,

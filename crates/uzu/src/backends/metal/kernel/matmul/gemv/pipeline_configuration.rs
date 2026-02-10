@@ -19,22 +19,14 @@ pub struct PipelineConfiguration {
 impl PipelineConfiguration {
     pub fn output_elements_per_threadgroup(&self) -> u32 {
         if self.transpose_matrix {
-            self.threadgroup_cols
-                * self.threads_per_simdgroup_col
-                * self.elements_per_thread_col
+            self.threadgroup_cols * self.threads_per_simdgroup_col * self.elements_per_thread_col
         } else {
-            self.threadgroup_rows
-                * self.threads_per_simdgroup_row
-                * self.elements_per_thread_row
+            self.threadgroup_rows * self.threads_per_simdgroup_row * self.elements_per_thread_row
         }
     }
 
     pub fn threads_per_threadgroup(&self) -> MTLSize {
-        MTLSize::new(
-            32,
-            self.threadgroup_cols as usize,
-            self.threadgroup_rows as usize,
-        )
+        MTLSize::new(32, self.threadgroup_cols as usize, self.threadgroup_rows as usize)
     }
 }
 

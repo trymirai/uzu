@@ -1,10 +1,7 @@
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::common::kernel::{
-    Kernel, KernelArgument, KernelArgumentType, KernelParameter,
-    KernelParameterType,
-};
+use crate::common::kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter, KernelParameterType};
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
 
@@ -43,9 +40,7 @@ pub enum MetalAstKind {
     Other,
 }
 
-fn annotation_from_ast_node(
-    annotation_node: MetalAstNode
-) -> anyhow::Result<Box<[Box<str>]>> {
+fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box<[Box<str>]>> {
     if !matches!(annotation_node.kind, MetalAstKind::AnnotateAttr) {
         bail!(
             "unexpected kind of root node: MetalAstKind::AnnotateAttr expected, but {:?} found",
@@ -62,26 +57,17 @@ fn annotation_from_ast_node(
             };
 
             if constant_expr.inner.len() != 1 {
-                bail!(
-                    "ConstantExpr must have exactly one child, found {}",
-                    constant_expr.inner.len()
-                );
+                bail!("ConstantExpr must have exactly one child, found {}", constant_expr.inner.len());
             }
 
             let mut implicit_cast_expr = constant_expr.inner.pop().unwrap();
 
             let MetalAstKind::ImplicitCastExpr = implicit_cast_expr.kind else {
-                bail!(
-                    "expected ImplicitCastExpr, found {:?}",
-                    implicit_cast_expr.kind
-                );
+                bail!("expected ImplicitCastExpr, found {:?}", implicit_cast_expr.kind);
             };
 
             if implicit_cast_expr.inner.len() != 1 {
-                bail!(
-                    "ImplicitCastExpr must have exactly one child, found {}",
-                    implicit_cast_expr.inner.len()
-                );
+                bail!("ImplicitCastExpr must have exactly one child, found {}", implicit_cast_expr.inner.len());
             }
 
             let string_literal = implicit_cast_expr.inner.pop().unwrap();
@@ -90,15 +76,11 @@ fn annotation_from_ast_node(
                 value,
             } = string_literal.kind
             else {
-                bail!(
-                    "expected StringLiteral, found {:?}",
-                    string_literal.kind
-                );
+                bail!("expected StringLiteral, found {:?}", string_literal.kind);
             };
 
             // NOTE: string literal includes "" (and is probably not parsed?), using json parse here for now
-            Ok(serde_json::from_str(&value)
-                .context("failed to parse string literal")?)
+            Ok(serde_json::from_str(&value).context("failed to parse string literal")?)
         })
         .collect()
 }
@@ -145,9 +127,9 @@ impl MetalArgument {
             ["uint"] | ["uint32_t"] | ["unsigned", "int"] => Ok("u32".into()),
             ["int"] | ["int32_t"] => Ok("i32".into()),
             ["float"] => Ok("f32".into()),
-            [vpath] if vpath.starts_with("uzu::") => Ok(vpath
-                .replacen("uzu::", "crate::backends::common::gpu_types::", 1)
-                .into()),
+            [vpath] if vpath.starts_with("uzu::") => {
+                Ok(vpath.replacen("uzu::", "crate::backends::common::gpu_types::", 1).into())
+            },
             _ => bail!("unknown scalar type: {c_type}"),
         }
     }
@@ -159,11 +141,10 @@ impl MetalArgument {
         let MetalAstKind::ParmVarDecl {
             name,
             range,
-            ty:
-                ParmVarDeclType {
-                    qual_type,
-                    desugared_qual_type,
-                },
+            ty: ParmVarDeclType {
+                qual_type,
+                desugared_qual_type,
+            },
         } = argument_node.kind
         else {
             bail!("argument isn't ParmVarDecl: {:?}", argument_node.kind);
@@ -177,27 +158,16 @@ impl MetalArgument {
             bail!("more than one annotation on argument ast node");
         }
 
-        let annotation =
-            if let Some(annotation_node) = argument_node.inner.first() {
-                Some(annotation_from_ast_node(annotation_node.clone())?)
-            } else {
-                None
-            };
+        let annotation = if let Some(annotation_node) = argument_node.inner.first() {
+            Some(annotation_from_ast_node(annotation_node.clone())?)
+        } else {
+            None
+        };
 
-        let start_offset = range
-            .begin
-            .spelling_loc
-            .context("no start location in source range")?
-            .offset;
-        let end_offset = range
-            .end
-            .spelling_loc
-            .context("no end location in source range")?
-            .offset;
+        let start_offset = range.begin.spelling_loc.context("no start location in source range")?.offset;
+        let end_offset = range.end.spelling_loc.context("no end location in source range")?.offset;
         let source =
-            str::from_utf8(&source.as_bytes()[start_offset..=end_offset])
-                .context("source range is not utf-8")?
-                .into();
+            str::from_utf8(&source.as_bytes()[start_offset..=end_offset]).context("source range is not utf-8")?.into();
 
         Ok(Self {
             name,
@@ -219,58 +189,36 @@ impl MetalArgument {
             match &*annotation_key {
                 "dsl.specialize" => {
                     if !annotation.is_empty() {
-                        bail!(
-                            "dsl.specialize takes no arguments, got {}",
-                            annotation.len()
-                        );
+                        bail!("dsl.specialize takes no arguments, got {}", annotation.len());
                     }
                     let rust_type = Self::scalar_type_to_rust(&self.c_type)?;
                     Ok(MetalArgumentType::Specialize(rust_type.into()))
                 },
                 "dsl.axis" => {
                     if annotation.len() != 2 {
-                        bail!(
-                            "dsl.axis requires 2 arguments, got {}",
-                            annotation.len()
-                        );
+                        bail!("dsl.axis requires 2 arguments, got {}", annotation.len());
                     }
-                    Ok(MetalArgumentType::Axis(
-                        annotation.remove(0),
-                        annotation.remove(0),
-                    ))
+                    Ok(MetalArgumentType::Axis(annotation.remove(0), annotation.remove(0)))
                 },
                 "dsl.groups" => {
                     if annotation.len() != 1 {
-                        bail!(
-                            "dsl.groups requires 1 argument, got {}",
-                            annotation.len()
-                        );
+                        bail!("dsl.groups requires 1 argument, got {}", annotation.len());
                     }
                     let dim = annotation.remove(0);
                     match dim.as_ref() {
-                        "INDIRECT" => Ok(MetalArgumentType::Groups(
-                            MetalGroupsType::Indirect,
-                        )),
-                        _ => Ok(MetalArgumentType::Groups(
-                            MetalGroupsType::Direct(dim),
-                        )),
+                        "INDIRECT" => Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)),
+                        _ => Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(dim))),
                     }
                 },
                 "dsl.threads" => {
                     if annotation.len() != 1 {
-                        bail!(
-                            "dsl.threads requires 1 argument, got {}",
-                            annotation.len()
-                        );
+                        bail!("dsl.threads requires 1 argument, got {}", annotation.len());
                     }
                     Ok(MetalArgumentType::Threads(annotation.remove(0)))
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
-        } else if self.c_type.contains("device")
-            && self.c_type.contains('*')
-            && !self.c_type.contains('&')
-        {
+        } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
             Ok(MetalArgumentType::Buffer)
         } else if let ["const", "constant", c_type_scalar, "&"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
@@ -286,23 +234,12 @@ impl MetalArgument {
                 Self::scalar_type_to_rust(c_type_scalar)?.into(),
                 MetalConstantType::Array,
             )))
-        } else if self.c_type.contains("threadgroup")
-            && self.c_type.contains('*')
-        {
-            let lbracket = self
-                .source
-                .rfind('[')
-                .context("threadgroup missing size bracket")?
-                + 1;
-            let rbracket = self
-                .source
-                .rfind(']')
-                .context("threadgroup missing size bracket")?;
+        } else if self.c_type.contains("threadgroup") && self.c_type.contains('*') {
+            let lbracket = self.source.rfind('[').context("threadgroup missing size bracket")? + 1;
+            let rbracket = self.source.rfind(']').context("threadgroup missing size bracket")?;
             let size_expr = &self.source[lbracket..rbracket];
             Ok(MetalArgumentType::Shared(Some(size_expr.into())))
-        } else if self.c_type.contains("threadgroup")
-            && self.c_type.contains('&')
-        {
+        } else if self.c_type.contains("threadgroup") && self.c_type.contains('&') {
             Ok(MetalArgumentType::Shared(None))
         } else {
             bail!("cannot parse c type: {}", self.c_type);
@@ -344,39 +281,27 @@ pub struct MetalKernelInfo {
 
 impl MetalKernelInfo {
     pub fn has_axis(&self) -> bool {
-        self.arguments.iter().any(|a| {
-            matches!(a.argument_type(), Ok(MetalArgumentType::Axis(..)))
-        })
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Axis(..))))
     }
 
     pub fn has_groups(&self) -> bool {
-        self.arguments.iter().any(|a| {
-            matches!(a.argument_type(), Ok(MetalArgumentType::Groups(_)))
-        })
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(_))))
     }
 
     pub fn has_groups_direct(&self) -> bool {
-        self.arguments.iter().any(|a| {
-            matches!(
-                a.argument_type(),
-                Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(_)))
-            )
-        })
+        self.arguments
+            .iter()
+            .any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(_)))))
     }
 
     pub fn has_groups_indirect(&self) -> bool {
-        self.arguments.iter().any(|a| {
-            matches!(
-                a.argument_type(),
-                Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect))
-            )
-        })
+        self.arguments
+            .iter()
+            .any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect))))
     }
 
     pub fn has_threads(&self) -> bool {
-        self.arguments.iter().any(|a| {
-            matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_)))
-        })
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_))))
     }
 
     pub fn to_kernel(&self) -> Kernel {
@@ -400,26 +325,18 @@ impl MetalKernelInfo {
                         name: a.name.clone(),
                         ty: KernelArgumentType::Buffer,
                     }),
-                    Ok(MetalArgumentType::Groups(
-                        MetalGroupsType::Indirect,
-                    )) if !indirect_flag => {
+                    Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)) if !indirect_flag => {
                         indirect_flag = true;
                         Some(KernelArgument {
                             name: "__dsl_indirect_dispatch_buffer".into(),
                             ty: KernelArgumentType::Buffer,
                         })
                     },
-                    Ok(MetalArgumentType::Constant((
-                        ty,
-                        MetalConstantType::Scalar,
-                    ))) => Some(KernelArgument {
+                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {
                         name: a.name.clone(),
                         ty: KernelArgumentType::Scalar(ty),
                     }),
-                    Ok(MetalArgumentType::Constant((
-                        ty,
-                        MetalConstantType::Array,
-                    ))) => Some(KernelArgument {
+                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => Some(KernelArgument {
                         name: a.name.clone(),
                         ty: KernelArgumentType::Constant(ty),
                     }),
@@ -435,48 +352,41 @@ impl MetalKernelInfo {
         node: MetalAstNode,
         source: &str,
     ) -> anyhow::Result<Option<Self>> {
-        let (is_template, template_parameters, node) =
-            if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
-                let mut template_parameters = Vec::new();
-                let mut function_node = None;
+        let (is_template, template_parameters, node) = if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
+            let mut template_parameters = Vec::new();
+            let mut function_node = None;
 
-                for child in node.inner {
-                    match child.kind {
-                        MetalAstKind::TemplateTypeParmDecl {
-                            name,
-                        } => {
-                            let name = name
-                                .context("template parameter missing name")?;
-                            template_parameters.push(name);
-                        },
-                        MetalAstKind::FunctionDecl {
-                            name: _,
-                        } => {
-                            function_node = Some(child);
-                        },
-                        _ => (),
-                    }
+            for child in node.inner {
+                match child.kind {
+                    MetalAstKind::TemplateTypeParmDecl {
+                        name,
+                    } => {
+                        let name = name.context("template parameter missing name")?;
+                        template_parameters.push(name);
+                    },
+                    MetalAstKind::FunctionDecl {
+                        name: _,
+                    } => {
+                        function_node = Some(child);
+                    },
+                    _ => (),
                 }
+            }
 
-                let node = function_node.context(
-                    "unexpected kind of root node: template without function",
-                )?;
+            let node = function_node.context("unexpected kind of root node: template without function")?;
 
-                (true, template_parameters, node)
-            } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
-                (false, Vec::new(), node)
-            } else {
-                return Ok(None);
-            };
+            (true, template_parameters, node)
+        } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
+            (false, Vec::new(), node)
+        } else {
+            return Ok(None);
+        };
 
         let MetalAstKind::FunctionDecl {
             name,
         } = node.kind
         else {
-            bail!(
-                "unexpected kind of root node: function expected, but {:?} found",
-                node.kind
-            );
+            bail!("unexpected kind of root node: function expected, but {:?} found", node.kind);
         };
 
         let mut arg_nodes = Vec::new();
@@ -489,9 +399,7 @@ impl MetalKernelInfo {
                     range: _,
                     ty: _,
                 } => arg_nodes.push(node),
-                MetalAstKind::AnnotateAttr => {
-                    annotations.push(annotation_from_ast_node(node)?)
-                },
+                MetalAstKind::AnnotateAttr => annotations.push(annotation_from_ast_node(node)?),
                 _ => (),
             }
         }
@@ -520,10 +428,7 @@ impl MetalKernelInfo {
                     bail!("malformed dsl.variants annotation");
                 };
 
-                let variants = variant_values
-                    .split(',')
-                    .map(|v| v.trim().into())
-                    .collect::<Box<[Box<str>]>>();
+                let variants = variant_values.split(',').map(|v| v.trim().into()).collect::<Box<[Box<str>]>>();
 
                 Ok(MetalTypeParameter {
                     name: typename.clone(),
@@ -537,20 +442,10 @@ impl MetalKernelInfo {
         }
 
         if is_template {
-            let template_names = template_parameters
-                .iter()
-                .map(|name| name.as_ref())
-                .collect::<Vec<_>>();
-            let variant_names = variants
-                .iter()
-                .map(|variant| variant.name.as_ref())
-                .collect::<Vec<_>>();
+            let template_names = template_parameters.iter().map(|name| name.as_ref()).collect::<Vec<_>>();
+            let variant_names = variants.iter().map(|variant| variant.name.as_ref()).collect::<Vec<_>>();
             if template_names != variant_names {
-                bail!(
-                    "template parameters {:?} do not match dsl.variants order {:?}",
-                    template_names,
-                    variant_names
-                );
+                bail!("template parameters {:?} do not match dsl.variants order {:?}", template_names, variant_names);
             }
         }
 
@@ -574,25 +469,24 @@ impl MetalKernelInfo {
 }
 
 pub fn validate_raw_kernel(node: &MetalAstNode) -> anyhow::Result<()> {
-    let (node, is_template) =
-        if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
-            let inner_fn = node.inner.iter().find(|c| {
-                matches!(
-                    c.kind,
-                    MetalAstKind::FunctionDecl {
-                        name: _
-                    }
-                )
-            });
-            match inner_fn {
-                Some(n) => (n, true),
-                None => return Ok(()),
-            }
-        } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
-            (node, false)
-        } else {
-            return Ok(());
-        };
+    let (node, is_template) = if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
+        let inner_fn = node.inner.iter().find(|c| {
+            matches!(
+                c.kind,
+                MetalAstKind::FunctionDecl {
+                    name: _
+                }
+            )
+        });
+        match inner_fn {
+            Some(n) => (n, true),
+            None => return Ok(()),
+        }
+    } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
+        (node, false)
+    } else {
+        return Ok(());
+    };
 
     let MetalAstKind::FunctionDecl {
         name,
@@ -608,15 +502,10 @@ pub fn validate_raw_kernel(node: &MetalAstNode) -> anyhow::Result<()> {
     for child in &node.inner {
         match &child.kind {
             MetalAstKind::MetalKernelAttr => has_metal_kernel_attr = true,
-            MetalAstKind::MetalMaxTotalThreadsPerThreadGroupAttr => {
-                has_max_threads_attr = true
-            },
+            MetalAstKind::MetalMaxTotalThreadsPerThreadGroupAttr => has_max_threads_attr = true,
             MetalAstKind::AnnotateAttr => {
-                if let Ok(annotation) = annotation_from_ast_node(child.clone())
-                {
-                    if annotation.first().map(|s| s.as_ref())
-                        == Some("dsl.kernel")
-                    {
+                if let Ok(annotation) = annotation_from_ast_node(child.clone()) {
+                    if annotation.first().map(|s| s.as_ref()) == Some("dsl.kernel") {
                         has_dsl_kernel = true;
                     }
                 }

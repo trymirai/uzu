@@ -1,9 +1,6 @@
 use std::time::Instant;
 
-use super::{
-    allocation_stats::AllocationStats, allocator_trait::AllocatorTrait,
-    model_config::ModelConfig,
-};
+use super::{allocation_stats::AllocationStats, allocator_trait::AllocatorTrait, model_config::ModelConfig};
 
 const F16_SIZE: usize = 2;
 
@@ -82,26 +79,16 @@ impl<'a, A: AllocatorTrait> InferenceSimulation<'a, A> {
         let qkv_size = batch_size * self.config.qkv_dim() * F16_SIZE;
         buffers.push(self.alloc_scratch(qkv_size));
 
-        let bias_size =
-            batch_size * (batch_size + self.current_prefix_len) * F16_SIZE;
+        let bias_size = batch_size * (batch_size + self.current_prefix_len) * F16_SIZE;
         buffers.push(self.alloc_scratch(bias_size));
 
-        let rotated_q_size = self.config.num_heads
-            * batch_size
-            * self.config.head_dim
-            * F16_SIZE;
+        let rotated_q_size = self.config.num_heads * batch_size * self.config.head_dim * F16_SIZE;
         buffers.push(self.alloc_scratch(rotated_q_size));
 
-        let rotated_k_size = self.config.num_groups
-            * batch_size
-            * self.config.head_dim
-            * F16_SIZE;
+        let rotated_k_size = self.config.num_groups * batch_size * self.config.head_dim * F16_SIZE;
         buffers.push(self.alloc_scratch(rotated_k_size));
 
-        let attn_out_size = batch_size
-            * self.config.num_heads
-            * self.config.head_dim
-            * F16_SIZE;
+        let attn_out_size = batch_size * self.config.num_heads * self.config.head_dim * F16_SIZE;
         buffers.push(self.alloc_scratch(attn_out_size));
 
         buffers

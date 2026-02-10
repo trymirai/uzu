@@ -2,20 +2,14 @@ use std::time::Instant;
 
 use bytemuck;
 use half::{bf16, f16};
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::{
         common::Context,
         metal::{
             MTLContext, ProtocolObject, Retained,
-            kernel::quant_matmul::{
-                QuantizationType, QuantizedMatmulArguments,
-                QuantizedMatmulKernel,
-            },
+            kernel::quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
         },
     },
     config::QuantizationMode,
@@ -141,8 +135,7 @@ fn get_zp_value(
             ((byte >> 4) & 0x0F) as f32
         }
     } else {
-        zero_points.get(row_idx * stride + group_idx).copied().unwrap_or(0)
-            as f32
+        zero_points.get(row_idx * stride + group_idx).copied().unwrap_or(0) as f32
     }
 }
 
@@ -191,19 +184,12 @@ fn cpu_reference(
 
                     let val_a = a[i * input_dim + l];
                     let scale = scales[l * num_groups + group_idx];
-                    let bias =
-                        if quantization_type == QuantizationType::ZeroPoint {
-                            let zp_val_qvm = get_zp_value(
-                                zero_points,
-                                zero_points_stride,
-                                l,
-                                group_idx,
-                                bits,
-                            );
-                            -scale * zp_val_qvm
-                        } else {
-                            biases[l * num_groups + group_idx]
-                        };
+                    let bias = if quantization_type == QuantizationType::ZeroPoint {
+                        let zp_val_qvm = get_zp_value(zero_points, zero_points_stride, l, group_idx, bits);
+                        -scale * zp_val_qvm
+                    } else {
+                        biases[l * num_groups + group_idx]
+                    };
                     acc += val_a * (scale * val_q + bias);
                 }
             } else {
@@ -211,13 +197,7 @@ fn cpu_reference(
                     let scale = scales[j * num_groups + g];
                     let bias = match quantization_type {
                         QuantizationType::ZeroPoint => {
-                            let zp = get_zp_value(
-                                zero_points,
-                                zero_points_stride,
-                                j,
-                                g,
-                                bits,
-                            );
+                            let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
                             -scale * zp
                         },
                         QuantizationType::Mlx => biases[j * num_groups + g],
@@ -315,13 +295,9 @@ fn generate_test_quant_params(
                     if bits == 4 {
                         let byte_index = k * zero_points_stride + (g >> 1);
                         if (g & 1) == 0 {
-                            zero_points[byte_index] = (zero_points[byte_index]
-                                & 0xF0)
-                                | (zp_val_u8 & 0x0F);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val_u8 & 0x0F);
                         } else {
-                            zero_points[byte_index] = (zero_points[byte_index]
-                                & 0x0F)
-                                | ((zp_val_u8 & 0x0F) << 4);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val_u8 & 0x0F) << 4);
                         }
                     } else {
                         zero_points[k * zero_points_stride + g] = zp_val_u8;
@@ -338,8 +314,7 @@ fn generate_test_quant_params(
                     } else {
                         zp_val_u8 as f32
                     };
-                    biases[k * num_groups + g] =
-                        quantize_value(-s * zp_val, data_type);
+                    biases[k * num_groups + g] = quantize_value(-s * zp_val, data_type);
                 }
             }
         } else {
@@ -359,13 +334,9 @@ fn generate_test_quant_params(
                     if bits == 4 {
                         let byte_index = j * zero_points_stride + (g >> 1);
                         if (g & 1) == 0 {
-                            zero_points[byte_index] = (zero_points[byte_index]
-                                & 0xF0)
-                                | (zp_val & 0x0F);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val & 0x0F);
                         } else {
-                            zero_points[byte_index] = (zero_points[byte_index]
-                                & 0x0F)
-                                | ((zp_val & 0x0F) << 4);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
                         }
                     } else {
                         let byte_index = j * zero_points_stride + g;
@@ -386,8 +357,7 @@ fn generate_test_quant_params(
                 for g in 0..num_groups {
                     let base_val = g * 3;
                     let bias_val = (base_val % 19) as f32 * 0.125;
-                    biases[k * num_groups + g] =
-                        quantize_value(bias_val, data_type);
+                    biases[k * num_groups + g] = quantize_value(bias_val, data_type);
                 }
             }
         } else {
@@ -399,8 +369,7 @@ fn generate_test_quant_params(
                         g * 3
                     };
                     let bias_val = (base_val % 19) as f32 * 0.125;
-                    biases[j * num_groups + g] =
-                        quantize_value(bias_val, data_type);
+                    biases[j * num_groups + g] = quantize_value(bias_val, data_type);
                 }
             }
         }
@@ -422,31 +391,20 @@ fn buffer_from_f32_slice(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     match dtype {
         DataType::F16 => {
-            let data: Vec<f16> =
-                values.iter().map(|&v| f16::from_f32(v)).collect();
+            let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
             ctx.device
-                .new_buffer_with_data(
-                    bytemuck::cast_slice(&data),
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
                 .expect("Failed to create buffer")
         },
         DataType::BF16 => {
-            let data: Vec<bf16> =
-                values.iter().map(|&v| bf16::from_f32(v)).collect();
+            let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
             ctx.device
-                .new_buffer_with_data(
-                    bytemuck::cast_slice(&data),
-                    MTLResourceOptions::STORAGE_MODE_SHARED,
-                )
+                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
                 .expect("Failed to create buffer")
         },
         DataType::F32 => ctx
             .device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(values),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+            .new_buffer_with_data(bytemuck::cast_slice(values), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer"),
         other => {
             panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
@@ -468,8 +426,7 @@ fn execute_quantized_matmul(
     data_type: DataType,
     bits: usize,
 ) -> ExecutionResult {
-    let weights_quant =
-        create_test_weights(output_dim, input_dim, weights_transposed, bits);
+    let weights_quant = create_test_weights(output_dim, input_dim, weights_transposed, bits);
     let weights_packed = if bits == 4 {
         pack_u4_weights(&weights_quant)
     } else {
@@ -503,29 +460,19 @@ fn execute_quantized_matmul(
 
     let w_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&weights_packed),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&weights_packed), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let s_buf = buffer_from_f32_slice(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
         QuantizationType::ZeroPoint => ctx
             .device
-            .new_buffer_with_data(
-                &params.zero_points,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+            .new_buffer_with_data(&params.zero_points, MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer"),
-        QuantizationType::Mlx => {
-            buffer_from_f32_slice(ctx, data_type, &params.biases)
-        },
+        QuantizationType::Mlx => buffer_from_f32_slice(ctx, data_type, &params.biases),
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
-    let y_buf = ctx
-        .create_buffer(batch * output_dim * data_type.size_in_bytes())
-        .expect("Failed to create buffer");
+    let y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernel::new(
         &ctx,
@@ -557,13 +504,8 @@ fn execute_quantized_matmul(
                 output_dim: output_dim as i32,
                 quantization_type,
             };
-            let cb_ref = ctx
-                .command_queue
-                .command_buffer()
-                .expect("Failed to create command buffer");
-            let encoder = cb_ref
-                .new_compute_command_encoder()
-                .expect("Failed to create compute encoder");
+            let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
             kernel.encode(&encoder, args).unwrap();
             encoder.end_encoding();
             cb_ref.commit();
@@ -585,13 +527,8 @@ fn execute_quantized_matmul(
             output_dim: output_dim as i32,
             quantization_type,
         };
-        let cb_ref = ctx
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer");
-        let encoder = cb_ref
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
         kernel.encode(&encoder, args).unwrap();
         encoder.end_encoding();
         cb_ref.commit();
@@ -620,23 +557,17 @@ fn execute_quantized_matmul(
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
                 let y_ptr = y_buf.contents().as_ptr() as *const f16;
-                let y_out = unsafe {
-                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
-                };
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
                 let y_ptr = y_buf.contents().as_ptr() as *const bf16;
-                let y_out = unsafe {
-                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
-                };
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
                 let y_ptr = y_buf.contents().as_ptr() as *const f32;
-                let y_out = unsafe {
-                    std::slice::from_raw_parts(y_ptr, batch * output_dim)
-                };
+                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.to_vec()
             },
             other => panic!("Unsupported dtype for validation: {:?}", other),
@@ -644,17 +575,12 @@ fn execute_quantized_matmul(
 
         let mut debug_prints = 0;
 
-        for (i, (&exp, &got)) in
-            y_expected.iter().zip(y_out_f32.iter()).enumerate()
-        {
+        for (i, (&exp, &got)) in y_expected.iter().zip(y_out_f32.iter()).enumerate() {
             let diff = (exp - got).abs();
 
             if check_tolerance(exp, got) {
                 if debug_prints < 16 {
-                    println!(
-                        "\n  detail idx {} diff {} exp {} got {}",
-                        i, diff, exp, got
-                    );
+                    println!("\n  detail idx {} diff {} exp {} got {}", i, diff, exp, got);
                 }
                 debug_prints += 1;
             }
@@ -676,16 +602,9 @@ fn execute_quantized_matmul(
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            println!(
-                "\nTotal errors: {} out of {} outputs",
-                debug_prints,
-                batch * output_dim
-            );
+            println!("\nTotal errors: {} out of {} outputs", debug_prints, batch * output_dim);
             println!("Error range: indices {}-{}", first_error, last_error);
-            println!(
-                "Dims batch={} output_dim={} input_dim={}",
-                batch, output_dim, input_dim
-            );
+            println!("Dims batch={} output_dim={} input_dim={}", batch, output_dim, input_dim);
             panic!("Validation failed with {} mismatches", debug_prints);
         }
 
@@ -708,8 +627,7 @@ struct TestConfig {
 
 const QMV_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
-const QMM_DIMS: &[(usize, usize, usize)] =
-    &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
+const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
 
 fn run_kernel_test(
     ctx: &MTLContext,
@@ -778,9 +696,7 @@ fn test_quant_gmv() {
 
     for config in &configs {
         for &(output_dim, input_dim) in QMV_DIMS {
-            run_kernel_test(
-                &ctx, 1, output_dim, input_dim, true, config, true, 1,
-            );
+            run_kernel_test(&ctx, 1, output_dim, input_dim, true, config, true, 1);
         }
     }
 }
@@ -824,9 +740,7 @@ fn test_quant_qvm() {
 
     for config in &configs {
         for &(output_dim, input_dim) in QVM_DIMS {
-            run_kernel_test(
-                &ctx, 1, output_dim, input_dim, false, config, true, 1,
-            );
+            run_kernel_test(&ctx, 1, output_dim, input_dim, false, config, true, 1);
         }
     }
 }
@@ -870,9 +784,7 @@ fn test_quant_gmm() {
 
     for config in &configs {
         for &(batch, output_dim, input_dim) in QMM_DIMS {
-            run_kernel_test(
-                &ctx, batch, output_dim, input_dim, false, config, true, 1,
-            );
+            run_kernel_test(&ctx, batch, output_dim, input_dim, false, config, true, 1);
         }
     }
 }
@@ -916,9 +828,7 @@ fn test_quant_gmm_transposed() {
 
     for config in &configs {
         for &(batch, output_dim, input_dim) in QMM_DIMS {
-            run_kernel_test(
-                &ctx, batch, output_dim, input_dim, true, config, true, 1,
-            );
+            run_kernel_test(&ctx, batch, output_dim, input_dim, true, config, true, 1);
         }
     }
 }
@@ -983,9 +893,7 @@ fn test_quant_matmul_perf() {
 
     for config in &configs {
         for &(batch, output_dim, input_dim) in &shapes {
-            let result = run_kernel_test(
-                &ctx, batch, output_dim, input_dim, false, config, false, 20,
-            );
+            let result = run_kernel_test(&ctx, batch, output_dim, input_dim, false, config, false, 20);
             let avg = result.elapsed / 20.0 * 1000.0; // ms
 
             println!(

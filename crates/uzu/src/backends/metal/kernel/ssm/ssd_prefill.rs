@@ -1,15 +1,8 @@
 use crate::backends::{
-    common::kernel::{
-        SSDPrefill64Kernel as _, SSDPrefillKernel as _,
-        SSDPrefillSequentialKernel as _,
-    },
+    common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
     metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext,
-        MTLError, ProtocolObject,
-        kernel::dsl::{
-            SSDPrefill64MetalKernel, SSDPrefillMetalKernel,
-            SSDPrefillSequentialMetalKernel,
-        },
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
     },
 };
 use objc2::Message;
@@ -52,10 +45,8 @@ impl SSDPrefillKernels {
         data_type: KernelDataType,
     ) -> Result<Self, MTLError> {
         let single = SSDPrefillMetalKernel::new(context, data_type.into())?;
-        let single_64 =
-            SSDPrefill64MetalKernel::new(context, data_type.into())?;
-        let sequential =
-            SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
+        let single_64 = SSDPrefill64MetalKernel::new(context, data_type.into())?;
+        let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             single,
             single_64,
@@ -83,26 +74,10 @@ impl SSDPrefillKernels {
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
-                    args.x_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.dt_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.cb_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.state_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
+                    args.x_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.dt_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.cb_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.state_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
                     args.channels as u32,
                     args.head_dim as u32,
                     compute_encoder,
@@ -120,26 +95,10 @@ impl SSDPrefillKernels {
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
-                    args.x_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.dt_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.cb_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    args.state_strides
-                        .iter()
-                        .map(|x| *x as u32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
+                    args.x_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.dt_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.cb_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                    args.state_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
                     args.channels as u32,
                     args.head_dim as u32,
                     compute_encoder,
@@ -158,26 +117,10 @@ impl SSDPrefillKernels {
                 args.suffix_len as u32,
                 args.group_size,
                 args.state_size,
-                args.x_strides
-                    .iter()
-                    .map(|x| *x as u32)
-                    .collect::<Vec<_>>()
-                    .as_slice(),
-                args.dt_strides
-                    .iter()
-                    .map(|x| *x as u32)
-                    .collect::<Vec<_>>()
-                    .as_slice(),
-                args.cb_strides
-                    .iter()
-                    .map(|x| *x as u32)
-                    .collect::<Vec<_>>()
-                    .as_slice(),
-                args.state_strides
-                    .iter()
-                    .map(|x| *x as u32)
-                    .collect::<Vec<_>>()
-                    .as_slice(),
+                args.x_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                args.dt_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                args.cb_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
+                args.state_strides.iter().map(|x| *x as u32).collect::<Vec<_>>().as_slice(),
                 args.channels as u32,
                 args.head_dim as u32,
                 compute_encoder,

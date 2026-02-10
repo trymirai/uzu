@@ -41,8 +41,7 @@ mod tests {
             subtract_mean: false,
         };
 
-        let deserialized_config: NormalizationConfig =
-            from_str(config_str).unwrap();
+        let deserialized_config: NormalizationConfig = from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
     }
 }

@@ -22,13 +22,7 @@ fn create_layer_results<B: Backend>(
     suffix_length: usize,
 ) -> Vec<Rc<RefCell<LayerActivationTrace<B>>>> {
     (0..model_shape.num_layers)
-        .map(|_| {
-            Rc::new(RefCell::new(LayerActivationTrace::new(
-                context,
-                model_shape,
-                suffix_length,
-            )))
-        })
+        .map(|_| Rc::new(RefCell::new(LayerActivationTrace::new(context, model_shape, suffix_length))))
         .collect()
 }
 
@@ -52,24 +46,13 @@ impl<B: Backend> LayerActivationTrace<B> {
     ) -> Self {
         let main_shape = model_shape.main_shape(suffix_length);
         let activation_data_type = model_shape.activation_data_type();
-        let main = |label| {
-            create_trace_array(
-                context,
-                &main_shape,
-                activation_data_type,
-                label,
-            )
-        };
+        let main = |label| create_trace_array(context, &main_shape, activation_data_type, label);
 
         Self {
             inputs: main("layer_activation_trace_inputs"),
-            pre_attention_norm: main(
-                "layer_activation_trace_pre_attention_norm",
-            ),
+            pre_attention_norm: main("layer_activation_trace_pre_attention_norm"),
             attention: main("layer_activation_trace_attention"),
-            post_attention_norm: main(
-                "layer_activation_trace_post_attention_norm",
-            ),
+            post_attention_norm: main("layer_activation_trace_post_attention_norm"),
             mlp_inputs: main("layer_activation_trace_mlp_inputs"),
             pre_mlp_norm: main("layer_activation_trace_pre_mlp_norm"),
             mlp: main("layer_activation_trace_mlp"),
@@ -95,18 +78,12 @@ impl<B: Backend> ActivationTrace<B> {
     ) -> Self {
         let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
-        let layer_results =
-            create_layer_results(context, model_shape, suffix_length);
+        let layer_results = create_layer_results(context, model_shape, suffix_length);
 
         Self {
             embedding_norm: None,
             layer_results,
-            output_norm: create_trace_array(
-                context,
-                &main_shape,
-                activation_data_type,
-                "activation_trace_output_norm",
-            ),
+            output_norm: create_trace_array(context, &main_shape, activation_data_type, "activation_trace_output_norm"),
             output_pooling: None,
             logits: create_trace_array(
                 context,
@@ -125,8 +102,7 @@ impl<B: Backend> ActivationTrace<B> {
     ) -> Self {
         let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
-        let layer_results =
-            create_layer_results(context, model_shape, suffix_length);
+        let layer_results = create_layer_results(context, model_shape, suffix_length);
         let model_dim = model_shape.main_shape(1)[1];
 
         Self {
@@ -137,36 +113,22 @@ impl<B: Backend> ActivationTrace<B> {
                 "activation_trace_embedding_norm",
             )),
             layer_results,
-            output_norm: create_trace_array(
-                context,
-                &main_shape,
-                activation_data_type,
-                "activation_trace_output_norm",
-            ),
+            output_norm: create_trace_array(context, &main_shape, activation_data_type, "activation_trace_output_norm"),
             output_pooling: Some(create_trace_array(
                 context,
                 &[1, model_dim],
                 activation_data_type,
                 "activation_trace_output_pooling",
             )),
-            logits: create_trace_array(
-                context,
-                &[1, num_labels],
-                activation_data_type,
-                "activation_trace_logits",
-            ),
+            logits: create_trace_array(context, &[1, num_labels], activation_data_type, "activation_trace_logits"),
         }
     }
 
     pub fn embedding_norm(&self) -> &ArrayCell<B> {
-        self.embedding_norm
-            .as_ref()
-            .expect("embedding_norm is only available for classifier traces")
+        self.embedding_norm.as_ref().expect("embedding_norm is only available for classifier traces")
     }
 
     pub fn output_pooling(&self) -> &ArrayCell<B> {
-        self.output_pooling
-            .as_ref()
-            .expect("output_pooling is only available for classifier traces")
+        self.output_pooling.as_ref().expect("output_pooling is only available for classifier traces")
     }
 }

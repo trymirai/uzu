@@ -77,19 +77,14 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             context_length,
         } = raw;
 
-        let layer_configs_boxed =
-            layer_configs.map(|layers| layers.into_boxed_slice());
+        let layer_configs_boxed = layer_configs.map(|layers| layers.into_boxed_slice());
 
         let layer_config_value = if let Some(config) = layer_config {
             config
         } else if let Some(configs) = layer_configs_boxed.as_ref() {
-            configs.first().cloned().ok_or_else(|| {
-                de::Error::custom("layer_configs must not be empty")
-            })?
+            configs.first().cloned().ok_or_else(|| de::Error::custom("layer_configs must not be empty"))?
         } else {
-            return Err(de::Error::custom(
-                "decoder config must include layer_config or layer_configs",
-            ));
+            return Err(de::Error::custom("decoder config must include layer_config or layer_configs"));
         };
 
         let num_layers_value = if let Some(value) = num_layers {
@@ -97,23 +92,18 @@ impl<'de> Deserialize<'de> for DecoderConfig {
         } else if let Some(configs) = layer_configs_boxed.as_ref() {
             configs.len()
         } else {
-            return Err(de::Error::custom(
-                "num_layers missing and layer_configs not provided",
-            ));
+            return Err(de::Error::custom("num_layers missing and layer_configs not provided"));
         };
 
-        let (num_heads_value, num_groups_value, head_dim_value) =
-            match (num_heads, num_groups, head_dim) {
-                (Some(h), Some(g), Some(d)) => (h, g, d),
-                _ => derive_dims_from_layer(&layer_config_value).ok_or_else(
-                    || {
-                        de::Error::custom(
-                            "num_heads/num_groups/head_dim missing and \
+        let (num_heads_value, num_groups_value, head_dim_value) = match (num_heads, num_groups, head_dim) {
+            (Some(h), Some(g), Some(d)) => (h, g, d),
+            _ => derive_dims_from_layer(&layer_config_value).ok_or_else(|| {
+                de::Error::custom(
+                    "num_heads/num_groups/head_dim missing and \
                              cannot be derived from layer config",
-                        )
-                    },
-                )?,
-            };
+                )
+            })?,
+        };
 
         let attention_scale_value = if attention_scale.is_some() {
             attention_scale
@@ -121,35 +111,26 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             layer_config_value.mixer_config.attention_scale()
         };
 
-        let sliding_window_sizes_boxed =
-            if let Some(sizes) = sliding_window_sizes {
-                Some(sizes.into_boxed_slice())
-            } else if let Some(configs) = layer_configs_boxed.as_ref() {
-                Some(
-                    configs
-                        .iter()
-                        .map(|layer| layer.mixer_config.sliding_window_size())
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                )
-            } else {
-                None
-            };
+        let sliding_window_sizes_boxed = if let Some(sizes) = sliding_window_sizes {
+            Some(sizes.into_boxed_slice())
+        } else if let Some(configs) = layer_configs_boxed.as_ref() {
+            Some(
+                configs
+                    .iter()
+                    .map(|layer| layer.mixer_config.sliding_window_size())
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            )
+        } else {
+            None
+        };
 
-        let explicit_layer_types =
-            layer_types.map(|types| types.into_boxed_slice());
-        let derived_layer_types =
-            if let Some(configs) = layer_configs_boxed.as_ref() {
-                Some(
-                    configs
-                        .iter()
-                        .map(layer_type_from_config)
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                )
-            } else {
-                None
-            };
+        let explicit_layer_types = layer_types.map(|types| types.into_boxed_slice());
+        let derived_layer_types = if let Some(configs) = layer_configs_boxed.as_ref() {
+            Some(configs.iter().map(layer_type_from_config).collect::<Vec<_>>().into_boxed_slice())
+        } else {
+            None
+        };
         let layer_types_value = explicit_layer_types.or(derived_layer_types);
 
         Ok(Self {
@@ -206,14 +187,8 @@ struct RawDecoderConfig {
     context_length: usize,
 }
 
-fn derive_dims_from_layer(
-    layer: &DecoderLayerConfig
-) -> Option<(usize, usize, usize)> {
-    Some((
-        layer.mixer_config.num_heads()?,
-        layer.mixer_config.num_groups()?,
-        layer.mixer_config.head_dim()?,
-    ))
+fn derive_dims_from_layer(layer: &DecoderLayerConfig) -> Option<(usize, usize, usize)> {
+    Some((layer.mixer_config.num_heads()?, layer.mixer_config.num_groups()?, layer.mixer_config.head_dim()?))
 }
 
 fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
@@ -241,12 +216,7 @@ impl DecoderConfig {
         self.layer_configs
             .as_ref()
             .map(|configs| {
-                configs.iter().any(|config| {
-                    matches!(
-                        config.mixer_config,
-                        crate::config::MixerConfig::Attention(_)
-                    )
-                })
+                configs.iter().any(|config| matches!(config.mixer_config, crate::config::MixerConfig::Attention(_)))
             })
             .unwrap_or(true)
     }
@@ -420,9 +390,7 @@ mod tests {
                         quantization: QuantizationConfig {
                             group_size: 32,
                             weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(
-                                QuantizationMode::Int8,
-                            ),
+                            activation_quantization_mode: Some(QuantizationMode::Int8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,
@@ -432,9 +400,7 @@ mod tests {
                         quantization: QuantizationConfig {
                             group_size: 32,
                             weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(
-                                QuantizationMode::Int8,
-                            ),
+                            activation_quantization_mode: Some(QuantizationMode::Int8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,
@@ -458,9 +424,7 @@ mod tests {
                         quantization: QuantizationConfig {
                             group_size: 32,
                             weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(
-                                QuantizationMode::Int8,
-                            ),
+                            activation_quantization_mode: Some(QuantizationMode::Int8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,

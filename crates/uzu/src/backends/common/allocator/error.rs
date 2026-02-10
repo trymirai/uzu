@@ -22,11 +22,7 @@ impl fmt::Display for AllocError {
                 requested,
                 available,
             } => {
-                write!(
-                    f,
-                    "Out of memory: requested {} bytes, {} available",
-                    requested, available
-                )
+                write!(f, "Out of memory: requested {} bytes, {} available", requested, available)
             },
             AllocError::AllocationFailed {
                 size,

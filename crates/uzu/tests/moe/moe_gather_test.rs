@@ -9,9 +9,7 @@ use uzu::backends::metal::kernel::{
     moe::{MoeGatherArguments, MoeGatherKernels},
 };
 
-use super::test_utils::{
-    alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx,
-};
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
 
 /// CPU reference for gather operation: x_perm[i] = x[bucketed_ids[i]]
 ///
@@ -37,8 +35,7 @@ pub fn cpu_gather(
         if token_id >= 0 && (token_id as usize) < t {
             let src_offset = (token_id as usize) * d_model;
             let dst_offset = row * d_model;
-            x_perm[dst_offset..dst_offset + d_model]
-                .copy_from_slice(&x[src_offset..src_offset + d_model]);
+            x_perm[dst_offset..dst_offset + d_model].copy_from_slice(&x[src_offset..src_offset + d_model]);
         }
     }
     x_perm
@@ -61,13 +58,10 @@ fn test_gather_correctness() {
         eprintln!("[GatherTest] T={}, sum_k={}, d_model={}", t, sum_k, d_model);
 
         // Random input
-        let x: Vec<bf16> = (0..t * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-2.0..2.0)))
-            .collect();
+        let x: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
 
         // Random bucketed_ids with valid token indices
-        let bucketed_ids: Vec<i32> =
-            (0..sum_k).map(|_| rng.random_range(0..t as i32)).collect();
+        let bucketed_ids: Vec<i32> = (0..sum_k).map(|_| rng.random_range(0..t as i32)).collect();
 
         let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
 
@@ -82,10 +76,7 @@ fn test_gather_correctness() {
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernels::new(&ctx).expect("MoeGatherKernel::new");
-        let cb = ctx
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather.encode(
             &cb,
             KernelDataType::BFloat16,
@@ -103,12 +94,8 @@ fn test_gather_correctness() {
         cb.wait_until_completed();
 
         // Compare
-        let x_gpu = unsafe {
-            std::slice::from_raw_parts(
-                x_perm_buf.contents().as_ptr() as *const bf16,
-                sum_k * d_model,
-            )
-        };
+        let x_gpu =
+            unsafe { std::slice::from_raw_parts(x_perm_buf.contents().as_ptr() as *const bf16, sum_k * d_model) };
 
         assert_bf16_close(x_gpu, &x_cpu, 1e-6, "gather output");
 

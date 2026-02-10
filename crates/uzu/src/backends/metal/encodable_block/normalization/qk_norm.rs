@@ -4,13 +4,9 @@ use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
         MTLResourceOptions, ProtocolObject, Retained,
-        kernel::rms_norm::{
-            QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel,
-            RMSNormKernelType,
-        },
+        kernel::rms_norm::{QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel, RMSNormKernelType},
     },
     config::{NormalizationConfig, UpcastMode},
     encodable_block::EncodingParameters,
@@ -50,34 +46,22 @@ impl QKNorm {
 
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
-            let scales_param =
-                parameter_tree.leaf("query_norm.scales").map_err(|e| {
-                    RMSNormError::MetalError(MTLError::Library(
-                        crate::backends::metal::error::LibraryError::Custom(
-                            format!("Failed to load query scales: {:?}", e),
-                        ),
-                    ))
-                })?;
+            let scales_param = parameter_tree.leaf("query_norm.scales").map_err(|e| {
+                RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(
+                    format!("Failed to load query scales: {:?}", e),
+                )))
+            })?;
 
             let scales_data = scales_param.as_bytes();
-            let scales_buffer = context.device.new_buffer_with_data(
-                scales_data,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            );
+            let scales_buffer =
+                context.device.new_buffer_with_data(scales_data, MTLResourceOptions::STORAGE_MODE_SHARED);
 
-            let accumulation_data_type: DataType =
-                q_config.accumulation_precision.into();
+            let accumulation_data_type: DataType = q_config.accumulation_precision.into();
             let scale_data_type: DataType = q_config.scale_precision.into();
 
-            let (input_type, scales_type, output_type) = match q_config
-                .upcast_mode
-            {
-                UpcastMode::OnlyNormalization => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-                UpcastMode::FullLayer => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
+            let (input_type, scales_type, output_type) = match q_config.upcast_mode {
+                UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
+                UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
             };
 
             let kernel = RMSNormKernel::new_with_mode(
@@ -96,34 +80,22 @@ impl QKNorm {
 
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
-            let scales_param =
-                parameter_tree.leaf("key_norm.scales").map_err(|e| {
-                    RMSNormError::MetalError(MTLError::Library(
-                        crate::backends::metal::error::LibraryError::Custom(
-                            format!("Failed to load key scales: {:?}", e),
-                        ),
-                    ))
-                })?;
+            let scales_param = parameter_tree.leaf("key_norm.scales").map_err(|e| {
+                RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(
+                    format!("Failed to load key scales: {:?}", e),
+                )))
+            })?;
 
             let scales_data = scales_param.as_bytes();
-            let scales_buffer = context.device.new_buffer_with_data(
-                scales_data,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            );
+            let scales_buffer =
+                context.device.new_buffer_with_data(scales_data, MTLResourceOptions::STORAGE_MODE_SHARED);
 
-            let accumulation_data_type: DataType =
-                k_config.accumulation_precision.into();
+            let accumulation_data_type: DataType = k_config.accumulation_precision.into();
             let scale_data_type: DataType = k_config.scale_precision.into();
 
-            let (input_type, scales_type, output_type) = match k_config
-                .upcast_mode
-            {
-                UpcastMode::OnlyNormalization => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
-                UpcastMode::FullLayer => {
-                    (intermediate_data_type, scale_data_type, scale_data_type)
-                },
+            let (input_type, scales_type, output_type) = match k_config.upcast_mode {
+                UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
+                UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
             };
 
             let kernel = RMSNormKernel::new_with_mode(
@@ -162,9 +134,8 @@ impl EncodableBlock<Metal> for QKNorm {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -197,11 +168,7 @@ impl EncodableBlock<Metal> for QKNorm {
         let head_dim = self.head_dim as i32;
 
         // Process query normalization if configured
-        if let (
-            Some(query_kernel),
-            Some(query_scales_buffer),
-            Some(query_config),
-        ) =
+        if let (Some(query_kernel), Some(query_scales_buffer), Some(query_config)) =
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             if let Err(e) = query_kernel.encode_qk_norm(
@@ -220,10 +187,7 @@ impl EncodableBlock<Metal> for QKNorm {
                     target: QKNormTarget::QueryHeads,
                 },
             ) {
-                eprintln!(
-                    "Failed to encode query normalization kernel: {:?}",
-                    e
-                );
+                eprintln!("Failed to encode query normalization kernel: {:?}", e);
             }
         }
 

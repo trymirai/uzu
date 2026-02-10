@@ -109,22 +109,13 @@ impl<B: Backend> KVCacheLayer<B> {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let prefix_segment_length = self.prefix_segment_length();
-        fill_attention_bias(
-            dst,
-            suffix_length,
-            prefix_segment_length,
-            |row_index, column_index| {
-                if let Some(bias_fn) = external_bias_fn {
-                    bias_fn(row_index, column_index)
-                } else {
-                    self.bias_should_be_neg_inf(
-                        row_index,
-                        column_index,
-                        suffix_token_positions,
-                    )
-                }
-            },
-        );
+        fill_attention_bias(dst, suffix_length, prefix_segment_length, |row_index, column_index| {
+            if let Some(bias_fn) = external_bias_fn {
+                bias_fn(row_index, column_index)
+            } else {
+                self.bias_should_be_neg_inf(row_index, column_index, suffix_token_positions)
+            }
+        });
     }
 
     pub fn bias_should_be_neg_inf(
@@ -184,22 +175,14 @@ impl<B: Backend> KVCacheLayer<B> {
                 }
 
                 // Absolute positions of the *source* rows.
-                let source_indices: Vec<usize> = accepted_suffix_indices
-                    .iter()
-                    .map(|i| i + suffix_start.unwrap_or(*prefix_len))
-                    .collect();
+                let source_indices: Vec<usize> =
+                    accepted_suffix_indices.iter().map(|i| i + suffix_start.unwrap_or(*prefix_len)).collect();
 
                 // Absolute positions of the *destination* rows.
-                let destination_indices: Vec<usize> = (*prefix_len
-                    ..*prefix_len + accepted_suffix_indices.len())
-                    .collect();
+                let destination_indices: Vec<usize> =
+                    (*prefix_len..*prefix_len + accepted_suffix_indices.len()).collect();
 
-                self.scatter_if_required(
-                    &source_indices,
-                    &destination_indices,
-                    command_buffer,
-                    kv_cache_update,
-                );
+                self.scatter_if_required(&source_indices, &destination_indices, command_buffer, kv_cache_update);
             },
 
             KVCacheLayerState::Windowed {
@@ -207,31 +190,21 @@ impl<B: Backend> KVCacheLayer<B> {
                 ring_length,
                 window_length,
             } => {
-                let suffix_indices: Vec<usize> =
-                    if accepted_suffix_indices.is_empty() {
-                        vec![0]
-                    } else {
-                        accepted_suffix_indices.to_vec()
-                    };
+                let suffix_indices: Vec<usize> = if accepted_suffix_indices.is_empty() {
+                    vec![0]
+                } else {
+                    accepted_suffix_indices.to_vec()
+                };
 
-                let source_indices: Vec<usize> =
-                    suffix_indices.iter().map(|i| i + *window_length).collect();
+                let source_indices: Vec<usize> = suffix_indices.iter().map(|i| i + *window_length).collect();
 
-                let mut destination_indices =
-                    Vec::with_capacity(suffix_indices.len());
+                let mut destination_indices = Vec::with_capacity(suffix_indices.len());
 
                 for i in 0..suffix_indices.len() {
-                    destination_indices.push(
-                        (*ring_length + *ring_offset + i) % *window_length,
-                    );
+                    destination_indices.push((*ring_length + *ring_offset + i) % *window_length);
                 }
 
-                self.scatter_if_required(
-                    &source_indices,
-                    &destination_indices,
-                    command_buffer,
-                    kv_cache_update,
-                );
+                self.scatter_if_required(&source_indices, &destination_indices, command_buffer, kv_cache_update);
             },
         }
     }
@@ -260,12 +233,7 @@ impl<B: Backend> KVCacheLayer<B> {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let _ = kv_cache_update.encode(
-            &[layer_data],
-            source_indices,
-            destination_indices,
-            command_buffer,
-        );
+        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, command_buffer);
     }
 
     pub fn register_accepted_tokens(
@@ -286,8 +254,7 @@ impl<B: Backend> KVCacheLayer<B> {
             } => {
                 for &token_pos in token_positions {
                     if *ring_length < *window_length {
-                        let dst =
-                            (*ring_offset + *ring_length) % *window_length;
+                        let dst = (*ring_offset + *ring_length) % *window_length;
 
                         self.prefix_token_positions[dst] = token_pos;
                         *ring_length += 1;
@@ -319,17 +286,10 @@ impl<B: Backend> KVCacheLayer<B> {
                 window_length,
             } => {
                 let newest_slot = (ring_length > 0)
-                    .then_some(
-                        (ring_offset + ring_length + window_length - 1)
-                            % window_length,
-                    )
+                    .then_some((ring_offset + ring_length + window_length - 1) % window_length)
                     .unwrap_or(0);
-                let unmask_col = (ring_length > 0)
-                    .then_some(newest_slot as i32)
-                    .unwrap_or(-1);
-                let mask_col = (ring_length == window_length)
-                    .then_some(ring_offset as i32)
-                    .unwrap_or(-1);
+                let unmask_col = (ring_length > 0).then_some(newest_slot as i32).unwrap_or(-1);
+                let mask_col = (ring_length == window_length).then_some(ring_offset as i32).unwrap_or(-1);
 
                 Some(AttentionBiasUpdate {
                     key: Some(window_length),
@@ -370,16 +330,8 @@ impl<B: Backend> KVCacheLayer<B> {
                 let dtype = keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys = context.create_array(
-                    &slice_shape,
-                    dtype,
-                    "kv_cache_layer_slice_keys",
-                );
-                let mut slice_values = context.create_array(
-                    &slice_shape,
-                    dtype,
-                    "kv_cache_layer_slice_values",
-                );
+                let mut slice_keys = context.create_array(&slice_shape, dtype, "kv_cache_layer_slice_keys");
+                let mut slice_values = context.create_array(&slice_shape, dtype, "kv_cache_layer_slice_values");
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -393,10 +345,7 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
-                let positions: Vec<usize> = slots
-                    .iter()
-                    .map(|&s| self.prefix_token_positions[s])
-                    .collect();
+                let positions: Vec<usize> = slots.iter().map(|&s| self.prefix_token_positions[s]).collect();
 
                 for (i, &slot) in slots.iter().enumerate() {
                     slice_keys.copy_slice(&keys, 1, slot..slot + 1, i);
@@ -440,8 +389,7 @@ impl<B: Backend> KVCacheLayer<B> {
                 Some(r) => {
                     let accepted = r.start;
                     *prefix_len = base_prefix_len.saturating_add(accepted);
-                    let keep_positions =
-                        base_positions_len.saturating_add(accepted);
+                    let keep_positions = base_positions_len.saturating_add(accepted);
                     self.prefix_token_positions.truncate(keep_positions);
                 },
             },
@@ -508,20 +456,9 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            self.prefix_token_positions[slot] =
-                                positions[src_i];
-                            dst_keys.copy_slice(
-                                keys,
-                                1,
-                                src_i..src_i + 1,
-                                slot,
-                            );
-                            dst_values.copy_slice(
-                                values,
-                                1,
-                                src_i..src_i + 1,
-                                slot,
-                            );
+                            self.prefix_token_positions[slot] = positions[src_i];
+                            dst_keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
+                            dst_values.copy_slice(values, 1, src_i..src_i + 1, slot);
                         }
                     },
                 }

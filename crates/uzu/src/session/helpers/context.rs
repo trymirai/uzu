@@ -1,7 +1,4 @@
-use crate::{
-    backends::metal::Metal, forward_pass::cache_layers::CacheLayers,
-    session::config::DecodingConfig,
-};
+use crate::{backends::metal::Metal, forward_pass::cache_layers::CacheLayers, session::config::DecodingConfig};
 
 pub struct Context {
     pub tokens: Vec<u64>,

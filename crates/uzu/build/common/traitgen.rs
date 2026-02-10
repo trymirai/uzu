@@ -56,8 +56,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         })
         .collect::<(Vec<_>, Vec<_>)>();
 
-    let encode_generics =
-        encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
     let kernel_trait = quote! {
         pub trait #trait_name: Sized {
@@ -70,17 +69,13 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         }
     };
 
-    let kernel_type =
-        quote! { type #trait_name: #trait_name<Backend = Self::Backend>; };
+    let kernel_type = quote! { type #trait_name: #trait_name<Backend = Self::Backend>; };
 
     (kernel_trait, kernel_type)
 }
 
-pub fn traitgen_all(
-    backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>
-) -> anyhow::Result<()> {
-    let out_dir =
-        PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>) -> anyhow::Result<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
     let mut kernels: HashMap<Box<[Box<str>]>, Box<[Kernel]>> = HashMap::new();
 
@@ -99,9 +94,7 @@ pub fn traitgen_all(
     let mut kernel_traits = Vec::new();
     let mut kernel_types = Vec::new();
 
-    for (_file_path, file_kernels) in
-        kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::"))
-    {
+    for (_file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
         for (tr, ty) in file_kernels.iter().map(traitgen) {
             kernel_traits.push(tr);
             kernel_types.push(ty);
@@ -137,8 +130,7 @@ pub fn traitgen_all(
         }
     };
 
-    write_tokens(kernel_traits, out_dir.join("traits.rs"))
-        .context("cannot write kernel traits")?;
+    write_tokens(kernel_traits, out_dir.join("traits.rs")).context("cannot write kernel traits")?;
 
     Ok(())
 }

@@ -1,14 +1,10 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-    tile_configuration::TileConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
         MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
@@ -16,19 +12,13 @@ use crate::{
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<
-        PipelineConfiguration,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
     pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for GEMM: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
         }
         Ok(Self {
             data_type,
@@ -41,36 +31,21 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
     ) -> Result<(), MTLError> {
-        let tiles_and_alignments: &[(
-            TileConfiguration,
-            &[(bool, bool, bool)],
-        )] = match self.data_type {
+        let tiles_and_alignments: &[(TileConfiguration, &[(bool, bool, bool)])] = match self.data_type {
             DataType::BF16 => &[
-                (
-                    TileConfiguration::new(64, 32, 32, 2, 2, 0),
-                    &[(false, true, true), (true, true, true)],
-                ),
+                (TileConfiguration::new(64, 32, 32, 2, 2, 0), &[(false, true, true), (true, true, true)]),
                 (
                     TileConfiguration::new(64, 64, 16, 2, 2, 0),
-                    &[
-                        (false, true, true),
-                        (true, false, true),
-                        (true, true, true),
-                    ],
+                    &[(false, true, true), (true, false, true), (true, true, true)],
                 ),
-                (
-                    TileConfiguration::new(64, 64, 16, 1, 2, 0),
-                    &[(true, true, true)],
-                ),
+                (TileConfiguration::new(64, 64, 16, 1, 2, 0), &[(true, true, true)]),
             ],
-            DataType::F16 => &[(
-                TileConfiguration::new(64, 64, 16, 2, 2, 0),
-                &[(true, true, true), (false, true, true)],
-            )],
-            DataType::F32 => &[(
-                TileConfiguration::new(32, 64, 16, 1, 2, 0),
-                &[(false, true, true), (true, true, true)],
-            )],
+            DataType::F16 => {
+                &[(TileConfiguration::new(64, 64, 16, 2, 2, 0), &[(true, true, true), (false, true, true)])]
+            },
+            DataType::F32 => {
+                &[(TileConfiguration::new(32, 64, 16, 1, 2, 0), &[(false, true, true), (true, true, true)])]
+            },
             _ => return Ok(()),
         };
 
@@ -108,10 +83,7 @@ impl Kernel {
         configuration: &PipelineConfiguration,
     ) -> String {
         let type_name = self.type_name();
-        let transpose_suffix = transpose_configuration(
-            configuration.transpose_a,
-            configuration.transpose_b,
-        );
+        let transpose_suffix = transpose_configuration(configuration.transpose_a, configuration.transpose_b);
         let prefix = if configuration.tile.is_nax() {
             "steel_gemm_nax"
         } else {
@@ -135,8 +107,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = MTLFunctionConstantValues::new();
@@ -181,11 +152,8 @@ impl Kernel {
                 configuration.use_out_source as u8,
                 configuration.do_axpby as u8
             );
-            let pipeline_state = context.compute_pipeline_state_cached(
-                &cache_key,
-                &kernel_name,
-                Some(&function_constants),
-            )?;
+            let pipeline_state =
+                context.compute_pipeline_state_cached(&cache_key, &kernel_name, Some(&function_constants))?;
             self.pipelines.insert(configuration.clone(), pipeline_state);
         }
         Ok(self.pipelines.get(configuration).unwrap())
@@ -198,10 +166,7 @@ impl Kernel {
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
-        let pipeline_state = self.get_or_compile_pipeline(
-            context,
-            &descriptor.pipeline_configuration,
-        )?;
+        let pipeline_state = self.get_or_compile_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
         encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
@@ -219,10 +184,7 @@ impl Kernel {
             encoder.set_value(addmm_params, 5);
         }
 
-        encoder.dispatch_threadgroups(
-            descriptor.threadgroups,
-            descriptor.threads_per_threadgroup,
-        );
+        encoder.dispatch_threadgroups(descriptor.threadgroups, descriptor.threads_per_threadgroup);
         Ok(false)
     }
 }

@@ -3,10 +3,7 @@
 use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
 use crate::backends::metal::MTLBlitCommandEncoder;
-use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
-};
+use crate::backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained};
 use crate::encodable_block::EncodingParameters;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
@@ -47,9 +44,8 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
         parameters: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, parameters);
             encoder.end_encoding();
         } else {
@@ -62,8 +58,7 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
         #[cfg(feature = "tracing")]
         {
             let traces_rc = state.traces().clone();
-            let logits_arrays =
-                state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
+            let logits_arrays = state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
             let logits_array_ref = logits_arrays[0].borrow();
             let linear_output_buffer = logits_array_ref.buffer();
             let data_type = logits_array_ref.data_type();
@@ -73,19 +68,10 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
             let trace_logits = traces_ref.logits.borrow();
             let dst_trace_buf = trace_logits.buffer();
 
-            let copy_size_bytes =
-                batch_size * self.num_labels * data_type.size_in_bytes();
+            let copy_size_bytes = batch_size * self.num_labels * data_type.size_in_bytes();
 
-            let blit = command_buffer
-                .new_blit_command_encoder()
-                .expect("Failed to create blit command encoder");
-            blit.copy_buffer_to_buffer(
-                linear_output_buffer,
-                0,
-                dst_trace_buf,
-                0,
-                copy_size_bytes,
-            );
+            let blit = command_buffer.new_blit_command_encoder().expect("Failed to create blit command encoder");
+            blit.copy_buffer_to_buffer(linear_output_buffer, 0, dst_trace_buf, 0, copy_size_bytes);
             blit.end_encoding();
         }
 

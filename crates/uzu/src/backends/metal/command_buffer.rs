@@ -10,13 +10,9 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
 
     fn with_compute_encoder<T>(
         &self,
-        callback: impl FnOnce(
-            &<Self::Backend as crate::backends::common::Backend>::ComputeEncoder,
-        ) -> T,
+        callback: impl FnOnce(&<Self::Backend as crate::backends::common::Backend>::ComputeEncoder) -> T,
     ) -> T {
-        let encoder = self
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = self.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
         let ret = callback(&encoder);
 
@@ -27,13 +23,9 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
 
     fn with_copy_encoder<T>(
         &self,
-        callback: impl FnOnce(
-            &<Self::Backend as crate::backends::common::Backend>::CopyEncoder,
-        ) -> T,
+        callback: impl FnOnce(&<Self::Backend as crate::backends::common::Backend>::CopyEncoder) -> T,
     ) -> T {
-        let encoder = self
-            .new_blit_command_encoder()
-            .expect("Failed to create blit command encoder");
+        let encoder = self.new_blit_command_encoder().expect("Failed to create blit command encoder");
 
         let ret = callback(&encoder);
 

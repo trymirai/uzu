@@ -54,12 +54,8 @@ fn strftime_now(format_string: String) -> String {
 
         loop {
             let mut buffer = vec![0u8; buf_len];
-            let written = libc::strftime(
-                buffer.as_mut_ptr() as *mut libc::c_char,
-                buffer.len(),
-                c_format.as_ptr(),
-                &tm,
-            );
+            let written =
+                libc::strftime(buffer.as_mut_ptr() as *mut libc::c_char, buffer.len(), c_format.as_ptr(), &tm);
 
             if written > 0 {
                 buffer.truncate(written as usize);
@@ -84,17 +80,13 @@ impl InputProcessor for InputProcessorDefault {
     ) -> Result<String, Error> {
         let messages = input.get_messages();
         for message in &messages {
-            if message.role != Role::Assistant
-                && message.reasoning_content.is_some()
-            {
+            if message.role != Role::Assistant && message.reasoning_content.is_some() {
                 return Err(Error::UnexpectedReasoningContent);
             }
         }
 
-        let messages = messages
-            .into_iter()
-            .map(|message| message.resolve(&self.message_processing_config))
-            .collect::<Vec<_>>();
+        let messages =
+            messages.into_iter().map(|message| message.resolve(&self.message_processing_config)).collect::<Vec<_>>();
         let template = self.message_processing_config.prompt_template.clone();
         let bos_token = self.message_processing_config.bos_token.clone();
 
@@ -102,12 +94,8 @@ impl InputProcessor for InputProcessorDefault {
         let mut environment = Environment::new();
         environment.set_unknown_method_callback(unknown_method_callback);
         environment.add_function("strftime_now", strftime_now);
-        environment
-            .add_template(template_name, template.as_str())
-            .map_err(|_| Error::UnableToLoadPromptTemplate)?;
-        let template = environment
-            .get_template(template_name)
-            .map_err(|_| Error::UnableToLoadPromptTemplate)?;
+        environment.add_template(template_name, template.as_str()).map_err(|_| Error::UnableToLoadPromptTemplate)?;
+        let template = environment.get_template(template_name).map_err(|_| Error::UnableToLoadPromptTemplate)?;
 
         let result = template
             .render(context!(

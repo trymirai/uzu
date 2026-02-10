@@ -7,9 +7,8 @@ use crate::{
     backends::common::{
         Context,
         kernel::{
-            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel,
-            BitmaskKernel, GumbelKernel, MinPKernel, TemperatureKernel,
-            TopKKernel, TopPKernel,
+            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
+            TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
     session::parameter::SamplingMethod,
@@ -83,13 +82,7 @@ impl<B: Backend> SamplingKernel<B> {
         max_batch_size: usize,
         max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        Self::new_with_strategy(
-            context,
-            data_type,
-            max_batch_size,
-            max_vocab_size,
-            ArgmaxStrategy::TwoPass,
-        )
+        Self::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, ArgmaxStrategy::TwoPass)
     }
 
     pub fn new_with_strategy(
@@ -100,56 +93,39 @@ impl<B: Backend> SamplingKernel<B> {
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
         let bitmask =
-            <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type)
-                .map_err(SamplingError::BackendError)?;
+            <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
         let temperature =
-            <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type)
-                .map_err(SamplingError::BackendError)?;
-        let topk = <B::Kernels as Kernels>::TopKKernel::new(context, data_type)
-            .map_err(SamplingError::BackendError)?;
-        let topp = <B::Kernels as Kernels>::TopPKernel::new(context, data_type)
-            .map_err(SamplingError::BackendError)?;
-        let minp = <B::Kernels as Kernels>::MinPKernel::new(context, data_type)
-            .map_err(SamplingError::BackendError)?;
+            <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
+        let topk = <B::Kernels as Kernels>::TopKKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
+        let topp = <B::Kernels as Kernels>::TopPKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
+        let minp = <B::Kernels as Kernels>::MinPKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
         let gumbel =
-            <B::Kernels as Kernels>::GumbelKernel::new(context, data_type)
-                .map_err(SamplingError::BackendError)?;
+            <B::Kernels as Kernels>::GumbelKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
-                let kernel = <B::Kernels as Kernels>::ArgmaxSingleKernel::new(
-                    context, data_type,
-                )
-                .map_err(SamplingError::BackendError)?;
+                let kernel = <B::Kernels as Kernels>::ArgmaxSingleKernel::new(context, data_type)
+                    .map_err(SamplingError::BackendError)?;
 
                 ArgmaxImplementation::SinglePass {
                     kernel,
                 }
             },
             ArgmaxStrategy::TwoPass => {
-                let main_kernel =
-                    <B::Kernels as Kernels>::ArgmaxMainKernel::new(
-                        context, data_type,
-                    )
+                let main_kernel = <B::Kernels as Kernels>::ArgmaxMainKernel::new(context, data_type)
                     .map_err(SamplingError::BackendError)?;
                 let final_kernel =
-                    <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context)
-                        .map_err(SamplingError::BackendError)?;
+                    <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context).map_err(SamplingError::BackendError)?;
 
                 let block_size = 1024;
                 let grain_size = 4;
 
                 let elements_per_group = block_size * grain_size;
-                let max_vocab_groups_per_batch =
-                    (max_vocab_size + elements_per_group - 1)
-                        / elements_per_group;
-                let max_partial_results =
-                    max_batch_size * max_vocab_groups_per_batch;
+                let max_vocab_groups_per_batch = (max_vocab_size + elements_per_group - 1) / elements_per_group;
+                let max_partial_results = max_batch_size * max_vocab_groups_per_batch;
 
                 let partial_results_buffer = context
-                    .create_buffer(
-                        max_partial_results * size_of::<ArgmaxPair>(),
-                    )
+                    .create_buffer(max_partial_results * size_of::<ArgmaxPair>())
                     .expect("Failed to create partial results buffer");
 
                 ArgmaxImplementation::TwoPass {
@@ -187,16 +163,10 @@ impl<B: Backend> SamplingKernel<B> {
         compute_encoder: &B::ComputeEncoder,
     ) -> Result<(), SamplingError<B>> {
         if batch_size > self.max_batch_size {
-            return Err(SamplingError::BatchSizeExceeded(
-                batch_size,
-                self.max_batch_size,
-            ));
+            return Err(SamplingError::BatchSizeExceeded(batch_size, self.max_batch_size));
         }
         if vocab_size > self.max_vocab_size {
-            return Err(SamplingError::VocabSizeExceeded(
-                vocab_size,
-                self.max_vocab_size,
-            ));
+            return Err(SamplingError::VocabSizeExceeded(vocab_size, self.max_vocab_size));
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
@@ -263,10 +233,7 @@ impl<B: Backend> SamplingKernel<B> {
 
             self.gumbel.encode(
                 logits_buffer,
-                (
-                    seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
-                    seeds_offset,
-                ),
+                (seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?, seeds_offset),
                 logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,

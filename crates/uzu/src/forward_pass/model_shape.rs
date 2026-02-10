@@ -29,19 +29,14 @@ pub struct ModelShape {
 
 impl ModelShape {
     pub fn from_decoder_config(decoder_config: &DecoderConfig) -> Self {
-        let activation_type: DataType =
-            match &decoder_config.layer_config.mlp_config {
-                crate::config::MLPConfig::Dense(d) => {
-                    d.linear_config.activation_precision().into()
-                },
-                crate::config::MLPConfig::MixtureOfExperts(m) => {
-                    m.expert_config.linear_config.activation_precision().into()
-                },
-            };
+        let activation_type: DataType = match &decoder_config.layer_config.mlp_config {
+            crate::config::MLPConfig::Dense(d) => d.linear_config.activation_precision().into(),
+            crate::config::MLPConfig::MixtureOfExperts(m) => {
+                m.expert_config.linear_config.activation_precision().into()
+            },
+        };
         let num_layers = decoder_config.num_layers;
-        let layer_types: Box<[DecoderLayerType]> = if let Some(layer_types) =
-            &decoder_config.layer_types
-        {
+        let layer_types: Box<[DecoderLayerType]> = if let Some(layer_types) = &decoder_config.layer_types {
             assert_eq!(
                 layer_types.len(),
                 num_layers,
@@ -75,8 +70,7 @@ impl ModelShape {
                 max_mamba_head_dim = max_mamba_head_dim.max(*head_dim);
                 max_mamba_conv_dim = max_mamba_conv_dim.max(*conv_dim);
                 max_mamba_state_dim = max_mamba_state_dim.max(*state_dim);
-                max_mamba_kernel_size =
-                    max_mamba_kernel_size.max(*kernel_size as usize);
+                max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
         Self {
@@ -368,9 +362,7 @@ impl ModelShape {
     }
 
     pub fn has_short_conv_layers(&self) -> bool {
-        self.layer_types.iter().any(|layer_type| {
-            matches!(layer_type, DecoderLayerType::ShortConv { .. })
-        })
+        self.layer_types.iter().any(|layer_type| matches!(layer_type, DecoderLayerType::ShortConv { .. }))
     }
 
     pub fn max_mamba_conv_dim(&self) -> Option<usize> {
@@ -409,9 +401,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
         match (self.max_mamba_conv_dim(), self.max_mamba_kernel_size()) {
-            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => {
-                Some([suffix_length + kernel_size - 1, conv_dim])
-            },
+            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => Some([suffix_length + kernel_size - 1, conv_dim]),
             _ => None,
         }
     }
@@ -474,9 +464,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> Option<[usize; 3]> {
         if self.has_state_space_layers() {
-            self.max_mamba_state_dim().map(|state_dim| {
-                [suffix_length, self.max_mamba_groups, state_dim]
-            })
+            self.max_mamba_state_dim().map(|state_dim| [suffix_length, self.max_mamba_groups, state_dim])
         } else {
             None
         }

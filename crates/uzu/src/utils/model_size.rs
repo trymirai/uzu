@@ -11,8 +11,7 @@ pub enum ModelSize {
 impl ModelSize {
     pub fn from_path(model_path: &Path) -> Self {
         let weights_path = model_path.join("model.safetensors");
-        let size_bytes =
-            std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
+        let size_bytes = std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
 
         Self::from_bytes(size_bytes)
     }
@@ -42,10 +41,7 @@ mod tests {
             .join(VERSION)
             .join(MODEL_DIR_NAME);
         if !path.exists() {
-            panic!(
-                "Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.",
-                path
-            );
+            panic!("Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.", path);
         }
         path
     }

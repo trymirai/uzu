@@ -11,9 +11,7 @@ use crate::DataType;
 pub enum HeaderLoadingError {
     #[error("The header is an invalid UTF-8 string and cannot be read.")]
     InvalidHeader,
-    #[error(
-        "The header does contain a valid string, but it is not valid JSON."
-    )]
+    #[error("The header does contain a valid string, but it is not valid JSON.")]
     InvalidHeaderDeserialization,
     #[error("The header is large than 100Mo which is considered too large.")]
     HeaderTooLarge,
@@ -41,9 +39,7 @@ pub struct TensorInfo {
     pub data_offsets: (usize, usize),
 }
 
-#[derive(
-    Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd,
-)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 #[non_exhaustive]
 pub enum Dtype {
     /// Boolan type
@@ -116,29 +112,20 @@ impl From<DataType> for Dtype {
 
 const MAX_HEADER_SIZE: usize = 100_000_000;
 
-pub fn read_metadata(
-    file: &File
-) -> Result<(usize, HashMetadata), HeaderLoadingError> {
+pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoadingError> {
     let mut header_buffer = [0u8; size_of::<u64>()];
-    file.read_exact_at(&mut header_buffer, 0)
-        .map_err(|_| HeaderLoadingError::HeaderTooSmall)?;
-    let metadata_size: usize = u64::from_le_bytes(header_buffer)
-        .try_into()
-        .map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
+    file.read_exact_at(&mut header_buffer, 0).map_err(|_| HeaderLoadingError::HeaderTooSmall)?;
+    let metadata_size: usize =
+        u64::from_le_bytes(header_buffer).try_into().map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
     if metadata_size > MAX_HEADER_SIZE {
         return Err(HeaderLoadingError::InvalidHeaderLength);
     }
 
-    let stop = metadata_size
-        .checked_add(8)
-        .ok_or(HeaderLoadingError::InvalidHeaderLength)?;
-    let mut json_buffer: Box<[u8]> =
-        core::iter::repeat(0).take(stop - size_of::<u64>()).collect();
-    file.read_exact_at(&mut json_buffer, 8)
-        .map_err(|_| HeaderLoadingError::InvalidHeader)?;
-    let string = core::str::from_utf8(&json_buffer)
-        .map_err(|_| HeaderLoadingError::InvalidHeader)?;
-    let metadata: HashMetadata = serde_json::from_str(string)
-        .map_err(|_| HeaderLoadingError::InvalidHeaderDeserialization)?;
+    let stop = metadata_size.checked_add(8).ok_or(HeaderLoadingError::InvalidHeaderLength)?;
+    let mut json_buffer: Box<[u8]> = core::iter::repeat(0).take(stop - size_of::<u64>()).collect();
+    file.read_exact_at(&mut json_buffer, 8).map_err(|_| HeaderLoadingError::InvalidHeader)?;
+    let string = core::str::from_utf8(&json_buffer).map_err(|_| HeaderLoadingError::InvalidHeader)?;
+    let metadata: HashMetadata =
+        serde_json::from_str(string).map_err(|_| HeaderLoadingError::InvalidHeaderDeserialization)?;
     Ok((stop, metadata))
 }

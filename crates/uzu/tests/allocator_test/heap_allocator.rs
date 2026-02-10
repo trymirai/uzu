@@ -1,9 +1,6 @@
 use std::cell::Cell;
 
-use metal::{
-    MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
-    MTLResourceOptions, MTLStorageMode,
-};
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLResourceOptions, MTLStorageMode};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::allocator_trait::AllocatorTrait;
@@ -16,16 +13,13 @@ pub struct MTLHeapAllocator {
 
 impl MTLHeapAllocator {
     pub fn new(heap_size: usize) -> Self {
-        let device =
-            <dyn MTLDevice>::system_default().expect("No Metal device");
+        let device = <dyn MTLDevice>::system_default().expect("No Metal device");
 
         let descriptor = MTLHeapDescriptor::new();
         descriptor.set_size(heap_size);
         descriptor.set_storage_mode(MTLStorageMode::Shared);
 
-        let heap = device
-            .new_heap_with_descriptor(&descriptor)
-            .expect("Failed to create heap");
+        let heap = device.new_heap_with_descriptor(&descriptor).expect("Failed to create heap");
 
         Self {
             heap,

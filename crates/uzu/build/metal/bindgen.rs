@@ -22,33 +22,18 @@ pub fn bindgen(
     let struct_name = format_ident!("{kernel_name}MetalKernel");
 
     let parse_expr = |expr: &Box<str>| -> anyhow::Result<TokenStream> {
-        syn::parse_str(expr.as_ref()).with_context(|| {
-            format!(
-                "cannot parse rust expression `{}` in kernel `{}`",
-                expr, kernel_name
-            )
-        })
+        syn::parse_str(expr.as_ref())
+            .with_context(|| format!("cannot parse rust expression `{}` in kernel `{}`", expr, kernel_name))
     };
 
-    let (variants_extra_arguments, variants_kernel_format) = if let Some(
-        variants,
-    ) =
-        &kernel.variants
-    {
-        let variant_names = variants
-            .iter()
-            .map(|type_parameter| {
-                format_ident!("{}", type_parameter.name.as_ref())
-            })
-            .collect::<Vec<_>>();
+    let (variants_extra_arguments, variants_kernel_format) = if let Some(variants) = &kernel.variants {
+        let variant_names =
+            variants.iter().map(|type_parameter| format_ident!("{}", type_parameter.name.as_ref())).collect::<Vec<_>>();
 
         let kernel_format = repeat_n("{}", variant_names.len() + 1).join("_");
 
         (
-            variant_names
-                .iter()
-                .map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType })
-                .collect(),
+            variant_names.iter().map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType }).collect(),
             quote! { &format!(#kernel_format, #kernel_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
         )
     } else {
@@ -56,15 +41,10 @@ pub fn bindgen(
     };
 
     let base_index = specialize_indices.get(&kernel.name).copied();
-    let (specialize_args, specialize_setup): (
-        Vec<TokenStream>,
-        Vec<TokenStream>,
-    ) = kernel
+    let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
         .arguments
         .iter()
-        .filter(|a| {
-            matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_)))
-        })
+        .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
         .enumerate()
         .map(|(i, a)| {
             let arg_name = format_ident!("{}", a.name.as_ref());
@@ -166,8 +146,7 @@ pub fn bindgen(
         })
         .multiunzip();
 
-    let encode_generics =
-        encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
     let (dispatch, elements) = if kernel.has_axis() {
         if kernel.has_groups() || kernel.has_threads() {
@@ -178,10 +157,9 @@ pub fn bindgen(
             .arguments
             .iter()
             .filter_map(|a| match a.argument_type() {
-                Ok(MetalArgumentType::Axis(
-                    threads_rexprs,
-                    threads_per_group_rexprs,
-                )) => Some((threads_rexprs, threads_per_group_rexprs)),
+                Ok(MetalArgumentType::Axis(threads_rexprs, threads_per_group_rexprs)) => {
+                    Some((threads_rexprs, threads_per_group_rexprs))
+                },
                 _ => None,
             })
             .map(|(threads_rexprs, threads_per_group_rexprs)| {
@@ -192,8 +170,7 @@ pub fn bindgen(
             .collect::<anyhow::Result<Vec<(TokenStream, TokenStream)>>>()?;
         axis.extend(repeat_n((quote! {1}, quote! {1}), 3 - axis.len()));
 
-        let (threads, threads_per_group): (Vec<TokenStream>, Vec<TokenStream>) =
-            axis.into_iter().unzip();
+        let (threads, threads_per_group): (Vec<TokenStream>, Vec<TokenStream>) = axis.into_iter().unzip();
 
         (
             quote! {
@@ -209,9 +186,7 @@ pub fn bindgen(
             .arguments
             .iter()
             .filter_map(|a| {
-                if let Ok(MetalArgumentType::Threads(rexprs)) =
-                    a.argument_type()
-                {
+                if let Ok(MetalArgumentType::Threads(rexprs)) = a.argument_type() {
                     Some(parse_expr(&rexprs))
                 } else {
                     None
@@ -241,10 +216,7 @@ pub fn bindgen(
                 .arguments
                 .iter()
                 .filter_map(|a| {
-                    if let Ok(MetalArgumentType::Groups(
-                        MetalGroupsType::Direct(rexprs),
-                    )) = a.argument_type()
-                    {
+                    if let Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(rexprs))) = a.argument_type() {
                         Some(parse_expr(&rexprs))
                     } else {
                         None

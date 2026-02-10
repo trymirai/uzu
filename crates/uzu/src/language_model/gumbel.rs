@@ -69,9 +69,7 @@ pub fn revidx(logit_idx: u32) -> (u32, u32) {
     let grain_idx = logit_idx_in_blockgrain / BLOCK_SIZE;
     let local_idx = logit_idx_in_blockgrain % BLOCK_SIZE;
 
-    let rng_offset = (global_idx * BLOCK_SIZE + local_idx)
-        * (GRAIN_SIZE + WORDS_PER_OFFSET - 1)
-        / WORDS_PER_OFFSET
+    let rng_offset = (global_idx * BLOCK_SIZE + local_idx) * (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET
         + grain_idx / WORDS_PER_OFFSET;
     let rng_word = grain_idx % WORDS_PER_OFFSET;
 

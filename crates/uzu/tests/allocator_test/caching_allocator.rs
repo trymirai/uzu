@@ -27,10 +27,7 @@ impl AllocatorTrait for CachingAllocator {
         &self,
         size: usize,
     ) -> Self::Buffer {
-        self.context
-            .allocator()
-            .alloc(BufferLifetime::Scratch, size)
-            .expect("Allocation failed")
+        self.context.allocator().alloc(BufferLifetime::Scratch, size).expect("Allocation failed")
     }
 
     fn free(

@@ -62,28 +62,17 @@ impl<B: Backend> ShortConvLayer<B> {
         let mut conv = self.conv_state.borrow_mut();
         let suffix = self.suffix_state.borrow();
 
-        assert_eq!(
-            conv.data_type(),
-            suffix.data_type(),
-            "ShortConv conv_state / suffix_state dtype mismatch"
-        );
+        assert_eq!(conv.data_type(), suffix.data_type(), "ShortConv conv_state / suffix_state dtype mismatch");
 
         let [model_dim, state_stride] = {
             let shape = conv.shape();
-            assert_eq!(
-                shape.len(),
-                2,
-                "ShortConv conv_state expected 2-D [model_dim, state_stride], got {:?}",
-                shape
-            );
+            assert_eq!(shape.len(), 2, "ShortConv conv_state expected 2-D [model_dim, state_stride], got {:?}", shape);
             [shape[0], shape[1]]
         };
 
         let suffix_shape = suffix.shape();
         assert!(
-            suffix_shape.len() == 3
-                && suffix_shape[1] == model_dim
-                && suffix_shape[2] == state_stride,
+            suffix_shape.len() == 3 && suffix_shape[1] == model_dim && suffix_shape[2] == state_stride,
             "ShortConv suffix_state expected 3-D [suffix_len, model_dim, state_stride], got {:?}",
             suffix_shape
         );
@@ -95,8 +84,7 @@ impl<B: Backend> ShortConvLayer<B> {
         );
 
         let elem_bytes = conv.data_type().size_in_bytes();
-        let bytes_per_token =
-            model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
+        let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
         let src_start = commit_index.saturating_mul(bytes_per_token);
         let src_end = src_start.saturating_add(bytes_per_token);
 

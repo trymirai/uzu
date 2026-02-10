@@ -30,10 +30,7 @@ pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
         ctx.create_buffer(1).expect("Failed to create empty buffer")
     } else {
         ctx.device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(data),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+            .new_buffer_with_data(bytemuck::cast_slice(data), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer")
     }
 }

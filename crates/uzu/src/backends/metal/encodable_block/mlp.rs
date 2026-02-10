@@ -3,8 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
 };
 
 use super::{EncodableBlock, Metal};
@@ -15,10 +14,7 @@ use crate::{
         kernel::{
             mlp::{MlpActivationType, MlpGateActMulEncodable},
             mlp_fused::{MlpFusedArguments, MlpFusedKernel},
-            quant_matmul::{
-                MlpFusedQmmArguments, MlpFusedQmmKernel, MlpFusedQmvArguments,
-                MlpFusedQmvKernel,
-            },
+            quant_matmul::{MlpFusedQmmArguments, MlpFusedQmmKernel, MlpFusedQmvArguments, MlpFusedQmvKernel},
         },
     },
     config::Activation,
@@ -54,9 +50,8 @@ impl EncodableBlock<Metal> for MlpBlock {
         params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -65,17 +60,15 @@ impl EncodableBlock<Metal> for MlpBlock {
 
             // Gate act+mul (fused_up -> hidden)
             {
-                let arrays =
-                    state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
+                let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
                 let fused = arrays[0].borrow_mut();
                 let hidden = arrays[1].borrow_mut();
                 let m = fused.shape()[0] as i32;
                 let fused_buf = fused.buffer();
                 let hidden_buf = hidden.buffer();
 
-                let encoder = command_buffer
-                    .new_compute_command_encoder()
-                    .expect("Failed to create compute command encoder");
+                let encoder =
+                    command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
                 self.gate
                     .encode(&encoder, fused_buf, hidden_buf, m)
                     .expect("Failed to encode MLP activation/mul kernel");
@@ -112,9 +105,7 @@ impl EncodableBlock<Metal> for MlpBlock {
         let m = fused.shape()[0] as i32;
         let fused_buf = fused.buffer();
         let hidden_buf = hidden.buffer();
-        self.gate
-            .encode(encoder, fused_buf, hidden_buf, m)
-            .expect("Failed to encode MLP activation/mul kernel");
+        self.gate.encode(encoder, fused_buf, hidden_buf, m).expect("Failed to encode MLP activation/mul kernel");
         drop(fused);
         drop(hidden);
 
@@ -143,8 +134,7 @@ pub struct MlpFusedBlock {
     down: Box<dyn EncodableBlock<Metal>>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
-    zero_points_or_biases_buffer:
-        Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    zero_points_or_biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -201,27 +191,11 @@ impl MlpFusedBlock {
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
-        let qmv = MlpFusedQmvKernel::new(
-            &context,
-            data_type,
-            group_size,
-            mode,
-            quantization_type,
-        )
-        .map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("{:?}", e))
-        })?;
+        let qmv = MlpFusedQmvKernel::new(&context, data_type, group_size, mode, quantization_type)
+            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("{:?}", e)))?;
 
-        let qmm = MlpFusedQmmKernel::new(
-            &context,
-            data_type,
-            group_size,
-            mode,
-            quantization_type,
-        )
-        .map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("{:?}", e))
-        })?;
+        let qmm = MlpFusedQmmKernel::new(&context, data_type, group_size, mode, quantization_type)
+            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("{:?}", e)))?;
 
         Ok(Self {
             context,
@@ -267,18 +241,14 @@ impl MlpFusedBlock {
                     batch_count: batch,
                     activation: self.activation,
                 };
-                kernel
-                    .borrow_mut()
-                    .encode(&self.context, encoder, &args)
-                    .expect("Failed to encode MLP fused kernel");
+                kernel.borrow_mut().encode(&self.context, encoder, &args).expect("Failed to encode MLP fused kernel");
             },
             MlpFusedUpKernel::Quantized {
                 qmv,
                 qmm,
             } => {
                 let scales = self.scales_buffer.as_ref().unwrap();
-                let zp_or_biases =
-                    self.zero_points_or_biases_buffer.as_ref().unwrap();
+                let zp_or_biases = self.zero_points_or_biases_buffer.as_ref().unwrap();
 
                 let is_decode = batch == 1;
                 if is_decode {
@@ -293,8 +263,7 @@ impl MlpFusedBlock {
                         hidden_dim: self.hidden_dim as i32,
                         batch_count: batch,
                     };
-                    qmv.encode(encoder, &args)
-                        .expect("Failed to encode MLP fused QMV");
+                    qmv.encode(encoder, &args).expect("Failed to encode MLP fused QMV");
                 } else {
                     let args = MlpFusedQmmArguments {
                         weights: &self.weights_buffer,
@@ -307,8 +276,7 @@ impl MlpFusedBlock {
                         input_dim: self.input_dim as i32,
                         hidden_dim: self.hidden_dim as i32,
                     };
-                    qmm.encode(encoder, &args)
-                        .expect("Failed to encode MLP fused QMM");
+                    qmm.encode(encoder, &args).expect("Failed to encode MLP fused QMM");
                 }
             },
         }
@@ -323,25 +291,22 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
         params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
             // Fused up + activation
             {
-                let arrays =
-                    state.arrays(&[self.input_array_id, self.hidden_array_id]);
+                let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);
                 let input = arrays[0].borrow_mut();
                 let hidden = arrays[1].borrow_mut();
                 let batch = input.shape()[0] as i32;
                 let input_buf = input.buffer();
                 let hidden_buf = hidden.buffer();
 
-                let encoder = command_buffer
-                    .new_compute_command_encoder()
-                    .expect("Failed to create compute command encoder");
+                let encoder =
+                    command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
                 self.encode_fused_up(&encoder, input_buf, 0, hidden_buf, batch);
                 encoder.end_encoding();
             }

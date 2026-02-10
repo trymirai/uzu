@@ -1,6 +1,4 @@
-use crate::backends::metal::{
-    MTLBuffer, ProtocolObject, kernel::mlp::MlpActivationType,
-};
+use crate::backends::metal::{MTLBuffer, ProtocolObject, kernel::mlp::MlpActivationType};
 
 #[derive(Debug)]
 pub struct MlpFusedArguments<'a> {

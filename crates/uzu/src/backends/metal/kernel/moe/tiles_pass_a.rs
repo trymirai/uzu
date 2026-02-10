@@ -2,17 +2,14 @@ use objc2::Message;
 
 use crate::backends::{
     common::kernel::{
-        MoePassABuildRowMapKernel, MoePassABuildTileMapKernel,
-        MoePassATileCountsKernel, MoePassATileScanKernel,
+        MoePassABuildRowMapKernel, MoePassABuildTileMapKernel, MoePassATileCountsKernel, MoePassATileScanKernel,
         MoePassAWriteDispatchArgsKernel,
     },
     metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError,
-        ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject,
         kernel::dsl::{
-            MoePassABuildRowMapMetalKernel, MoePassABuildTileMapMetalKernel,
-            MoePassATileCountsMetalKernel, MoePassATileScanMetalKernel,
-            MoePassAWriteDispatchArgsMetalKernel,
+            MoePassABuildRowMapMetalKernel, MoePassABuildTileMapMetalKernel, MoePassATileCountsMetalKernel,
+            MoePassATileScanMetalKernel, MoePassAWriteDispatchArgsMetalKernel,
         },
     },
 };
@@ -27,9 +24,9 @@ pub struct MoePassATileCountsArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoePassATileScanArguments<'a> {
-    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>, // [E]
+    pub tile_counts: &'a ProtocolObject<dyn MTLBuffer>,  // [E]
     pub tile_offsets: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,  // [>=1]
     pub e: usize,
 }
 
@@ -53,7 +50,7 @@ pub struct MoePassATileBuildArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoePassATileDispatchArguments<'a> {
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
     pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
     pub num_tiles_y: u32,
 }
@@ -82,9 +79,7 @@ impl MoePassATileKernels {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileCountsArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.counts.encode(
             &args.expert_offsets.retain(),
             &args.tile_counts.retain(),
@@ -100,9 +95,7 @@ impl MoePassATileKernels {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileScanArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.scan.encode(
             &args.tile_counts.retain(),
             &args.tile_offsets.retain(),
@@ -118,9 +111,7 @@ impl MoePassATileKernels {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassARowMapArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.row_map.encode(
             &args.expert_offsets.retain(),
             &args.row_expert_map.retain(),
@@ -136,9 +127,7 @@ impl MoePassATileKernels {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileBuildArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.build_map.encode(
             &args.expert_offsets.retain(),
             &args.tile_offsets.retain(),
@@ -156,15 +145,8 @@ impl MoePassATileKernels {
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         args: &MoePassATileDispatchArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        self.dispatch.encode(
-            &args.total_tiles.retain(),
-            &args.dispatch_args.retain(),
-            args.num_tiles_y,
-            &encoder,
-        );
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
+        self.dispatch.encode(&args.total_tiles.retain(), &args.dispatch_args.retain(), args.num_tiles_y, &encoder);
         encoder.end_encoding();
     }
 }

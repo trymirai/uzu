@@ -63,8 +63,8 @@ impl GrammarConfig {
         T: JsonSchema,
     {
         let schema_root = schemars::schema_for!(T);
-        let schema_str = serde_json::to_string(&schema_root)
-            .map_err(|e| format!("Failed to serialize schema: {}", e))?;
+        let schema_str =
+            serde_json::to_string(&schema_root).map_err(|e| format!("Failed to serialize schema: {}", e))?;
 
         Ok(Self::JsonSchema {
             schema: schema_str,
@@ -85,8 +85,8 @@ impl GrammarConfig {
         T: JsonSchema,
     {
         let schema_root = schemars::schema_for!(T);
-        let schema_str = serde_json::to_string(&schema_root)
-            .map_err(|e| format!("Failed to serialize schema: {}", e))?;
+        let schema_str =
+            serde_json::to_string(&schema_root).map_err(|e| format!("Failed to serialize schema: {}", e))?;
 
         Ok(Self::JsonSchema {
             schema: schema_str,

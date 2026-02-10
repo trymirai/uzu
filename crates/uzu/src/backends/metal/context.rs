@@ -3,14 +3,12 @@ use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 use metal::{MTLBuffer, MTLCommandBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    Metal, error::MTLError, kernel, metal_extensions::LibraryPipelineExtensions,
-};
+use super::{Metal, error::MTLError, kernel, metal_extensions::LibraryPipelineExtensions};
 use crate::backends::{
     common::{Allocator, Context},
     metal::{
-        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-        MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
+        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
+        MTLResourceOptions,
     },
 };
 
@@ -70,8 +68,7 @@ impl DeviceArchitecture {
 
         // Extract generation from architecture name
         // Format is typically like "Apple M3 Pro" or the GPU name "applegpu_g15d"
-        let (generation, device_class) =
-            Self::parse_architecture_info(&arch_string);
+        let (generation, device_class) = Self::parse_architecture_info(&arch_string);
 
         Self {
             generation,
@@ -100,10 +97,7 @@ impl DeviceArchitecture {
             DeviceGeneration::Unknown(0)
         };
 
-        let device_class = if arch.contains("Max")
-            || arch.contains("Ultra")
-            || arch.contains("Pro")
-        {
+        let device_class = if arch.contains("Max") || arch.contains("Ultra") || arch.contains("Pro") {
             DeviceClass::Desktop
         } else if arch.contains("iPhone") || arch.contains("iPad") {
             DeviceClass::Phone
@@ -133,9 +127,7 @@ pub struct MTLContext {
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub architecture: DeviceArchitecture,
     pub library: Retained<ProtocolObject<dyn MTLLibrary>>,
-    pipeline_cache: RefCell<
-        HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    >,
+    pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     allocator: Allocator<Metal>,
 }
 
@@ -162,22 +154,17 @@ impl MTLContext {
 
     /// TF32 toggle via UZU_TF32 environment variable.
     pub fn tf32_enabled(&self) -> bool {
-        env::var("UZU_TF32")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+        env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
     }
 
     pub fn compute_pipeline_state(
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         // Only cache pipelines without constants
         if constants.is_some() {
-            return self
-                .library
-                .compute_pipeline_state(function_name, constants);
+            return self.library.compute_pipeline_state(function_name, constants);
         }
         self.compute_pipeline_state_cached(function_name, function_name, None)
     }
@@ -187,18 +174,14 @@ impl MTLContext {
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
             return Ok(pipeline.clone());
         }
 
-        let pipeline =
-            self.library.compute_pipeline_state(function_name, constants)?;
+        let pipeline = self.library.compute_pipeline_state(function_name, constants)?;
 
-        self.pipeline_cache
-            .borrow_mut()
-            .insert(cache_key.to_string(), pipeline.clone());
+        self.pipeline_cache.borrow_mut().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
     }
@@ -208,22 +191,16 @@ impl Context for MTLContext {
     type Backend = Metal;
 
     fn new() -> Result<Rc<Self>, MTLError> {
-        let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default().ok_or(
-                MTLError::Generic("cannot open system default device".into()),
-            )?;
+        let device: Retained<ProtocolObject<dyn MTLDevice>> = <dyn metal::MTLDevice>::system_default()
+            .ok_or(MTLError::Generic("cannot open system default device".into()))?;
 
         let command_queue = device
             .new_command_queue_with_max_command_buffer_count(1024)
             .ok_or(MTLError::Generic("cannot create command queue".into()))?;
 
-        let library =
-            device.new_library_with_data(kernel::MTLB).map_err(|nserror| {
-                MTLError::Generic(format!(
-                    "Failed to create Metal library: {}",
-                    nserror
-                ))
-            })?;
+        let library = device
+            .new_library_with_data(kernel::MTLB)
+            .map_err(|nserror| MTLError::Generic(format!("Failed to create Metal library: {}", nserror)))?;
 
         let architecture = DeviceArchitecture::from_device(&device);
 
@@ -250,11 +227,7 @@ impl Context for MTLContext {
             .ok_or(MTLError::Generic("cannot create buffer".into()))
     }
 
-    fn create_command_buffer(
-        &self
-    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
-        self.command_queue
-            .command_buffer()
-            .ok_or(MTLError::Generic("cannot create command buffer".into()))
+    fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
+        self.command_queue.command_buffer().ok_or(MTLError::Generic("cannot create command buffer".into()))
     }
 }

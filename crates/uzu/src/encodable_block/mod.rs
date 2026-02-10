@@ -70,8 +70,6 @@ pub trait EncodableBlock<B: Backend> {
         command_buffer: &B::CommandBuffer,
         parameters: &EncodingParameters<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.encode_with_shared_encoder(state, encoder, parameters)
-        });
+        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, encoder, parameters));
     }
 }

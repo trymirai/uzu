@@ -6,13 +6,11 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
-            Retained,
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
+            ProtocolObject, Retained,
             compilation_parameters::CompilationConfig,
             kernel::short_conv::{
-                ShortConvDecodeArguments, ShortConvKernel,
-                ShortConvPackArguments, ShortConvPrefillArguments,
+                ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments, ShortConvPrefillArguments,
                 ShortConvTrieArguments,
             },
         },
@@ -58,19 +56,13 @@ impl ShortConvMixer {
         decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
-            panic!(
-                "Layer {} marked as non-ShortConv but ShortConv config provided",
-                layer_index
-            );
+            panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
 
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
 
-        let data_type: DataType = short_conv_config
-            .in_projection_config
-            .activation_precision()
-            .into();
+        let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
         let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
@@ -105,8 +97,7 @@ impl ShortConvMixer {
         };
 
         let short_conv_kernel =
-            ShortConvKernel::new(mtl_context, kernel_data_type)
-                .expect("Failed to create short conv kernel");
+            ShortConvKernel::new(mtl_context, kernel_data_type).expect("Failed to create short conv kernel");
 
         Self {
             layer_index,
@@ -133,9 +124,7 @@ impl ShortConvMixer {
 
         self.in_projection.encode(state, command_buffer, parameters);
 
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.run_conv(state, &encoder, active_suffix_length);
         encoder.end_encoding();
 
@@ -158,13 +147,11 @@ impl ShortConvMixer {
             return;
         }
 
-        self.in_projection
-            .encode_with_shared_encoder(state, encoder, parameters);
+        self.in_projection.encode_with_shared_encoder(state, encoder, parameters);
 
         self.run_conv(state, encoder, active_suffix_length);
 
-        self.out_projection
-            .encode_with_shared_encoder(state, encoder, parameters);
+        self.out_projection.encode_with_shared_encoder(state, encoder, parameters);
     }
 
     fn clear_suffix_state_valid_range(
@@ -175,9 +162,7 @@ impl ShortConvMixer {
             return;
         };
         let cache = cache_layers.borrow();
-        let layer = cache.data[self.layer_index]
-            .as_short_conv()
-            .expect("Expected ShortConv layer");
+        let layer = cache.data[self.layer_index].as_short_conv().expect("Expected ShortConv layer");
         layer.clear_suffix_state_valid_range();
     }
 
@@ -191,9 +176,7 @@ impl ShortConvMixer {
             return;
         };
         let cache = cache_layers.borrow();
-        let layer = cache.data[self.layer_index]
-            .as_short_conv()
-            .expect("Expected ShortConv layer");
+        let layer = cache.data[self.layer_index].as_short_conv().expect("Expected ShortConv layer");
         layer.set_suffix_state_valid_range(start, len);
     }
 
@@ -242,11 +225,8 @@ impl ShortConvMixer {
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmInProj,
-            ArrayId::ShortConvState(self.layer_index),
-            ArrayId::AttentionOutput,
-        ]);
+        let arrays =
+            state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
         let in_proj = arrays[0].borrow_mut();
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
@@ -266,15 +246,11 @@ impl ShortConvMixer {
         let state_stride = kernel_size.saturating_sub(1);
 
         // Allocate temporary padded buffer
-        let data_type: DataType =
-            self.config.in_projection_config.activation_precision().into();
+        let data_type: DataType = self.config.in_projection_config.activation_precision().into();
         let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
-        let padded_buf = state
-            .mtl_context()
-            .create_buffer(padded_size)
-            .expect("Failed to create padded buffer");
+        let padded_buf = state.mtl_context().create_buffer(padded_size).expect("Failed to create padded buffer");
         self.short_conv_kernel
             .encode_pack(
                 compute,
@@ -341,23 +317,18 @@ impl ShortConvMixer {
         let suffix_state_buf = suffix_state.buffer().clone();
         let out_buf = out.buffer().clone();
 
-        let data_type: DataType =
-            self.config.in_projection_config.activation_precision().into();
+        let data_type: DataType = self.config.in_projection_config.activation_precision().into();
         let elem_bytes = data_type.size_in_bytes();
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset =
-            in_proj.offset() + sampling_start * in_proj_stride * elem_bytes;
-        let out_offset =
-            out.offset() + sampling_start * self.model_dim * elem_bytes;
-        let suffix_state_offset = suffix_state.offset()
-            + sampling_start * self.model_dim * state_stride * elem_bytes;
+        let in_proj_offset = in_proj.offset() + sampling_start * in_proj_stride * elem_bytes;
+        let out_offset = out.offset() + sampling_start * self.model_dim * elem_bytes;
+        let suffix_state_offset = suffix_state.offset() + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.offset();
-        let parents_offset =
-            parents.offset() + sampling_start * std::mem::size_of::<i32>();
+        let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.buffer().clone();
@@ -398,11 +369,8 @@ impl ShortConvMixer {
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmInProj,
-            ArrayId::ShortConvState(self.layer_index),
-            ArrayId::AttentionOutput,
-        ]);
+        let arrays =
+            state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
         let in_proj = arrays[0].borrow_mut();
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
@@ -450,9 +418,8 @@ impl EncodableBlock<Metal> for ShortConvMixer {
         parameters: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             self.encode_pipeline_with_encoder(state, &encoder, parameters);
             encoder.end_encoding();
 
@@ -466,8 +433,7 @@ impl EncodableBlock<Metal> for ShortConvMixer {
     }
 
     fn supports_shared_encoder(&self) -> bool {
-        self.in_projection.supports_shared_encoder()
-            && self.out_projection.supports_shared_encoder()
+        self.in_projection.supports_shared_encoder() && self.out_projection.supports_shared_encoder()
     }
 
     fn encode_with_shared_encoder(

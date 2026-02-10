@@ -32,9 +32,7 @@ impl MlpFusedDispatchDescriptor {
     pub fn variant(&self) -> MlpFusedKernelVariant {
         match self {
             MlpFusedDispatchDescriptor::Gemv(_) => MlpFusedKernelVariant::Gemv,
-            MlpFusedDispatchDescriptor::SplitK(_) => {
-                MlpFusedKernelVariant::SplitK
-            },
+            MlpFusedDispatchDescriptor::SplitK(_) => MlpFusedKernelVariant::SplitK,
             MlpFusedDispatchDescriptor::Gemm(_) => MlpFusedKernelVariant::Gemm,
         }
     }
@@ -47,15 +45,11 @@ pub(crate) fn choose_dispatch_descriptor(
     arguments: &MlpFusedArguments,
 ) -> Result<MlpFusedDispatchDescriptor, MTLError> {
     if weights_transposed {
-        if let Some(descriptor) =
-            gemv::DispatchDescriptor::try_new(context, data_type, arguments)?
-        {
+        if let Some(descriptor) = gemv::DispatchDescriptor::try_new(context, data_type, arguments)? {
             return Ok(MlpFusedDispatchDescriptor::Gemv(descriptor));
         }
 
-        if let Some(descriptor) =
-            split_k::DispatchDescriptor::try_new(context, data_type, arguments)?
-        {
+        if let Some(descriptor) = split_k::DispatchDescriptor::try_new(context, data_type, arguments)? {
             return Ok(MlpFusedDispatchDescriptor::SplitK(descriptor));
         }
     }
@@ -74,11 +68,5 @@ pub fn determine_kernel_variant(
     weights_transposed: bool,
     arguments: &MlpFusedArguments,
 ) -> Result<MlpFusedKernelVariant, MTLError> {
-    choose_dispatch_descriptor(
-        context,
-        data_type,
-        weights_transposed,
-        arguments,
-    )
-    .map(|d| d.variant())
+    choose_dispatch_descriptor(context, data_type, weights_transposed, arguments).map(|d| d.variant())
 }

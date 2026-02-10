@@ -4,12 +4,9 @@ use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
         MTLResourceOptions, ProtocolObject, Retained,
-        kernel::rms_norm::{
-            RMSNormArguments, RMSNormError, RMSNormKernel, RMSNormKernelType,
-        },
+        kernel::rms_norm::{RMSNormArguments, RMSNormError, RMSNormKernel, RMSNormKernelType},
     },
     config::{NormalizationConfig, UpcastMode},
     encodable_block::EncodingParameters,
@@ -37,26 +34,20 @@ impl RMSNorm {
     ) -> Result<Self, RMSNormError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            RMSNormError::MetalError(MTLError::Library(
-                crate::backends::metal::error::LibraryError::Custom(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )),
-            ))
+            RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+                "Failed to load scales: {:?}",
+                e
+            ))))
         })?;
 
         // TODO: Don't create buffers dynamically, we need to use forward pass storage for thing like this
         let scales_data = scales_param.as_bytes();
         let scales_buffer = context
             .device
-            .new_buffer_with_data(
-                scales_data,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+            .new_buffer_with_data(scales_data, MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create scales buffer");
 
-        let accumulation_data_type: DataType =
-            config.accumulation_precision.into();
+        let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
         let (input_type, scales_type, output_type) = match config.upcast_mode {
@@ -105,9 +96,8 @@ impl EncodableBlock<Metal> for RMSNorm {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -149,8 +139,7 @@ impl EncodableBlock<Metal> for RMSNorm {
         } else {
             (0, state.active_suffix_length())
         };
-        let batch_len =
-            batch_len.min(suffix_length.saturating_sub(batch_start));
+        let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
         if batch_len == 0 {
             return;
         }

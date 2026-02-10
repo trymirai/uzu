@@ -1,8 +1,6 @@
 use super::{
     common::MatmulArguments,
-    dispatch_descriptor::{
-        MatmulDispatchDescriptor, choose_dispatch_descriptor,
-    },
+    dispatch_descriptor::{MatmulDispatchDescriptor, choose_dispatch_descriptor},
     gemm,
     gemv::GemvKernel,
     split_k::SplitKGemm,
@@ -12,8 +10,8 @@ use crate::{
     backends::{
         common::kernel::TensorAddBiasKernel,
         metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-            ProtocolObject, Retained, kernel::dsl::TensorAddBiasMetalKernel,
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
+            kernel::dsl::TensorAddBiasMetalKernel,
         },
     },
 };
@@ -28,11 +26,8 @@ pub struct MatmulKernel {
 
 impl MatmulKernel {
     pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MatmulKernel: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MatmulKernel: {data_type:?}")));
         }
 
         Ok(Self {
@@ -60,9 +55,7 @@ impl MatmulKernel {
         Ok(())
     }
 
-    fn get_or_create_gemm(
-        &mut self
-    ) -> Result<&mut gemm::GemmKernel, MTLError> {
+    fn get_or_create_gemm(&mut self) -> Result<&mut gemm::GemmKernel, MTLError> {
         if self.gemm.is_none() {
             self.gemm = Some(gemm::GemmKernel::new(self.data_type)?);
         }
@@ -97,8 +90,7 @@ impl MatmulKernel {
             },
             MatmulDispatchDescriptor::SplitK(descriptor) => {
                 let splitk = self.get_or_create_splitk()?;
-                splitk
-                    .encode_descriptor(context, encoder, arguments, descriptor)
+                splitk.encode_descriptor(context, encoder, arguments, descriptor)
             },
             MatmulDispatchDescriptor::Gemm(descriptor) => {
                 let gemm = self.get_or_create_gemm()?;
@@ -115,15 +107,9 @@ impl MatmulKernel {
     ) -> Result<(), MTLError> {
         Self::apply_batch_collapse(&mut arguments);
 
-        let descriptor =
-            choose_dispatch_descriptor(context, self.data_type, &arguments)?;
+        let descriptor = choose_dispatch_descriptor(context, self.data_type, &arguments)?;
 
-        let bias_fused = self.encode_dispatch_descriptor(
-            context,
-            encoder,
-            &arguments,
-            &descriptor,
-        )?;
+        let bias_fused = self.encode_dispatch_descriptor(context, encoder, &arguments, &descriptor)?;
 
         if let Some(bias) = arguments.bias {
             if !bias_fused {
@@ -150,18 +136,10 @@ impl MatmulKernel {
         }
 
         if self.bias_add.is_none() {
-            self.bias_add =
-                Some(TensorAddBiasMetalKernel::new(context, self.data_type)?);
+            self.bias_add = Some(TensorAddBiasMetalKernel::new(context, self.data_type)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add.encode(
-            arguments.d,
-            bias,
-            arguments.d,
-            n as u32,
-            total_len as u32,
-            encoder,
-        );
+        bias_add.encode(arguments.d, bias, arguments.d, n as u32, total_len as u32, encoder);
         Ok(())
     }
 

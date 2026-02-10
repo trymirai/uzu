@@ -13,8 +13,7 @@ pub struct DeviceAllocator {
 
 impl DeviceAllocator {
     pub fn new() -> Self {
-        let device =
-            <dyn MTLDevice>::system_default().expect("No Metal device");
+        let device = <dyn MTLDevice>::system_default().expect("No Metal device");
 
         Self {
             device,
@@ -31,10 +30,8 @@ impl AllocatorTrait for DeviceAllocator {
         &self,
         size: usize,
     ) -> Self::Buffer {
-        let buffer = self
-            .device
-            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let buffer =
+            self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).expect("Failed to create buffer");
 
         let buf_size = buffer.length();
         let new_active = self.active_memory.get() + buf_size;
