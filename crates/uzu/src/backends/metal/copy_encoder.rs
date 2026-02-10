@@ -14,7 +14,7 @@ impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
         dst: &<Self::Backend as crate::backends::common::Backend>::NativeBuffer,
         size: usize,
     ) {
-        assert!(src.length() <= size && dst.length() <= size);
+        assert!(src.length() >= size && dst.length() >= size);
 
         self.copy_buffer_to_buffer(src, 0, dst, 0, size);
     }
