@@ -43,6 +43,7 @@ pub struct QuantizedMatmulKernel {
     >,
     output_dim: usize,
     weights_transposed: bool,
+    has_batched_matrix_vector: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +69,25 @@ fn dtype_suffix(data_type: DataType) -> Option<&'static str> {
         _ => None,
     }
 }
+
+fn matrix_vector_batch_threshold() -> usize {
+    std::env::var("UZU_QMM_BATCH_THRESHOLD")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32)
+}
+
+fn batched_matrix_vector_enabled() -> bool {
+    !std::env::var("UZU_DISABLE_BATCHED_QMV")
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            lowered == "1" || lowered == "true" || lowered == "yes"
+        })
+        .unwrap_or(false)
+}
+
+const MATRIX_VECTOR_BATCH_TILE: usize = 4;
 
 fn base_qmm_kernel_name(
     type_suffix: &str,
@@ -141,6 +161,29 @@ impl QuantizedMatmulKernel {
             .map_err(QuantizedMatmulError::MetalError)?;
         pipelines.insert(KernelKind::MatrixVector, (pipeline_mv, 32, 32));
 
+        let mut has_batched_matrix_vector = false;
+        if let Some(kernel_name_mvb) = select_matrix_vector_batch_kernel_name(
+            data_type,
+            group_size,
+            weights_transposed,
+            output_dim,
+            input_dim,
+            mode,
+        )? {
+            let cache_key_mvb =
+                format!("{}_mlx_{}", kernel_name_mvb, use_mlx_quant);
+            let pipeline_mvb = mtl_context
+                .compute_pipeline_state_cached(
+                    &cache_key_mvb,
+                    &kernel_name_mvb,
+                    Some(&function_constants),
+                )
+                .map_err(QuantizedMatmulError::MetalError)?;
+            pipelines
+                .insert(KernelKind::MatrixVectorBatch, (pipeline_mvb, 32, 32));
+            has_batched_matrix_vector = true;
+        }
+
         let kernel_name_mm = select_qmm_kernel_name(
             data_type,
             group_size,
@@ -174,6 +217,7 @@ impl QuantizedMatmulKernel {
             pipelines,
             output_dim,
             weights_transposed,
+            has_batched_matrix_vector,
         })
     }
 
@@ -238,6 +282,23 @@ impl QuantizedMatmulKernel {
                     threads_per_threadgroup,
                 );
             },
+            KernelKind::MatrixVectorBatch => {
+                let bk = 32;
+                let bn = if self.weights_transposed {
+                    8
+                } else {
+                    64
+                };
+                let n_tgp_y = (n + bn - 1) / bn;
+                let m_tgp_x = (m as usize + MATRIX_VECTOR_BATCH_TILE - 1)
+                    / MATRIX_VECTOR_BATCH_TILE;
+                let threadgroups = MTLSize::new(m_tgp_x, n_tgp_y as usize, 1);
+                let threads_per_threadgroup = MTLSize::new(bk as usize, 2, 1);
+                encoder.dispatch_threadgroups(
+                    threadgroups,
+                    threads_per_threadgroup,
+                );
+            },
             KernelKind::MatrixMatrix => {
                 let wm = 2;
                 let wn = 2;
@@ -262,7 +323,17 @@ impl QuantizedMatmulKernel {
         &self,
         batch: usize,
     ) -> KernelKind {
-        if batch < 32 || self.output_dim == 1 {
+        let threshold = matrix_vector_batch_threshold();
+        if self.output_dim == 1 {
+            KernelKind::MatrixVector
+        } else if self.has_batched_matrix_vector
+            && batched_matrix_vector_enabled()
+            && batch >= 2
+            && batch <= 8
+            && batch < threshold
+        {
+            KernelKind::MatrixVectorBatch
+        } else if batch < threshold {
             KernelKind::MatrixVector
         } else {
             KernelKind::MatrixMatrix
@@ -294,6 +365,39 @@ fn select_matrix_vector_kernel_name(
     }
 
     Ok(format!("qvm_{}_g{}_b{}", type_suffix, group_size, bits))
+}
+
+fn select_matrix_vector_batch_kernel_name(
+    data_type: DataType,
+    group_size: usize,
+    weights_transposed: bool,
+    output_dim: usize,
+    input_dim: usize,
+    mode: QuantizationMode,
+) -> Result<Option<String>, QuantizedMatmulError> {
+    let type_suffix = dtype_suffix(data_type)
+        .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+    let bits = match mode {
+        QuantizationMode::UInt4 => 4,
+        QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
+    };
+
+    if !weights_transposed || bits != 4 {
+        return Ok(None);
+    }
+
+    if output_dim % 8 != 0 || input_dim % 512 != 0 {
+        return Ok(None);
+    }
+
+    if group_size != 64 && group_size != 128 {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "qmv_batch4_{}_g{}_b{}_fast",
+        type_suffix, group_size, bits
+    )))
 }
 
 fn select_qmm_kernel_name(
@@ -337,6 +441,7 @@ fn select_qmm_kernel_name(
 enum KernelKind {
     MatrixMatrix,
     MatrixVector,
+    MatrixVectorBatch,
 }
 
 /// Arguments for MLP fused quantized GEMV

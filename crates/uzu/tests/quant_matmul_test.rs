@@ -98,12 +98,15 @@ fn create_test_weights(
 fn check_tolerance(
     exp: f32,
     got: f32,
+    dtype: DataType,
 ) -> bool {
     let diff = (exp - got).abs() as f64;
-    // For F16 at boundaries (like 65504), machine epsilon is 32 (approx 0.05% relative error)
-    // We use a conservative relative tolerance of 0.2%
-    let rel_tol = 0.002;
-    let abs_tol = 0.1f64;
+    // BF16 has substantially coarser mantissa precision than F16/F32, so use a
+    // wider relative tolerance for BF16 outputs.
+    let (rel_tol, abs_tol) = match dtype {
+        DataType::BF16 => (0.01, 0.1f64),
+        _ => (0.002, 0.1f64),
+    };
     let tol = abs_tol.max(exp.abs() as f64 * rel_tol);
     diff > tol
 }
@@ -649,7 +652,7 @@ fn execute_quantized_matmul(
         {
             let diff = (exp - got).abs();
 
-            if check_tolerance(exp, got) {
+            if check_tolerance(exp, got, data_type) {
                 if debug_prints < 16 {
                     println!(
                         "\n  detail idx {} diff {} exp {} got {}",
@@ -665,14 +668,14 @@ fn execute_quantized_matmul(
                 .iter()
                 .zip(y_out_f32.iter())
                 .enumerate()
-                .find(|&(_, (&e, &g))| check_tolerance(e, g))
+                .find(|&(_, (&e, &g))| check_tolerance(e, g, data_type))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             let last_error = y_expected
                 .iter()
                 .zip(y_out_f32.iter())
                 .enumerate()
-                .filter(|&(_, (&e, &g))| check_tolerance(e, g))
+                .filter(|&(_, (&e, &g))| check_tolerance(e, g, data_type))
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
@@ -699,6 +702,7 @@ fn execute_quantized_matmul(
     }
 }
 
+#[derive(Clone, Copy)]
 struct TestConfig {
     quant_type: QuantizationType,
     bits: usize,
@@ -924,6 +928,102 @@ fn test_quant_gmm_transposed() {
 }
 
 #[test]
+fn test_quant_qmv_batched_correctness() {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping batched QMV test");
+            return;
+        },
+    };
+
+    let batched_disabled = std::env::var("UZU_DISABLE_BATCHED_QMV")
+        .ok()
+        .map(|value| value.to_ascii_lowercase())
+        .map(|value| value == "1" || value == "true" || value == "yes")
+        .unwrap_or(false);
+    if batched_disabled {
+        println!("Batched QMV disabled via UZU_DISABLE_BATCHED_QMV; skipping");
+        return;
+    }
+
+    let threshold = std::env::var("UZU_QMM_BATCH_THRESHOLD")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32);
+    if threshold <= 8 {
+        println!(
+            "UZU_QMM_BATCH_THRESHOLD={} routes batch<=8 away from batched QMV; skipping",
+            threshold
+        );
+        return;
+    }
+
+    // Conditions picked to force MatrixVectorBatch path:
+    // - transposed weights
+    // - 4-bit quantization
+    // - input_dim % 512 == 0 and output_dim % 8 == 0
+    // - batch in 2..=8
+    let cases = vec![
+        (2, 256, 512),
+        (3, 256, 512),
+        (4, 512, 1024),
+        (7, 512, 1024),
+        (8, 1024, 2048),
+    ];
+
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+        TestConfig {
+            quant_type: QuantizationType::Mlx,
+            bits: 4,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+        TestConfig {
+            quant_type: QuantizationType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F32,
+            group_size: 64,
+        },
+    ];
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in &cases {
+            run_kernel_test(
+                &ctx, batch, output_dim, input_dim, true, config, true, 1,
+            );
+        }
+    }
+}
+
+#[test]
+fn test_quant_qmv_bf16_suffix1_correctness() {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping BF16 suffix-1 QMV test");
+            return;
+        },
+    };
+
+    let config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 128,
+    };
+
+    // Matches the failing BF16 dimensions from batched validation, but M=1.
+    run_kernel_test(&ctx, 1, 256, 512, true, &config, true, 1);
+}
+
+#[test]
 #[ignore]
 fn test_quant_matmul_perf() {
     let ctx = match MTLContext::new() {
@@ -997,6 +1097,106 @@ fn test_quant_matmul_perf() {
                 config.group_size,
                 avg
             );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_batch_decode_suffix_perf() {
+    let ctx = match MTLContext::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping batch decode perf test");
+            return;
+        },
+    };
+
+    // Shapes selected from downloaded model configs:
+    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
+    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
+    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
+    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
+    let qwen_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 128,
+    };
+    let lfm_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 64,
+    };
+    let model_shapes = vec![
+        (
+            "Qwen3-1.7B",
+            qwen_config,
+            vec![
+                ("attn_qkv", 4096, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 12288, 2048),
+                ("mlp_down", 2048, 6144),
+            ],
+        ),
+        (
+            "LFM2-1.2B",
+            lfm_config,
+            vec![
+                ("attn_qkv", 3072, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 16384, 2048),
+                ("mlp_down", 2048, 8192),
+            ],
+        ),
+    ];
+    let iterations = 30;
+    let threshold = std::env::var("UZU_QMM_BATCH_THRESHOLD")
+        .unwrap_or_else(|_| "32(default)".to_string());
+    let suffix_start = std::env::var("UZU_SUFFIX_START")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
+    let suffix_end = std::env::var("UZU_SUFFIX_END")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(8);
+
+    println!("Using UZU_QMM_BATCH_THRESHOLD={}", threshold);
+    println!("Using suffix range {}..={}", suffix_start, suffix_end);
+    println!(
+        "{:<6} | {:<12} | {:<12} | {:<12} | {:<11} | {:<12}",
+        "Suffix", "Model", "Block", "N x K", "Avg Latency", "Per-token"
+    );
+    println!("{}", "-".repeat(96));
+
+    for suffix_length in suffix_start..=suffix_end {
+        for (model_name, config, shapes) in &model_shapes {
+            for &(block_name, output_dim, input_dim) in shapes {
+                let result = run_kernel_test(
+                    &ctx,
+                    suffix_length,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    false,
+                    iterations,
+                );
+                let avg_ms = (result.elapsed / iterations as f64) * 1000.0;
+                let per_token_us = (avg_ms / suffix_length as f64) * 1000.0;
+
+                println!(
+                    "{:<6} | {:<12} | {:<12} | {:<12} | {:>8.4} ms | {:>8.2} us",
+                    suffix_length,
+                    model_name,
+                    block_name,
+                    format!("{}x{}", output_dim, input_dim),
+                    avg_ms,
+                    per_token_us
+                );
+            }
         }
     }
 }

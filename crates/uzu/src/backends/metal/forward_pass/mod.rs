@@ -7,6 +7,7 @@ pub mod state;
 #[cfg(feature = "tracing")]
 pub mod traces;
 
+pub use crate::forward_pass::state::{ArrayId, HashMapId, RopeType};
 pub use cache_layers::{CacheLayer, CacheLayers};
 pub use encoder_resolver::EncoderResolver;
 pub use kv_cache_layer::{
@@ -14,7 +15,6 @@ pub use kv_cache_layer::{
 };
 pub use short_conv_layer::ShortConvLayer;
 pub use ssm_layer::SSMLayer;
-pub use crate::forward_pass::state::{ArrayId, HashMapId, RopeType};
 pub use state::{
     ArrayCell, ClassifierModeState, ForwardPassMode, ForwardPassState,
     LanguageModelGeneratorModeState,

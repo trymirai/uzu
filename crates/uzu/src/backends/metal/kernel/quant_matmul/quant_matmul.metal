@@ -1502,6 +1502,248 @@ void qmv_fast_impl(
   }
 }
 
+template <typename T, int group_size, int bits, int batch_tile>
+void qmv_fast_batch_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& in_vec_size,
+    const constant int& out_vec_size,
+    const constant int& batch_size,
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  constexpr int packs_per_thread = bits == 2 ? 1 : 2;
+  constexpr int num_simdgroups = 2;
+  constexpr int results_per_simdgroup = 4;
+  constexpr int pack_factor = get_pack_factor<bits, 32>();
+  constexpr int bytes_per_pack = get_bytes_per_pack<bits, 32>();
+  constexpr int values_per_thread = pack_factor * packs_per_thread;
+  constexpr int block_size = values_per_thread * SIMD_SIZE;
+  constexpr int scale_step_per_thread = group_size / values_per_thread;
+
+  if (batch_size <= 0) {
+    return;
+  }
+
+  const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) +
+                      simd_gid * results_per_simdgroup;
+  if (out_row >= out_vec_size) {
+    return;
+  }
+
+  const int batch_start = static_cast<int>(tid.x) * batch_tile;
+  if (batch_start >= batch_size) {
+    return;
+  }
+
+  const int in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
+  const int in_vec_size_g = in_vec_size / group_size;
+
+  const device uint8_t* ws_base = (const device uint8_t*)w;
+  ws_base += out_row * in_vec_size_w +
+             simd_lid * packs_per_thread * bytes_per_pack;
+  const device T* scales_base =
+      scales + out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+
+  const device T* biases_base = nullptr;
+  const device uint8_t* zps_base = nullptr;
+  int zp_stride = 0;
+  bool high_nibble = false;
+
+  if (kUseMlxQuant) {
+    biases_base =
+        biases + out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+  } else {
+    if (bits == 4) {
+      zp_stride = (in_vec_size_g + 1) / 2;
+      zps_base = zero_points + out_row * zp_stride;
+      int g_offset = simd_lid / scale_step_per_thread;
+      zps_base += g_offset / 2;
+      high_nibble = (g_offset & 1) != 0;
+    } else {
+      zp_stride = in_vec_size_g;
+      zps_base = zero_points + out_row * zp_stride;
+      zps_base += simd_lid / scale_step_per_thread;
+    }
+  }
+
+  typedef float U;
+  thread U x_thread[batch_tile][values_per_thread];
+  thread U result[batch_tile][results_per_simdgroup];
+  thread bool active[batch_tile];
+  thread const device T* x_batch_ptr[batch_tile];
+  thread device T* y_batch_ptr[batch_tile];
+
+  for (int b = 0; b < batch_tile; b++) {
+    for (int row = 0; row < results_per_simdgroup; row++) {
+      result[b][row] = 0.0f;
+    }
+
+    const int batch_index = batch_start + b;
+    const bool is_active = batch_index < batch_size;
+    active[b] = is_active;
+    if (is_active) {
+      x_batch_ptr[b] = x + batch_index * in_vec_size + simd_lid * values_per_thread;
+      y_batch_ptr[b] = y + batch_index * out_vec_size + out_row;
+    }
+  }
+
+  const device uint8_t* ws_k = ws_base;
+  const device T* scales_k = scales_base;
+  const device T* biases_k = biases_base;
+  const device uint8_t* zps_k = zps_base;
+  bool high_nibble_k = high_nibble;
+
+  for (int k = 0; k < in_vec_size; k += block_size) {
+    auto wl0 = (const device uint8_t*)(ws_k);
+    auto wl1 = (const device uint8_t*)(ws_k + in_vec_size_w);
+    auto wl2 = (const device uint8_t*)(ws_k + 2 * in_vec_size_w);
+    auto wl3 = (const device uint8_t*)(ws_k + 3 * in_vec_size_w);
+
+    U s0 = static_cast<U>(scales_k[0]);
+    U s1 = static_cast<U>(scales_k[in_vec_size_g]);
+    U s2 = static_cast<U>(scales_k[2 * in_vec_size_g]);
+    U s3 = static_cast<U>(scales_k[3 * in_vec_size_g]);
+
+    U b0 = 0.0f;
+    U b1 = 0.0f;
+    U b2 = 0.0f;
+    U b3 = 0.0f;
+    U zp0 = 0.0f;
+    U zp1 = 0.0f;
+    U zp2 = 0.0f;
+    U zp3 = 0.0f;
+
+    if (kUseMlxQuant) {
+      b0 = static_cast<U>(biases_k[0]);
+      b1 = static_cast<U>(biases_k[in_vec_size_g]);
+      b2 = static_cast<U>(biases_k[2 * in_vec_size_g]);
+      b3 = static_cast<U>(biases_k[3 * in_vec_size_g]);
+    } else {
+      uint8_t zp_byte0 = zps_k[0];
+      uint8_t zp_byte1 = zps_k[zp_stride];
+      uint8_t zp_byte2 = zps_k[2 * zp_stride];
+      uint8_t zp_byte3 = zps_k[3 * zp_stride];
+      zp0 = static_cast<U>(
+          (bits == 4 && high_nibble_k) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F)
+      );
+      zp1 = static_cast<U>(
+          (bits == 4 && high_nibble_k) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F)
+      );
+      zp2 = static_cast<U>(
+          (bits == 4 && high_nibble_k) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F)
+      );
+      zp3 = static_cast<U>(
+          (bits == 4 && high_nibble_k) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F)
+      );
+      if (bits == 8) {
+        zp0 = static_cast<U>(zp_byte0);
+        zp1 = static_cast<U>(zp_byte1);
+        zp2 = static_cast<U>(zp_byte2);
+        zp3 = static_cast<U>(zp_byte3);
+      }
+    }
+
+    for (int b = 0; b < batch_tile; b++) {
+      if (!active[b]) {
+        continue;
+      }
+
+      U sum = load_vector<T, U, values_per_thread, bits>(
+          x_batch_ptr[b],
+          x_thread[b]
+      );
+
+      if (kUseMlxQuant) {
+        result[b][0] += qdot<U, values_per_thread, bits>(
+            wl0,
+            x_thread[b],
+            s0,
+            b0,
+            sum
+        );
+        result[b][1] += qdot<U, values_per_thread, bits>(
+            wl1,
+            x_thread[b],
+            s1,
+            b1,
+            sum
+        );
+        result[b][2] += qdot<U, values_per_thread, bits>(
+            wl2,
+            x_thread[b],
+            s2,
+            b2,
+            sum
+        );
+        result[b][3] += qdot<U, values_per_thread, bits>(
+            wl3,
+            x_thread[b],
+            s3,
+            b3,
+            sum
+        );
+      } else {
+        result[b][0] += qdot_zero_point<U, values_per_thread, bits>(
+            wl0,
+            x_thread[b],
+            s0,
+            zp0
+        );
+        result[b][1] += qdot_zero_point<U, values_per_thread, bits>(
+            wl1,
+            x_thread[b],
+            s1,
+            zp1
+        );
+        result[b][2] += qdot_zero_point<U, values_per_thread, bits>(
+            wl2,
+            x_thread[b],
+            s2,
+            zp2
+        );
+        result[b][3] += qdot_zero_point<U, values_per_thread, bits>(
+            wl3,
+            x_thread[b],
+            s3,
+            zp3
+        );
+      }
+
+      x_batch_ptr[b] += block_size;
+    }
+
+    ws_k += block_size * bytes_per_pack / pack_factor;
+    scales_k += block_size / group_size;
+    if (kUseMlxQuant) {
+      biases_k += block_size / group_size;
+    } else {
+      if (bits == 4) {
+        zps_k += (block_size / group_size) / 2;
+      } else {
+        zps_k += block_size / group_size;
+      }
+    }
+  }
+
+  for (int b = 0; b < batch_tile; b++) {
+    if (!active[b]) {
+      continue;
+    }
+    for (int row = 0; row < results_per_simdgroup; row++) {
+      U reduced = simd_sum(result[b][row]);
+      if (simd_lid == 0) {
+        y_batch_ptr[b][row] = static_cast<T>(reduced);
+      }
+    }
+  }
+}
+
 template <typename T, int group_size, int bits, bool use_zero_points>
 void qvm_impl_core(
     const device uint32_t* ws,
@@ -1912,6 +2154,38 @@ template <typename T, int group_size, int bits>
   );
 }
 
+template <typename T, int group_size, int bits, int batch_tile>
+[[kernel, max_total_threads_per_threadgroup(64)]] void qmv_fast_batch(
+    const device uint32_t* w [[buffer(0)]],
+    const device T* scales [[buffer(1)]],
+    const device uint8_t* zero_points
+    [[buffer(2), function_constant(kUseZeroPoints)]],
+    const device T* biases [[buffer(2), function_constant(kUseMlxQuant)]],
+    const device T* x [[buffer(3)]],
+    device T* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+  qmv_fast_batch_impl<T, group_size, bits, batch_tile>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      K,
+      N,
+      M,
+      tid,
+      simd_gid,
+      simd_lid
+  );
+}
+
 template [[host_name("qmv_f16_g32_b4_fast")]] [[kernel]] void qmv_fast<
     half,
     32,
@@ -2213,6 +2487,102 @@ template [[host_name("qmv_f32_g128_b8_fast")]] [[kernel]] void qmv_fast<
     device float* y [[buffer(4)]],
     const constant int& K [[buffer(5)]],
     const constant int& N [[buffer(6)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_f16_g64_b4_fast")]] [[kernel]] void
+qmv_fast_batch<half, 64, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_f16_g128_b4_fast")]] [[kernel]] void
+qmv_fast_batch<half, 128, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device half* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device half* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_bf16_g64_b4_fast")]] [[kernel]] void
+qmv_fast_batch<bfloat, 64, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_bf16_g128_b4_fast")]] [[kernel]] void
+qmv_fast_batch<bfloat, 128, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device bfloat* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device bfloat* biases [[buffer(2)]],
+    const device bfloat* x [[buffer(3)]],
+    device bfloat* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_f32_g64_b4_fast")]] [[kernel]] void
+qmv_fast_batch<float, 64, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+);
+
+template [[host_name("qmv_batch4_f32_g128_b4_fast")]] [[kernel]] void
+qmv_fast_batch<float, 128, 4, 4>(
+    const device uint32_t* w [[buffer(0)]],
+    const device float* scales [[buffer(1)]],
+    const device uint8_t* zero_points [[buffer(2)]],
+    const device float* biases [[buffer(2)]],
+    const device float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    const constant int& K [[buffer(5)]],
+    const constant int& N [[buffer(6)]],
+    const constant int& M [[buffer(7)]],
     uint3 tid [[threadgroup_position_in_grid]],
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]
