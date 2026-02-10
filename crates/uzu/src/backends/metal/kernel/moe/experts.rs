@@ -2,10 +2,9 @@ use std::{mem::size_of, ptr::NonNull};
 
 use super::{dtype_index, dtype_suffix};
 use crate::backends::metal::{
-    FunctionConstantValuesSetValue, KernelDataType, MTLBlitCommandEncoderExt,
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-    MTLSize, ProtocolObject, Retained,
+    FunctionConstantValuesSetValue, KernelDataType, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+    MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
     kernel::moe::tiles_map::{
         MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
         MoeTileScanArguments,

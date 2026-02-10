@@ -4,9 +4,8 @@ use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, t
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, FunctionConstantValuesSetValue,
-        MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained,
+        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };

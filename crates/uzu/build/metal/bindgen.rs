@@ -6,12 +6,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, LitInt, Type};
 
-use crate::metal::ast::MetalGroupsType;
-
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
     wrapper::SpecializeBaseIndices,
 };
+use crate::metal::ast::MetalGroupsType;
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,

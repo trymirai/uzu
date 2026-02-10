@@ -2,6 +2,7 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
+use super::{Backend, Kernels};
 use crate::{
     DataType,
     backends::common::{
@@ -13,8 +14,6 @@ use crate::{
     },
     session::parameter::SamplingMethod,
 };
-
-use super::{Backend, Kernels};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArgmaxStrategy {

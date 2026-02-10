@@ -1,4 +1,3 @@
-use crate::backends::metal::Metal;
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
@@ -12,7 +11,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::{common::Context, common::kernel::SigmoidKernel, metal::error::ClassifierError},
+    backends::{
+        common::{Context, kernel::SigmoidKernel},
+        metal::{Metal, error::ClassifierError},
+    },
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::EncodableBlock,
     forward_pass::{

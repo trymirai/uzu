@@ -9,11 +9,11 @@ pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained, kernel::RMSNormError,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
+        kernel::RMSNormError,
     },
     config::NormalizationConfig,
     encodable_block::EncodingParameters,

@@ -1,16 +1,18 @@
 //! Attention kernel encodable.
 
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::{
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-    Retained,
-    kernel::attention::{
-        AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-        AttentionTwoPassArguments, KVCacheUpdateArguments,
+use crate::{
+    backends::metal::{
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
+        Retained,
+        kernel::attention::{
+            AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
+            AttentionSinglePassArguments, AttentionTwoPassArguments, KVCacheUpdateArguments,
+        },
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
 };
-use crate::encodable_block::EncodingParameters;
-use crate::forward_pass::state::{ArrayId, ForwardPassState, HashMapId};
 
 fn env_gemm_attention_enabled() -> bool {
     static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

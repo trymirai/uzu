@@ -5,8 +5,10 @@ use async_trait::async_trait;
 use syn::{Expr, ExprLit, Fields, Item, ItemStruct, Lit, Meta, Type, TypeArray, TypePath};
 use tokio::task::spawn_blocking;
 
-use crate::common::{compiler::Compiler, kernel::Kernel};
-use crate::debug_log;
+use crate::{
+    common::{compiler::Compiler, kernel::Kernel},
+    debug_log,
+};
 
 #[derive(Debug)]
 pub struct GpuTypesCompiler {

@@ -1,16 +1,18 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::backends::{
+    common::kernel::MoeCountsOffsetsFusedKernel,
+    metal::kernel::{
+        KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
+        dsl::MoeCountsOffsetsFusedMetalKernel,
+        moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+    },
+};
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
-use uzu::backends::metal::kernel::dsl::MoeCountsOffsetsFusedMetalKernel;
-use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
-    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
-};
 
 fn cpu_expert_buckets(
     topk_ids: &[i32],

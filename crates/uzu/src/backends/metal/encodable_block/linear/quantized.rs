@@ -1,18 +1,15 @@
-use crate::backends::metal::Metal;
-
-use crate::backends::{
-    common::kernel::TensorAddBiasKernel,
-    metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
-};
-
 use crate::{
     DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        encodable_block::EncodableBlock,
-        kernel::{
-            dsl::TensorAddBiasMetalKernel,
-            quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
+    backends::{
+        common::kernel::TensorAddBiasKernel,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, Metal,
+            ProtocolObject, Retained,
+            encodable_block::EncodableBlock,
+            kernel::{
+                dsl::TensorAddBiasMetalKernel,
+                quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
+            },
         },
     },
     config::QuantizationConfig,

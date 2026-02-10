@@ -3,13 +3,13 @@ use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 use objc2::rc::Retained;
 use thiserror::Error;
 
-use crate::backends::metal::{
-    FunctionConstantValuesSetValue, KernelDataType, MTLBuffer,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-    MTLFunctionConstantValues, MTLSize, ProtocolObject,
+use crate::backends::{
+    common::gpu_types::{AttnMaskParams, AttnParams},
+    metal::{
+        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
+    },
 };
-
-use crate::backends::common::gpu_types::{AttnMaskParams, AttnParams};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionKernelVariant {

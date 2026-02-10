@@ -6,9 +6,8 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLBuffer,
-            MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-            MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+            ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
             kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
         },
     },

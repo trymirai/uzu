@@ -1,11 +1,7 @@
 //! Layer executables - a single decoder layer with mixer, norms, and MLP.
 
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
-#[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained};
 use objc2::rc::autoreleasepool;
 
 use super::{
@@ -15,9 +11,14 @@ use super::{
     },
     MixerExecutables,
 };
+#[cfg(not(feature = "tracing"))]
+use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{MTLContext, compilation_parameters::CompilationConfig, kernel::KernelDataType},
+    backends::metal::{
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
+        compilation_parameters::CompilationConfig, kernel::KernelDataType,
+    },
     config::{DecoderLayerType, MixerConfig},
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},

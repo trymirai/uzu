@@ -1,14 +1,14 @@
-use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal, ProtocolObject, Retained,
-};
-
 use super::{
     super::{MTLContext, MTLError, kernel::dsl::ActivationMetalKernel},
     EncodableBlock,
 };
-use crate::{DataType, config::Activation as ActivationConfig};
 use crate::{
-    backends::common::kernel::ActivationKernel,
+    DataType,
+    backends::{
+        common::kernel::ActivationKernel,
+        metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal, ProtocolObject, Retained},
+    },
+    config::Activation as ActivationConfig,
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
 };

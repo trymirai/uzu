@@ -1,18 +1,19 @@
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
-#[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained};
 use objc2::rc::autoreleasepool;
 
 use super::{Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap, TensorCopy, transformer_layer};
-use crate::forward_pass::state::{ArrayId, ForwardPassState};
+#[cfg(not(feature = "tracing"))]
+use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType,
-    backends::metal::{MTLContext, compilation_parameters::CompilationConfig, kernel::KernelDataType},
+    backends::metal::{
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
+        compilation_parameters::CompilationConfig, kernel::KernelDataType,
+    },
     config::TransformerLayerConfig,
     encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 

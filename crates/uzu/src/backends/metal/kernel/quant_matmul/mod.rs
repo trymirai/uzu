@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+        FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
     },
     config::QuantizationMode,
 };

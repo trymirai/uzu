@@ -1,9 +1,5 @@
 use std::cell::RefCell;
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
-};
-
 use super::{
     super::{EncodableBlock, Metal},
     EmbeddingError,
@@ -11,7 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        Retained,
         kernel::matmul::{MatmulArguments, MatmulKernel},
     },
     encodable_block::EncodingParameters,

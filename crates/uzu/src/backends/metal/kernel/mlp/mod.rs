@@ -3,9 +3,8 @@ use crate::{
     backends::{
         common::kernel::MlpGateActMulKernel,
         metal::{
-            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder,
-            MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject,
-            Retained, kernel::dsl::MlpGateActMulMetalKernel,
+            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
+            MTLFunctionConstantValues, ProtocolObject, Retained, kernel::dsl::MlpGateActMulMetalKernel,
         },
     },
     config::Activation,
@@ -62,10 +61,7 @@ impl MlpFusedConfig {
         let fcv = MTLFunctionConstantValues::new();
         fcv.set_value(&true, MLP_FUSED_FC_INDEX as usize);
         fcv.set_value(&self.hidden_dim, MLP_HIDDEN_DIM_FC_INDEX as usize);
-        fcv.set_value(
-            &(self.activation as u32),
-            MLP_ACTIVATION_FC_INDEX as usize,
-        );
+        fcv.set_value(&(self.activation as u32), MLP_ACTIVATION_FC_INDEX as usize);
         fcv
     }
 }

@@ -1,9 +1,8 @@
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer,
-        MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
         metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,

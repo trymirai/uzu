@@ -1,16 +1,15 @@
 use std::{mem, ptr::NonNull};
 
-use crate::{
-    backends::metal::Metal,
-    encodable_block::{EncodableBlock, EncodingParameters},
-    forward_pass::state::ForwardPassState,
-};
 use objc2::rc::Retained;
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, error::MTLError, image::Image,
-    metal_extensions::ComputeEncoderDispatch,
+use crate::{
+    backends::metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLSize, Metal, ProtocolObject, error::MTLError, image::Image,
+        metal_extensions::ComputeEncoderDispatch,
+    },
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
 };
 
 #[repr(C)]

@@ -1,14 +1,17 @@
 //! Tensor add-swap encodable.
 
-use crate::backends::{
-    common::kernel::TensorAddSwapKernel,
-    metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
-};
-
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::{MTLContext, MTLError, kernel::dsl::TensorAddSwapMetalKernel};
-use crate::encodable_block::EncodingParameters;
-use crate::forward_pass::state::{ArrayId, ForwardPassState};
+use crate::{
+    backends::{
+        common::kernel::TensorAddSwapKernel,
+        metal::{
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained, kernel::dsl::TensorAddSwapMetalKernel,
+        },
+    },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
+};
 
 pub struct TensorAddSwap {
     kernel: TensorAddSwapMetalKernel,

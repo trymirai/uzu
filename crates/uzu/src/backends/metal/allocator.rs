@@ -3,9 +3,8 @@ use std::{ops::Deref, os::raw::c_void, ptr::NonNull};
 use metal::{MTLBuffer, MTLResourceExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::common::NativeBuffer;
-
 use super::Metal;
+use crate::backends::common::NativeBuffer;
 
 impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     type Backend = Metal;

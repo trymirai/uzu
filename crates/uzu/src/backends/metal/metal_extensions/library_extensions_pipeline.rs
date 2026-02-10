@@ -23,11 +23,9 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         constants: Option<&MTLFunctionConstantValues>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         let function = match constants {
-            Some(const_values) => self.new_function_with_name_constant_values_error(
-                function_name,
-                const_values,
-                std::ptr::null_mut(),
-            ),
+            Some(const_values) => {
+                self.new_function_with_name_constant_values_error(function_name, const_values, std::ptr::null_mut())
+            },
             None => self.new_function_with_name(function_name),
         }
         .ok_or(MTLError::Library(LibraryError::FunctionCreationFailed))?;

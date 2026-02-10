@@ -1,3 +1,5 @@
+use objc2::Message;
+
 use crate::backends::{
     common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
     metal::{
@@ -5,7 +7,6 @@ use crate::backends::{
         kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
     },
 };
-use objc2::Message;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {

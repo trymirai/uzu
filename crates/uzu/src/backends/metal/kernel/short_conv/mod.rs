@@ -1,7 +1,6 @@
 use crate::backends::metal::{
-    ComputeEncoderSetValue, FunctionConstantValuesSetValue, KernelDataType,
-    MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-    MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]

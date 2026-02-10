@@ -3,11 +3,13 @@
 use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
 use crate::backends::metal::MTLBlitCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained};
-use crate::encodable_block::EncodingParameters;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
-use crate::forward_pass::state::ForwardPassState;
+use crate::{
+    backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
+    encodable_block::EncodingParameters,
+    forward_pass::state::ForwardPassState,
+};
 
 pub struct ClassifierPredictionHead {
     dense: Box<dyn EncodableBlock<Metal>>,
