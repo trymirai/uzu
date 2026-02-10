@@ -14,7 +14,6 @@ KERNEL(Gumbel) (
     device T* processed_logits,
     constant uint& batch_size,
     constant uint& vocab_size,
-    constant uint& seeds_offset,
     uint group_idx GROUPS(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE)),
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
@@ -26,7 +25,7 @@ KERNEL(Gumbel) (
 
   uint grain_offset = batch_start + grain_offset_in_batch;
 
-  uint64_t rng_seed = batch_seeds[seeds_offset + batch_idx];
+  uint64_t rng_seed = batch_seeds[batch_idx];
   uint64_t rng_offset = (group_idx * BLOCK_SIZE + thread_idx) *
                         (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET;
   PhiloxState rng;

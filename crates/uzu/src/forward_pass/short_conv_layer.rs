@@ -95,9 +95,8 @@ impl<B: Backend> ShortConvLayer<B> {
         );
 
         let elem_bytes = conv.data_type().size_in_bytes();
-        let bytes_per_token = model_dim
-            .saturating_mul(state_stride)
-            .saturating_mul(elem_bytes);
+        let bytes_per_token =
+            model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
         let src_start = commit_index.saturating_mul(bytes_per_token);
         let src_end = src_start.saturating_add(bytes_per_token);
 

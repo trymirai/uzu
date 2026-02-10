@@ -127,9 +127,9 @@ impl EncodableBlock<Metal> for LayerNorm {
         };
 
         self.kernel.encode(
-            &input_buffer,
+            input_buffer,
             &self.scales_buffer,
-            &output_buffer,
+            output_buffer,
             batch_size,
             model_dim,
             self.config.epsilon,

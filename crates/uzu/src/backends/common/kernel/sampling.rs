@@ -202,8 +202,7 @@ impl<B: Backend> SamplingKernel<B> {
         if let Some(bitmask_buffer) = bitmask_buffer {
             self.bitmask.encode(
                 logits_buffer,
-                bitmask_buffer,
-                bitmask_offset as u32,
+                (bitmask_buffer, bitmask_offset),
                 logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -264,11 +263,13 @@ impl<B: Backend> SamplingKernel<B> {
 
             self.gumbel.encode(
                 logits_buffer,
-                seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                (
+                    seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?,
+                    seeds_offset,
+                ),
                 logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
-                (seeds_offset / size_of::<u64>()) as u32,
                 compute_encoder,
             );
         }

@@ -211,9 +211,11 @@ void short_conv_trie_kernel(
 
     // Select parent state (root uses base_state)
     const int parent = parents[node];
-    const device T* parent_state = (parent < 0)
-        ? (base_state + base_state_offset)
-        : (suffix_state + (size_t(parent) * model_dim + size_t(channel_idx)) * state_stride);
+    const device T* parent_state =
+        (parent < 0) ? (base_state + base_state_offset)
+                     : (suffix_state +
+                        (size_t(parent) * model_dim + size_t(channel_idx)) *
+                            state_stride);
 
     float acc = 0.0f;
     if (has_bias) {
@@ -236,7 +238,8 @@ void short_conv_trie_kernel(
     // Write post-state for this node
     if (tap_count > 0) {
       device T* dst_state =
-          suffix_state + (node * model_dim + size_t(channel_idx)) * state_stride;
+          suffix_state +
+          (node * model_dim + size_t(channel_idx)) * state_stride;
       for (int tap = 0; tap < tap_count - 1; ++tap) {
         dst_state[size_t(tap)] = parent_state[size_t(tap + 1)];
       }

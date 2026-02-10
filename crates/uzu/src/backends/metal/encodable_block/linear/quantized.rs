@@ -272,7 +272,7 @@ impl EncodableBlock<Metal> for QuantizedLinear {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_if(
                 output_buffer,
-                &bias_buf,
+                bias_buf,
                 output_buffer,
                 self.output_dim as u32,
                 total_len as u32,
@@ -329,7 +329,7 @@ impl EncodableBlock<Metal> for QuantizedLinear {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_if(
                 output_buffer,
-                &bias_buf,
+                bias_buf,
                 output_buffer,
                 self.output_dim as u32,
                 total_len as u32,

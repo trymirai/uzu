@@ -25,7 +25,8 @@ trait ComputeEncoderRawConditional {
 pub trait ComputeEncoderConditional {
     fn condition<IfBlock, ElseBlock>(
         &self,
-        predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        predicate: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        offset: usize,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
@@ -70,29 +71,20 @@ where
 {
     fn condition<IfBlock, ElseBlock>(
         &self,
-        predicate: Option<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        predicate: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        offset: usize,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
         IfBlock: FnOnce(),
         ElseBlock: FnOnce(),
     {
-        match (predicate, else_block) {
-            (Some(p), Some(else_fn)) => {
-                self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
-                if_block();
-                self.encode_start_else();
-                else_fn();
-                self.encode_end_if();
-            },
-            (Some(p), None) => {
-                self.encode_start_if(p, 0, MTLCompareFunction::Equal, 0);
-                if_block();
-                self.encode_end_if();
-            },
-            (None, _) => {
-                if_block();
-            },
+        self.encode_start_if(predicate, offset, MTLCompareFunction::Equal, 0);
+        if_block();
+        if let Some(else_block) = else_block {
+            self.encode_start_else();
+            else_block();
         }
+        self.encode_end_if();
     }
 }

@@ -74,8 +74,8 @@ impl EncodableBlock<Metal> for TensorCopy {
         let destination_mtl_buffer = destination_array.buffer();
 
         self.kernel.encode(
-            &source_mtl_buffer,
-            &destination_mtl_buffer,
+            source_mtl_buffer,
+            destination_mtl_buffer,
             length as u32,
             encoder,
         );

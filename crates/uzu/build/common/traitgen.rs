@@ -2,9 +2,9 @@ use std::{collections::HashMap, env, path::PathBuf};
 
 use anyhow::{Context, bail};
 use itertools::Itertools;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::Type;
+use syn::{Lifetime, Type};
 
 use crate::common::{
     codegen::write_tokens,
@@ -30,28 +30,34 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         quote! { #name: #ty }
     });
 
-    let args = kernel
+    let (encode_generics, args) = kernel
         .arguments
         .iter()
         .map(|a| {
             let name = format_ident!("{}", a.name.as_ref());
-            let ty = match &a.ty {
+
+            match &a.ty {
                 KernelArgumentType::Buffer => {
-                    quote! { &<Self::Backend as Backend>::NativeBuffer }
+                    let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
+                    (
+                        Some(quote! { #buffer_lifetime }),
+                        quote! { #name: impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
+                    )
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    quote! { &[#ty] }
+                    (None, quote! { #name: &[#ty] })
                 },
                 KernelArgumentType::Scalar(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    quote! { #ty }
+                    (None, quote! { #name: #ty })
                 },
-            };
-
-            quote! { #name: #ty }
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<(Vec<_>, Vec<_>)>();
+
+    let encode_generics =
+        encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
     let kernel_trait = quote! {
         pub trait #trait_name: Sized {
@@ -59,8 +65,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             fn new(context: &<Self::Backend as Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-            fn encode(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::ComputeEncoder);
-            fn encode_if(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::ComputeEncoder, predicate: Option<&<Self::Backend as Backend>::NativeBuffer>);
+            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder);
+            fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#args ,)* encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder, predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>);
         }
     };
 
@@ -103,8 +109,24 @@ pub fn traitgen_all(
     }
 
     let kernel_traits = quote! {
-        use crate::backends::common::Backend;
+        use crate::backends::common::{Backend, NativeBuffer};
         use crate::DataType;
+
+        pub trait BufferArg<'a, B: NativeBuffer> {
+            fn into_parts(self) -> (&'a B, usize);
+        }
+
+        impl<'a, B: NativeBuffer> BufferArg<'a, B> for &'a B {
+            fn into_parts(self) -> (&'a B, usize) {
+                (self, 0)
+            }
+        }
+
+        impl<'a, B: NativeBuffer> BufferArg<'a, B> for (&'a B, usize) {
+            fn into_parts(self) -> (&'a B, usize) {
+                self
+            }
+        }
 
         #(#kernel_traits)*
 
