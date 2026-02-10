@@ -5,9 +5,8 @@ use crate::{
     backends::{
         common::kernel::MlpGateActMulKernel,
         metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType,
-            MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
-            kernel::dsl::MlpGateActMulMetalKernel,
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues,
+            ProtocolObject, Retained, kernel::dsl::MlpGateActMulMetalKernel,
         },
     },
     config::Activation,
@@ -60,9 +59,7 @@ impl MlpFusedConfig {
     }
 
     /// Create function constants for MLP fused matmul
-    pub fn make_function_constants(
-        &self
-    ) -> Retained<MTLFunctionConstantValues> {
+    pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
         let fcv = MTLFunctionConstantValues::new();
         let fused = true;
         fcv.set_constant_value_type_at_index(
@@ -86,15 +83,10 @@ impl MlpFusedConfig {
 }
 
 /// Create function constants for non-fused (standard) matmul
-pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues>
-{
+pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
     let fcv = MTLFunctionConstantValues::new();
     let fused = false;
-    fcv.set_constant_value_type_at_index(
-        NonNull::from(&fused).cast(),
-        MTLDataType::Bool,
-        MLP_FUSED_FC_INDEX as usize,
-    );
+    fcv.set_constant_value_type_at_index(NonNull::from(&fused).cast(), MTLDataType::Bool, MLP_FUSED_FC_INDEX as usize);
     fcv
 }
 
@@ -135,14 +127,7 @@ impl MlpGateActMulEncodable {
                 panic!("Identity activation is not supported for kernel")
             },
         };
-        self.kernel.encode(
-            fused_up,
-            hidden,
-            self.hidden_dim as i32,
-            m,
-            act_type,
-            encoder,
-        );
+        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, act_type, encoder);
         Ok(())
     }
 }

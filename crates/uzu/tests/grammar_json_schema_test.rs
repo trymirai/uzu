@@ -44,41 +44,29 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     let decoding_config = DecodingConfig::default()
         .with_sampling_seed(uzu::prelude::SamplingSeed::Custom(42))
         .with_speculator_config(speculator_config);
-    let mut session = Session::new(model_dir, decoding_config)
-        .expect("Failed to create session");
+    let mut session = Session::new(model_dir, decoding_config).expect("Failed to create session");
 
-    let input = Input::Text(
-        "Generate a detailed person profile with address and hobbies in JSON format.".to_string(),
-    );
+    let input = Input::Text("Generate a detailed person profile with address and hobbies in JSON format.".to_string());
 
-    let grammar_config = GrammarConfig::from_json_schema_type::<Person>()
-        .expect("Failed to create grammar config");
+    let grammar_config = GrammarConfig::from_json_schema_type::<Person>().expect("Failed to create grammar config");
 
-    let run_config = RunConfig::default()
-        .tokens_limit(1024)
-        .sampling_policy(SamplingPolicy::Default)
-        .grammar_config(grammar_config);
+    let run_config =
+        RunConfig::default().tokens_limit(1024).sampling_policy(SamplingPolicy::Default).grammar_config(grammar_config);
 
-    let output = session
-        .run(input, run_config, None::<fn(uzu::session::types::Output) -> bool>)
-        .expect("Failed to run session");
+    let output =
+        session.run(input, run_config, None::<fn(uzu::session::types::Output) -> bool>).expect("Failed to run session");
 
     let stats = output.stats;
-    let total_tokens = stats.total_stats.tokens_count_input
-        + stats.total_stats.tokens_count_output;
+    let total_tokens = stats.total_stats.tokens_count_input + stats.total_stats.tokens_count_output;
 
     println!("\n=== Test Results ===");
     println!("Generated output length: {} chars", output.text.original.len());
     println!(
         "Input tokens: {}, Output tokens: {}",
-        stats.total_stats.tokens_count_input,
-        stats.total_stats.tokens_count_output
+        stats.total_stats.tokens_count_input, stats.total_stats.tokens_count_output
     );
     println!("Total time: {:.2}s", stats.total_stats.duration);
-    println!(
-        "Throughput: {:.2} tokens/s",
-        total_tokens as f64 / stats.total_stats.duration
-    );
+    println!("Throughput: {:.2} tokens/s", total_tokens as f64 / stats.total_stats.duration);
 
     match serde_json::from_str::<Person>(&output.text.original) {
         Ok(person) => {
@@ -86,10 +74,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
             println!("  Name: {}", person.name);
             println!("  Age: {}", person.age);
             println!("  Email: {}", person.email);
-            println!(
-                "  Address: {}, {}",
-                person.address.city, person.address.country
-            );
+            println!("  Address: {}, {}", person.address.city, person.address.country);
             println!("  Hobbies: {:?}", person.hobbies);
 
             assert!(!person.name.is_empty());
@@ -99,10 +84,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
             assert!(!person.hobbies.is_empty());
         },
         Err(e) => {
-            panic!(
-                "✗ Generated invalid JSON: {}\nOutput: {}",
-                e, output.text.original
-            );
+            panic!("✗ Generated invalid JSON: {}\nOutput: {}", e, output.text.original);
         },
     }
 }

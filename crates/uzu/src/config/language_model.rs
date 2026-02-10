@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig,
-    GenerationConfig, MessageProcessorConfig, MixerConfig, TransformerConfig,
-    config::ConfigError,
+    DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig, MessageProcessorConfig,
+    MixerConfig, TransformerConfig, config::ConfigError,
 };
 
 struct AttentionDims {
@@ -27,8 +26,7 @@ impl InnerModelConfig {
     pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         let tf = &self.transformer_config;
 
-        let first_layer =
-            tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
+        let first_layer = tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
         let layer_config = DecoderLayerConfig {
             pre_attention_norm_config: first_layer
@@ -36,9 +34,7 @@ impl InnerModelConfig {
                 .clone()
                 .unwrap_or_else(|| tf.output_norm_config.clone()),
             mixer_config: first_layer.mixer_config.clone(),
-            post_attention_norm_config: first_layer
-                .post_attention_norm_config
-                .clone(),
+            post_attention_norm_config: first_layer.post_attention_norm_config.clone(),
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
@@ -70,9 +66,7 @@ impl InnerModelConfig {
                     .clone()
                     .unwrap_or_else(|| tf.output_norm_config.clone()),
                 mixer_config: layer.mixer_config.clone(),
-                post_attention_norm_config: layer
-                    .post_attention_norm_config
-                    .clone(),
+                post_attention_norm_config: layer.post_attention_norm_config.clone(),
                 pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
                 mlp_config: layer.mlp_config.clone(),
                 post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
@@ -101,9 +95,7 @@ impl InnerModelConfig {
         })
     }
 
-    fn derive_attention_dims(
-        tf: &TransformerConfig
-    ) -> Result<AttentionDims, ConfigError> {
+    fn derive_attention_dims(tf: &TransformerConfig) -> Result<AttentionDims, ConfigError> {
         if let (Some(num_heads), Some(head_dim)) = (tf.num_heads, tf.head_dim) {
             return Ok(AttentionDims {
                 num_heads,
@@ -113,17 +105,9 @@ impl InnerModelConfig {
             });
         }
 
-        if let Some(attn) = tf
-            .layer_configs
-            .iter()
-            .find_map(|layer| layer.mixer_config.as_attention())
-        {
-            let num_heads = attn.num_heads.ok_or_else(|| {
-                ConfigError::MissingField("num_heads".to_string())
-            })?;
-            let head_dim = attn.head_dim.ok_or_else(|| {
-                ConfigError::MissingField("head_dim".to_string())
-            })?;
+        if let Some(attn) = tf.layer_configs.iter().find_map(|layer| layer.mixer_config.as_attention()) {
+            let num_heads = attn.num_heads.ok_or_else(|| ConfigError::MissingField("num_heads".to_string()))?;
+            let head_dim = attn.head_dim.ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
             return Ok(AttentionDims {
                 num_heads,
                 num_groups: attn.num_groups.unwrap_or(num_heads),
@@ -132,11 +116,7 @@ impl InnerModelConfig {
             });
         }
 
-        if let Some(mamba) = tf
-            .layer_configs
-            .iter()
-            .find_map(|layer| layer.mixer_config.as_mamba())
-        {
+        if let Some(mamba) = tf.layer_configs.iter().find_map(|layer| layer.mixer_config.as_mamba()) {
             return Ok(AttentionDims {
                 num_heads: mamba.num_heads,
                 num_groups: mamba.num_groups,

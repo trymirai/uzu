@@ -19,17 +19,12 @@ pub use crate::backends::common::kernel::kv_cache_update::KVCacheUpdate;
 pub use array::MetalArray;
 pub use backend::Metal;
 pub use classifier_context::ClassifierContext;
-pub use context::{
-    DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext,
-};
+pub use context::{DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext};
 pub use encodable_block::Decoder;
 pub use error::MTLError;
 pub use kernel::{KernelDataType, RopeKernel, dsl::MetalKernels};
 pub use language_model_generator_context::LanguageModelGeneratorContext;
-pub use media_utils::{
-    ImagePreprocessingParams, ImagePreprocessingRequirements,
-    MetalImagePreprocessor,
-};
+pub use media_utils::{ImagePreprocessingParams, ImagePreprocessingRequirements, MetalImagePreprocessor};
 pub use metal::prelude::*;
 pub use metal_extensions::ComputeEncoderSetValue;
 pub use placement_analysis::PlacementAnalysis;

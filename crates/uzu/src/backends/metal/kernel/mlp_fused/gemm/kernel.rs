@@ -1,25 +1,18 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained,
-        kernel::mlp_fused::common::MlpFusedArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, ProtocolObject, Retained, kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
     weights_transposed: bool,
-    pipelines: HashMap<
-        PipelineConfiguration,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
@@ -27,11 +20,8 @@ impl Kernel {
         data_type: DataType,
         weights_transposed: bool,
     ) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP fused GEMM: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MLP fused GEMM: {data_type:?}")));
         }
         Ok(Self {
             data_type,
@@ -86,8 +76,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
 
@@ -99,10 +88,7 @@ impl Kernel {
                 52,
             );
 
-            let pipeline_state = context.compute_pipeline_state(
-                &kernel_name,
-                Some(&function_constants),
-            )?;
+            let pipeline_state = context.compute_pipeline_state(&kernel_name, Some(&function_constants))?;
             self.pipelines.insert(configuration.clone(), pipeline_state);
         }
         Ok(self.pipelines.get(configuration).unwrap())
@@ -115,27 +101,17 @@ impl Kernel {
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {
-        let pipeline_state = self.get_or_compile_pipeline(
-            context,
-            &descriptor.pipeline_configuration,
-        )?;
+        let pipeline_state = self.get_or_compile_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
-        encoder.set_buffer(
-            Some(arguments.input),
-            arguments.input_offset as usize,
-            0,
-        );
+        encoder.set_buffer(Some(arguments.input), arguments.input_offset as usize, 0);
         encoder.set_buffer(Some(arguments.weights), 0, 1);
         encoder.set_buffer(Some(arguments.output), 0, 2);
 
         encoder.set_value(&descriptor.params, 3);
         encoder.set_value(&descriptor.hidden_dim, 10);
 
-        encoder.dispatch_threadgroups(
-            descriptor.threadgroups,
-            descriptor.threads_per_threadgroup,
-        );
+        encoder.dispatch_threadgroups(descriptor.threadgroups, descriptor.threads_per_threadgroup);
         Ok(())
     }
 }

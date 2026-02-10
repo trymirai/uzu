@@ -61,14 +61,7 @@ impl<B: Backend> Array<B> {
         &self,
         shape: &[usize],
     ) -> Self {
-        unsafe {
-            Self::from_parts(
-                self.buffer.clone(),
-                self.offset,
-                shape,
-                self.data_type,
-            )
-        }
+        unsafe { Self::from_parts(self.buffer.clone(), self.offset, shape, self.data_type) }
     }
 
     // Getters
@@ -112,21 +105,11 @@ impl<B: Backend> Array<B> {
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self.cpu_ptr().as_ptr() as *const u8,
-                self.size(),
-            )
-        }
+        unsafe { std::slice::from_raw_parts(self.cpu_ptr().as_ptr() as *const u8, self.size()) }
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.cpu_ptr().as_ptr() as *mut u8,
-                self.size(),
-            )
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.cpu_ptr().as_ptr() as *mut u8, self.size()) }
     }
 
     pub fn as_slice<T: ArrayElement>(&self) -> &[T] {
@@ -140,8 +123,7 @@ impl<B: Backend> Array<B> {
     }
 
     pub fn as_view<T: ArrayElement>(&self) -> ArrayView<'_, T, IxDyn> {
-        ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>())
-            .expect("Failed to create array view")
+        ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
     }
 
     pub fn copy_from_array<C: Backend>(
@@ -168,17 +150,12 @@ impl<B: Backend> Array<B> {
                 assert_eq!(a, b, "Shapes must match on all non-sliced axes");
             }
         }
-        assert_eq!(
-            self.data_type(),
-            source.data_type(),
-            "Arrays must have the same data type"
-        );
+        assert_eq!(self.data_type(), source.data_type(), "Arrays must have the same data type");
 
         let elem_size = self.data_type().size_in_bytes();
 
         // The number of contiguous elements to copy for each slice operation
-        let block_size_elems =
-            self.shape().iter().skip(axis + 1).product::<usize>();
+        let block_size_elems = self.shape().iter().skip(axis + 1).product::<usize>();
         let block_size_bytes = block_size_elems * elem_size;
 
         // The total number of blocks to copy
@@ -199,8 +176,7 @@ impl<B: Backend> Array<B> {
             let src_block_start = i * src_stride_bytes;
             let dst_block_start = i * dst_stride_bytes;
 
-            let src_start =
-                src_block_start + src_range.start * block_size_bytes;
+            let src_start = src_block_start + src_range.start * block_size_bytes;
             let dst_start = dst_block_start + dst_offset * block_size_bytes;
 
             let src_slice = &src_buf[src_start..src_start + copy_bytes];
@@ -267,8 +243,7 @@ pub trait ArrayContextExt {
         data_type: DataType,
         label: &str,
     ) -> Array<Self::Backend> {
-        let mut array =
-            self.create_array_uninitialized(shape, data_type, label);
+        let mut array = self.create_array_uninitialized(shape, data_type, label);
         array.as_bytes_mut().fill(0);
         array
     }
@@ -285,9 +260,7 @@ impl<C: Context> ArrayContextExt for C {
     ) -> Array<Self::Backend> {
         let buffer_size_bytes = size_for_shape(shape, data_type);
 
-        let buffer = self
-            .create_buffer(buffer_size_bytes)
-            .expect("Failed to create buffer");
+        let buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
         unsafe { Array::from_parts(buffer, 0, shape, data_type) }

@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
 use crate::backends::metal::{
-    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat,
-    MTLReadWriteTextureTier, ProtocolObject,
+    MTLDevice, MTLDeviceExt, MTLFeatureSet, MTLGPUFamily, MTLPixelFormat, MTLReadWriteTextureTier, ProtocolObject,
 };
 
 /// Enum representing various Metal features that may or may not be supported by a device.
@@ -44,9 +43,7 @@ impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    self.supports_feature_set(
-                        MTLFeatureSet::macOS_GPUFamily1_v3,
-                    )
+                    self.supports_feature_set(MTLFeatureSet::macOS_GPUFamily1_v3)
                 }
                 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
                 {
@@ -55,46 +52,37 @@ impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
             },
             Feature::TileShaders => self.supports_family(MTLGPUFamily::Apple4),
             Feature::ReadWriteTextures(pixel_format) => {
-                let tier_one_supported_formats: HashSet<MTLPixelFormat> = [
-                    MTLPixelFormat::R32Float,
-                    MTLPixelFormat::R32Uint,
-                    MTLPixelFormat::R32Sint,
-                ]
-                .into();
+                let tier_one_supported_formats: HashSet<MTLPixelFormat> =
+                    [MTLPixelFormat::R32Float, MTLPixelFormat::R32Uint, MTLPixelFormat::R32Sint].into();
 
-                let tier_two_supported_formats: HashSet<MTLPixelFormat> =
-                    tier_one_supported_formats
-                        .union(
-                            &[
-                                MTLPixelFormat::RGBA32Float,
-                                MTLPixelFormat::RGBA32Uint,
-                                MTLPixelFormat::RGBA32Sint,
-                                MTLPixelFormat::RGBA16Float,
-                                MTLPixelFormat::RGBA16Uint,
-                                MTLPixelFormat::RGBA16Sint,
-                                MTLPixelFormat::RGBA8Unorm,
-                                MTLPixelFormat::RGBA8Uint,
-                                MTLPixelFormat::RGBA8Sint,
-                                MTLPixelFormat::R16Float,
-                                MTLPixelFormat::R16Uint,
-                                MTLPixelFormat::R16Sint,
-                                MTLPixelFormat::R8Unorm,
-                                MTLPixelFormat::R8Uint,
-                                MTLPixelFormat::R8Sint,
-                            ]
-                            .into_iter()
-                            .collect(),
-                        )
-                        .cloned()
-                        .collect();
+                let tier_two_supported_formats: HashSet<MTLPixelFormat> = tier_one_supported_formats
+                    .union(
+                        &[
+                            MTLPixelFormat::RGBA32Float,
+                            MTLPixelFormat::RGBA32Uint,
+                            MTLPixelFormat::RGBA32Sint,
+                            MTLPixelFormat::RGBA16Float,
+                            MTLPixelFormat::RGBA16Uint,
+                            MTLPixelFormat::RGBA16Sint,
+                            MTLPixelFormat::RGBA8Unorm,
+                            MTLPixelFormat::RGBA8Uint,
+                            MTLPixelFormat::RGBA8Sint,
+                            MTLPixelFormat::R16Float,
+                            MTLPixelFormat::R16Uint,
+                            MTLPixelFormat::R16Sint,
+                            MTLPixelFormat::R8Unorm,
+                            MTLPixelFormat::R8Uint,
+                            MTLPixelFormat::R8Sint,
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )
+                    .cloned()
+                    .collect();
 
                 match self.read_write_texture_support() {
-                    MTLReadWriteTextureTier::Tier1 => {
-                        tier_one_supported_formats.contains(&pixel_format)
-                    },
-                    MTLReadWriteTextureTier::Tier2 => {
-                        tier_two_supported_formats.contains(&pixel_format)
-                    },
+                    MTLReadWriteTextureTier::Tier1 => tier_one_supported_formats.contains(&pixel_format),
+                    MTLReadWriteTextureTier::Tier2 => tier_two_supported_formats.contains(&pixel_format),
                     MTLReadWriteTextureTier::None => false,
                 }
             },

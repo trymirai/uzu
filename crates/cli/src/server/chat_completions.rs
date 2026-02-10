@@ -6,10 +6,7 @@ use uuid::Uuid;
 use uzu::session::{
     config::RunConfig,
     parameter::SamplingPolicy,
-    types::{
-        FinishReason, Input, Message, Output, Role, RunStats, Stats, StepStats,
-        TotalStats,
-    },
+    types::{FinishReason, Input, Message, Output, Role, RunStats, Stats, StepStats, TotalStats},
 };
 
 use crate::server::SessionState;
@@ -53,10 +50,7 @@ pub fn handle_chat_completions(
 
     println!("📨 [{}] Incoming chat completion request:", id);
     println!("   Messages: {} message(s)", request.messages.len());
-    println!(
-        "   Max tokens: {}",
-        request.max_completion_tokens.unwrap_or(2048)
-    );
+    println!("   Max tokens: {}", request.max_completion_tokens.unwrap_or(2048));
 
     for (i, msg) in request.messages.iter().enumerate() {
         let content_preview = if msg.content.len() > 10000 {
@@ -79,58 +73,53 @@ pub fn handle_chat_completions(
         })
         .collect();
     let input = Input::Messages(messages);
-    let run_config =
-        RunConfig::new(tokens_limit, true, SamplingPolicy::Default, None);
+    let run_config = RunConfig::new(tokens_limit, true, SamplingPolicy::Default, None);
 
     let start_time = std::time::Instant::now();
     let mut session = state.session_wrapper.lock();
 
-    let output =
-        match session.run(input, run_config, None::<fn(Output) -> bool>) {
-            Ok(output) => output,
-            Err(e) => {
-                eprintln!("❌ [{}] Session run error: {}", id, e);
-                // Return error response
-                let error_response = ChatCompletionResponse {
-                    id: id.clone(),
-                    object: "chat.completion".to_string(),
-                    created: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64,
-                    model: model_name.clone(),
-                    choices: vec![ChatCompletionChoice {
-                        index: 0,
-                        message: ChatMessage {
-                            content: format!("Error: {}", e),
-                            role: Role::Assistant,
-                        },
-                        finish_reason: "error".to_string(),
-                    }],
-                    stats: Stats {
-                        prefill_stats: StepStats {
-                            duration: 0.0,
-                            suffix_length: 0,
-                            tokens_count: 0,
-                            tokens_per_second: 0.0,
-                            processed_tokens_per_second: 0.0,
-                            model_run: RunStats {
-                                count: 0,
-                                average_duration: 0.0,
-                            },
-                            run: None,
-                        },
-                        generate_stats: None,
-                        total_stats: TotalStats {
-                            duration: 0.0,
-                            tokens_count_input: 0,
-                            tokens_count_output: 0,
-                        },
+    let output = match session.run(input, run_config, None::<fn(Output) -> bool>) {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("❌ [{}] Session run error: {}", id, e);
+            // Return error response
+            let error_response = ChatCompletionResponse {
+                id: id.clone(),
+                object: "chat.completion".to_string(),
+                created: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+                model: model_name.clone(),
+                choices: vec![ChatCompletionChoice {
+                    index: 0,
+                    message: ChatMessage {
+                        content: format!("Error: {}", e),
+                        role: Role::Assistant,
                     },
-                };
-                return Json(error_response);
-            },
-        };
+                    finish_reason: "error".to_string(),
+                }],
+                stats: Stats {
+                    prefill_stats: StepStats {
+                        duration: 0.0,
+                        suffix_length: 0,
+                        tokens_count: 0,
+                        tokens_per_second: 0.0,
+                        processed_tokens_per_second: 0.0,
+                        model_run: RunStats {
+                            count: 0,
+                            average_duration: 0.0,
+                        },
+                        run: None,
+                    },
+                    generate_stats: None,
+                    total_stats: TotalStats {
+                        duration: 0.0,
+                        tokens_count_input: 0,
+                        tokens_count_output: 0,
+                    },
+                },
+            };
+            return Json(error_response);
+        },
+    };
 
     let processing_time = start_time.elapsed();
 
@@ -149,14 +138,7 @@ pub fn handle_chat_completions(
     println!("   Response length: {} chars", text.original.len());
     println!("   Finish reason: {:?}", finish_reason_val);
     println!("   Processing time: {:.3}s", processing_time.as_secs_f64());
-    println!(
-        "   Tokens/second: {:.1}",
-        stats
-            .generate_stats
-            .as_ref()
-            .map(|s| s.tokens_per_second)
-            .unwrap_or(0.0)
-    );
+    println!("   Tokens/second: {:.1}", stats.generate_stats.as_ref().map(|s| s.tokens_per_second).unwrap_or(0.0));
 
     print!("   Response preview: ");
     let text = text.original.clone();
@@ -171,8 +153,7 @@ pub fn handle_chat_completions(
     let response = ChatCompletionResponse {
         id: id.clone(),
         object: "chat.completion".to_string(),
-        created: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-            as i64,
+        created: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
         model: model_name,
         choices: vec![ChatCompletionChoice {
             index: 0,

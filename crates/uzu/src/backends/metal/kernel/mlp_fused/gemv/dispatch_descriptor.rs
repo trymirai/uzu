@@ -1,12 +1,7 @@
-use super::pipeline_configuration::{
-    PipelineConfiguration, select_configuration,
-};
+use super::pipeline_configuration::{PipelineConfiguration, select_configuration};
 use crate::{
     DataType,
-    backends::metal::{
-        MTLContext, MTLError, MTLSize,
-        kernel::mlp_fused::common::MlpFusedArguments,
-    },
+    backends::metal::{MTLContext, MTLError, MTLSize, kernel::mlp_fused::common::MlpFusedArguments},
 };
 
 #[derive(Debug, Clone)]
@@ -27,35 +22,23 @@ impl DispatchDescriptor {
         data_type: DataType,
         arguments: &MlpFusedArguments,
     ) -> Result<Option<Self>, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP fused GEMV: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MLP fused GEMV: {data_type:?}")));
         }
 
         if arguments.batch != 1 {
             return Ok(None);
         }
 
-        let pipeline_configuration =
-            select_configuration(arguments.hidden_dim, arguments.activation);
+        let pipeline_configuration = select_configuration(arguments.hidden_dim, arguments.activation);
 
-        let output_elements_per_threadgroup =
-            pipeline_configuration.output_elements_per_threadgroup();
-        let threadgroup_count_x =
-            ((arguments.hidden_dim as u32 + output_elements_per_threadgroup
-                - 1)
-                / output_elements_per_threadgroup) as u64;
+        let output_elements_per_threadgroup = pipeline_configuration.output_elements_per_threadgroup();
+        let threadgroup_count_x = ((arguments.hidden_dim as u32 + output_elements_per_threadgroup - 1)
+            / output_elements_per_threadgroup) as u64;
         let threadgroup_count_z = arguments.batch_count.max(1) as u64;
 
-        let threadgroups = MTLSize::new(
-            threadgroup_count_x as usize,
-            1,
-            threadgroup_count_z as usize,
-        );
-        let threads_per_threadgroup =
-            pipeline_configuration.threads_per_threadgroup();
+        let threadgroups = MTLSize::new(threadgroup_count_x as usize, 1, threadgroup_count_z as usize);
+        let threads_per_threadgroup = pipeline_configuration.threads_per_threadgroup();
 
         Ok(Some(Self {
             pipeline_configuration,

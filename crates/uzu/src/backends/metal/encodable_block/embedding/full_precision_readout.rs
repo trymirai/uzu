@@ -1,8 +1,7 @@
 use std::cell::RefCell;
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
 };
 
 use super::{
@@ -35,46 +34,37 @@ impl FullPrecisionEmbeddingReadout {
         model_dim: usize,
         parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(EmbeddingError::UnsupportedDataType(data_type));
         }
 
         let weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("output_weights").map_err(|e| {
-                EmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load weights: {:?}",
-                    e
-                )))
+                EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load weights: {:?}", e)))
             })?,
         };
 
         if weights.shape() != [vocab_size, model_dim] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
-                    weights.shape(),
-                    vocab_size,
-                    model_dim
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
+                weights.shape(),
+                vocab_size,
+                model_dim
+            ))));
         }
 
         if weights.data_type() != data_type {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Weights dtype mismatch: got {:?}, expected {:?}",
-                    weights.data_type(),
-                    data_type
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Weights dtype mismatch: got {:?}, expected {:?}",
+                weights.data_type(),
+                data_type
+            ))));
         }
 
         let weights_buffer = weights.buffer().to_owned();
 
-        let mut kernel =
-            MatmulKernel::new(data_type).map_err(EmbeddingError::MetalError)?;
+        let mut kernel = MatmulKernel::new(data_type).map_err(EmbeddingError::MetalError)?;
         kernel.precompile(_mtl_context).map_err(EmbeddingError::MetalError)?;
 
         Ok(Self {
@@ -93,9 +83,7 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingReadout {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 

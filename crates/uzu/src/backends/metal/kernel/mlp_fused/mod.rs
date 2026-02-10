@@ -6,9 +6,7 @@ mod kernel;
 mod split_k;
 
 pub use common::MlpFusedArguments;
-pub use dispatch_descriptor::{
-    MlpFusedKernelVariant, determine_kernel_variant,
-};
+pub use dispatch_descriptor::{MlpFusedKernelVariant, determine_kernel_variant};
 pub use gemm::GemmKernel;
 pub use gemv::GemvKernel;
 pub use kernel::MlpFusedKernel;

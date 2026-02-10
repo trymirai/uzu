@@ -7,10 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 use uzu::{DataType, backends::metal::MetalArray};
-use xgrammar::{
-    DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
-    TokenizerInfo,
-};
+use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Person {
@@ -24,10 +21,7 @@ fn person_schema_metal_bitmask() {
     let crate_version = env!("CARGO_PKG_VERSION");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let model_dir = repo_root
-        .join("models")
-        .join(crate_version)
-        .join("Llama-3.2-1B-Instruct");
+    let model_dir = repo_root.join("models").join(crate_version).join("Llama-3.2-1B-Instruct");
 
     let tokenizer_path = model_dir.join("tokenizer.json");
     if !tokenizer_path.exists() {
@@ -39,26 +33,13 @@ fn person_schema_metal_bitmask() {
     }
 
     let schema_root = schemars::schema_for!(Person);
-    let schema_str =
-        serde_json::to_string(&schema_root).expect("schema to string");
+    let schema_str = serde_json::to_string(&schema_root).expect("schema to string");
 
-    let tokenizer =
-        Tokenizer::from_file(&tokenizer_path).expect("load tokenizer.json");
-    let tokenizer_info =
-        TokenizerInfo::from_huggingface(&tokenizer, None, None).unwrap();
+    let tokenizer = Tokenizer::from_file(&tokenizer_path).expect("load tokenizer.json");
+    let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, None).unwrap();
 
-    let grammar = Grammar::from_json_schema(
-        &schema_str,
-        true,
-        Some(2),
-        Some((",", ":")),
-        true,
-        None,
-        false,
-    )
-    .unwrap();
-    let mut compiler =
-        GrammarCompiler::new(&tokenizer_info, 8, true, -1).unwrap();
+    let grammar = Grammar::from_json_schema(&schema_str, true, Some(2), Some((",", ":")), true, None, false).unwrap();
+    let mut compiler = GrammarCompiler::new(&tokenizer_info, 8, true, -1).unwrap();
     let compiled = compiler.compile_grammar(&grammar).unwrap();
 
     let mut matcher = GrammarMatcher::new(&compiled, None, true, -1).unwrap();
@@ -80,11 +61,8 @@ fn person_schema_metal_bitmask() {
     // xgrammar expects an int32 mask tensor of shape [buffer_size]
     let elems = batch * buffer_size;
     let bytes = elems * core::mem::size_of::<i32>();
-    let buffer = device
-        .new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-    let metal_bitmask =
-        unsafe { MetalArray::from_parts(buffer, 0, &shape, DataType::I32) };
+    let buffer = device.new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED).expect("Failed to create buffer");
+    let metal_bitmask = unsafe { MetalArray::from_parts(buffer, 0, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {

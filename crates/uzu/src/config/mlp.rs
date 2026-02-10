@@ -137,37 +137,34 @@ mod tests {
             }
         "#;
 
-        let ground_truth_config =
-            MLPConfig::MixtureOfExperts(MixtureOfExpertsConfig {
-                mixture_size: 32,
-                num_experts_per_token: 4,
-                routing_function: RoutingFunctionConfig::SoftmaxRouting,
-                router_config: LinearConfig::FullPrecision {
-                    precision: ConfigDataType::BFloat16,
-                },
-                router_has_biases: true,
-                expert_config: MoeExpertConfig {
-                    linear_config: LinearConfig::QLoRA {
-                        quantization: QuantizationConfig {
-                            group_size: 32,
-                            weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(
-                                QuantizationMode::Int8,
-                            ),
-                            activation_precision: ConfigDataType::BFloat16,
-                        },
-                        lora_rank: 16,
-                        lora_scale: 2.0,
+        let ground_truth_config = MLPConfig::MixtureOfExperts(MixtureOfExpertsConfig {
+            mixture_size: 32,
+            num_experts_per_token: 4,
+            routing_function: RoutingFunctionConfig::SoftmaxRouting,
+            router_config: LinearConfig::FullPrecision {
+                precision: ConfigDataType::BFloat16,
+            },
+            router_has_biases: true,
+            expert_config: MoeExpertConfig {
+                linear_config: LinearConfig::QLoRA {
+                    quantization: QuantizationConfig {
+                        group_size: 32,
+                        weight_quantization_mode: QuantizationMode::UInt4,
+                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        activation_precision: ConfigDataType::BFloat16,
                     },
-                    activation: Activation::SiLU {
-                        alpha: 1.0,
-                    },
-                    has_up_biases: true,
-                    has_down_biases: true,
-                    gate_clipping: [None, Some(7.0)],
-                    up_clipping: [-6.0, 8.0],
+                    lora_rank: 16,
+                    lora_scale: 2.0,
                 },
-            });
+                activation: Activation::SiLU {
+                    alpha: 1.0,
+                },
+                has_up_biases: true,
+                has_down_biases: true,
+                gate_clipping: [None, Some(7.0)],
+                up_clipping: [-6.0, 8.0],
+            },
+        });
 
         let deserialized_config: MLPConfig = from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);

@@ -3,14 +3,11 @@ use std::{cell::RefCell, mem, rc::Rc};
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt,
-        MTLResourceOptions, MetalArray, ProtocolObject, Retained,
+        MTLCommandBuffer, MTLContext, MTLDevice, MTLDeviceExt, MTLResourceOptions, MetalArray, ProtocolObject,
+        Retained,
         error::MTLError,
         image::{Image, PixelFormat, TextureUsage},
-        kernel::media_kernels::{
-            ExtractImagePatches, ImageParameters, PatchParameters,
-            ScalePadNormalizeImage,
-        },
+        kernel::media_kernels::{ExtractImagePatches, ImageParameters, PatchParameters, ScalePadNormalizeImage},
     },
 };
 
@@ -43,10 +40,8 @@ fn calculate_preprocessing_dimensions(
     let scaled_width = (input_width as f32 * scale_factor).ceil() as u32;
     let scaled_height = (input_height as f32 * scale_factor).ceil() as u32;
 
-    let padded_width =
-        ((scaled_width + patch_size - 1) / patch_size) * patch_size;
-    let padded_height =
-        ((scaled_height + patch_size - 1) / patch_size) * patch_size;
+    let padded_width = ((scaled_width + patch_size - 1) / patch_size) * patch_size;
+    let padded_height = ((scaled_height + patch_size - 1) / patch_size) * patch_size;
 
     (padded_width, padded_height, scale_factor)
 }
@@ -93,23 +88,19 @@ pub fn calculate_image_preprocessing_requirements(
     input_height: u32,
     params: &ImagePreprocessingParams,
 ) -> ImagePreprocessingRequirements {
-    let (padded_width, padded_height, _scale_factor) =
-        calculate_preprocessing_dimensions(
-            input_width,
-            input_height,
-            params.min_pixels,
-            params.max_pixels,
-            params.patch_size,
-        );
+    let (padded_width, padded_height, _scale_factor) = calculate_preprocessing_dimensions(
+        input_width,
+        input_height,
+        params.min_pixels,
+        params.max_pixels,
+        params.patch_size,
+    );
 
     let num_patches_x = padded_width / params.patch_size;
     let num_patches_y = padded_height / params.patch_size;
     let total_spatial_patches = num_patches_x * num_patches_y;
-    let output_buffer_element_count = total_spatial_patches
-        * params.temporal_slices
-        * params.num_channels
-        * params.patch_size
-        * params.patch_size;
+    let output_buffer_element_count =
+        total_spatial_patches * params.temporal_slices * params.num_channels * params.patch_size * params.patch_size;
 
     let intermediate_texture_usage = TextureUsage {
         shader_read: true,
@@ -158,30 +149,12 @@ impl MetalImagePreprocessor {
         let padded_height = requirements.padded_height;
 
         let input_dimensions_data = [input_image.width(), input_image.height()];
-        let mut input_dimensions_tensor = data_to_mtl_tensor(
-            &self.device,
-            &input_dimensions_data,
-            vec![2],
-            DataType::F32,
-        )?;
-        let mut image_mean_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.image_mean,
-            vec![3],
-            DataType::F32,
-        )?;
-        let mut image_std_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.image_std,
-            vec![3],
-            DataType::F32,
-        )?;
-        let mut padding_value_rgb_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.padding_value_rgb,
-            vec![1],
-            DataType::F32,
-        )?;
+        let mut input_dimensions_tensor =
+            data_to_mtl_tensor(&self.device, &input_dimensions_data, vec![2], DataType::F32)?;
+        let mut image_mean_tensor = data_to_mtl_tensor(&self.device, &params.image_mean, vec![3], DataType::F32)?;
+        let mut image_std_tensor = data_to_mtl_tensor(&self.device, &params.image_std, vec![3], DataType::F32)?;
+        let mut padding_value_rgb_tensor =
+            data_to_mtl_tensor(&self.device, &params.padding_value_rgb, vec![1], DataType::F32)?;
 
         let _spn_tensors: Vec<&mut MetalArray> = vec![
             &mut input_dimensions_tensor,
@@ -204,34 +177,15 @@ impl MetalImagePreprocessor {
             command_buffer,
         );
 
-        let mut final_output_buffer_array_ref =
-            output_patch_buffer_cell.borrow_mut();
+        let mut final_output_buffer_array_ref = output_patch_buffer_cell.borrow_mut();
 
         let padded_dimensions_data = [padded_width, padded_height];
-        let mut padded_dimensions_tensor = data_to_mtl_tensor(
-            &self.device,
-            &padded_dimensions_data,
-            vec![2],
-            DataType::F32,
-        )?;
-        let mut patch_size_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.patch_size,
-            vec![1],
-            DataType::F32,
-        )?;
-        let mut num_channels_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.num_channels,
-            vec![1],
-            DataType::F32,
-        )?;
-        let mut temporal_slices_tensor = data_to_mtl_tensor(
-            &self.device,
-            &params.temporal_slices,
-            vec![1],
-            DataType::F32,
-        )?;
+        let mut padded_dimensions_tensor =
+            data_to_mtl_tensor(&self.device, &padded_dimensions_data, vec![2], DataType::F32)?;
+        let mut patch_size_tensor = data_to_mtl_tensor(&self.device, &params.patch_size, vec![1], DataType::F32)?;
+        let mut num_channels_tensor = data_to_mtl_tensor(&self.device, &params.num_channels, vec![1], DataType::F32)?;
+        let mut temporal_slices_tensor =
+            data_to_mtl_tensor(&self.device, &params.temporal_slices, vec![1], DataType::F32)?;
 
         let _eip_tensors: Vec<&mut MetalArray> = vec![
             &mut *final_output_buffer_array_ref,
@@ -243,10 +197,7 @@ impl MetalImagePreprocessor {
         let _eip_images = [intermediate_texture];
 
         let patch_params = PatchParameters {
-            padded_dimensions: [
-                requirements.padded_width,
-                requirements.padded_height,
-            ],
+            padded_dimensions: [requirements.padded_width, requirements.padded_height],
             patch_size: params.patch_size,
             num_channels: params.num_channels,
             temporal_slices: params.temporal_slices,
@@ -269,11 +220,8 @@ fn data_to_mtl_tensor<T: Copy>(
     data_type: DataType,
 ) -> Result<MetalArray, MTLError> {
     let size = mem::size_of::<T>();
-    let bytes = unsafe {
-        std::slice::from_raw_parts(data as *const T as *const u8, size)
-    };
-    let buffer = device
-        .new_buffer_with_data(bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const T as *const u8, size) };
+    let buffer =
+        device.new_buffer_with_data(bytes, MTLResourceOptions::STORAGE_MODE_SHARED).expect("Failed to create buffer");
     unsafe { Ok(MetalArray::from_parts(buffer, 0, &shape, data_type)) }
 }

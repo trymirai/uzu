@@ -1,6 +1,5 @@
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal,
-    ProtocolObject, Retained,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal, ProtocolObject, Retained,
 };
 
 use super::{
@@ -46,9 +45,7 @@ impl EncodableBlock<Metal> for Activation {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
         self.encode_with_shared_encoder(state, &encoder, _parameters);
 
@@ -84,12 +81,6 @@ impl EncodableBlock<Metal> for Activation {
             },
         };
 
-        self.kernel.encode(
-            input_buffer,
-            output_buffer,
-            n as u32,
-            act_type,
-            encoder,
-        );
+        self.kernel.encode(input_buffer, output_buffer, n as u32, act_type, encoder);
     }
 }

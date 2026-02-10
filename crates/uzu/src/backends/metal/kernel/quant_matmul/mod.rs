@@ -3,9 +3,8 @@ use std::{collections::HashMap, ptr::NonNull};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLError, MTLFunctionConstantValues, MTLSize,
-        ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
+        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
     },
     config::QuantizationMode,
 };
@@ -37,10 +36,7 @@ pub enum QuantizedMatmulError {
 }
 
 pub struct QuantizedMatmulKernel {
-    pipelines: HashMap<
-        KernelKind,
-        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64),
-    >,
+    pipelines: HashMap<KernelKind, (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64)>,
     output_dim: usize,
     weights_transposed: bool,
 }
@@ -107,8 +103,7 @@ impl QuantizedMatmulKernel {
         quantization_type: QuantizationType,
         weights_transposed: bool,
     ) -> Result<Self, QuantizedMatmulError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
@@ -122,41 +117,21 @@ impl QuantizedMatmulKernel {
 
         let mut pipelines = HashMap::new();
 
-        let kernel_name_mv = select_matrix_vector_kernel_name(
-            data_type,
-            group_size,
-            weights_transposed,
-            output_dim,
-            input_dim,
-            mode,
-        )?;
+        let kernel_name_mv =
+            select_matrix_vector_kernel_name(data_type, group_size, weights_transposed, output_dim, input_dim, mode)?;
 
         let cache_key_mv = format!("{}_mlx_{}", kernel_name_mv, use_mlx_quant);
         let pipeline_mv = mtl_context
-            .compute_pipeline_state_cached(
-                &cache_key_mv,
-                &kernel_name_mv,
-                Some(&function_constants),
-            )
+            .compute_pipeline_state_cached(&cache_key_mv, &kernel_name_mv, Some(&function_constants))
             .map_err(QuantizedMatmulError::MetalError)?;
         pipelines.insert(KernelKind::MatrixVector, (pipeline_mv, 32, 32));
 
-        let kernel_name_mm = select_qmm_kernel_name(
-            data_type,
-            group_size,
-            weights_transposed,
-            output_dim,
-            input_dim,
-            mode,
-        )?;
+        let kernel_name_mm =
+            select_qmm_kernel_name(data_type, group_size, weights_transposed, output_dim, input_dim, mode)?;
 
         let cache_key_mm = format!("{}_mlx_{}", kernel_name_mm, use_mlx_quant);
         let pipeline_mm = mtl_context
-            .compute_pipeline_state_cached(
-                &cache_key_mm,
-                &kernel_name_mm,
-                Some(&function_constants),
-            )
+            .compute_pipeline_state_cached(&cache_key_mm, &kernel_name_mm, Some(&function_constants))
             .map_err(QuantizedMatmulError::MetalError)?;
 
         let (bm, bn) = if kernel_name_mm.contains("_64x64") {
@@ -196,12 +171,10 @@ impl QuantizedMatmulKernel {
     ) -> Result<(), QuantizedMatmulError> {
         let variant = self.select_variant(args.batch as usize);
         let (pipeline, bm, bn) =
-            self.pipelines.get(&variant).ok_or_else(|| {
-                QuantizedMatmulError::InvalidDimensions {
-                    m: args.batch as usize,
-                    n: args.output_dim as usize,
-                    k: args.input_dim as usize,
-                }
+            self.pipelines.get(&variant).ok_or_else(|| QuantizedMatmulError::InvalidDimensions {
+                m: args.batch as usize,
+                n: args.output_dim as usize,
+                k: args.input_dim as usize,
             })?;
 
         encoder.set_compute_pipeline_state(pipeline);
@@ -230,28 +203,17 @@ impl QuantizedMatmulKernel {
                     64
                 };
                 let n_tgp_y = (n + bn - 1) / bn;
-                let threadgroups =
-                    MTLSize::new(m as usize, n_tgp_y as usize, 1);
+                let threadgroups = MTLSize::new(m as usize, n_tgp_y as usize, 1);
                 let threads_per_threadgroup = MTLSize::new(bk as usize, 2, 1);
-                encoder.dispatch_threadgroups(
-                    threadgroups,
-                    threads_per_threadgroup,
-                );
+                encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
             },
             KernelKind::MatrixMatrix => {
                 let wm = 2;
                 let wn = 2;
-                let threads_per_threadgroup =
-                    MTLSize::new(32, wn as usize, wm as usize);
-                let threadgroups = MTLSize::new(
-                    ((n as u64 + bn - 1) / bn) as usize,
-                    ((m as u64 + bm - 1) / bm) as usize,
-                    1,
-                );
-                encoder.dispatch_threadgroups(
-                    threadgroups,
-                    threads_per_threadgroup,
-                );
+                let threads_per_threadgroup = MTLSize::new(32, wn as usize, wm as usize);
+                let threadgroups =
+                    MTLSize::new(((n as u64 + bn - 1) / bn) as usize, ((m as u64 + bm - 1) / bm) as usize, 1);
+                encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
             },
         }
 
@@ -278,8 +240,7 @@ fn select_matrix_vector_kernel_name(
     input_dim: usize,
     mode: QuantizationMode,
 ) -> Result<String, QuantizedMatmulError> {
-    let type_suffix = dtype_suffix(data_type)
-        .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+    let type_suffix = dtype_suffix(data_type).ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
     let bits = match mode {
         QuantizationMode::UInt4 => 4,
         QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
@@ -304,8 +265,7 @@ fn select_qmm_kernel_name(
     input_dim: usize,
     mode: QuantizationMode,
 ) -> Result<String, QuantizedMatmulError> {
-    let type_suffix = dtype_suffix(data_type)
-        .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+    let type_suffix = dtype_suffix(data_type).ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
     let bits = match mode {
         QuantizationMode::UInt4 => 4,
         QuantizationMode::Int8 | QuantizationMode::UInt8 => 8,
@@ -316,15 +276,11 @@ fn select_qmm_kernel_name(
     } else {
         ""
     };
-    let mut kernel_name =
-        base_qmm_kernel_name(type_suffix, group_size, transpose_infix, bits)?;
+    let mut kernel_name = base_qmm_kernel_name(type_suffix, group_size, transpose_infix, bits)?;
     if weights_transposed {
         if output_dim % 32 != 0 {
             kernel_name.push_str("_unaligned");
-        } else if type_suffix == "bf16"
-            && (group_size == 128 || group_size == 64)
-            && (bits == 4 || bits == 8)
-        {
+        } else if type_suffix == "bf16" && (group_size == 128 || group_size == 64) && (bits == 4 || bits == 8) {
             kernel_name.push_str("_64x64");
         }
     } else if input_dim % 32 == 0 {
@@ -376,8 +332,7 @@ impl MlpFusedQmvKernel {
         mode: QuantizationMode,
         quantization_type: QuantizationType,
     ) -> Result<Self, QuantizedMatmulError> {
-        let type_suffix = dtype_suffix(data_type)
-            .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+        let type_suffix = dtype_suffix(data_type).ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
 
         let bits = match mode {
             QuantizationMode::UInt4 => 4,
@@ -388,8 +343,7 @@ impl MlpFusedQmvKernel {
             return Err(QuantizedMatmulError::UnsupportedBits(bits));
         }
 
-        let kernel_name =
-            format!("qmv_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
+        let kernel_name = format!("qmv_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
@@ -426,10 +380,8 @@ impl MlpFusedQmvKernel {
 
         // Dispatch: one threadgroup per 8 output rows (num_simdgroups * results_per_simdgroup)
         let rows_per_threadgroup = 8;
-        let n_tgp_y = ((args.hidden_dim + rows_per_threadgroup - 1)
-            / rows_per_threadgroup) as u64;
-        let threadgroups =
-            MTLSize::new(args.batch_count.max(1) as usize, n_tgp_y as usize, 1);
+        let n_tgp_y = ((args.hidden_dim + rows_per_threadgroup - 1) / rows_per_threadgroup) as u64;
+        let threadgroups = MTLSize::new(args.batch_count.max(1) as usize, n_tgp_y as usize, 1);
         let threads_per_threadgroup = MTLSize::new(32, 2, 1); // 2 simdgroups, 32 threads each
 
         encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
@@ -474,8 +426,7 @@ impl MlpFusedQmmKernel {
         mode: QuantizationMode,
         quantization_type: QuantizationType,
     ) -> Result<Self, QuantizedMatmulError> {
-        let type_suffix = dtype_suffix(data_type)
-            .ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
+        let type_suffix = dtype_suffix(data_type).ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
 
         let bits = match mode {
             QuantizationMode::UInt4 => 4,
@@ -486,8 +437,7 @@ impl MlpFusedQmmKernel {
             return Err(QuantizedMatmulError::UnsupportedBits(bits));
         }
 
-        let kernel_name =
-            format!("qmm_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
+        let kernel_name = format!("qmm_mlp_fused_{}_g{}_b{}", type_suffix, group_size, bits);
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);

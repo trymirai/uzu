@@ -29,37 +29,17 @@ impl<B: Backend> CommonAuxBuffers<B> {
         Self {
             suffix_length,
             main: scratch.main.view(&model_shape.main_shape(suffix_length)),
-            shortcut: scratch
-                .shortcut
-                .view(&model_shape.main_shape(suffix_length)),
+            shortcut: scratch.shortcut.view(&model_shape.main_shape(suffix_length)),
             qkv: scratch.qkv.view(&model_shape.qkv_shape(suffix_length)),
-            attention_output: scratch
-                .attention_output
-                .view(&model_shape.attention_output_shape(suffix_length)),
-            mlp_fused_up: scratch
-                .mlp_fused_up
-                .view(&model_shape.mlp_fused_up_shape(suffix_length)),
-            mlp_hidden: scratch
-                .mlp_hidden
-                .view(&model_shape.mlp_hidden_shape(suffix_length)),
-            rotated_queries: scratch
-                .rotated_queries
-                .view(&model_shape.rotated_queries_shape(suffix_length)),
-            rotated_keys: scratch
-                .rotated_keys
-                .view(&model_shape.rotated_keys_shape(suffix_length)),
-            extracted_values: scratch
-                .extracted_values
-                .view(&model_shape.extracted_values_shape(suffix_length)),
-            attention_partials: scratch
-                .attention_partials
-                .view(&model_shape.attention_partials_shape(suffix_length)),
-            attention_sums: scratch
-                .attention_sums
-                .view(&model_shape.attention_sums_shape(suffix_length)),
-            attention_maxs: scratch
-                .attention_maxs
-                .view(&model_shape.attention_maxs_shape(suffix_length)),
+            attention_output: scratch.attention_output.view(&model_shape.attention_output_shape(suffix_length)),
+            mlp_fused_up: scratch.mlp_fused_up.view(&model_shape.mlp_fused_up_shape(suffix_length)),
+            mlp_hidden: scratch.mlp_hidden.view(&model_shape.mlp_hidden_shape(suffix_length)),
+            rotated_queries: scratch.rotated_queries.view(&model_shape.rotated_queries_shape(suffix_length)),
+            rotated_keys: scratch.rotated_keys.view(&model_shape.rotated_keys_shape(suffix_length)),
+            extracted_values: scratch.extracted_values.view(&model_shape.extracted_values_shape(suffix_length)),
+            attention_partials: scratch.attention_partials.view(&model_shape.attention_partials_shape(suffix_length)),
+            attention_sums: scratch.attention_sums.view(&model_shape.attention_sums_shape(suffix_length)),
+            attention_maxs: scratch.attention_maxs.view(&model_shape.attention_maxs_shape(suffix_length)),
         }
     }
 }

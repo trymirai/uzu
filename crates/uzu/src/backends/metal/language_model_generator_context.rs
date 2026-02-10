@@ -7,24 +7,22 @@ use std::{
 };
 
 use super::{
-    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
-    compilation_parameters::CompilationConfig, kernel::TokenCopyKernel,
+    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig,
+    kernel::TokenCopyKernel,
 };
 use crate::{
     DataType,
     backends::{
         common::{Context, kernel::MaskUpdateKernel},
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
-            MTLEvent, ProtocolObject, Retained,
+            MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
             kernel::dsl::MaskUpdateMetalKernel,
         },
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::Sampling,
     forward_pass::{
-        cache_layers::CacheLayers, model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers, state::SharedBuffers,
+        cache_layers::CacheLayers, model_shape::ModelShape, scratch_buffers::ScratchBuffers, state::SharedBuffers,
     },
     language_model::rng::PRng,
     parameters::ParameterLoader,
@@ -63,15 +61,12 @@ impl AsyncBuffers {
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions = context
-            .create_buffer(max_tokens * std::mem::size_of::<i32>())
-            .expect("Failed to create positions buffer");
-        let seeds = context
-            .create_buffer(max_tokens * std::mem::size_of::<u64>())
-            .expect("Failed to create seeds buffer");
-        let results = context
-            .create_buffer(batch_size * std::mem::size_of::<u32>())
-            .expect("Failed to create results buffer");
+        let positions =
+            context.create_buffer(max_tokens * std::mem::size_of::<i32>()).expect("Failed to create positions buffer");
+        let seeds =
+            context.create_buffer(max_tokens * std::mem::size_of::<u64>()).expect("Failed to create seeds buffer");
+        let results =
+            context.create_buffer(batch_size * std::mem::size_of::<u32>()).expect("Failed to create results buffer");
         let event = context.device.new_event().expect("Failed to create event");
 
         Self {
@@ -161,77 +156,46 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context =
-            MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let command_buffer = context
-            .create_command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
+        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").to_owned();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
             return Err(Error::UnableToLoadConfig);
         }
-        let config_file =
-            File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
+        let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
         let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file))
-                .map_err(|_| Error::UnableToLoadConfig)?;
+            serde_json::from_reader(BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         // Extract language model config
-        let language_model_config = model_metadata
-            .model_config
-            .as_language_model()
-            .ok_or(Error::UnableToLoadConfig)?;
+        let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config = Rc::new(
-            language_model_config
-                .decoder_config()
-                .map_err(|_| Error::UnableToLoadConfig)?,
-        );
+        let decoder_config = Rc::new(language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let prefill_step_size =
-            decoding_config.prefill_step_size.resolve(language_model_config);
+        let prefill_step_size = decoding_config.prefill_step_size.resolve(language_model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
-        let max_prefix_length: usize =
-            decoding_config.context_length.resolve(language_model_config);
-        let max_suffix_length: usize =
-            std::cmp::max(prefill_step_size, generate_suffix_length);
+        let max_prefix_length: usize = decoding_config.context_length.resolve(language_model_config);
+        let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
         let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
         }
-        let weights_file = File::open(&weights_path)
-            .map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, context.as_ref())
-            .map_err(|_| Error::UnableToLoadWeights)?;
+        let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
+        let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(
-            context.as_ref(),
-            &decoder_config,
-            &model_shape,
-        )));
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
         shared_buffers.borrow_mut().update_data(&root_loader_view);
 
-        let scratch_buffers = ScratchBuffers::new(
-            context.as_ref(),
-            &decoder_config,
-            &model_shape,
-            max_prefix_length,
-            max_suffix_length,
-        );
+        let scratch_buffers =
+            ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
 
-        let executables = Decoder::new(
-            context.clone(),
-            decoder_config.clone(),
-            &root_loader_view,
-            compilation_config.clone(),
-        );
+        let executables =
+            Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view, compilation_config.clone());
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -240,28 +204,18 @@ impl LanguageModelGeneratorContext {
             max_suffix_length,
         )));
 
-        let intermediate_data_type: DataType =
-            decoder_config.output_norm_config.scale_precision.into();
+        let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
         let kv_cache_update = Box::new(
-            KVCacheUpdate::new(
-                context.as_ref(),
-                intermediate_data_type,
-                max_prefix_length,
-            )
-            .map_err(|_| Error::UnableToCreateMetalContext)?,
+            KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
+                .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
-        let gpu_sampler = Sampling::<Metal>::new(
-            &context,
-            intermediate_data_type,
-            max_suffix_length,
-            decoder_config.vocab_size,
-        )
-        .map_err(|_| Error::UnableToCreateMetalContext)?;
+        let gpu_sampler =
+            Sampling::<Metal>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
+                .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let token_copy = TokenCopyKernel::new(&context)
-            .map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy = TokenCopyKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
@@ -273,10 +227,8 @@ impl LanguageModelGeneratorContext {
             None
         };
 
-        let async_batch_size =
-            decoding_config.async_batch_size.resolve(model_path);
-        let async_buffers =
-            AsyncBuffers::new(&context, max_prefix_length, async_batch_size);
+        let async_batch_size = decoding_config.async_batch_size.resolve(model_path);
+        let async_buffers = AsyncBuffers::new(&context, max_prefix_length, async_batch_size);
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());
 
@@ -302,11 +254,7 @@ impl LanguageModelGeneratorContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = self
-            .mtl_context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
+        self.command_buffer =
+            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
     }
 }

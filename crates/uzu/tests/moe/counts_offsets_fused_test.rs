@@ -56,18 +56,13 @@ fn gen_topk_ids_from_logits(
 
     // Generate random input and router weights
     let d_model = 64; // arbitrary model dimension for test
-    let input_f32: Vec<f32> =
-        (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
-    let weight_f32: Vec<f32> =
-        (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
-    let bias_f32: Vec<f32> =
-        (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
+    let input_f32: Vec<f32> = (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+    let weight_f32: Vec<f32> = (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+    let bias_f32: Vec<f32> = (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
 
     // Convert to bf16
-    let input: Vec<bf16> =
-        input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-    let weight: Vec<bf16> =
-        weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+    let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
     let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
 
     let input_buf = alloc_buffer_with_data(ctx, &input);
@@ -77,12 +72,8 @@ fn gen_topk_ids_from_logits(
     let topk_probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     // Use fused router+topk kernel
-    let router_topk =
-        MoeRouterTopKKernel::new(ctx).expect("router_topk kernel");
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let router_topk = MoeRouterTopKKernel::new(ctx).expect("router_topk kernel");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let args = MoeRouterTopKArguments {
         input_buffer: &input_buf,
         weight_buffer: &weight_buf,
@@ -95,9 +86,7 @@ fn gen_topk_ids_from_logits(
         k,
         renorm: true,
     };
-    router_topk
-        .encode(&cb, KernelDataType::BFloat16, args)
-        .expect("encode router_topk");
+    router_topk.encode(&cb, KernelDataType::BFloat16, args).expect("encode router_topk");
     cb.commit();
     cb.wait_until_completed();
 
@@ -117,8 +106,7 @@ fn test_counts_offsets_fused_parity_random() {
             if k > e {
                 continue;
             }
-            let (topk_ids, topk_ids_buf) =
-                gen_topk_ids_from_logits(&ctx, t, e, k);
+            let (topk_ids, topk_ids_buf) = gen_topk_ids_from_logits(&ctx, t, e, k);
 
             // CPU reference
             let counts_cpu = cpu_bucket_counts(&topk_ids, t, k, e);
@@ -130,12 +118,8 @@ fn test_counts_offsets_fused_parity_random() {
             let num_tiles = ((e + 511) / 512).max(1);
             let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-            let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx)
-                .expect("fused kernel");
-            let cb = ctx
-                .command_queue
-                .command_buffer()
-                .expect("Failed to create command buffer");
+            let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
             let encoder = cb.new_compute_command_encoder().expect("encoder");
 
             kernel.encode(
@@ -155,25 +139,13 @@ fn test_counts_offsets_fused_parity_random() {
 
             // Verify offsets
             let offsets_ptr = offsets_buf.contents().as_ptr() as *const u32;
-            let offsets_gpu =
-                unsafe { std::slice::from_raw_parts(offsets_ptr, e + 1) };
-            assert_eq!(
-                offsets_gpu,
-                &offsets_cpu[..],
-                "offsets mismatch T={} E={} K={}",
-                t,
-                e,
-                k
-            );
+            let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_ptr, e + 1) };
+            assert_eq!(offsets_gpu, &offsets_cpu[..], "offsets mismatch T={} E={} K={}", t, e, k);
 
             // Verify sum
             let sum_ptr = sum_k_buf.contents().as_ptr() as *const u32;
             let sum_gpu = unsafe { *sum_ptr };
-            assert_eq!(
-                sum_gpu, sum_cpu,
-                "sum mismatch T={} E={} K={}",
-                t, e, k
-            );
+            assert_eq!(sum_gpu, sum_cpu, "sum mismatch T={} E={} K={}", t, e, k);
         }
     }
 }
@@ -197,33 +169,15 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel =
-        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(
-        &topk_ids_buf,
-        &offsets_buf,
-        &sum_k_buf,
-        &partials_buf,
-        t as u32,
-        e as u32,
-        k as u32,
-        &encoder,
-    );
+    kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
     encoder.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
-    let offsets_gpu = unsafe {
-        std::slice::from_raw_parts(
-            offsets_buf.contents().as_ptr() as *const u32,
-            e + 1,
-        )
-    };
+    let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
 
     let mut expected_offsets = vec![0u32; e + 1];
     expected_offsets[4..].fill((t * k) as u32);
@@ -238,32 +192,14 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel =
-        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(
-        &topk_ids_buf,
-        &offsets_buf,
-        &sum_k_buf,
-        &partials_buf,
-        t as u32,
-        e as u32,
-        k as u32,
-        &encoder,
-    );
+    kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
     encoder.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
-    let offsets_gpu = unsafe {
-        std::slice::from_raw_parts(
-            offsets_buf.contents().as_ptr() as *const u32,
-            e + 1,
-        )
-    };
+    let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
     assert!(offsets_gpu.iter().all(|&v| v == 0));
 }

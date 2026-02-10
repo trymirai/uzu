@@ -1,13 +1,10 @@
 use crate::backends::{
-    common::kernel::{
-        MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel,
-        MoeWriteDispatchArgsKernel,
-    },
+    common::kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
     metal::{
         MTLContext, MTLError,
         kernel::dsl::{
-            MoeBuildTileMapMetalKernel, MoeTileCountsMetalKernel,
-            MoeTileScanMetalKernel, MoeWriteDispatchArgsMetalKernel,
+            MoeBuildTileMapMetalKernel, MoeTileCountsMetalKernel, MoeTileScanMetalKernel,
+            MoeWriteDispatchArgsMetalKernel,
         },
     },
 };
@@ -37,15 +34,8 @@ impl MoeTileMapKernels {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileCountsArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        self.counts.encode(
-            &args.offsets_buffer.retain(),
-            &args.tile_counts_buffer.retain(),
-            args.e as u32,
-            &encoder,
-        );
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
+        self.counts.encode(&args.offsets_buffer.retain(), &args.tile_counts_buffer.retain(), args.e as u32, &encoder);
         encoder.end_encoding();
     }
 
@@ -54,9 +44,7 @@ impl MoeTileMapKernels {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileScanArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.scan.encode(
             &args.tile_counts_buffer.retain(),
             &args.tile_offsets_buffer.retain(),
@@ -72,9 +60,7 @@ impl MoeTileMapKernels {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileMapBuildArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.build.encode(
             &args.expert_offsets.retain(),
             &args.tile_offsets.retain(),
@@ -91,21 +77,14 @@ impl MoeTileMapKernels {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: &MoeTileDispatchArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
-        self.dispatch.encode(
-            &args.total_tiles.retain(),
-            &args.dispatch_args.retain(),
-            args.num_tiles_x,
-            &encoder,
-        );
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
+        self.dispatch.encode(&args.total_tiles.retain(), &args.dispatch_args.retain(), args.num_tiles_x, &encoder);
         encoder.end_encoding();
     }
 }
 
 pub struct MoeTileCountsArguments<'a> {
-    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E+1]
+    pub offsets_buffer: &'a ProtocolObject<dyn MTLBuffer>,     // [E+1]
     pub tile_counts_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E]
     pub e: usize,
 }
@@ -128,7 +107,7 @@ pub struct MoeTileMapBuildArguments<'a> {
 
 #[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a> {
-    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>, // [>=1]
+    pub total_tiles: &'a ProtocolObject<dyn MTLBuffer>,   // [>=1]
     pub dispatch_args: &'a ProtocolObject<dyn MTLBuffer>, // [3]
-    pub num_tiles_x: u32, // x dimension for indirect dispatch
+    pub num_tiles_x: u32,                                 // x dimension for indirect dispatch
 }

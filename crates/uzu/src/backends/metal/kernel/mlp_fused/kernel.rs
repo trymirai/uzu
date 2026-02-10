@@ -2,9 +2,7 @@ use crate::backends::metal::{MTLComputeCommandEncoder, ProtocolObject};
 
 use super::{
     common::MlpFusedArguments,
-    dispatch_descriptor::{
-        MlpFusedDispatchDescriptor, choose_dispatch_descriptor,
-    },
+    dispatch_descriptor::{MlpFusedDispatchDescriptor, choose_dispatch_descriptor},
     gemm::GemmKernel,
     gemv::GemvKernel,
     split_k::SplitKKernel,
@@ -27,11 +25,8 @@ impl MlpFusedKernel {
         data_type: DataType,
         weights_transposed: bool,
     ) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MlpFusedKernel: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MlpFusedKernel: {data_type:?}")));
         }
 
         Ok(Self {
@@ -45,8 +40,7 @@ impl MlpFusedKernel {
 
     fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel, MTLError> {
         if self.gemm.is_none() {
-            self.gemm =
-                Some(GemmKernel::new(self.data_type, self.weights_transposed)?);
+            self.gemm = Some(GemmKernel::new(self.data_type, self.weights_transposed)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
@@ -79,8 +73,7 @@ impl MlpFusedKernel {
             },
             MlpFusedDispatchDescriptor::SplitK(descriptor) => {
                 let splitk = self.get_or_create_splitk()?;
-                splitk
-                    .encode_descriptor(context, encoder, arguments, descriptor)
+                splitk.encode_descriptor(context, encoder, arguments, descriptor)
             },
             MlpFusedDispatchDescriptor::Gemm(descriptor) => {
                 let gemm = self.get_or_create_gemm()?;
@@ -95,18 +88,8 @@ impl MlpFusedKernel {
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MlpFusedArguments,
     ) -> Result<(), MTLError> {
-        let descriptor = choose_dispatch_descriptor(
-            context,
-            self.data_type,
-            self.weights_transposed,
-            arguments,
-        )?;
+        let descriptor = choose_dispatch_descriptor(context, self.data_type, self.weights_transposed, arguments)?;
 
-        self.encode_dispatch_descriptor(
-            context,
-            encoder,
-            arguments,
-            &descriptor,
-        )
+        self.encode_dispatch_descriptor(context, encoder, arguments, &descriptor)
     }
 }

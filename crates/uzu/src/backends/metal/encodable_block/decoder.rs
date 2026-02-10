@@ -7,8 +7,7 @@ use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext,
-        ProtocolObject, Retained,
+        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },
@@ -38,64 +37,43 @@ impl Decoder {
         root_weight_loader: &ParameterTree<MTLContext>,
         compilation_config: Rc<CompilationConfig>,
     ) -> Self {
-        let decoder_weight_loader = root_weight_loader
-            .subtree("transformer")
-            .expect("transformer subtree not found");
+        let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
 
-        let embed =
-            embed_block(&decoder_config, &mtl_context, root_weight_loader);
+        let embed = embed_block(&decoder_config, &mtl_context, root_weight_loader);
 
-        let readout =
-            readout_block(&decoder_config, &mtl_context, root_weight_loader);
+        let readout = readout_block(&decoder_config, &mtl_context, root_weight_loader);
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
-        let norm_reference_layer = decoder_config
-            .layer_configs
-            .as_ref()
-            .map(|configs| &configs[0])
-            .unwrap_or(&decoder_config.layer_config);
-        let norm_data_type: DataType = match &norm_reference_layer.mixer_config
-        {
-            MixerConfig::Attention(attention_config) => attention_config
-                .qkv_projection_config
-                .activation_precision()
-                .into(),
-            MixerConfig::Mamba(mamba_config) => {
-                mamba_config.in_projection_config.activation_precision().into()
+        let norm_reference_layer =
+            decoder_config.layer_configs.as_ref().map(|configs| &configs[0]).unwrap_or(&decoder_config.layer_config);
+        let norm_data_type: DataType = match &norm_reference_layer.mixer_config {
+            MixerConfig::Attention(attention_config) => {
+                attention_config.qkv_projection_config.activation_precision().into()
             },
-            MixerConfig::ShortConv(short_conv_config) => short_conv_config
-                .in_projection_config
-                .activation_precision()
-                .into(),
+            MixerConfig::Mamba(mamba_config) => mamba_config.in_projection_config.activation_precision().into(),
+            MixerConfig::ShortConv(short_conv_config) => {
+                short_conv_config.in_projection_config.activation_precision().into()
+            },
         };
 
         let global_rope = if decoder_config.global_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| {
-                Self::create_rope_block(
-                    &mtl_context,
-                    (*data_type).into(),
-                    RopeType::Global,
-                )
-            })
+            attention_data_type
+                .as_ref()
+                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Global))
         } else {
             None
         };
 
         let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| {
-                Self::create_rope_block(
-                    &mtl_context,
-                    (*data_type).into(),
-                    RopeType::Local,
-                )
-            })
+            attention_data_type
+                .as_ref()
+                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Local))
         } else {
             None
         };
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let sliding_window_sizes =
-            model_shape.sliding_window_length_per_layer.clone();
+        let sliding_window_sizes = model_shape.sliding_window_length_per_layer.clone();
 
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
@@ -107,13 +85,10 @@ impl Decoder {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        let mut rope_block = global_rope.clone().expect(
-                            "Global rope missing for transformer layer",
-                        );
-                        if let (Some(_), Some(local_rope_block)) = (
-                            sliding_window_sizes[layer_index],
-                            local_rope.clone(),
-                        ) {
+                        let mut rope_block = global_rope.clone().expect("Global rope missing for transformer layer");
+                        if let (Some(_), Some(local_rope_block)) =
+                            (sliding_window_sizes[layer_index], local_rope.clone())
+                        {
                             rope_block = local_rope_block;
                         }
                         Some(rope_block)
@@ -126,9 +101,7 @@ impl Decoder {
                     } => None,
                 };
 
-                let layer_loader = decoder_weight_loader
-                    .subtree(&format!("layers.{}", layer_index))
-                    .unwrap();
+                let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
                 LayerExecutables::new(
                     mtl_context.clone(),
@@ -176,10 +149,8 @@ impl Decoder {
         kernel_data_type: KernelDataType,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableBlock<Metal>>> {
-        let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
-            Rope::new(mtl_context, kernel_data_type, rope_type)
-                .expect("Failed to create Rope"),
-        );
+        let rotation: Box<dyn EncodableBlock<Metal>> =
+            Box::new(Rope::new(mtl_context, kernel_data_type, rope_type).expect("Failed to create Rope"));
         Rc::new(rotation)
     }
 
@@ -190,12 +161,9 @@ impl Decoder {
                 .as_ref()
                 .map(|configs| &configs[layer_index])
                 .unwrap_or(&decoder_config.layer_config);
-            layer_config.attention_config().map(|attention_config| {
-                attention_config
-                    .qkv_projection_config
-                    .activation_precision()
-                    .into()
-            })
+            layer_config
+                .attention_config()
+                .map(|attention_config| attention_config.qkv_projection_config.activation_precision().into())
         })
     }
 }
@@ -230,22 +198,14 @@ impl EncodableBlock<Metal> for Decoder {
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(
-                command_buffer,
-                ArrayId::Main,
-                traces.borrow().output_norm.clone(),
-            );
+            state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
         self.readout.encode(state, command_buffer, parameters);
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(
-                command_buffer,
-                ArrayId::Logits,
-                traces.borrow().logits.clone(),
-            );
+            state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
         }
     }
 }

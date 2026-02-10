@@ -1,9 +1,6 @@
 use crate::session::{
     config::SpeculatorConfig,
-    parameter::{
-        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize,
-        SamplingSeed,
-    },
+    parameter::{AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
 };
 
 #[derive(Clone)]

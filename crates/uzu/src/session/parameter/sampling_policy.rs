@@ -1,6 +1,4 @@
-use crate::{
-    config::LanguageModelConfig, session::parameter::ConfigResolvableValue,
-};
+use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SamplingMethod {
@@ -33,9 +31,7 @@ impl Default for SamplingPolicy {
     }
 }
 
-impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod>
-    for SamplingPolicy
-{
+impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPolicy {
     fn resolve(
         &self,
         config: &LanguageModelConfig,

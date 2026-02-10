@@ -13,9 +13,7 @@ use caching_allocator::CachingAllocator;
 use device_allocator::DeviceAllocator;
 use heap_allocator::MTLHeapAllocator;
 use model_config::ModelConfig;
-use simulation_result::{
-    run_long_simulation, run_simulation, run_simulation_with_config,
-};
+use simulation_result::{run_long_simulation, run_simulation, run_simulation_with_config};
 use uzu::backends::common::Context;
 
 const KB: f64 = 1024.0;
@@ -28,26 +26,17 @@ fn print_comparison(
     device_result: &simulation_result::SimulationResult,
 ) {
     println!("\n=== {} ===", name);
-    println!(
-        "{:<20} {:>14} {:>14} {:>14}",
-        "Metric", "UZU Caching", "Heap", "Device"
-    );
+    println!("{:<20} {:>14} {:>14} {:>14}", "Metric", "UZU Caching", "Heap", "Device");
     println!("{:-<62}", "");
 
     println!(
         "{:<20} {:>14} {:>14} {:>14}",
-        "Allocations",
-        uzu_result.stats.total_allocs,
-        heap_result.stats.total_allocs,
-        device_result.stats.total_allocs
+        "Allocations", uzu_result.stats.total_allocs, heap_result.stats.total_allocs, device_result.stats.total_allocs
     );
 
     println!(
         "{:<20} {:>14} {:>14} {:>14}",
-        "Frees",
-        uzu_result.stats.total_frees,
-        heap_result.stats.total_frees,
-        device_result.stats.total_frees
+        "Frees", uzu_result.stats.total_frees, heap_result.stats.total_frees, device_result.stats.total_frees
     );
 
     println!(
@@ -93,15 +82,10 @@ fn print_comparison(
     println!();
 
     let device_time = device_result.stats.avg_alloc_time_us().max(0.001);
-    let uzu_speedup =
-        device_time / uzu_result.stats.avg_alloc_time_us().max(0.001);
-    let heap_speedup =
-        device_time / heap_result.stats.avg_alloc_time_us().max(0.001);
+    let uzu_speedup = device_time / uzu_result.stats.avg_alloc_time_us().max(0.001);
+    let heap_speedup = device_time / heap_result.stats.avg_alloc_time_us().max(0.001);
 
-    println!(
-        "Alloc speedup vs device: UZU {:.1}x, Heap {:.1}x",
-        uzu_speedup, heap_speedup
-    );
+    println!("Alloc speedup vs device: UZU {:.1}x, Heap {:.1}x", uzu_speedup, heap_speedup);
 }
 
 fn print_memory_over_time(
@@ -142,40 +126,17 @@ fn test_allocator_comparison() {
     println!("========================================");
 
     let uzu_allocator = CachingAllocator::new();
-    let uzu_result = run_simulation(
-        &uzu_allocator,
-        prompt_length,
-        generate_length,
-        prefill_step_size,
-    );
+    let uzu_result = run_simulation(&uzu_allocator, prompt_length, generate_length, prefill_step_size);
 
     let heap_allocator = MTLHeapAllocator::new(512 * 1024 * 1024);
-    let heap_result = run_simulation(
-        &heap_allocator,
-        prompt_length,
-        generate_length,
-        prefill_step_size,
-    );
+    let heap_result = run_simulation(&heap_allocator, prompt_length, generate_length, prefill_step_size);
 
     let device_allocator = DeviceAllocator::new();
-    let device_result = run_simulation(
-        &device_allocator,
-        prompt_length,
-        generate_length,
-        prefill_step_size,
-    );
+    let device_result = run_simulation(&device_allocator, prompt_length, generate_length, prefill_step_size);
 
-    print_comparison(
-        "Short Conversation Results",
-        &uzu_result,
-        &heap_result,
-        &device_result,
-    );
+    print_comparison("Short Conversation Results", &uzu_result, &heap_result, &device_result);
 
-    assert_eq!(
-        uzu_result.stats.total_allocs, uzu_result.stats.total_frees,
-        "UZU allocator: allocs should equal frees"
-    );
+    assert_eq!(uzu_result.stats.total_allocs, uzu_result.stats.total_frees, "UZU allocator: allocs should equal frees");
     assert_eq!(
         heap_result.stats.total_allocs, heap_result.stats.total_frees,
         "Heap allocator: allocs should equal frees"
@@ -196,10 +157,7 @@ fn test_long_conversation_comparison() {
 
     println!("\n========================================");
     println!("  Long Conversation Test");
-    println!(
-        "  {} conversations, ~{}p + ~{}g tokens each",
-        num_conversations, avg_prompt_length, avg_generate_length
-    );
+    println!("  {} conversations, ~{}p + ~{}g tokens each", num_conversations, avg_prompt_length, avg_generate_length);
     println!("========================================");
 
     let gc_limit = 256 * 1024 * 1024;
@@ -238,12 +196,7 @@ fn test_long_conversation_comparison() {
         snapshot_interval,
     );
 
-    print_comparison(
-        "Long Conversation Results",
-        &uzu_result,
-        &heap_result,
-        &device_result,
-    );
+    print_comparison("Long Conversation Results", &uzu_result, &heap_result, &device_result);
 
     print_memory_over_time("UZU Caching", &uzu_result.snapshots, 15);
     print_memory_over_time("Heap", &heap_result.snapshots, 15);
@@ -252,27 +205,18 @@ fn test_long_conversation_comparison() {
     println!("\n--- Memory Efficiency Summary ---");
     println!(
         "UZU peak/requested ratio: {:.2}%",
-        (uzu_result.peak_memory_bytes as f64
-            / uzu_result.stats.total_bytes_requested as f64)
-            * 100.0
+        (uzu_result.peak_memory_bytes as f64 / uzu_result.stats.total_bytes_requested as f64) * 100.0
     );
     println!(
         "Heap peak/requested ratio: {:.2}%",
-        (heap_result.peak_memory_bytes as f64
-            / heap_result.stats.total_bytes_requested as f64)
-            * 100.0
+        (heap_result.peak_memory_bytes as f64 / heap_result.stats.total_bytes_requested as f64) * 100.0
     );
     println!(
         "Device peak/requested ratio: {:.2}%",
-        (device_result.peak_memory_bytes as f64
-            / device_result.stats.total_bytes_requested as f64)
-            * 100.0
+        (device_result.peak_memory_bytes as f64 / device_result.stats.total_bytes_requested as f64) * 100.0
     );
 
-    assert_eq!(
-        uzu_result.stats.total_allocs, uzu_result.stats.total_frees,
-        "UZU allocator: allocs should equal frees"
-    );
+    assert_eq!(uzu_result.stats.total_allocs, uzu_result.stats.total_frees, "UZU allocator: allocs should equal frees");
     assert_eq!(
         device_result.stats.total_allocs, device_result.stats.total_frees,
         "Device allocator: allocs should equal frees"
@@ -290,39 +234,21 @@ fn test_multi_model_comparison() {
     println!("  {}p + {}g tokens per model", prompt_length, generate_length);
     println!("========================================");
 
-    println!(
-        "\n{:<15} {:>12} {:>12} {:>12}",
-        "Model", "UZU (µs)", "Heap (µs)", "Device (µs)"
-    );
+    println!("\n{:<15} {:>12} {:>12} {:>12}", "Model", "UZU (µs)", "Heap (µs)", "Device (µs)");
     println!("{:-<55}", "");
 
     for config in ModelConfig::all_models() {
         let uzu_allocator = CachingAllocator::new();
-        let uzu_result = run_simulation_with_config(
-            &uzu_allocator,
-            config,
-            prompt_length,
-            generate_length,
-            prefill_step_size,
-        );
+        let uzu_result =
+            run_simulation_with_config(&uzu_allocator, config, prompt_length, generate_length, prefill_step_size);
 
         let heap_allocator = MTLHeapAllocator::new(512 * 1024 * 1024);
-        let heap_result = run_simulation_with_config(
-            &heap_allocator,
-            config,
-            prompt_length,
-            generate_length,
-            prefill_step_size,
-        );
+        let heap_result =
+            run_simulation_with_config(&heap_allocator, config, prompt_length, generate_length, prefill_step_size);
 
         let device_allocator = DeviceAllocator::new();
-        let device_result = run_simulation_with_config(
-            &device_allocator,
-            config,
-            prompt_length,
-            generate_length,
-            prefill_step_size,
-        );
+        let device_result =
+            run_simulation_with_config(&device_allocator, config, prompt_length, generate_length, prefill_step_size);
 
         println!(
             "{:<15} {:>12.2} {:>12.2} {:>12.2}",

@@ -11,10 +11,7 @@ use crate::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{
-            ArrayId, CommonAuxBuffers, HashMapId,
-            LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers,
-        },
+        state::{ArrayId, CommonAuxBuffers, HashMapId, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
     },
     session::parameter::SamplingMethod,
     utils::attention::fill_attention_bias,
@@ -81,13 +78,9 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
     ) -> ArrayCell<B> {
         let suffix_length = token_positions.len();
-        let token_positions_array =
-            scratch.token_positions.view(&[suffix_length]);
-        let token_positions_i32: Box<[i32]> =
-            token_positions.iter().map(|p| *p as i32).collect();
-        token_positions_array
-            .borrow_mut()
-            .copy_from_view(token_positions_i32.as_ref().into());
+        let token_positions_array = scratch.token_positions.view(&[suffix_length]);
+        let token_positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
+        token_positions_array.borrow_mut().copy_from_view(token_positions_i32.as_ref().into());
         token_positions_array
     }
 
@@ -105,8 +98,7 @@ impl<B: Backend> ForwardPassState<B> {
             parents.fill(-1);
 
             if sampling_length > 0 {
-                let root_pos =
-                    token_positions.get(sampling_start).copied().unwrap_or(0);
+                let root_pos = token_positions.get(sampling_start).copied().unwrap_or(0);
 
                 let mut stack: Vec<usize> = Vec::new();
 
@@ -122,11 +114,7 @@ impl<B: Backend> ForwardPassState<B> {
                     } else if let Some(&p) = stack.get(depth - 1) {
                         p as i32
                     } else {
-                        debug_assert!(
-                            false,
-                            "invalid trie depth ordering: depth={depth}, stack_len={}",
-                            stack.len()
-                        );
+                        debug_assert!(false, "invalid trie depth ordering: depth={depth}, stack_len={}", stack.len());
                         -1
                     };
                     parents[abs_idx] = parent_local;
@@ -169,15 +157,8 @@ impl<B: Backend> ForwardPassState<B> {
         async_seeds: Option<(&B::NativeBuffer, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
-        assert_eq!(
-            suffix_length,
-            token_positions.len(),
-            "Tokens and positions must have same length"
-        );
-        assert!(
-            suffix_length <= cache_layers.borrow().max_suffix_length(),
-            "Suffix length exceeds KV cache capacity"
-        );
+        assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
+        assert!(suffix_length <= cache_layers.borrow().max_suffix_length(), "Suffix length exceeds KV cache capacity");
 
         // Token IDs - optionally skip copy for async path
         let token_ids_cell = if skip_token_ids_copy {
@@ -187,29 +168,23 @@ impl<B: Backend> ForwardPassState<B> {
         };
 
         // Token positions - use async buffer if provided
-        let token_positions_cell =
-            if let Some((async_buf, offset)) = async_positions {
-                let array = unsafe {
-                    Array::from_parts(
-                        async_buf.clone(),
-                        offset * std::mem::size_of::<i32>(),
-                        &[suffix_length],
-                        DataType::I32,
-                    )
-                };
-                RefCell::new(array)
-            } else {
-                Self::init_token_positions(scratch, token_positions)
+        let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
+            let array = unsafe {
+                Array::from_parts(
+                    async_buf.clone(),
+                    offset * std::mem::size_of::<i32>(),
+                    &[suffix_length],
+                    DataType::I32,
+                )
             };
+            RefCell::new(array)
+        } else {
+            Self::init_token_positions(scratch, token_positions)
+        };
 
         // Trie parent indices (relative, within the sampling segment).
         // Only meaningful when sampling_length > 0.
-        let token_parents_cell = Self::init_token_parents(
-            scratch,
-            token_positions,
-            sampling_start,
-            sampling_length,
-        );
+        let token_parents_cell = Self::init_token_parents(scratch, token_positions, sampling_start, sampling_length);
 
         // Token bitmask
         let token_bitmask_cell = token_bitmask.map(|bitmask| {
@@ -238,12 +213,10 @@ impl<B: Backend> ForwardPassState<B> {
         };
 
         // Logits
-        let logits_cell =
-            scratch.logits.view(&model_shape.logits_shape(suffix_length));
+        let logits_cell = scratch.logits.view(&model_shape.logits_shape(suffix_length));
 
         // Sampling output
-        let sampling_output =
-            Some(scratch.sampling_output.view(&[suffix_length]));
+        let sampling_output = Some(scratch.sampling_output.view(&[suffix_length]));
 
         // Attention bias (causal + sliding window)
         let attention_bias = Self::init_llm_attention_bias(
@@ -256,40 +229,28 @@ impl<B: Backend> ForwardPassState<B> {
         );
 
         // Common aux buffers
-        let common_aux =
-            CommonAuxBuffers::new(scratch, model_shape, suffix_length);
+        let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
 
         // LLM-specific aux buffers
-        let llm_aux = Some(LanguageModelGeneratorAuxBuffers::new(
-            scratch,
-            decoder_config,
-            model_shape,
-            suffix_length,
-        ));
+        let llm_aux = Some(LanguageModelGeneratorAuxBuffers::new(scratch, decoder_config, model_shape, suffix_length));
 
         // Traces
         #[cfg(feature = "tracing")]
-        let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(
-            context.as_ref(),
-            model_shape,
-            suffix_length,
-        )));
+        let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(context.as_ref(), model_shape, suffix_length)));
 
-        let mode = ForwardPassMode::LanguageModelGenerator(
-            LanguageModelGeneratorModeState {
-                cache_layers,
-                token_seeds: token_seeds_cell,
-                logits: logits_cell,
-                sampling_output,
-                sampling_method: None,
-                #[cfg(feature = "tracing")]
-                traces,
-                active_suffix_length,
-                sampling_start,
-                sampling_length,
-                is_prefilling,
-            },
-        );
+        let mode = ForwardPassMode::LanguageModelGenerator(LanguageModelGeneratorModeState {
+            cache_layers,
+            token_seeds: token_seeds_cell,
+            logits: logits_cell,
+            sampling_output,
+            sampling_method: None,
+            #[cfg(feature = "tracing")]
+            traces,
+            active_suffix_length,
+            sampling_start,
+            sampling_length,
+            is_prefilling,
+        });
         Self {
             context,
             token_ids: token_ids_cell,
@@ -317,10 +278,8 @@ impl<B: Backend> ForwardPassState<B> {
             .attention_window_size_to_bias
             .iter()
             .map(|(window_size, buffer)| {
-                let prefix_length =
-                    window_size.unwrap_or(cache_ref.max_prefix_length());
-                let attention_bias_shape =
-                    [suffix_length, suffix_length + prefix_length];
+                let prefix_length = window_size.unwrap_or(cache_ref.max_prefix_length());
+                let attention_bias_shape = [suffix_length, suffix_length + prefix_length];
                 let array = buffer.borrow().view(&attention_bias_shape);
                 (*window_size, array)
             })
@@ -339,10 +298,7 @@ impl<B: Backend> ForwardPassState<B> {
             );
         }
 
-        attention_bias_map
-            .into_iter()
-            .map(|(k, v)| (k, RefCell::new(v)))
-            .collect()
+        attention_bias_map.into_iter().map(|(k, v)| (k, RefCell::new(v))).collect()
     }
 
     // ========================================================================
@@ -364,31 +320,19 @@ impl<B: Backend> ForwardPassState<B> {
         assert_eq!(suffix_length, token_positions.len());
 
         let token_ids_cell = Self::init_token_ids(scratch, token_ids);
-        let token_positions_cell =
-            Self::init_token_positions(scratch, token_positions);
-        let token_parents_cell =
-            Self::init_token_parents(scratch, token_positions, 0, 0);
+        let token_positions_cell = Self::init_token_positions(scratch, token_positions);
+        let token_parents_cell = Self::init_token_parents(scratch, token_positions, 0, 0);
 
         // Attention bias (bidirectional or causal)
-        let attention_bias = Self::init_classifier_attention_bias(
-            scratch,
-            suffix_length,
-            bidirectional_attention,
-        );
+        let attention_bias = Self::init_classifier_attention_bias(scratch, suffix_length, bidirectional_attention);
 
         // Common aux buffers
-        let common_aux =
-            CommonAuxBuffers::new(scratch, model_shape, suffix_length);
+        let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
 
         // Classifier-specific buffers
         let model_dim = model_shape.main_shape(1)[1];
-        let classifier_state = Self::init_classifier_buffers(
-            context.as_ref(),
-            model_shape,
-            model_dim,
-            num_labels,
-            suffix_length,
-        );
+        let classifier_state =
+            Self::init_classifier_buffers(context.as_ref(), model_shape, model_dim, num_labels, suffix_length);
 
         let mode = ForwardPassMode::Classifier(classifier_state);
 
@@ -425,37 +369,19 @@ impl<B: Backend> ForwardPassState<B> {
             if bidirectional_attention {
                 if let Some(window_size) = window {
                     let half_window = (window_size / 2) as isize;
-                    fill_attention_bias(
-                        bias_array,
-                        suffix_length,
-                        0,
-                        |row, col| {
-                            let distance = (row as isize) - (col as isize);
-                            distance.abs() > half_window
-                        },
-                    );
+                    fill_attention_bias(bias_array, suffix_length, 0, |row, col| {
+                        let distance = (row as isize) - (col as isize);
+                        distance.abs() > half_window
+                    });
                 } else {
-                    fill_attention_bias(
-                        bias_array,
-                        suffix_length,
-                        0,
-                        |_row, _col| false,
-                    );
+                    fill_attention_bias(bias_array, suffix_length, 0, |_row, _col| false);
                 }
             } else {
-                fill_attention_bias(
-                    bias_array,
-                    suffix_length,
-                    0,
-                    |row, col| row < col,
-                );
+                fill_attention_bias(bias_array, suffix_length, 0, |row, col| row < col);
             }
         }
 
-        attention_bias_map
-            .into_iter()
-            .map(|(k, v)| (k, RefCell::new(v)))
-            .collect()
+        attention_bias_map.into_iter().map(|(k, v)| (k, RefCell::new(v))).collect()
     }
 
     #[cfg(feature = "tracing")]
@@ -471,17 +397,8 @@ impl<B: Backend> ForwardPassState<B> {
 
         let create_buffer = |size: usize| -> ArrayCell<B> {
             let buffer_size = size * data_type.size_in_bytes();
-            let buffer = context
-                .create_buffer(buffer_size)
-                .expect("Failed to create buffer");
-            RefCell::new(unsafe {
-                Array::from_parts(
-                    buffer,
-                    0,
-                    &[batch_size, size / batch_size],
-                    data_type,
-                )
-            })
+            let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
+            RefCell::new(unsafe { Array::from_parts(buffer, 0, &[batch_size, size / batch_size], data_type) })
         };
 
         ClassifierModeState {
@@ -489,19 +406,9 @@ impl<B: Backend> ForwardPassState<B> {
             dense: create_buffer(batch_size * model_dim),
             norm: create_buffer(batch_size * model_dim),
             classifier_logits: {
-                let buffer_size =
-                    batch_size * num_labels * data_type.size_in_bytes();
-                let buffer = context
-                    .create_buffer(buffer_size)
-                    .expect("Failed to create buffer");
-                RefCell::new(unsafe {
-                    Array::from_parts(
-                        buffer,
-                        0,
-                        &[batch_size, num_labels],
-                        data_type,
-                    )
-                })
+                let buffer_size = batch_size * num_labels * data_type.size_in_bytes();
+                let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
+                RefCell::new(unsafe { Array::from_parts(buffer, 0, &[batch_size, num_labels], data_type) })
             },
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
@@ -526,12 +433,8 @@ impl<B: Backend> ForwardPassState<B> {
         let create_buffer = |dims: &[usize]| -> ArrayCell<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
-            let buffer = context
-                .create_buffer(buffer_size)
-                .expect("Failed to create buffer");
-            RefCell::new(unsafe {
-                Array::from_parts(buffer, 0, dims, data_type)
-            })
+            let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
+            RefCell::new(unsafe { Array::from_parts(buffer, 0, dims, data_type) })
         };
 
         ClassifierModeState {
@@ -596,150 +499,88 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::TokenIds => self.token_ids.clone(),
             ArrayId::TokenPositions => self.token_positions.clone(),
             ArrayId::TokenParents => self.token_parents.clone(),
-            ArrayId::TokenBitmask => {
-                self.token_bitmask.clone().expect("Token bitmask not available")
-            },
+            ArrayId::TokenBitmask => self.token_bitmask.clone().expect("Token bitmask not available"),
             ArrayId::Main => self.common_aux.main.clone(),
             ArrayId::Shortcut => self.common_aux.shortcut.clone(),
             ArrayId::QKV => self.common_aux.qkv.clone(),
-            ArrayId::AttentionOutput => {
-                self.common_aux.attention_output.clone()
-            },
+            ArrayId::AttentionOutput => self.common_aux.attention_output.clone(),
             ArrayId::MlpFusedUp => self.common_aux.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.common_aux.mlp_hidden.clone(),
             ArrayId::RotatedQueries => self.common_aux.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.common_aux.rotated_keys.clone(),
-            ArrayId::ExtractedValues => {
-                self.common_aux.extracted_values.clone()
-            },
-            ArrayId::AttentionPartials => {
-                self.common_aux.attention_partials.clone()
-            },
+            ArrayId::ExtractedValues => self.common_aux.extracted_values.clone(),
+            ArrayId::AttentionPartials => self.common_aux.attention_partials.clone(),
             ArrayId::AttentionSums => self.common_aux.attention_sums.clone(),
             ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
 
             // Shared buffer arrays
-            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => self
-                .shared_buffer_array(id)
-                .expect("Shared buffer array should be available"),
+            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => {
+                self.shared_buffer_array(id).expect("Shared buffer array should be available")
+            },
 
             // LLM-specific arrays
             ArrayId::Logits => self.llm_state().logits.clone(),
             ArrayId::TokenSeeds => self.llm_state().token_seeds.clone(),
             ArrayId::Keys(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_transformer()
-                    .expect("Expected transformer layer")
-                    .keys
-                    .clone()
+                cache.data[layer_index].as_transformer().expect("Expected transformer layer").keys.clone()
             },
             ArrayId::Values(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_transformer()
-                    .expect("Expected transformer layer")
-                    .values
+                cache.data[layer_index].as_transformer().expect("Expected transformer layer").values.clone()
+            },
+            ArrayId::AttentionSinks(layer_index) => {
+                self.shared_buffers.borrow().attention_sinks.as_ref().expect("Attention sinks not initialized")
+                    [layer_index]
                     .clone()
             },
-            ArrayId::AttentionSinks(layer_index) => self
-                .shared_buffers
-                .borrow()
-                .attention_sinks
-                .as_ref()
-                .expect("Attention sinks not initialized")[layer_index]
-                .clone(),
 
             // SSM arrays (LLM only)
-            ArrayId::SsmInProj => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_inproj.clone())
-                .expect("SSM inproj not initialized"),
-            ArrayId::SsmPacked(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_packed.clone())
-                .expect("SSM packed not initialized"),
+            ArrayId::SsmInProj => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ssm_inproj.clone()).expect("SSM inproj not initialized")
+            },
+            ArrayId::SsmPacked(_) => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ssm_packed.clone()).expect("SSM packed not initialized")
+            },
             ArrayId::SsmConvState(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_state_space()
-                    .expect("Expected SSM layer")
-                    .conv_state
-                    .clone()
+                cache.data[layer_index].as_state_space().expect("Expected SSM layer").conv_state.clone()
             },
             ArrayId::SsmState(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_state_space()
-                    .expect("Expected SSM layer")
-                    .ssm_state
-                    .clone()
+                cache.data[layer_index].as_state_space().expect("Expected SSM layer").ssm_state.clone()
             },
-            ArrayId::SsmX(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_x.clone())
-                .expect("SSM x not initialized"),
-            ArrayId::SsmB(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_b.clone())
-                .expect("SSM b not initialized"),
-            ArrayId::SsmC(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_c.clone())
-                .expect("SSM c not initialized"),
-            ArrayId::SsmDt(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_dt.clone())
-                .expect("SSM dt not initialized"),
-            ArrayId::SsmZ(_) => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.ssm_z.clone())
-                .expect("SSM z not initialized"),
+            ArrayId::SsmX(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_x.clone()).expect("SSM x not initialized"),
+            ArrayId::SsmB(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_b.clone()).expect("SSM b not initialized"),
+            ArrayId::SsmC(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_c.clone()).expect("SSM c not initialized"),
+            ArrayId::SsmDt(_) => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ssm_dt.clone()).expect("SSM dt not initialized")
+            },
+            ArrayId::SsmZ(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_z.clone()).expect("SSM z not initialized"),
             ArrayId::ShortConvState(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_short_conv()
-                    .expect("Expected ShortConv layer")
-                    .conv_state
-                    .clone()
+                cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").conv_state.clone()
             },
             ArrayId::ShortConvSuffixState(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index]
-                    .as_short_conv()
-                    .expect("Expected ShortConv layer")
-                    .suffix_state
-                    .clone()
+                cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").suffix_state.clone()
             },
 
             // MoE arrays (LLM only)
-            ArrayId::MoeTopkIds => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_topk_ids.clone())
-                .expect("MoE topk_ids not initialized"),
+            ArrayId::MoeTopkIds => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_topk_ids.clone()).expect("MoE topk_ids not initialized")
+            },
             ArrayId::MoeTopkProbs => self
                 .llm_aux
                 .as_ref()
                 .and_then(|aux| aux.moe_topk_probs.clone())
                 .expect("MoE topk_probs not initialized"),
-            ArrayId::MoeOffsets => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_offsets.clone())
-                .expect("MoE offsets not initialized"),
-            ArrayId::MoeSumK => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_sumk.clone())
-                .expect("MoE sumk not initialized"),
+            ArrayId::MoeOffsets => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_offsets.clone()).expect("MoE offsets not initialized")
+            },
+            ArrayId::MoeSumK => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_sumk.clone()).expect("MoE sumk not initialized")
+            },
             ArrayId::MoeBucketedTokenIds => self
                 .llm_aux
                 .as_ref()
@@ -750,26 +591,18 @@ impl<B: Backend> ForwardPassState<B> {
                 .as_ref()
                 .and_then(|aux| aux.moe_bucketed_probs.clone())
                 .expect("MoE bucketed_probs not initialized"),
-            ArrayId::MoeXPerm => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_x_perm.clone())
-                .expect("MoE x_perm not initialized"),
-            ArrayId::MoeTok2Row => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_tok2row.clone())
-                .expect("MoE tok2row not initialized"),
-            ArrayId::MoeYPartial => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_y_partial.clone())
-                .expect("MoE y_partial not initialized"),
-            ArrayId::MoeHidden => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_hidden.clone())
-                .expect("MoE hidden not initialized"),
+            ArrayId::MoeXPerm => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_x_perm.clone()).expect("MoE x_perm not initialized")
+            },
+            ArrayId::MoeTok2Row => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_tok2row.clone()).expect("MoE tok2row not initialized")
+            },
+            ArrayId::MoeYPartial => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_y_partial.clone()).expect("MoE y_partial not initialized")
+            },
+            ArrayId::MoeHidden => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_hidden.clone()).expect("MoE hidden not initialized")
+            },
             ArrayId::MoeTwoPassRowExpertMap => self
                 .llm_aux
                 .as_ref()
@@ -785,11 +618,9 @@ impl<B: Backend> ForwardPassState<B> {
                 .as_ref()
                 .and_then(|aux| aux.moe_tile_offsets.clone())
                 .expect("MoE tile_offsets not initialized"),
-            ArrayId::MoeTileMap => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_tile_map.clone())
-                .expect("MoE tile_map not initialized"),
+            ArrayId::MoeTileMap => {
+                self.llm_aux.as_ref().and_then(|aux| aux.moe_tile_map.clone()).expect("MoE tile_map not initialized")
+            },
             ArrayId::MoeTotalTiles => self
                 .llm_aux
                 .as_ref()
@@ -817,18 +648,10 @@ impl<B: Backend> ForwardPassState<B> {
                 .expect("MoE block_alloc not initialized"),
 
             // Classifier-specific arrays
-            ArrayId::ClassifierPooling => {
-                self.classifier_state().pooling.clone()
-            },
-            ArrayId::ClassifierPredictionHeadDense => {
-                self.classifier_state().dense.clone()
-            },
-            ArrayId::ClassifierPredictionHeadNorm => {
-                self.classifier_state().norm.clone()
-            },
-            ArrayId::ClassifierPredictionHeadLogits => {
-                self.classifier_state().classifier_logits.clone()
-            },
+            ArrayId::ClassifierPooling => self.classifier_state().pooling.clone(),
+            ArrayId::ClassifierPredictionHeadDense => self.classifier_state().dense.clone(),
+            ArrayId::ClassifierPredictionHeadNorm => self.classifier_state().norm.clone(),
+            ArrayId::ClassifierPredictionHeadLogits => self.classifier_state().classifier_logits.clone(),
         }
     }
 
@@ -839,32 +662,12 @@ impl<B: Backend> ForwardPassState<B> {
         let shared = self.shared_buffers.borrow();
         match id {
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared
-                    .global_rope
-                    .as_ref()
-                    .expect("Global rope not initialized")
-                    .cosines
-                    .clone(),
-                RopeType::Local => shared
-                    .local_rope
-                    .as_ref()
-                    .expect("Local rope not initialized")
-                    .cosines
-                    .clone(),
+                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").cosines.clone(),
+                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").cosines.clone(),
             }),
             ArrayId::RopeSines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared
-                    .global_rope
-                    .as_ref()
-                    .expect("Global rope not initialized")
-                    .sines
-                    .clone(),
-                RopeType::Local => shared
-                    .local_rope
-                    .as_ref()
-                    .expect("Local rope not initialized")
-                    .sines
-                    .clone(),
+                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").sines.clone(),
+                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").sines.clone(),
             }),
             _ => None,
         }
@@ -902,9 +705,7 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn active_suffix_length(&self) -> usize {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.active_suffix_length
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.active_suffix_length,
             ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
         }
     }
@@ -912,9 +713,7 @@ impl<B: Backend> ForwardPassState<B> {
     /// Start index (within the suffix batch) for which we need logits/sampling.
     pub fn sampling_start(&self) -> usize {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.sampling_start
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_start,
             ForwardPassMode::Classifier(_) => 0,
         }
     }
@@ -922,36 +721,28 @@ impl<B: Backend> ForwardPassState<B> {
     /// Number of batch items for which we need logits/sampling.
     pub fn sampling_length(&self) -> usize {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.sampling_length
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_length,
             ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
         }
     }
 
     pub fn is_prefilling(&self) -> bool {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.is_prefilling
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.is_prefilling,
             ForwardPassMode::Classifier(_) => true,
         }
     }
 
     pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers<B>>>> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                Some(&state.cache_layers)
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => Some(&state.cache_layers),
             ForwardPassMode::Classifier(_) => None,
         }
     }
 
     pub fn sampling_output(&self) -> Option<&ArrayCell<B>> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.sampling_output.as_ref()
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
             ForwardPassMode::Classifier(_) => None,
         }
     }
@@ -964,22 +755,16 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn sampling_method_mut(
-        &mut self
-    ) -> Option<&mut Option<SamplingMethod>> {
+    pub fn sampling_method_mut(&mut self) -> Option<&mut Option<SamplingMethod>> {
         match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                Some(&mut state.sampling_method)
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => Some(&mut state.sampling_method),
             ForwardPassMode::Classifier(_) => None,
         }
     }
 
     pub fn sampling_method(&self) -> Option<SamplingMethod> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.sampling_method
-            },
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_method,
             ForwardPassMode::Classifier(_) => None,
         }
     }
@@ -989,9 +774,7 @@ impl<B: Backend> ForwardPassState<B> {
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
-        destination_array
-            .borrow_mut()
-            .copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
+        destination_array.borrow_mut().copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
     }
 
     pub fn encode_copy_array(

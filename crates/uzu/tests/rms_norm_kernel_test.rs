@@ -3,29 +3,21 @@
 
 use bytemuck;
 use half::{bf16, f16};
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::{
         common::Context,
         metal::{
             MTLContext,
-            kernel::rms_norm::{
-                QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel,
-                RMSNormKernelType,
-            },
+            kernel::rms_norm::{QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel, RMSNormKernelType},
             metal_extensions::CommandBufferTimingExt,
         },
     },
 };
 
 // Helper trait to unify different float types for testing
-trait TestFloat:
-    Copy + Clone + std::fmt::Debug + PartialEq + bytemuck::NoUninit
-{
+trait TestFloat: Copy + Clone + std::fmt::Debug + PartialEq + bytemuck::NoUninit {
     fn from_f32(val: f32) -> Self;
     fn to_f32(self) -> f32;
     fn size_of() -> usize;
@@ -92,47 +84,26 @@ fn compute_expected_rms_norm(
         DataType::F16 => {
             // Convert inputs to their actual types, then to F16 for accumulation
             let input_f16: Vec<f16> = match input_type {
-                DataType::F32 => {
-                    input_data_f32.iter().map(|&x| f16::from_f32(x)).collect()
-                },
-                DataType::F16 => input_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(f16::from_f32(x).to_f32()))
-                    .collect(),
-                DataType::BF16 => input_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(bf16::from_f32(x).to_f32()))
-                    .collect(),
+                DataType::F32 => input_data_f32.iter().map(|&x| f16::from_f32(x)).collect(),
+                DataType::F16 => input_data_f32.iter().map(|&x| f16::from_f32(f16::from_f32(x).to_f32())).collect(),
+                DataType::BF16 => input_data_f32.iter().map(|&x| f16::from_f32(bf16::from_f32(x).to_f32())).collect(),
                 _ => panic!("Unsupported input type: {:?}", input_type),
             };
             let scale_f16: Vec<f16> = match scale_type {
-                DataType::F32 => {
-                    scale_data_f32.iter().map(|&x| f16::from_f32(x)).collect()
-                },
-                DataType::F16 => scale_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(f16::from_f32(x).to_f32()))
-                    .collect(),
-                DataType::BF16 => scale_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(bf16::from_f32(x).to_f32()))
-                    .collect(),
+                DataType::F32 => scale_data_f32.iter().map(|&x| f16::from_f32(x)).collect(),
+                DataType::F16 => scale_data_f32.iter().map(|&x| f16::from_f32(f16::from_f32(x).to_f32())).collect(),
+                DataType::BF16 => scale_data_f32.iter().map(|&x| f16::from_f32(bf16::from_f32(x).to_f32())).collect(),
                 _ => panic!("Unsupported scale type: {:?}", scale_type),
             };
             let epsilon_f16 = f16::from_f32(epsilon);
             let scale_offset_f16 = f16::from_f32(scale_offset);
 
             // Compute mean square in F16 (matches Metal kernel logic)
-            let mean_square_f16 = input_f16
-                .iter()
-                .map(|&x| x * x)
-                .fold(f16::ZERO, |acc, x| acc + x)
+            let mean_square_f16 = input_f16.iter().map(|&x| x * x).fold(f16::ZERO, |acc, x| acc + x)
                 / f16::from_f32(input_f16.len() as f32);
 
             // Use rsqrt like the Metal kernel (inverse square root)
-            let rms_norm_f16 = f16::from_f32(
-                (mean_square_f16 + epsilon_f16).to_f32().sqrt().recip(),
-            );
+            let rms_norm_f16 = f16::from_f32((mean_square_f16 + epsilon_f16).to_f32().sqrt().recip());
 
             // Apply normalization and scaling based on mode (matches Metal kernel exactly)
             if full_layer_mode {
@@ -164,47 +135,26 @@ fn compute_expected_rms_norm(
         DataType::BF16 => {
             // Convert inputs to their actual types, then to BF16 for accumulation
             let input_bf16: Vec<bf16> = match input_type {
-                DataType::F32 => {
-                    input_data_f32.iter().map(|&x| bf16::from_f32(x)).collect()
-                },
-                DataType::F16 => input_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(f16::from_f32(x).to_f32()))
-                    .collect(),
-                DataType::BF16 => input_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(bf16::from_f32(x).to_f32()))
-                    .collect(),
+                DataType::F32 => input_data_f32.iter().map(|&x| bf16::from_f32(x)).collect(),
+                DataType::F16 => input_data_f32.iter().map(|&x| bf16::from_f32(f16::from_f32(x).to_f32())).collect(),
+                DataType::BF16 => input_data_f32.iter().map(|&x| bf16::from_f32(bf16::from_f32(x).to_f32())).collect(),
                 _ => panic!("Unsupported input type: {:?}", input_type),
             };
             let scale_bf16: Vec<bf16> = match scale_type {
-                DataType::F32 => {
-                    scale_data_f32.iter().map(|&x| bf16::from_f32(x)).collect()
-                },
-                DataType::F16 => scale_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(f16::from_f32(x).to_f32()))
-                    .collect(),
-                DataType::BF16 => scale_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(bf16::from_f32(x).to_f32()))
-                    .collect(),
+                DataType::F32 => scale_data_f32.iter().map(|&x| bf16::from_f32(x)).collect(),
+                DataType::F16 => scale_data_f32.iter().map(|&x| bf16::from_f32(f16::from_f32(x).to_f32())).collect(),
+                DataType::BF16 => scale_data_f32.iter().map(|&x| bf16::from_f32(bf16::from_f32(x).to_f32())).collect(),
                 _ => panic!("Unsupported scale type: {:?}", scale_type),
             };
             let epsilon_bf16 = bf16::from_f32(epsilon);
             let scale_offset_bf16 = bf16::from_f32(scale_offset);
 
             // Compute mean square in BF16 (matches Metal kernel logic)
-            let mean_square_bf16 = input_bf16
-                .iter()
-                .map(|&x| x * x)
-                .fold(bf16::ZERO, |acc, x| acc + x)
+            let mean_square_bf16 = input_bf16.iter().map(|&x| x * x).fold(bf16::ZERO, |acc, x| acc + x)
                 / bf16::from_f32(input_bf16.len() as f32);
 
             // Use rsqrt like the Metal kernel (inverse square root)
-            let rms_norm_bf16 = bf16::from_f32(
-                (mean_square_bf16 + epsilon_bf16).to_f32().sqrt().recip(),
-            );
+            let rms_norm_bf16 = bf16::from_f32((mean_square_bf16 + epsilon_bf16).to_f32().sqrt().recip());
 
             // Apply normalization and scaling based on mode (matches Metal kernel exactly)
             if full_layer_mode {
@@ -237,33 +187,19 @@ fn compute_expected_rms_norm(
             // Convert inputs to their actual types, then to F32 for accumulation
             let input_f32: Vec<f32> = match input_type {
                 DataType::F32 => input_data_f32.to_vec(),
-                DataType::F16 => input_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(x).to_f32())
-                    .collect(),
-                DataType::BF16 => input_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(x).to_f32())
-                    .collect(),
+                DataType::F16 => input_data_f32.iter().map(|&x| f16::from_f32(x).to_f32()).collect(),
+                DataType::BF16 => input_data_f32.iter().map(|&x| bf16::from_f32(x).to_f32()).collect(),
                 _ => panic!("Unsupported input type: {:?}", input_type),
             };
             let scale_f32: Vec<f32> = match scale_type {
                 DataType::F32 => scale_data_f32.to_vec(),
-                DataType::F16 => scale_data_f32
-                    .iter()
-                    .map(|&x| f16::from_f32(x).to_f32())
-                    .collect(),
-                DataType::BF16 => scale_data_f32
-                    .iter()
-                    .map(|&x| bf16::from_f32(x).to_f32())
-                    .collect(),
+                DataType::F16 => scale_data_f32.iter().map(|&x| f16::from_f32(x).to_f32()).collect(),
+                DataType::BF16 => scale_data_f32.iter().map(|&x| bf16::from_f32(x).to_f32()).collect(),
                 _ => panic!("Unsupported scale type: {:?}", scale_type),
             };
 
             // Compute mean square in F32 (matches Metal kernel logic)
-            let mean_square: f32 =
-                input_f32.iter().map(|&x| x * x).sum::<f32>()
-                    / (input_f32.len() as f32);
+            let mean_square: f32 = input_f32.iter().map(|&x| x * x).sum::<f32>() / (input_f32.len() as f32);
             // Use rsqrt like the Metal kernel (inverse square root)
             let rms_norm = (mean_square + epsilon).sqrt().recip();
 
@@ -327,17 +263,14 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         .map(|i| {
             // Create a sine wave pattern with values roughly in [-2, 2] range
             // This gives us reasonable values that work well with F16 precision
-            2.0 * f32::sin(i as f32 * 0.01)
-                + 0.1 * (i as f32 / model_dim as f32)
+            2.0 * f32::sin(i as f32 * 0.01) + 0.1 * (i as f32 / model_dim as f32)
         })
         .collect();
     let scale_data_f32: Vec<f32> = vec![1.0; model_dim as usize]; // Unit scales
 
     // Convert to target types
-    let input_data: Vec<InputT> =
-        input_data_f32.iter().map(|&x| InputT::from_f32(x)).collect();
-    let scale_data: Vec<ScaleT> =
-        scale_data_f32.iter().map(|&x| ScaleT::from_f32(x)).collect();
+    let input_data: Vec<InputT> = input_data_f32.iter().map(|&x| InputT::from_f32(x)).collect();
+    let scale_data: Vec<ScaleT> = scale_data_f32.iter().map(|&x| ScaleT::from_f32(x)).collect();
 
     // Calculate expected output
     let expected_output_f32 = compute_expected_rms_norm(
@@ -354,26 +287,17 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     // Create Metal buffers
     let input_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&input_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&input_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let scale_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&scale_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let output_buffer = mtl_context
         .device
-        .new_buffer(
-            model_dim as usize * OutputT::size_of(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(model_dim as usize * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     // Create RMS norm kernel
@@ -388,14 +312,9 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     .expect("Failed to create RMS norm kernel");
 
     // Create command buffer and encode
-    let command_buffer_ref = mtl_context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -418,10 +337,8 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
 
     // Read results
     let output_ptr = output_buffer.contents().as_ptr() as *const OutputT;
-    let output_data =
-        unsafe { std::slice::from_raw_parts(output_ptr, model_dim as usize) };
-    let output_data_f32: Vec<f32> =
-        output_data.iter().map(|&x| x.to_f32()).collect();
+    let output_data = unsafe { std::slice::from_raw_parts(output_ptr, model_dim as usize) };
+    let output_data_f32: Vec<f32> = output_data.iter().map(|&x| x.to_f32()).collect();
 
     println!(
         "Types: Input={:?}, Scale={:?}, Output={:?}, Accum={:?}",
@@ -432,11 +349,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     println!("Output (first 8): {:?}", &output_data_f32[..8]);
     println!(
         "RMS value: {}",
-        f32::sqrt(
-            input_data_f32.iter().map(|&x| x * x).sum::<f32>()
-                / (model_dim as f32)
-                + epsilon
-        )
+        f32::sqrt(input_data_f32.iter().map(|&x| x * x).sum::<f32>() / (model_dim as f32) + epsilon)
     );
 
     // Verify results with tolerance for different precisions
@@ -450,9 +363,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         1e-5
     };
 
-    for (i, (&expected, &actual)) in
-        expected_output_f32.iter().zip(output_data_f32.iter()).enumerate()
-    {
+    for (i, (&expected, &actual)) in expected_output_f32.iter().zip(output_data_f32.iter()).enumerate() {
         let diff = (expected - actual).abs();
         assert!(
             diff < tolerance,
@@ -494,33 +405,22 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     let input_data_f32: Vec<f32> = vec![1e-4, 2e-4, 3e-4, 4e-4]; // Scaled up for F16 precision
     let scale_data_f32: Vec<f32> = vec![2.0, 0.5, 1.5, 0.8]; // Non-unit scales
 
-    let input_data: Vec<InputT> =
-        input_data_f32.iter().map(|&x| InputT::from_f32(x)).collect();
-    let scale_data: Vec<ScaleT> =
-        scale_data_f32.iter().map(|&x| ScaleT::from_f32(x)).collect();
+    let input_data: Vec<InputT> = input_data_f32.iter().map(|&x| InputT::from_f32(x)).collect();
+    let scale_data: Vec<ScaleT> = scale_data_f32.iter().map(|&x| ScaleT::from_f32(x)).collect();
 
     let input_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&input_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&input_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let scale_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&scale_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let output_buffer = mtl_context
         .device
-        .new_buffer(
-            4 * OutputT::size_of(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(4 * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let kernel = RMSNormKernel::new(
@@ -533,14 +433,9 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     )
     .expect("Failed to create RMS norm kernel");
 
-    let command_buffer_ref = mtl_context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -567,13 +462,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     // Check that all values are finite (no NaN or infinity)
     for (i, &value) in output_data.iter().enumerate() {
         let f32_value = value.to_f32();
-        assert!(
-            f32_value.is_finite(),
-            "Output at index {} is not finite: {} (type {:?})",
-            i,
-            f32_value,
-            output_type
-        );
+        assert!(f32_value.is_finite(), "Output at index {} is not finite: {} (type {:?})", i, f32_value, output_type);
     }
 
     println!(
@@ -585,237 +474,112 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
 // All F32 accumulation tests
 #[test]
 fn test_rms_norm_f32_f32_f32_f32() {
-    test_rms_norm_basic_typed::<f32, f32, f32>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, f32, f32>(DataType::F32, DataType::F32, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f32_f16_f32_f32() {
-    test_rms_norm_basic_typed::<f32, f16, f32>(
-        DataType::F32,
-        DataType::F16,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, f16, f32>(DataType::F32, DataType::F16, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f32_f32_f16_f32() {
-    test_rms_norm_basic_typed::<f32, f32, f16>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F16,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, f32, f16>(DataType::F32, DataType::F32, DataType::F16, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f32_f16_f16_f32() {
-    test_rms_norm_basic_typed::<f32, f16, f16>(
-        DataType::F32,
-        DataType::F16,
-        DataType::F16,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, f16, f16>(DataType::F32, DataType::F16, DataType::F16, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f16_f32_f32_f32() {
-    test_rms_norm_basic_typed::<f16, f32, f32>(
-        DataType::F16,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f16, f32, f32>(DataType::F16, DataType::F32, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f16_f16_f32_f32() {
-    test_rms_norm_basic_typed::<f16, f16, f32>(
-        DataType::F16,
-        DataType::F16,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f16, f16, f32>(DataType::F16, DataType::F16, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f16_f32_f16_f32() {
-    test_rms_norm_basic_typed::<f16, f32, f16>(
-        DataType::F16,
-        DataType::F32,
-        DataType::F16,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f16, f32, f16>(DataType::F16, DataType::F32, DataType::F16, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f16_f16_f16_f32() {
-    test_rms_norm_basic_typed::<f16, f16, f16>(
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f16, f16, f16>(DataType::F16, DataType::F16, DataType::F16, DataType::F32);
 }
 
 // F16 accumulation tests
 #[test]
 fn test_rms_norm_f32_f32_f32_f16() {
-    test_rms_norm_basic_typed::<f32, f32, f32>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f32, f32, f32>(DataType::F32, DataType::F32, DataType::F32, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f32_f16_f32_f16() {
-    test_rms_norm_basic_typed::<f32, f16, f32>(
-        DataType::F32,
-        DataType::F16,
-        DataType::F32,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f32, f16, f32>(DataType::F32, DataType::F16, DataType::F32, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f32_f32_f16_f16() {
-    test_rms_norm_basic_typed::<f32, f32, f16>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F16,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f32, f32, f16>(DataType::F32, DataType::F32, DataType::F16, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f32_f16_f16_f16() {
-    test_rms_norm_basic_typed::<f32, f16, f16>(
-        DataType::F32,
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f32, f16, f16>(DataType::F32, DataType::F16, DataType::F16, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f16_f32_f32_f16() {
-    test_rms_norm_basic_typed::<f16, f32, f32>(
-        DataType::F16,
-        DataType::F32,
-        DataType::F32,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f16, f32, f32>(DataType::F16, DataType::F32, DataType::F32, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f16_f16_f32_f16() {
-    test_rms_norm_basic_typed::<f16, f16, f32>(
-        DataType::F16,
-        DataType::F16,
-        DataType::F32,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f16, f16, f32>(DataType::F16, DataType::F16, DataType::F32, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f16_f32_f16_f16() {
-    test_rms_norm_basic_typed::<f16, f32, f16>(
-        DataType::F16,
-        DataType::F32,
-        DataType::F16,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f16, f32, f16>(DataType::F16, DataType::F32, DataType::F16, DataType::F16);
 }
 #[test]
 fn test_rms_norm_f16_f16_f16_f16() {
-    test_rms_norm_basic_typed::<f16, f16, f16>(
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-    );
+    test_rms_norm_basic_typed::<f16, f16, f16>(DataType::F16, DataType::F16, DataType::F16, DataType::F16);
 }
 
 // BFloat16 tests (using f32 storage)
 #[test]
 fn test_rms_norm_bf16_bf16_f32_f32() {
-    test_rms_norm_basic_typed::<bf16, bf16, f32>(
-        DataType::BF16,
-        DataType::BF16,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<bf16, bf16, f32>(DataType::BF16, DataType::BF16, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_bf16_f32_f32_f32() {
-    test_rms_norm_basic_typed::<bf16, f32, f32>(
-        DataType::BF16,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<bf16, f32, f32>(DataType::BF16, DataType::F32, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_bf16_f16_f32_f32() {
-    test_rms_norm_basic_typed::<bf16, f16, f32>(
-        DataType::BF16,
-        DataType::F16,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<bf16, f16, f32>(DataType::BF16, DataType::F16, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_f32_bf16_f32_f32() {
-    test_rms_norm_basic_typed::<f32, bf16, f32>(
-        DataType::F32,
-        DataType::BF16,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, bf16, f32>(DataType::F32, DataType::BF16, DataType::F32, DataType::F32);
 }
 
 // Edge case tests for critical combinations
 #[test]
 fn test_rms_norm_edge_f32_f32_f32_f32() {
-    test_rms_norm_edge_cases_typed::<f32, f32, f32>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_edge_cases_typed::<f32, f32, f32>(DataType::F32, DataType::F32, DataType::F32, DataType::F32);
 }
 #[test]
 fn test_rms_norm_edge_f16_f16_f16_f16() {
-    test_rms_norm_edge_cases_typed::<f16, f16, f16>(
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-        DataType::F16,
-    );
+    test_rms_norm_edge_cases_typed::<f16, f16, f16>(DataType::F16, DataType::F16, DataType::F16, DataType::F16);
 }
 #[test]
 fn test_rms_norm_edge_f32_f16_f16_f32() {
-    test_rms_norm_edge_cases_typed::<f32, f16, f16>(
-        DataType::F32,
-        DataType::F16,
-        DataType::F16,
-        DataType::F32,
-    );
+    test_rms_norm_edge_cases_typed::<f32, f16, f16>(DataType::F32, DataType::F16, DataType::F16, DataType::F32);
 }
 
 // Legacy test wrappers for compatibility
 #[test]
 fn test_rms_norm_kernel_basic() {
-    test_rms_norm_basic_typed::<f32, f32, f32>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_basic_typed::<f32, f32, f32>(DataType::F32, DataType::F32, DataType::F32, DataType::F32);
 }
 
 #[test]
 fn test_rms_norm_edge_cases() {
-    test_rms_norm_edge_cases_typed::<f32, f32, f32>(
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-    );
+    test_rms_norm_edge_cases_typed::<f32, f32, f32>(DataType::F32, DataType::F32, DataType::F32, DataType::F32);
 }
 
 fn perf_rms_norm_with_size(
@@ -863,18 +627,12 @@ fn perf_rms_norm_with_size(
     // ---- Create Metal buffers ----
     let input_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&input_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&input_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let scale_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&scale_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let output_buffer = mtl_context
@@ -886,14 +644,9 @@ fn perf_rms_norm_with_size(
         .expect("Failed to create buffer");
 
     // ---- Launch and time ----
-    let command_buffer_ref = mtl_context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let _ = kernel.encode(
         &compute_encoder,
@@ -938,39 +691,23 @@ fn perf_rms_norm_with_size(
 
     // ---- Sanity check results ----
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_data = unsafe {
-        std::slice::from_raw_parts(
-            output_ptr,
-            (batch_size * model_dim) as usize,
-        )
-    };
+    let output_data = unsafe { std::slice::from_raw_parts(output_ptr, (batch_size * model_dim) as usize) };
 
     // Sample check for large outputs
     let sample_size = std::cmp::min(1000, output_data.len());
-    for i in (0..output_data.len())
-        .step_by(std::cmp::max(1, output_data.len() / sample_size))
-    {
-        assert!(
-            output_data[i].is_finite(),
-            "Output at index {} is not finite: {}",
-            i,
-            output_data[i]
-        );
+    for i in (0..output_data.len()).step_by(std::cmp::max(1, output_data.len() / sample_size)) {
+        assert!(output_data[i].is_finite(), "Output at index {} is not finite: {}", i, output_data[i]);
     }
 
     // Check that normalization is working
-    let mean_abs =
-        output_data.iter().take(sample_size).map(|x| x.abs()).sum::<f32>()
-            / sample_size as f32;
+    let mean_abs = output_data.iter().take(sample_size).map(|x| x.abs()).sum::<f32>() / sample_size as f32;
     assert!(
         mean_abs > 0.01 && mean_abs < 100.0,
         "Mean absolute value {} seems unreasonable - normalization may not be working",
         mean_abs
     );
 
-    println!(
-        "✅ RMS norm performance test passed with reasonable output values"
-    );
+    println!("✅ RMS norm performance test passed with reasonable output values");
 }
 
 #[test]
@@ -1024,8 +761,7 @@ fn qk_norm_test() {
     let k_offset = (num_q_heads * head_dim) as usize;
     for head in 0..num_kv_heads {
         for dim in 0..head_dim {
-            let idx =
-                batch_offset + k_offset + (head * head_dim + dim) as usize;
+            let idx = batch_offset + k_offset + (head * head_dim + dim) as usize;
             qkv_data[idx] = 2.0 + (head as f32) * 0.1 + (dim as f32) * 0.01;
         }
     }
@@ -1034,8 +770,7 @@ fn qk_norm_test() {
     let v_offset = ((num_q_heads + num_kv_heads) * head_dim) as usize;
     for head in 0..num_kv_heads {
         for dim in 0..head_dim {
-            let idx =
-                batch_offset + v_offset + (head * head_dim + dim) as usize;
+            let idx = batch_offset + v_offset + (head * head_dim + dim) as usize;
             qkv_data[idx] = 3.0 + (head as f32) * 0.1 + (dim as f32) * 0.01;
         }
     }
@@ -1046,26 +781,17 @@ fn qk_norm_test() {
     // Create buffers
     let qkv_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&qkv_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&qkv_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let q_scales_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&scale_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let k_scales_buffer = mtl_context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&scale_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     // Create QK norm kernels
@@ -1093,13 +819,8 @@ fn qk_norm_test() {
 
     // Test Q head normalization
     {
-        let command_buffer = mtl_context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer");
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
+        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         let _ = q_kernel.encode_qk_norm(
             &compute_encoder,
@@ -1108,7 +829,7 @@ fn qk_norm_test() {
                 scales_buffer: &q_scales_buffer,
                 qkv_output_buffer: &qkv_buffer,
                 batch_size,
-                num_q_heads, // Now correctly passes actual head count
+                num_q_heads,  // Now correctly passes actual head count
                 num_kv_heads, // Now correctly passes actual head count
                 head_dim,
                 epsilon,
@@ -1123,12 +844,8 @@ fn qk_norm_test() {
     }
 
     // Verify Q heads were normalized (should have different values now)
-    let output_data = unsafe {
-        std::slice::from_raw_parts(
-            qkv_buffer.contents().as_ptr() as *const f32,
-            qkv_data.len(),
-        )
-    };
+    let output_data =
+        unsafe { std::slice::from_raw_parts(qkv_buffer.contents().as_ptr() as *const f32, qkv_data.len()) };
 
     // Check that Q heads were processed (values should be different from original)
     for head in 0..num_q_heads as usize {
@@ -1164,13 +881,8 @@ fn qk_norm_test() {
 
     // Test K head normalization
     {
-        let command_buffer = mtl_context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer");
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
+        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         let _ = k_kernel.encode_qk_norm(
             &compute_encoder,
@@ -1179,7 +891,7 @@ fn qk_norm_test() {
                 scales_buffer: &k_scales_buffer,
                 qkv_output_buffer: &qkv_buffer,
                 batch_size,
-                num_q_heads, // Now correctly passes actual head count
+                num_q_heads,  // Now correctly passes actual head count
                 num_kv_heads, // Now correctly passes actual head count
                 head_dim,
                 epsilon,
@@ -1194,12 +906,8 @@ fn qk_norm_test() {
     }
 
     // Verify K heads were normalized
-    let final_data = unsafe {
-        std::slice::from_raw_parts(
-            qkv_buffer.contents().as_ptr() as *const f32,
-            qkv_data.len(),
-        )
-    };
+    let final_data =
+        unsafe { std::slice::from_raw_parts(qkv_buffer.contents().as_ptr() as *const f32, qkv_data.len()) };
 
     // Check that K heads were processed
     for head in 0..num_kv_heads as usize {

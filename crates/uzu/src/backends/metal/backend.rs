@@ -1,7 +1,4 @@
-use metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
-    MTLComputeCommandEncoder,
-};
+use metal::{MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLComputeCommandEncoder};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{MTLContext, MTLError, MetalKernels};

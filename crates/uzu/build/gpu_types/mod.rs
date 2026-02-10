@@ -2,10 +2,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use syn::{
-    Expr, ExprLit, Fields, Item, ItemStruct, Lit, Meta, Type, TypeArray,
-    TypePath,
-};
+use syn::{Expr, ExprLit, Fields, Item, ItemStruct, Lit, Meta, Type, TypeArray, TypePath};
 use tokio::task::spawn_blocking;
 
 use crate::common::{compiler::Compiler, kernel::Kernel};
@@ -20,22 +17,13 @@ pub struct GpuTypesCompiler {
 
 impl GpuTypesCompiler {
     pub fn new() -> anyhow::Result<Self> {
-        let crate_dir = PathBuf::from(
-            env::var("CARGO_MANIFEST_DIR")
-                .context("missing CARGO_MANIFEST_DIR")?,
-        );
+        let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?);
 
         let generated_dir = crate_dir.join("src/backends/metal/generated");
-        fs::create_dir_all(&generated_dir).with_context(|| {
-            format!("cannot create {}", generated_dir.display())
-        })?;
+        fs::create_dir_all(&generated_dir).with_context(|| format!("cannot create {}", generated_dir.display()))?;
 
-        let build_dir =
-            PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?)
-                .join("gpu_types");
-        fs::create_dir_all(&build_dir).with_context(|| {
-            format!("cannot create {}", build_dir.display())
-        })?;
+        let build_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join("gpu_types");
+        fs::create_dir_all(&build_dir).with_context(|| format!("cannot create {}", build_dir.display()))?;
 
         Ok(Self {
             crate_dir,
@@ -49,25 +37,20 @@ impl GpuTypesCompiler {
     }
 
     fn generate(&self) -> anyhow::Result<()> {
-        let gpu_types_dir =
-            self.crate_dir.join("src/backends/common/gpu_types");
+        let gpu_types_dir = self.crate_dir.join("src/backends/common/gpu_types");
 
         let source_files: Vec<PathBuf> = fs::read_dir(&gpu_types_dir)
-            .with_context(|| {
-                format!("cannot read {}", gpu_types_dir.display())
-            })?
+            .with_context(|| format!("cannot read {}", gpu_types_dir.display()))?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
             .filter(|path| {
-                path.extension().map(|ext| ext == "rs").unwrap_or(false)
-                    && path.file_stem() != Some("mod".as_ref())
+                path.extension().map(|ext| ext == "rs").unwrap_or(false) && path.file_stem() != Some("mod".as_ref())
             })
             .collect();
 
         let mut hasher = blake3::Hasher::new();
         for path in &source_files {
-            let content = fs::read(path)
-                .with_context(|| format!("cannot read {}", path.display()))?;
+            let content = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
             hasher.update(&content);
         }
 
@@ -87,9 +70,8 @@ impl GpuTypesCompiler {
             self.generate_header_for_file(src_path)?;
         }
 
-        fs::write(&cached_hash_path, &source_hash).with_context(|| {
-            format!("cannot write {}", cached_hash_path.display())
-        })?;
+        fs::write(&cached_hash_path, &source_hash)
+            .with_context(|| format!("cannot write {}", cached_hash_path.display()))?;
 
         debug_log!("gpu_types generation done");
 
@@ -100,24 +82,18 @@ impl GpuTypesCompiler {
         &self,
         src_path: &PathBuf,
     ) -> anyhow::Result<()> {
-        let module_name = src_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .context("invalid source file name")?;
+        let module_name = src_path.file_stem().and_then(|s| s.to_str()).context("invalid source file name")?;
 
-        let source = fs::read_to_string(src_path)
-            .with_context(|| format!("cannot read {}", src_path.display()))?;
+        let source = fs::read_to_string(src_path).with_context(|| format!("cannot read {}", src_path.display()))?;
 
-        let syntax = syn::parse_file(&source)
-            .with_context(|| format!("cannot parse {}", src_path.display()))?;
+        let syntax = syn::parse_file(&source).with_context(|| format!("cannot parse {}", src_path.display()))?;
 
         let mut repr_c_structs: Vec<ItemStruct> = Vec::new();
         for item in syntax.items {
             if let Item::Struct(item_struct) = item {
                 let has_repr_c = item_struct.attrs.iter().any(|attribute| {
                     if attribute.path().is_ident("repr") {
-                        if let Ok(ident) = attribute.parse_args::<syn::Ident>()
-                        {
+                        if let Ok(ident) = attribute.parse_args::<syn::Ident>() {
                             return ident == "C";
                         }
                     }
@@ -156,18 +132,12 @@ impl GpuTypesCompiler {
 
             if let Fields::Named(named_fields) = &rust_struct.fields {
                 for field in &named_fields.named {
-                    let field_name = field
-                        .ident
-                        .as_ref()
-                        .map(|ident| ident.to_string())
-                        .unwrap_or_default();
+                    let field_name = field.ident.as_ref().map(|ident| ident.to_string()).unwrap_or_default();
                     let c_type = rust_type_to_c(&field.ty);
 
                     for attribute in &field.attrs {
                         if attribute.path().is_ident("doc") {
-                            if let Meta::NameValue(meta_name_value) =
-                                &attribute.meta
-                            {
+                            if let Meta::NameValue(meta_name_value) = &attribute.meta {
                                 if let Expr::Lit(ExprLit {
                                     lit: Lit::Str(literal_string),
                                     ..
@@ -177,8 +147,7 @@ impl GpuTypesCompiler {
                                     let doc_comment = doc_comment.trim();
                                     if !doc_comment.is_empty() {
                                         c_struct_definitions.push_str("  /**");
-                                        c_struct_definitions
-                                            .push_str(doc_comment);
+                                        c_struct_definitions.push_str(doc_comment);
                                         c_struct_definitions.push_str(" */\n");
                                     }
                                 }
@@ -186,15 +155,10 @@ impl GpuTypesCompiler {
                         }
                     }
 
-                    if let Some((base_type, array_size)) =
-                        c_type.split_once('[')
-                    {
-                        c_struct_definitions.push_str(&format!(
-                            "  {base_type} {field_name}[{array_size};\n"
-                        ));
+                    if let Some((base_type, array_size)) = c_type.split_once('[') {
+                        c_struct_definitions.push_str(&format!("  {base_type} {field_name}[{array_size};\n"));
                     } else {
-                        c_struct_definitions
-                            .push_str(&format!("  {c_type} {field_name};\n"));
+                        c_struct_definitions.push_str(&format!("  {c_type} {field_name};\n"));
                     }
                 }
             }
@@ -244,9 +208,7 @@ namespace {module_name} {{
         );
 
         let output_path = self.generated_dir.join(format!("{module_name}.h"));
-        fs::write(&output_path, &header_content).with_context(|| {
-            format!("cannot write {}", output_path.display())
-        })?;
+        fs::write(&output_path, &header_content).with_context(|| format!("cannot write {}", output_path.display()))?;
 
         debug_log!("  -> {}", output_path.display());
 
@@ -303,9 +265,7 @@ fn rust_type_to_c(rust_type: &Type) -> String {
 
 #[async_trait]
 impl Compiler for GpuTypesCompiler {
-    async fn build(
-        &self
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(&self) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         let crate_dir = self.crate_dir.clone();
         let generated_dir = self.generated_dir.clone();
         let build_dir = self.build_dir.clone();

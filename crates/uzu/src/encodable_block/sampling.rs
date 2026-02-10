@@ -22,12 +22,7 @@ impl<B: Backend> Sampling<B> {
         max_batch_size: usize,
         max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        let kernel = SamplingKernel::new(
-            context,
-            data_type,
-            max_batch_size,
-            max_vocab_size,
-        )?;
+        let kernel = SamplingKernel::new(context, data_type, max_batch_size, max_vocab_size)?;
         Ok(Self {
             kernel,
         })
@@ -40,13 +35,8 @@ impl<B: Backend> Sampling<B> {
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
-        let kernel = SamplingKernel::new_with_strategy(
-            context,
-            data_type,
-            max_batch_size,
-            max_vocab_size,
-            argmax_strategy,
-        )?;
+        let kernel =
+            SamplingKernel::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, argmax_strategy)?;
         Ok(Self {
             kernel,
         })
@@ -60,10 +50,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         encoder: &B::ComputeEncoder,
         _parameters: &EncodingParameters<B>,
     ) {
-        assert!(
-            state.sampling_output().is_some(),
-            "Sampling output buffer must be pre-allocated"
-        );
+        assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
         let logits_binding = state.arrays(&[ArrayId::Logits]);
         let logits = logits_binding[0].borrow();
@@ -82,19 +69,14 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         let output_buffer_ref = state.sampling_output().unwrap().borrow();
 
         let sampling_method = state.sampling_method().unwrap();
-        let seeds_offset =
-            seeds.offset() + sampling_start * std::mem::size_of::<u64>();
+        let seeds_offset = seeds.offset() + sampling_start * std::mem::size_of::<u64>();
 
-        let (bitmask_buffer, bitmask_offset) =
-            state.token_bitmask().map_or((None, 0usize), |cell| {
-                let bitmask = cell.borrow();
-                let bitmask_row_len = bitmask.shape()[1];
-                let bitmask_offset = bitmask.offset()
-                    + sampling_start
-                        * bitmask_row_len
-                        * std::mem::size_of::<u32>();
-                (Some(bitmask.buffer().clone()), bitmask_offset)
-            });
+        let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |cell| {
+            let bitmask = cell.borrow();
+            let bitmask_row_len = bitmask.shape()[1];
+            let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
+            (Some(bitmask.buffer().clone()), bitmask_offset)
+        });
         if let Err(e) = self.kernel.encode_with_encoder(
             logits.buffer(),
             Some(seeds.buffer()),

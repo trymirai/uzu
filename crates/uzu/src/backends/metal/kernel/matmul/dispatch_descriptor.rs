@@ -43,21 +43,15 @@ pub(crate) fn choose_dispatch_descriptor(
     data_type: DataType,
     arguments: &MatmulArguments,
 ) -> Result<MatmulDispatchDescriptor, MTLError> {
-    if let Some(descriptor) =
-        gemv::DispatchDescriptor::try_new(context, data_type, arguments)?
-    {
+    if let Some(descriptor) = gemv::DispatchDescriptor::try_new(context, data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    if let Some(descriptor) =
-        split_k::DispatchDescriptor::try_new(context, data_type, arguments)?
-    {
+    if let Some(descriptor) = split_k::DispatchDescriptor::try_new(context, data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::SplitK(descriptor));
     }
 
-    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(
-        context, data_type, arguments,
-    )?))
+    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(context, data_type, arguments)?))
 }
 
 pub fn determine_kernel_variant(
@@ -65,6 +59,5 @@ pub fn determine_kernel_variant(
     data_type: DataType,
     arguments: &MatmulArguments,
 ) -> Result<MatmulKernelVariant, MTLError> {
-    choose_dispatch_descriptor(context, data_type, arguments)
-        .map(|d| d.variant())
+    choose_dispatch_descriptor(context, data_type, arguments).map(|d| d.variant())
 }

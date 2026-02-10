@@ -44,19 +44,9 @@ impl DataType {
     const fn dl_data_type_code(self) -> DLDataTypeCode {
         match self {
             DataType::BF16 => DLDataTypeCode::kDLBfloat,
-            DataType::F16 | DataType::F32 | DataType::F64 => {
-                DLDataTypeCode::kDLFloat
-            },
-            DataType::I4
-            | DataType::I8
-            | DataType::I16
-            | DataType::I32
-            | DataType::I64 => DLDataTypeCode::kDLInt,
-            DataType::U4
-            | DataType::U8
-            | DataType::U16
-            | DataType::U32
-            | DataType::U64 => DLDataTypeCode::kDLUInt,
+            DataType::F16 | DataType::F32 | DataType::F64 => DLDataTypeCode::kDLFloat,
+            DataType::I4 | DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64 => DLDataTypeCode::kDLInt,
+            DataType::U4 | DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 => DLDataTypeCode::kDLUInt,
         }
     }
 }

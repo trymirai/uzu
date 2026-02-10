@@ -13,8 +13,7 @@ use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-        Retained, kernel::RMSNormError,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained, kernel::RMSNormError,
     },
     config::NormalizationConfig,
     encodable_block::EncodingParameters,
@@ -80,23 +79,15 @@ impl EncodableBlock<Metal> for Normalization {
         parameters: &EncodingParameters<Metal>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => {
-                layer_norm.encode(state, command_buffer, parameters)
-            },
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.encode(state, command_buffer, parameters)
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode(state, command_buffer, parameters),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode(state, command_buffer, parameters),
         }
     }
 
     fn supports_shared_encoder(&self) -> bool {
         match self {
-            Normalization::LayerNorm(layer_norm) => {
-                layer_norm.supports_shared_encoder()
-            },
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.supports_shared_encoder()
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.supports_shared_encoder(),
+            Normalization::RMSNorm(rms_norm) => rms_norm.supports_shared_encoder(),
         }
     }
 
@@ -107,11 +98,8 @@ impl EncodableBlock<Metal> for Normalization {
         parameters: &EncodingParameters<Metal>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => layer_norm
-                .encode_with_shared_encoder(state, encoder, parameters),
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.encode_with_shared_encoder(state, encoder, parameters)
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, encoder, parameters),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode_with_shared_encoder(state, encoder, parameters),
         }
     }
 }

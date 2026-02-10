@@ -3,10 +3,8 @@ use std::ptr::NonNull;
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLDataType,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
-        metal_extensions::ComputeEncoderSetValue,
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType,
+        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,
 };
@@ -34,17 +32,9 @@ fn make_function_constants(
     let function_constants = MTLFunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
-    function_constants.set_constant_value_type_at_index(
-        NonNull::from(&activation_type).cast(),
-        MTLDataType::Int,
-        0,
-    );
+    function_constants.set_constant_value_type_at_index(NonNull::from(&activation_type).cast(), MTLDataType::Int, 0);
 
-    function_constants.set_constant_value_type_at_index(
-        NonNull::from(&has_bias).cast(),
-        MTLDataType::Bool,
-        1,
-    );
+    function_constants.set_constant_value_type_at_index(NonNull::from(&has_bias).cast(), MTLDataType::Bool, 1);
 
     function_constants
 }
@@ -53,19 +43,17 @@ pub struct Conv1dScanKernel {
     pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct Conv1dScanArguments<'a> {
     pub padded: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0) [prefix+suffix, channels]
-    pub w: &'a ProtocolObject<dyn MTLBuffer>, // buffer(1) [channels, kernel]
+    pub w: &'a ProtocolObject<dyn MTLBuffer>,      // buffer(1) [channels, kernel]
     pub b: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(2) [channels]
-    pub x_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(3) [suffix, inner_dim]
-    pub b_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(4) [suffix, proj_dim]
-    pub c_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(5) [suffix, proj_dim]
+    pub x_out: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3) [suffix, inner_dim]
+    pub b_out: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(4) [suffix, proj_dim]
+    pub c_out: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(5) [suffix, proj_dim]
     pub state_out: &'a ProtocolObject<dyn MTLBuffer>, // buffer(6) [channels, kernel-1]
     pub suffix_len: usize,
     pub kernel_size: i32,
@@ -111,58 +99,36 @@ impl Conv1dScanKernel {
         activation: &Activation,
     ) -> Result<Self, SSMKernelError> {
         let fn_name = format!("conv1d_scan_kernel_{}", fn_suffix(data_type));
-        let pack_name =
-            format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
-        let decode_name =
-            format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
+        let pack_name = format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
+        let decode_name = format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
         let activation_id = activation_to_int(activation);
         let pipeline_no_bias = {
             let function_constants = make_function_constants(activation, false);
             let cache_key = format!("{}_act_{}_bias_0", fn_name, activation_id);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &fn_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &fn_name, Some(&function_constants))
                 .map_err(SSMKernelError::MetalError)?
         };
         let pipeline_with_bias = {
             let function_constants = make_function_constants(activation, true);
             let cache_key = format!("{}_act_{}_bias_1", fn_name, activation_id);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &fn_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &fn_name, Some(&function_constants))
                 .map_err(SSMKernelError::MetalError)?
         };
-        let pack_pipeline = context
-            .compute_pipeline_state(&pack_name, None)
-            .map_err(SSMKernelError::MetalError)?;
+        let pack_pipeline = context.compute_pipeline_state(&pack_name, None).map_err(SSMKernelError::MetalError)?;
         let decode_pipeline_no_bias = {
             let function_constants = make_function_constants(activation, false);
-            let cache_key =
-                format!("{}_act_{}_bias_0", decode_name, activation_id);
+            let cache_key = format!("{}_act_{}_bias_0", decode_name, activation_id);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &decode_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &decode_name, Some(&function_constants))
                 .map_err(SSMKernelError::MetalError)?
         };
         let decode_pipeline_with_bias = {
             let function_constants = make_function_constants(activation, true);
-            let cache_key =
-                format!("{}_act_{}_bias_1", decode_name, activation_id);
+            let cache_key = format!("{}_act_{}_bias_1", decode_name, activation_id);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &decode_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &decode_name, Some(&function_constants))
                 .map_err(SSMKernelError::MetalError)?
         };
         Ok(Self {
@@ -204,8 +170,7 @@ impl Conv1dScanKernel {
             height: padded_rows,
             depth: 1,
         };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 
@@ -256,8 +221,7 @@ impl Conv1dScanKernel {
             height: args.channels,
             depth: 1,
         };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 
@@ -313,8 +277,7 @@ impl Conv1dScanKernel {
             height: channels,
             depth: 1,
         };
-        compute_encoder
-            .dispatch_threads(total_threads, threads_per_threadgroup);
+        compute_encoder.dispatch_threads(total_threads, threads_per_threadgroup);
         Ok(())
     }
 }

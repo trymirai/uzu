@@ -1,9 +1,8 @@
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject,
-        Retained,
+        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        MTLSize, ProtocolObject, Retained,
     },
 };
 
@@ -107,9 +106,7 @@ impl RMSNormKernel {
             full_layer,
         )?;
 
-        let pipeline = context
-            .compute_pipeline_state(&function_name, None)
-            .map_err(RMSNormError::MetalError)?;
+        let pipeline = context.compute_pipeline_state(&function_name, None).map_err(RMSNormError::MetalError)?;
 
         Ok(Self {
             pipeline,
@@ -144,18 +141,11 @@ impl RMSNormKernel {
 
         Ok(format!(
             "{}_{}_{}_{}_{}{}",
-            base_name,
-            input_suffix,
-            scales_suffix,
-            output_suffix,
-            accum_suffix,
-            mode_suffix
+            base_name, input_suffix, scales_suffix, output_suffix, accum_suffix, mode_suffix
         ))
     }
 
-    fn data_type_to_suffix(
-        data_type: DataType
-    ) -> Result<&'static str, RMSNormError> {
+    fn data_type_to_suffix(data_type: DataType) -> Result<&'static str, RMSNormError> {
         match data_type {
             DataType::F32 => Ok("f32"),
             DataType::F16 => Ok("f16"),
@@ -169,9 +159,7 @@ impl RMSNormKernel {
         }
     }
 
-    fn accum_type_to_suffix(
-        data_type: DataType
-    ) -> Result<&'static str, RMSNormError> {
+    fn accum_type_to_suffix(data_type: DataType) -> Result<&'static str, RMSNormError> {
         match data_type {
             DataType::F32 => Ok("f32"),
             DataType::F16 => Ok("f16"),
@@ -196,17 +184,9 @@ impl RMSNormKernel {
         compute_encoder.set_compute_pipeline_state(&self.pipeline);
 
         // Set buffers
-        compute_encoder.set_buffer(
-            Some(args.input_buffer),
-            args.input_offset as usize,
-            0,
-        );
+        compute_encoder.set_buffer(Some(args.input_buffer), args.input_offset as usize, 0);
         compute_encoder.set_buffer(Some(args.scales_buffer), 0, 1);
-        compute_encoder.set_buffer(
-            Some(args.output_buffer),
-            args.output_offset as usize,
-            2,
-        );
+        compute_encoder.set_buffer(Some(args.output_buffer), args.output_offset as usize, 2);
 
         // Set parameters
         compute_encoder.set_value(&args.batch_size, 3);
@@ -226,10 +206,7 @@ impl RMSNormKernel {
             depth: 1,
         };
 
-        compute_encoder.dispatch_threadgroups(
-            threadgroups_per_grid,
-            threads_per_threadgroup,
-        );
+        compute_encoder.dispatch_threadgroups(threadgroups_per_grid, threads_per_threadgroup);
 
         Ok(())
     }
@@ -264,12 +241,8 @@ impl RMSNormKernel {
         // We only ever normalize within [Q] and/or [K].
         let (head_offset, head_count): (u32, u32) = match args.target {
             QKNormTarget::QueryHeads => (0, args.num_q_heads as u32),
-            QKNormTarget::KeyHeads => {
-                (args.num_q_heads as u32, args.num_kv_heads as u32)
-            },
-            QKNormTarget::Both => {
-                (0, (args.num_q_heads + args.num_kv_heads) as u32)
-            },
+            QKNormTarget::KeyHeads => (args.num_q_heads as u32, args.num_kv_heads as u32),
+            QKNormTarget::Both => (0, (args.num_q_heads + args.num_kv_heads) as u32),
         };
 
         if args.batch_size <= 0 || args.head_dim <= 0 || head_count == 0 {
@@ -284,11 +257,9 @@ impl RMSNormKernel {
         let simd_width = self.pipeline.thread_execution_width();
         let max_threads = self.pipeline.max_total_threads_per_threadgroup();
         let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
-        let heads_per_threadgroup =
-            (head_count as usize).min(max_heads_per_threadgroup).max(1);
+        let heads_per_threadgroup = (head_count as usize).min(max_heads_per_threadgroup).max(1);
 
-        let num_head_tiles =
-            (head_count as usize).div_ceil(heads_per_threadgroup);
+        let num_head_tiles = (head_count as usize).div_ceil(heads_per_threadgroup);
 
         let threadgroups_per_grid = MTLSize {
             width: args.batch_size as usize,
@@ -302,10 +273,7 @@ impl RMSNormKernel {
             depth: 1,
         };
 
-        compute_encoder.dispatch_threadgroups(
-            threadgroups_per_grid,
-            threads_per_threadgroup,
-        );
+        compute_encoder.dispatch_threadgroups(threadgroups_per_grid, threads_per_threadgroup);
 
         Ok(())
     }

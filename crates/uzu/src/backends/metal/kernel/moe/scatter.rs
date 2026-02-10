@@ -1,7 +1,6 @@
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
-    ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLContext, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -16,15 +15,11 @@ pub struct MoeScatterKernels {
     pipeline_bases: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_bf16:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     // map variants
-    pipeline_scatter_map_f16:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_f32:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_bf16:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
@@ -61,20 +56,13 @@ pub struct MoeScatterWithMapArguments<'a> {
 
 impl MoeScatterKernels {
     pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeScatterError> {
-        let pipeline_bases = mtl_context
-            .compute_pipeline_state("moe_block_bases_from_partials", None)?;
-        let pipeline_scatter_f16 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_f16", None)?;
-        let pipeline_scatter_f32 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_f32", None)?;
-        let pipeline_scatter_bf16 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_bf16", None)?;
-        let pipeline_scatter_map_f16 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_map_f16", None)?;
-        let pipeline_scatter_map_f32 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_map_f32", None)?;
-        let pipeline_scatter_map_bf16 = mtl_context
-            .compute_pipeline_state("moe_scatter_buckets_map_bf16", None)?;
+        let pipeline_bases = mtl_context.compute_pipeline_state("moe_block_bases_from_partials", None)?;
+        let pipeline_scatter_f16 = mtl_context.compute_pipeline_state("moe_scatter_buckets_f16", None)?;
+        let pipeline_scatter_f32 = mtl_context.compute_pipeline_state("moe_scatter_buckets_f32", None)?;
+        let pipeline_scatter_bf16 = mtl_context.compute_pipeline_state("moe_scatter_buckets_bf16", None)?;
+        let pipeline_scatter_map_f16 = mtl_context.compute_pipeline_state("moe_scatter_buckets_map_f16", None)?;
+        let pipeline_scatter_map_f32 = mtl_context.compute_pipeline_state("moe_scatter_buckets_map_f32", None)?;
+        let pipeline_scatter_map_bf16 = mtl_context.compute_pipeline_state("moe_scatter_buckets_map_bf16", None)?;
 
         Ok(Self {
             pipeline_bases,
@@ -92,9 +80,8 @@ impl MoeScatterKernels {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         compute_encoder.set_compute_pipeline_state(&self.pipeline_bases);
         compute_encoder.set_buffer(Some(args.partials_buffer), 0, 0);
         compute_encoder.set_buffer(Some(args.block_bases_buffer), 0, 1);
@@ -125,22 +112,18 @@ impl MoeScatterKernels {
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         // Select pipeline based on dtype
         match dtype {
             KernelDataType::Float16 => {
-                compute_encoder
-                    .set_compute_pipeline_state(&self.pipeline_scatter_f16);
+                compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_f16);
             },
             KernelDataType::Float32 => {
-                compute_encoder
-                    .set_compute_pipeline_state(&self.pipeline_scatter_f32);
+                compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_f32);
             },
             KernelDataType::BFloat16 => {
-                compute_encoder
-                    .set_compute_pipeline_state(&self.pipeline_scatter_bf16);
+                compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_bf16);
             },
         }
         compute_encoder.set_buffer(Some(args.topk_ids_buffer), 0, 0);
@@ -176,9 +159,8 @@ impl MoeScatterKernels {
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         let pipeline = match dtype {
             KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
             KernelDataType::Float32 => &self.pipeline_scatter_map_f32,

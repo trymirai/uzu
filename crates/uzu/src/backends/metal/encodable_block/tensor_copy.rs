@@ -2,16 +2,11 @@
 
 use crate::backends::{
     common::kernel::TensorCopyKernel,
-    metal::{
-        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        ProtocolObject, Retained,
-    },
+    metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
 };
 
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::{
-    MTLContext, MTLError, kernel::dsl::TensorCopyMetalKernel,
-};
+use crate::backends::metal::{MTLContext, MTLError, kernel::dsl::TensorCopyMetalKernel};
 use crate::encodable_block::EncodingParameters;
 use crate::forward_pass::state::{ArrayId, ForwardPassState};
 
@@ -41,9 +36,7 @@ impl EncodableBlock<Metal> for TensorCopy {
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -73,11 +66,6 @@ impl EncodableBlock<Metal> for TensorCopy {
         let source_mtl_buffer = source_array.buffer();
         let destination_mtl_buffer = destination_array.buffer();
 
-        self.kernel.encode(
-            source_mtl_buffer,
-            destination_mtl_buffer,
-            length as u32,
-            encoder,
-        );
+        self.kernel.encode(source_mtl_buffer, destination_mtl_buffer, length as u32, encoder);
     }
 }

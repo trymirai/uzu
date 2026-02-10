@@ -1,9 +1,8 @@
 use std::ptr::NonNull;
 
 use crate::backends::metal::{
-    ComputeEncoderSetValue, KernelDataType, MTLBuffer,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType,
-    MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+    MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -16,32 +15,20 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
     dt.function_name_suffix()
 }
 
-fn make_function_constants(
-    has_bias: bool
-) -> Retained<MTLFunctionConstantValues> {
+fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
     let function_constants = MTLFunctionConstantValues::new();
-    function_constants.set_constant_value_type_at_index(
-        NonNull::from(&has_bias).cast(),
-        MTLDataType::Bool,
-        0,
-    );
+    function_constants.set_constant_value_type_at_index(NonNull::from(&has_bias).cast(), MTLDataType::Bool, 0);
     function_constants
 }
 
 pub struct ShortConvKernel {
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    prefill_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    trie_pipeline_no_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    trie_pipeline_with_bias:
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    prefill_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    trie_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct ShortConvPackArguments<'a> {
@@ -112,61 +99,40 @@ impl ShortConvKernel {
         context: &MTLContext,
         data_type: KernelDataType,
     ) -> Result<Self, ShortConvKernelError> {
-        let pack_name =
-            format!("short_conv_pack_kernel_{}", fn_suffix(data_type));
-        let prefill_name =
-            format!("short_conv_prefill_kernel_{}", fn_suffix(data_type));
-        let decode_name =
-            format!("short_conv_decode_kernel_{}", fn_suffix(data_type));
-        let trie_name =
-            format!("short_conv_trie_kernel_{}", fn_suffix(data_type));
+        let pack_name = format!("short_conv_pack_kernel_{}", fn_suffix(data_type));
+        let prefill_name = format!("short_conv_prefill_kernel_{}", fn_suffix(data_type));
+        let decode_name = format!("short_conv_decode_kernel_{}", fn_suffix(data_type));
+        let trie_name = format!("short_conv_trie_kernel_{}", fn_suffix(data_type));
 
-        let pack_pipeline = context
-            .compute_pipeline_state(&pack_name, None)
-            .map_err(ShortConvKernelError::MetalError)?;
+        let pack_pipeline =
+            context.compute_pipeline_state(&pack_name, None).map_err(ShortConvKernelError::MetalError)?;
 
         let prefill_pipeline_no_bias = {
             let function_constants = make_function_constants(false);
             let cache_key = format!("{}_has_bias_0", prefill_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &prefill_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &prefill_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
         let prefill_pipeline_with_bias = {
             let function_constants = make_function_constants(true);
             let cache_key = format!("{}_has_bias_1", prefill_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &prefill_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &prefill_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
         let decode_pipeline_no_bias = {
             let function_constants = make_function_constants(false);
             let cache_key = format!("{}_has_bias_0", decode_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &decode_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &decode_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
         let decode_pipeline_with_bias = {
             let function_constants = make_function_constants(true);
             let cache_key = format!("{}_has_bias_1", decode_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &decode_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &decode_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
 
@@ -174,22 +140,14 @@ impl ShortConvKernel {
             let function_constants = make_function_constants(false);
             let cache_key = format!("{}_has_bias_0", trie_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &trie_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &trie_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
         let trie_pipeline_with_bias = {
             let function_constants = make_function_constants(true);
             let cache_key = format!("{}_has_bias_1", trie_name);
             context
-                .compute_pipeline_state_cached(
-                    &cache_key,
-                    &trie_name,
-                    Some(&function_constants),
-                )
+                .compute_pipeline_state_cached(&cache_key, &trie_name, Some(&function_constants))
                 .map_err(ShortConvKernelError::MetalError)?
         };
 
@@ -356,18 +314,10 @@ impl ShortConvKernel {
         if has_bias {
             compute_encoder.set_buffer(args.b, 0, 2);
         }
-        compute_encoder.set_buffer(
-            Some(args.base_state),
-            args.base_state_offset,
-            3,
-        );
+        compute_encoder.set_buffer(Some(args.base_state), args.base_state_offset, 3);
         compute_encoder.set_buffer(Some(args.parents), args.parents_offset, 4);
         compute_encoder.set_buffer(Some(args.out), args.out_offset, 5);
-        compute_encoder.set_buffer(
-            Some(args.suffix_state),
-            args.suffix_state_offset,
-            6,
-        );
+        compute_encoder.set_buffer(Some(args.suffix_state), args.suffix_state_offset, 6);
 
         compute_encoder.set_value(&args.suffix_len, 7);
         compute_encoder.set_value(&args.kernel_size, 8);
