@@ -169,7 +169,7 @@ impl ShortConvMixer {
 
     fn clear_suffix_state_valid_range(
         &self,
-        state: &ForwardPassState,
+        state: &ForwardPassState<Metal>,
     ) {
         let Some(cache_layers) = state.cache_layers() else {
             return;
@@ -183,7 +183,7 @@ impl ShortConvMixer {
 
     fn set_suffix_state_valid_range(
         &self,
-        state: &ForwardPassState,
+        state: &ForwardPassState<Metal>,
         start: usize,
         len: usize,
     ) {
@@ -199,7 +199,7 @@ impl ShortConvMixer {
 
     fn run_conv(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         active_suffix_length: usize,
     ) {
@@ -312,7 +312,7 @@ impl ShortConvMixer {
 
     fn run_trie_conv(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         sampling_start: usize,
         trie_len: usize,

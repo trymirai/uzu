@@ -10,8 +10,6 @@ use crate::{
     },
 };
 
-/// Default max batch size for GEMV kernel.
-/// Can be overridden via UZU_GEMV_MAX_BATCH environment variable.
 const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
 
 static GEMV_MAX_BATCH: OnceLock<i32> = OnceLock::new();
@@ -78,16 +76,13 @@ impl DispatchDescriptor {
         let m = arguments.batch;
         let n = arguments.output_dim;
 
-        // Max batch size for GEMV - can be overridden via UZU_GEMV_MAX_BATCH env var
         let max_gemv_batch = max_gemv_batch_threshold();
 
         if n == 1 {
-            // Column vector output - only support m=1 for now
             if m != 1 {
                 return Ok(None);
             }
         } else if m > max_gemv_batch {
-            // Batch too large for GEMV
             return Ok(None);
         }
 
@@ -119,30 +114,10 @@ impl DispatchDescriptor {
         } else {
             arguments.batch
         };
-        let mut batch_pack = 1;
-        let ilp2 = false;
-        if m == 4
-            && arguments.input_dim <= 2048
-            && (1536..=3072).contains(&output_dimension)
-        {
-            batch_pack = 2;
-        } else if m <= 8 {
-            batch_pack = 4.min(m);
-        }
-
-        if batch_pack > m {
-            batch_pack = 1;
-        }
-        if batch_pack > 1 && m % batch_pack != 0 {
-            batch_pack = if batch_pack == 4 && m % 2 == 0 { 2 } else { 1 };
-        }
-
         let pipeline_configuration = select_configuration(
             arguments.transpose_a,
             arguments.transpose_b,
             transpose_matrix,
-            batch_pack as u32,
-            ilp2,
             arguments.input_dim,
             output_dimension,
             false,
@@ -197,10 +172,8 @@ impl DispatchDescriptor {
                 / output_elements_per_threadgroup) as u64;
         let threadgroup_count_z = batch_groups.max(1) as u64;
 
-        // For batched GEMV, use y-dimension for batch rows
         let batch_rows = arguments.batch;
-        let threadgroup_count_y =
-            (batch_rows / batch_pack).max(1) as u64;
+        let threadgroup_count_y = batch_rows.max(1) as u64;
 
         let threadgroups = MTLSize::new(
             threadgroup_count_x as usize,
