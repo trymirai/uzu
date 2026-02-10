@@ -1,5 +1,5 @@
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -9,11 +9,11 @@ use crate::{
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
-            forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::FullPrecisionEmbeddingLookupMetalKernel,
+            Retained, kernel::dsl::FullPrecisionEmbeddingLookupMetalKernel,
         },
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -86,9 +86,9 @@ impl FullPrecisionEmbeddingLookup {
 impl EncodableBlock<Metal> for FullPrecisionEmbeddingLookup {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -108,9 +108,9 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingLookup {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();

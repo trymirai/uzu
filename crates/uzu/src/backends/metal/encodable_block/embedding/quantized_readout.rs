@@ -1,5 +1,5 @@
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -10,7 +10,6 @@ use crate::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
             Retained,
-            forward_pass::{ArrayId, ForwardPassState},
             kernel::quant_matmul::{
                 QuantizationType, QuantizedMatmulArguments,
                 QuantizedMatmulKernel,
@@ -18,6 +17,8 @@ use crate::{
         },
     },
     config::QuantizationMode,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -219,9 +220,9 @@ impl QuantizedEmbeddingReadout {
 impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -241,9 +242,9 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();

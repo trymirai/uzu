@@ -8,12 +8,12 @@ use crate::backends::{
     },
 };
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::{
-    MTLContext, MTLError,
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::dsl::TensorCopyMetalKernel,
+    MTLContext, MTLError, kernel::dsl::TensorCopyMetalKernel,
 };
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState};
 
 pub struct TensorCopy {
     kernel: TensorCopyMetalKernel,
@@ -37,9 +37,9 @@ impl TensorCopy {
 impl EncodableBlock<Metal> for TensorCopy {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -59,9 +59,9 @@ impl EncodableBlock<Metal> for TensorCopy {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorCopy expects exactly 2 arrays");

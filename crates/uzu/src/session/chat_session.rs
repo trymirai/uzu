@@ -19,8 +19,8 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
-    backends::metal::forward_pass::cache_layers::CacheLayer,
     config::{MixerConfig, ModelMetadata},
+    forward_pass::cache_layers::CacheLayer,
     language_model::{
         LanguageModelGenerator,
         grammar::CompiledGrammar,

@@ -3,7 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     SharedMoeWeights,
 };
 use crate::{
@@ -15,7 +15,6 @@ use crate::{
             KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
             MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext,
             MetalArray, NSRange, ProtocolObject, Retained,
-            forward_pass::{ArrayId, ForwardPassState},
             kernel::{
                 MoeGatherKernels,
                 dsl::{
@@ -32,6 +31,8 @@ use crate::{
             },
         },
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -300,9 +301,9 @@ impl MoeBlock {
 impl EncodableBlock<Metal> for MoeBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -644,9 +645,9 @@ impl EncodableBlock<Metal> for MoeBlock {
 
     fn encode_with_shared_encoder(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         unreachable!("MoeBlock does not support shared compute encoder");
     }

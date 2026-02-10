@@ -7,12 +7,11 @@ use crate::backends::metal::{
     ProtocolObject, Retained,
 };
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::metal::{
         MTLContext,
-        forward_pass::{ArrayId, ForwardPassState},
         kernel::{
             mlp::{MlpActivationType, MlpGateActMulEncodable},
             mlp_fused::{MlpFusedArguments, MlpFusedKernel},
@@ -23,6 +22,8 @@ use crate::{
         },
     },
     config::Activation,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 pub struct MlpBlock {
@@ -48,9 +49,9 @@ impl MlpBlock {
 impl EncodableBlock<Metal> for MlpBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -97,9 +98,9 @@ impl EncodableBlock<Metal> for MlpBlock {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         // Up
         self.up.encode_with_shared_encoder(state, encoder, params);
@@ -317,9 +318,9 @@ impl MlpFusedBlock {
 impl EncodableBlock<Metal> for MlpFusedBlock {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -361,9 +362,9 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        params: &EncodingParameters,
+        params: &EncodingParameters<Metal>,
     ) {
         // Fused up + activation
         let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);

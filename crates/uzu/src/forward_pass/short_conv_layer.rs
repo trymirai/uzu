@@ -2,15 +2,15 @@ use std::cell::Cell;
 
 use bytemuck::fill_zeroes;
 
-use super::kv_cache_layer::ArrayCell;
+use crate::{array::ArrayCell, backends::common::Backend};
 
 #[derive(Debug)]
-pub struct ShortConvLayer {
-    pub conv_state: ArrayCell,
+pub struct ShortConvLayer<B: Backend> {
+    pub conv_state: ArrayCell<B>,
     /// Per-token post-state written during speculative runs.
     ///
     /// Shape: [max_suffix_length, model_dim, state_stride]
-    pub suffix_state: ArrayCell,
+    pub suffix_state: ArrayCell<B>,
     /// Start index (in the suffix batch) for which `suffix_state` contains
     /// valid post-states for this layer.
     pub suffix_state_valid_start: Cell<usize>,
@@ -19,7 +19,7 @@ pub struct ShortConvLayer {
     pub suffix_state_valid_len: Cell<usize>,
 }
 
-impl ShortConvLayer {
+impl<B: Backend> ShortConvLayer<B> {
     pub fn zero(&self) {
         {
             let mut conv = self.conv_state.borrow_mut();

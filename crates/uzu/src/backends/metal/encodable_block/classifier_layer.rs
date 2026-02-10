@@ -9,16 +9,18 @@ use crate::backends::metal::{
 use objc2::rc::autoreleasepool;
 
 use super::{
-    Attention, EncodableBlock, EncodingParameters, ForwardPassState,
-    Normalization, QKNorm, TensorAddSwap, TensorCopy, transformer_layer,
+    Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap,
+    TensorCopy, transformer_layer,
 };
+use crate::forward_pass::state::{ArrayId, ForwardPassState};
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, compilation_parameters::CompilationConfig,
-        forward_pass::ArrayId, kernel::KernelDataType,
+        kernel::KernelDataType,
     },
     config::TransformerLayerConfig,
+    encodable_block::EncodingParameters,
     parameters::ParameterTree,
 };
 
@@ -283,9 +285,9 @@ impl ClassifierLayer {
 impl EncodableBlock<Metal> for ClassifierLayer {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         #[cfg(not(feature = "tracing"))]
         {
@@ -475,9 +477,9 @@ impl EncodableBlock<Metal> for ClassifierLayer {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),

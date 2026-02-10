@@ -18,17 +18,18 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     backends::metal::{
-        CacheLayers, KVCacheUpdate, KernelDataType, MTLCommandBuffer,
-        MTLCommandQueue, MTLContext, MetalArray,
-        forward_pass::{
-            ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
-            traces::ActivationTrace,
-        },
+        KVCacheUpdate, MTLCommandBuffer, MTLCommandQueue, MTLContext, Metal,
+        MetalArray,
     },
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::Sampling,
-    forward_pass::scratch_buffers::ScratchBuffers,
+    encodable_block::{EncodableBlock, EncodingParameters, Sampling},
+    forward_pass::{
+        cache_layers::CacheLayers,
+        scratch_buffers::ScratchBuffers,
+        state::{ArrayId, ForwardPassState},
+        traces::ActivationTrace,
+    },
     language_model::{
         LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -562,7 +563,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn validate_layer_traces(
-        traces: &Rc<RefCell<ActivationTrace>>,
+        traces: &Rc<RefCell<ActivationTrace<Metal>>>,
         traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
@@ -677,7 +678,7 @@ impl TraceValidator {
     }
 
     fn validate_classifier_traces(
-        traces: &Rc<RefCell<ActivationTrace>>,
+        traces: &Rc<RefCell<ActivationTrace<Metal>>>,
         traces_view: &ParameterTree<MTLContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
@@ -1012,7 +1013,7 @@ impl TraceValidator {
         );
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
-            &context.mtl_context,
+            context.mtl_context.as_ref(),
             &context.model_shape,
             resolved_prefix_length,
             desired_suffix_length,
@@ -1020,12 +1021,11 @@ impl TraceValidator {
 
         let intermediate_dtype: DataType =
             decoder_config.output_norm_config.scale_precision.into();
-        let kernel_dtype: KernelDataType = intermediate_dtype.into();
 
         context.kv_cache_update = Box::new(
             KVCacheUpdate::new(
-                &context.mtl_context,
-                kernel_dtype,
+                context.mtl_context.as_ref(),
+                intermediate_dtype,
                 resolved_prefix_length,
             )
             .expect("Failed to create KV cache update kernel"),

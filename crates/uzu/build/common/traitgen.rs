@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use syn::Type;
 
 use crate::common::{
     codegen::write_tokens,
@@ -21,7 +22,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         let ty = match &p.ty {
             KernelParameterType::DType => quote! { DataType },
             KernelParameterType::Specialization(ty) => {
-                let ty = format_ident!("{}", ty.as_ref());
+                let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                 quote! { #ty }
             },
         };
@@ -39,11 +40,11 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                     quote! { &<Self::Backend as Backend>::NativeBuffer }
                 },
                 KernelArgumentType::Constant(ty) => {
-                    let ty = format_ident!("{}", ty.as_ref());
+                    let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                     quote! { &[#ty] }
                 },
                 KernelArgumentType::Scalar(ty) => {
-                    let ty = format_ident!("{}", ty.as_ref());
+                    let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                     quote! { #ty }
                 },
             };
@@ -58,8 +59,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             fn new(context: &<Self::Backend as Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-            fn encode(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::EncoderRef);
-            fn encode_if(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::EncoderRef, predicate: Option<&<Self::Backend as Backend>::NativeBuffer>);
+            fn encode(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::ComputeEncoder);
+            fn encode_if(&self, #(#args ,)* encoder: &<Self::Backend as Backend>::ComputeEncoder, predicate: Option<&<Self::Backend as Backend>::NativeBuffer>);
         }
     };
 

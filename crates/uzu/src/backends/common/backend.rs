@@ -1,12 +1,13 @@
-use std::error::Error;
+use std::{error::Error, fmt::Debug};
 
-use super::{CommandBuffer, Context, Kernels, NativeBuffer};
+use super::{CommandBuffer, Context, CopyEncoder, Kernels, NativeBuffer};
 
-pub trait Backend: Clone {
+pub trait Backend: Debug + Clone {
     type Context: Context<Backend = Self>;
-    type CommandBuffer: CommandBuffer<Backend = Self>;
     type NativeBuffer: NativeBuffer<Backend = Self>;
-    type EncoderRef;
+    type CommandBuffer: CommandBuffer<Backend = Self>;
+    type ComputeEncoder;
+    type CopyEncoder: CopyEncoder<Backend = Self>;
     type Kernels: Kernels<Backend = Self>;
-    type Error: Error;
+    type Error: Error + Debug;
 }

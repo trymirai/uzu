@@ -1,16 +1,11 @@
-use std::cell::RefCell;
-
-use super::super::{MTLContext, MetalArray};
 use crate::{
-    array::ArrayContextExt,
-    backends::metal::{
-        MTLCommandBuffer, ProtocolObject, Retained,
-        kernel::{KVCacheUpdate, kv_cache_update::KVLayerData},
+    array::{Array, ArrayCell, ArrayContextExt},
+    backends::common::{
+        Backend,
+        kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
     utils::attention::fill_attention_bias,
 };
-
-pub type ArrayCell = RefCell<MetalArray>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttentionBiasUpdate {
@@ -20,7 +15,7 @@ pub struct AttentionBiasUpdate {
 }
 
 #[derive(Clone)]
-pub enum KVSlice {
+pub enum KVSlice<B: Backend> {
     Full {
         base_prefix_len: usize,
         base_positions_len: usize,
@@ -32,8 +27,8 @@ pub enum KVSlice {
         base_ring_length: usize,
         slots: Vec<usize>,
         positions: Vec<usize>, // per slot
-        keys: MetalArray,      // [num_groups, slots.len(), head_dim]
-        values: MetalArray,    // [num_groups, slots.len(), head_dim]
+        keys: Array<B>,        // [num_groups, slots.len(), head_dim]
+        values: Array<B>,      // [num_groups, slots.len(), head_dim]
     },
 }
 
@@ -55,18 +50,18 @@ pub enum KVCacheLayerState {
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 #[derive(Debug)]
-pub struct KVCacheLayer {
+pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: ArrayCell,
+    pub keys: ArrayCell<B>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: ArrayCell,
+    pub values: ArrayCell<B>,
 
     pub prefix_token_positions: Vec<usize>,
     pub max_suffix_length: usize,
 }
 
-impl KVCacheLayer {
+impl<B: Backend> KVCacheLayer<B> {
     pub fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
@@ -94,10 +89,6 @@ impl KVCacheLayer {
         }
     }
 
-    pub fn is_sliding_window(&self) -> bool {
-        matches!(self.state, KVCacheLayerState::Windowed { .. })
-    }
-
     pub fn window_length(&self) -> Option<usize> {
         match &self.state {
             KVCacheLayerState::Full {
@@ -112,7 +103,7 @@ impl KVCacheLayer {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut MetalArray,
+        dst: &mut Array<B>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
@@ -181,8 +172,8 @@ impl KVCacheLayer {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &B::CommandBuffer,
+        kv_cache_update: &KVCacheUpdate<B>,
     ) {
         match &mut self.state {
             KVCacheLayerState::Full {
@@ -249,8 +240,8 @@ impl KVCacheLayer {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &B::CommandBuffer,
+        kv_cache_update: &KVCacheUpdate<B>,
     ) {
         if source_indices == destination_indices {
             return;
@@ -351,9 +342,9 @@ impl KVCacheLayer {
 
     pub fn slice(
         &self,
-        context: &MTLContext,
+        context: &B::Context,
         range: std::ops::Range<usize>,
-    ) -> Option<KVSlice> {
+    ) -> Option<KVSlice<B>> {
         match self.state {
             KVCacheLayerState::Full {
                 prefix_len,
@@ -427,7 +418,7 @@ impl KVCacheLayer {
 
     pub fn apply_slice(
         &mut self,
-        slice: &KVSlice,
+        slice: &KVSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         match (slice, &mut self.state) {

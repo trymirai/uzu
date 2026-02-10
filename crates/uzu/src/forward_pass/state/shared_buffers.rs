@@ -6,23 +6,16 @@ use crate::{
     DataType,
     array::{ArrayCell, ArrayContextExt},
     backends::common::Backend,
-    config::{DecoderConfig, MLPConfig},
+    config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
 use super::RopeBuffers;
 
-pub struct MoeExpertWeights<B: Backend> {
-    pub w1: ArrayCell<B>,
-    pub w2: ArrayCell<B>,
-    pub w3: ArrayCell<B>,
-}
-
 pub struct SharedBuffers<B: Backend> {
     pub global_rope: Option<RopeBuffers<B>>,
     pub local_rope: Option<RopeBuffers<B>>,
-    pub moe_expert_weights: Option<Vec<MoeExpertWeights<B>>>,
     pub attention_sinks: Option<Vec<ArrayCell<B>>>,
 }
 
@@ -41,12 +34,6 @@ impl<B: Backend> SharedBuffers<B> {
             .local_rope_config
             .is_some()
             .then(|| RopeBuffers::new(context, model_shape));
-
-        let moe_expert_weights = matches!(
-            decoder_config.layer_config.mlp_config,
-            MLPConfig::MixtureOfExperts(_)
-        )
-        .then(Vec::new);
 
         let attention_sinks = decoder_config
             .layer_config
@@ -68,7 +55,6 @@ impl<B: Backend> SharedBuffers<B> {
         Self {
             global_rope,
             local_rope,
-            moe_expert_weights,
             attention_sinks,
         }
     }

@@ -12,20 +12,20 @@ use objc2::rc::autoreleasepool;
 
 use super::{
     super::{
-        Attention, EncodableBlock, EncodingParameters, MambaMixer, QKNorm,
-        RMSNorm, ShortConvMixer, TensorAddSwap, TensorCopy, transformer_layer,
+        Attention, EncodableBlock, MambaMixer, QKNorm, RMSNorm, ShortConvMixer,
+        TensorAddSwap, TensorCopy, transformer_layer,
     },
     MixerExecutables,
 };
 use crate::{
     DataType, DecoderLayerConfig,
     backends::metal::{
-        MTLContext,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{ArrayId, ForwardPassState},
+        MTLContext, compilation_parameters::CompilationConfig,
         kernel::KernelDataType,
     },
     config::{DecoderLayerType, MixerConfig},
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -311,9 +311,9 @@ impl LayerExecutables {
 impl EncodableBlock<Metal> for LayerExecutables {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
@@ -538,9 +538,9 @@ impl EncodableBlock<Metal> for LayerExecutables {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),
