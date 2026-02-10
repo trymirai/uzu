@@ -71,22 +71,13 @@ impl PlacementAnalysis {
         let mut result = Self::default();
 
         // Extract layer counts
-        let re_layers = Regex::new(r"Layers Count: (\d+): ANE: (\d+) \(([\d\.e\-]+)%\), GPU: (\d+) \(([\d\.e\-]+)%\)").unwrap();
+        let re_layers =
+            Regex::new(r"Layers Count: (\d+): ANE: (\d+) \(([\d\.e\-]+)%\), GPU: (\d+) \(([\d\.e\-]+)%\)").unwrap();
         if let Some(captures) = re_layers.captures(log_output) {
             // println!("Found layer count information");
-            if let (
-                Some(total),
-                Some(ane),
-                Some(ane_pct),
-                Some(gpu),
-                Some(gpu_pct),
-            ) = (
-                captures.get(1),
-                captures.get(2),
-                captures.get(3),
-                captures.get(4),
-                captures.get(5),
-            ) {
+            if let (Some(total), Some(ane), Some(ane_pct), Some(gpu), Some(gpu_pct)) =
+                (captures.get(1), captures.get(2), captures.get(3), captures.get(4), captures.get(5))
+            {
                 result.total_layers = total.as_str().parse().unwrap_or(0);
                 result.ane_layers = ane.as_str().parse().unwrap_or(0);
                 result.gpu_layers = gpu.as_str().parse().unwrap_or(0);
@@ -108,14 +99,9 @@ impl PlacementAnalysis {
             // println!("Found unplaced operations section");
 
             // The operations section begins after "Unplaced operations:"
-            if let Some(ops_section) =
-                log_output.split("Unplaced operations:").nth(1)
-            {
+            if let Some(ops_section) = log_output.split("Unplaced operations:").nth(1) {
                 // The operations section ends at "Couldn't find any ANERegionCall operation."
-                if let Some(ops_text) = ops_section
-                    .split("Couldn't find any ANERegionCall operation")
-                    .next()
-                {
+                if let Some(ops_text) = ops_section.split("Couldn't find any ANERegionCall operation").next() {
                     // Process operations section
                     let mut current_op_type = String::new();
                     let mut _current_op_count = 0;
@@ -126,20 +112,12 @@ impl PlacementAnalysis {
                     // Process line by line
                     for line in ops_text.lines() {
                         // Line like "mps.multiply (6):" starts a new operation type section
-                        if let Some(caps) = Regex::new(r"(\w+\.\w+) \((\d+)\):")
-                            .unwrap()
-                            .captures(line)
-                        {
-                            if let (Some(op_type), Some(count)) =
-                                (caps.get(1), caps.get(2))
-                            {
+                        if let Some(caps) = Regex::new(r"(\w+\.\w+) \((\d+)\):").unwrap().captures(line) {
+                            if let (Some(op_type), Some(count)) = (caps.get(1), caps.get(2)) {
                                 current_op_type = op_type.as_str().to_string();
-                                _current_op_count =
-                                    count.as_str().parse().unwrap_or(0);
+                                _current_op_count = count.as_str().parse().unwrap_or(0);
                                 // Insert immediately to handle logs that omit per-op lines
-                                let trimmed = current_op_type
-                                    .trim_start_matches("mps.")
-                                    .to_string();
+                                let trimmed = current_op_type.trim_start_matches("mps.").to_string();
                                 unique_ops.insert(trimmed);
                                 // println!(
                                 //     "Found operation type: {} ({})",
@@ -149,9 +127,7 @@ impl PlacementAnalysis {
                         // Lines starting with "%" contain actual operation instances
                         } else if line.trim().starts_with('%') {
                             // Store operation type **without** "mps." prefix so tests expect plain names
-                            let trimmed = current_op_type
-                                .trim_start_matches("mps.")
-                                .to_string();
+                            let trimmed = current_op_type.trim_start_matches("mps.").to_string();
                             unique_ops.insert(trimmed);
                         }
                     }
@@ -170,9 +146,7 @@ impl PlacementAnalysis {
 
         // For ANE operations, we would need to extract them if present
         // Extract ANERegionCall occurrences so tests can validate presence
-        let ane_region_re =
-            Regex::new(r"ANERegionCall operations|ANERegionCall operation")
-                .unwrap();
+        let ane_region_re = Regex::new(r"ANERegionCall operations|ANERegionCall operation").unwrap();
         if ane_region_re.is_match(log_output) {
             // We don't have detailed operation names – the tests only check for a placeholder string
             // so insert a canonical name once if any ANERegionCall string appears.
@@ -225,9 +199,7 @@ mod tests {
         "#;
         let analysis = PlacementAnalysis::from_log_output(log_output);
         assert_eq!(analysis.ane_layers, 3);
-        assert!(
-            analysis.ane_operations.contains(&"ANE region call".to_string())
-        );
+        assert!(analysis.ane_operations.contains(&"ANE region call".to_string()));
     }
 
     #[test]
@@ -245,9 +217,7 @@ mod tests {
         assert_eq!(analysis.gpu_layers, 5);
         assert!(analysis.gpu_operations.contains(&"convolution".to_string()));
         assert_eq!(analysis.gpu_operations.len(), 1);
-        assert!(
-            analysis.ane_operations.contains(&"ANE region call".to_string())
-        );
+        assert!(analysis.ane_operations.contains(&"ANE region call".to_string()));
     }
 
     #[test]

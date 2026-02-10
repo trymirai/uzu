@@ -4,13 +4,13 @@ use std::cell::RefCell;
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
         Retained,
-        encodable_block::{EncodableBlock, EncodingParameters},
-        forward_pass::{ArrayId, ForwardPassState},
+        encodable_block::EncodableBlock,
         kernel::matmul::{MatmulArguments, MatmulKernel},
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -34,17 +34,16 @@ impl FullPrecisionLinear {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
-        if !matches!(precision, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
+        if !matches!(precision, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MTLError::Generic(format!(
                 "Unsupported data type for full precision linear kernel: {:?}",
                 precision
             )));
         }
 
-        let weights = parameter_tree.leaf("weights").map_err(|e| {
-            MTLError::Generic(format!("Failed to load weights: {:?}", e))
-        })?;
+        let weights = parameter_tree
+            .leaf("weights")
+            .map_err(|e| MTLError::Generic(format!("Failed to load weights: {:?}", e)))?;
 
         let w_shape = weights.shape();
         if w_shape != [output_dim, input_dim] {
@@ -62,8 +61,7 @@ impl FullPrecisionLinear {
             )));
         }
 
-        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            weights.buffer().to_owned().into();
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = weights.buffer().to_owned().into();
 
         let bias_buffer = match parameter_tree.leaf("biases") {
             Ok(biases) => {
@@ -81,8 +79,7 @@ impl FullPrecisionLinear {
                         precision
                     )));
                 }
-                let bias_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                    biases.buffer().to_owned().into();
+                let bias_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = biases.buffer().to_owned().into();
                 Some(bias_buffer)
             },
             Err(_) => None,
@@ -106,9 +103,9 @@ impl FullPrecisionLinear {
 impl EncodableBlock<Metal> for FullPrecisionLinear {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -119,9 +116,7 @@ impl EncodableBlock<Metal> for FullPrecisionLinear {
         let input_buffer = input_array_mut.buffer();
         let output_buffer = output_array_mut.buffer();
 
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
         let args = MatmulArguments {
             a: input_buffer,
@@ -144,9 +139,7 @@ impl EncodableBlock<Metal> for FullPrecisionLinear {
         };
 
         let mut kernel = self.kernel.borrow_mut();
-        kernel
-            .encode(state.mtl_context(), &encoder, args)
-            .expect("Failed to encode matmul kernel");
+        kernel.encode(state.mtl_context(), &encoder, args).expect("Failed to encode matmul kernel");
 
         encoder.end_encoding();
 
@@ -162,9 +155,9 @@ impl EncodableBlock<Metal> for FullPrecisionLinear {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -196,8 +189,6 @@ impl EncodableBlock<Metal> for FullPrecisionLinear {
         };
 
         let mut kernel = self.kernel.borrow_mut();
-        kernel
-            .encode(state.mtl_context(), encoder, args)
-            .expect("Failed to encode matmul kernel");
+        kernel.encode(state.mtl_context(), encoder, args).expect("Failed to encode matmul kernel");
     }
 }

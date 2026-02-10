@@ -7,22 +7,15 @@ use objc2::{
 use crate::{
     DataType,
     backends::{
-        common::kernel::{
-            MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel,
-        },
+        common::kernel::{MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
         metal::{
             MTLContext, MTLError,
             kernel::{
                 MoeExpertsTwoPassArguments,
-                dsl::{
-                    MoeExpertsDecodeDownFused2DMetalKernel,
-                    MoeExpertsDecodePassAMetalKernel,
-                },
+                dsl::{MoeExpertsDecodeDownFused2DMetalKernel, MoeExpertsDecodePassAMetalKernel},
                 moe::{
-                    MoePassARowMapArguments, MoePassATileBuildArguments,
-                    MoePassATileCountsArguments, MoePassATileDispatchArguments,
-                    MoePassATileKernels, MoePassATileScanArguments,
-                    dtype_index,
+                    MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
+                    MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments, dtype_index,
                 },
             },
         },
@@ -43,8 +36,7 @@ impl MoeExpertsTwoPassDecodeKernels {
         for gate in 0u32..4u32 {
             let mut kernels = vec![];
             for dtype in &DTYPES {
-                let kernel =
-                    MoeExpertsDecodePassAMetalKernel::new(ctx, *dtype, gate)?;
+                let kernel = MoeExpertsDecodePassAMetalKernel::new(ctx, *dtype, gate)?;
                 kernels.push(kernel);
             }
             pass_a_indirect.push(kernels);
@@ -52,11 +44,7 @@ impl MoeExpertsTwoPassDecodeKernels {
 
         let mut fused_down = Vec::with_capacity(DTYPES.len());
         for dtype in &DTYPES {
-            let kernel = MoeExpertsDecodeDownFused2DMetalKernel::new(
-                ctx,
-                *dtype,
-                DataType::F32,
-            )?;
+            let kernel = MoeExpertsDecodeDownFused2DMetalKernel::new(ctx, *dtype, DataType::F32)?;
             fused_down.push(kernel);
         }
 
@@ -129,9 +117,8 @@ impl MoeExpertsTwoPassDecodeKernels {
         // pass a
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = dtype_index(args.data_type);
-        let pass_a_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let pass_a_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
         pass_a_kernel.encode(
             &args.x_perm_buffer.retain(),
@@ -155,9 +142,8 @@ impl MoeExpertsTwoPassDecodeKernels {
 
         // pass b
         let pass_b_kernel = &self.fused_down[dtype_idx];
-        let pass_b_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let pass_b_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         pass_b_kernel.encode(
             &args.hidden_buffer.retain(),
             &args.row_expert_map.retain(),

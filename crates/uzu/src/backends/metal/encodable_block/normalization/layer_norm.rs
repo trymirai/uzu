@@ -1,19 +1,18 @@
 //! LayerNorm encodable.
 
-use super::super::{EncodableBlock, EncodingParameters, Metal};
+use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::{
         common::kernel::LayerNormKernel,
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-            MTLResourceOptions, ProtocolObject, Retained,
-            forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::LayerNormMetalKernel,
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt,
+            MTLError, MTLResourceOptions, ProtocolObject, Retained, kernel::dsl::LayerNormMetalKernel,
         },
     },
     config::{NormalizationConfig, UpcastMode},
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -36,25 +35,19 @@ impl LayerNorm {
     ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            MTLError::Library(
-                crate::backends::metal::error::LibraryError::Custom(format!(
-                    "Failed to load scales: {:?}",
-                    e
-                )),
-            )
+            MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+                "Failed to load scales: {:?}",
+                e
+            )))
         })?;
 
         let scales_data = scales_param.as_bytes();
         let scales_buffer = context
             .device
-            .new_buffer_with_data(
-                scales_data,
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
+            .new_buffer_with_data(scales_data, MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create scales buffer");
 
-        let accumulation_data_type: DataType =
-            config.accumulation_precision.into();
+        let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
         let kernel = LayerNormMetalKernel::new(
@@ -77,13 +70,12 @@ impl LayerNorm {
 impl EncodableBlock<Metal> for LayerNorm {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -99,9 +91,9 @@ impl EncodableBlock<Metal> for LayerNorm {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
@@ -126,9 +118,9 @@ impl EncodableBlock<Metal> for LayerNorm {
         };
 
         self.kernel.encode(
-            &input_buffer,
+            input_buffer,
             &self.scales_buffer,
-            &output_buffer,
+            output_buffer,
             batch_size,
             model_dim,
             self.config.epsilon,

@@ -1,0 +1,11 @@
+name: setup
+description: Setup dependencies
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+    - run: |
+        brew install clang-format
+        xcodebuild -downloadComponent MetalToolchain
+      shell: bash

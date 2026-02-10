@@ -7,6 +7,5 @@
 mod trace_validator;
 
 pub use trace_validator::{
-    ArrayTransform, TraceValidator, TracerValidationMetrics,
-    TracerValidationResult, TracerValidationResults,
+    ArrayTransform, TraceValidator, TracerValidationMetrics, TracerValidationResult, TracerValidationResults,
 };

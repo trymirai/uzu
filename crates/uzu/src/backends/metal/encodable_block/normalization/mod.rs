@@ -8,17 +8,16 @@ pub use layer_norm::LayerNorm;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-        Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::RMSNormError,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained, kernel::RMSNormError,
     },
     config::NormalizationConfig,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -75,43 +74,32 @@ impl Normalization {
 impl EncodableBlock<Metal> for Normalization {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => {
-                layer_norm.encode(state, command_buffer, parameters)
-            },
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.encode(state, command_buffer, parameters)
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode(state, command_buffer, parameters),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode(state, command_buffer, parameters),
         }
     }
 
     fn supports_shared_encoder(&self) -> bool {
         match self {
-            Normalization::LayerNorm(layer_norm) => {
-                layer_norm.supports_shared_encoder()
-            },
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.supports_shared_encoder()
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.supports_shared_encoder(),
+            Normalization::RMSNorm(rms_norm) => rms_norm.supports_shared_encoder(),
         }
     }
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => layer_norm
-                .encode_with_shared_encoder(state, encoder, parameters),
-            Normalization::RMSNorm(rms_norm) => {
-                rms_norm.encode_with_shared_encoder(state, encoder, parameters)
-            },
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, encoder, parameters),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode_with_shared_encoder(state, encoder, parameters),
         }
     }
 }

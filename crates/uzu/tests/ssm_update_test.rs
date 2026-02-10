@@ -2,10 +2,7 @@
 
 use bytemuck;
 use half::bf16;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use uzu::backends::{
     common::Context,
     common::kernel::SSDUpdateKernel,
@@ -50,8 +47,7 @@ fn ssm_update_ref_bf16(
             let state_offset = idx * n;
             let mut acc = 0.0f32;
             for i in 0..n {
-                let new_s = state[state_offset + i].to_f32()
-                    * (a[i].to_f32() * delta).exp()
+                let new_s = state[state_offset + i].to_f32() * (a[i].to_f32() * delta).exp()
                     + b[cb_offset + i].to_f32() * delta * this_x;
                 next_state[state_offset + i] = bf16::from_f32(new_s);
                 acc += new_s * c[cb_offset + i].to_f32();
@@ -107,8 +103,7 @@ fn ssd_update_no_z_ref_bf16(
                 let mut acc = 0.0f32;
                 for i in 0..n {
                     let s_old = state[state_idx0 + i].to_f32();
-                    let new_s = s_old * this_decay
-                        + b[cb_idx0 + i].to_f32() * dt_scaled_input;
+                    let new_s = s_old * this_decay + b[cb_idx0 + i].to_f32() * dt_scaled_input;
                     next_state[state_idx0 + i] = bf16::from_f32(new_s);
                     acc += new_s * c[cb_idx0 + i].to_f32();
                 }
@@ -162,8 +157,7 @@ fn ssd_update_ref_bf16(
                 let mut acc = 0.0f32;
                 for i in 0..n {
                     let s_old = state[state_idx0 + i].to_f32();
-                    let new_s = s_old * this_decay
-                        + b[cb_idx0 + i].to_f32() * dt_scaled_input;
+                    let new_s = s_old * this_decay + b[cb_idx0 + i].to_f32() * dt_scaled_input;
                     next_state[state_idx0 + i] = bf16::from_f32(new_s);
                     acc += new_s * c[cb_idx0 + i].to_f32();
                 }
@@ -188,29 +182,15 @@ fn ssd_update_with_z_bf16() {
     let g = 2usize;
     let n = 8usize;
 
-    let x: Vec<bf16> = (0..bsz * h * dh)
-        .map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.2))
-        .collect();
-    let z: Vec<bf16> = (0..bsz * h * dh)
-        .map(|i| bf16::from_f32(((i % 5) as f32) * 0.1 - 0.1))
-        .collect();
-    let dt: Vec<bf16> = (0..bsz * h)
-        .map(|i| bf16::from_f32(((i % 5) as f32) * 0.3 - 1.0))
-        .collect();
-    let b: Vec<bf16> = (0..bsz * g * n)
-        .map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.05))
-        .collect();
-    let c: Vec<bf16> = (0..bsz * g * n)
-        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.015))
-        .collect();
-    let d: Vec<bf16> =
-        (0..h).map(|i| bf16::from_f32(((i % 3) as f32) * 0.05)).collect();
-    let state: Vec<bf16> = (0..bsz * h * dh * n)
-        .map(|i| bf16::from_f32(((i % 23) as f32) * 0.01 - 0.05))
-        .collect();
+    let x: Vec<bf16> = (0..bsz * h * dh).map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.2)).collect();
+    let z: Vec<bf16> = (0..bsz * h * dh).map(|i| bf16::from_f32(((i % 5) as f32) * 0.1 - 0.1)).collect();
+    let dt: Vec<bf16> = (0..bsz * h).map(|i| bf16::from_f32(((i % 5) as f32) * 0.3 - 1.0)).collect();
+    let b: Vec<bf16> = (0..bsz * g * n).map(|i| bf16::from_f32(((i % 11) as f32) * 0.02 - 0.05)).collect();
+    let c: Vec<bf16> = (0..bsz * g * n).map(|i| bf16::from_f32(((i % 13) as f32) * 0.015)).collect();
+    let d: Vec<bf16> = (0..h).map(|i| bf16::from_f32(((i % 3) as f32) * 0.05)).collect();
+    let state: Vec<bf16> = (0..bsz * h * dh * n).map(|i| bf16::from_f32(((i % 23) as f32) * 0.01 - 0.05)).collect();
 
-    let (y_exp, ns_exp) =
-        ssd_update_ref_bf16(&x, &dt, &b, &c, &d, &z, &state, bsz, h, dh, g, n);
+    let (y_exp, ns_exp) = ssd_update_ref_bf16(&x, &dt, &b, &c, &d, &z, &state, bsz, h, dh, g, n);
     let y_exp_f32: Vec<f32> = y_exp.iter().map(|&v| v.to_f32()).collect();
     let ns_exp_f32: Vec<f32> = ns_exp.iter().map(|&v| v.to_f32()).collect();
 
@@ -221,79 +201,45 @@ fn ssd_update_with_z_bf16() {
 
     let x_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&x),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&x), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let dt_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&dt),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&dt), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let b_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&b),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&b), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let c_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&c),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&c), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let d_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&d),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&d), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let z_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&z),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&z), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let state_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&state),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&state), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let y_buf = ctx
         .device
-        .new_buffer(
-            bsz * h * dh * std::mem::size_of::<bf16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(bsz * h * dh * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let ns_buf = ctx
         .device
-        .new_buffer(
-            bsz * h * dh * n * std::mem::size_of::<bf16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(bsz * h * dh * n * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel =
-        SSDUpdateMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
-            .unwrap();
-    let cb_ref = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
+    let kernel = SSDUpdateMetalKernel::new(&ctx, KernelDataType::BFloat16.into()).unwrap();
+    let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let enc = cb
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel.encode(
         &x_buf,
         &dt_buf,
@@ -323,8 +269,7 @@ fn ssd_update_with_z_bf16() {
     let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };
     let y_out_f32: Vec<f32> = y_out.iter().map(|&v| v.to_f32()).collect();
     let ns_ptr = ns_buf.contents().as_ptr() as *const bf16;
-    let ns_out =
-        unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * dh * n) };
+    let ns_out = unsafe { std::slice::from_raw_parts(ns_ptr, bsz * h * dh * n) };
     let ns_out_f32: Vec<f32> = ns_out.iter().map(|&v| v.to_f32()).collect();
     let tol = 2e-2;
     for (i, (a, b)) in y_out_f32.iter().zip(y_exp_f32.iter()).enumerate() {

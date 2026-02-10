@@ -5,11 +5,9 @@ use crate::{
     backends::{
         common::kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
         metal::{
-            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLContext, MTLError, ProtocolObject, Retained,
-            kernel::dsl::{
-                MoeGatherXPerm1DMetalKernel, MoeGatherXPerm2DMetalKernel,
-            },
+            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            kernel::dsl::{MoeGatherXPerm1DMetalKernel, MoeGatherXPerm2DMetalKernel},
         },
     },
 };
@@ -46,9 +44,7 @@ impl MoeGatherKernels {
         dtype: KernelDataType,
         args: &MoeGatherArguments,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         match dtype {
             KernelDataType::Float32 => self.f32.encode(
                 &args.x_buffer.retain(),

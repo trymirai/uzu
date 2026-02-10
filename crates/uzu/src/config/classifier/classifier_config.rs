@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{PoolingType, PredictionHeadConfig};
 use crate::{
-    DecoderConfig, DecoderLayerConfig, EmbeddingConfig, LinearConfig,
-    NormalizationConfig, TransformerConfig, config::ConfigError,
+    DecoderConfig, DecoderLayerConfig, EmbeddingConfig, LinearConfig, NormalizationConfig, TransformerConfig,
+    config::ConfigError,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -37,24 +37,15 @@ impl ClassifierConfig {
     pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         // For classifier, we use the first layer config as the template
         // (most classifiers have homogeneous layers)
-        let first_layer = self
-            .transformer_config
-            .layer_configs
-            .first()
-            .ok_or(ConfigError::NoLayers)?;
+        let first_layer = self.transformer_config.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
         let layer_config = DecoderLayerConfig {
-            pre_attention_norm_config: first_layer
-                .pre_attention_norm_config
-                .clone()
-                .unwrap_or_else(|| {
-                    // If first layer has no pre-attention norm (like ModernBERT), use a default
-                    self.transformer_config.output_norm_config.clone()
-                }),
+            pre_attention_norm_config: first_layer.pre_attention_norm_config.clone().unwrap_or_else(|| {
+                // If first layer has no pre-attention norm (like ModernBERT), use a default
+                self.transformer_config.output_norm_config.clone()
+            }),
             mixer_config: first_layer.mixer_config.clone(),
-            post_attention_norm_config: first_layer
-                .post_attention_norm_config
-                .clone(),
+            post_attention_norm_config: first_layer.post_attention_norm_config.clone(),
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
@@ -62,12 +53,11 @@ impl ClassifierConfig {
 
         let first_mixer = &first_layer.mixer_config;
 
-        let num_heads =
-            self.num_heads.or(first_mixer.num_heads()).ok_or_else(|| {
-                ConfigError::MissingField("num_heads".to_string())
-            })?;
-        let num_groups =
-            self.num_groups.or(first_mixer.num_groups()).unwrap_or(num_heads);
+        let num_heads = self
+            .num_heads
+            .or(first_mixer.num_heads())
+            .ok_or_else(|| ConfigError::MissingField("num_heads".to_string()))?;
+        let num_groups = self.num_groups.or(first_mixer.num_groups()).unwrap_or(num_heads);
         let head_dim = self
             .head_dim
             .or(first_mixer.head_dim())
@@ -75,19 +65,10 @@ impl ClassifierConfig {
 
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: self
-                .transformer_config
-                .global_rope_config
-                .clone(),
-            local_rope_config: self
-                .transformer_config
-                .local_rope_config
-                .clone(),
+            global_rope_config: self.transformer_config.global_rope_config.clone(),
+            local_rope_config: self.transformer_config.local_rope_config.clone(),
             layer_config,
-            output_norm_config: self
-                .transformer_config
-                .output_norm_config
-                .clone(),
+            output_norm_config: self.transformer_config.output_norm_config.clone(),
             vocab_size: self.vocab_size,
             model_dim: self.model_dim,
             hidden_dim: self.transformer_config.hidden_dim,

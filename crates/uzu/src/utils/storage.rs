@@ -14,14 +14,10 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
 
         if let Some(path) = objc2::rc::autoreleasepool(|_| unsafe {
             let fm = NSFileManager::defaultManager();
-            let urls = fm.URLsForDirectory_inDomains(
-                dir,
-                NSSearchPathDomainMask::UserDomainMask,
-            );
+            let urls = fm.URLsForDirectory_inDomains(dir, NSSearchPathDomainMask::UserDomainMask);
 
             urls.firstObject().map(|url| {
-                let ns_path: Retained<NSString> =
-                    url.path().expect("URL should have a path");
+                let ns_path: Retained<NSString> = url.path().expect("URL should have a path");
                 PathBuf::from(ns_path.to_string())
             })
         }) {

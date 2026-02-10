@@ -22,10 +22,7 @@ fn verify_sprout(
     assert_eq!(flat_trie.index(&TrieNode::new(0, None, 0)), None);
     assert_eq!(flat_trie.token_ids().collect::<Vec<u64>>(), vec![0]);
     assert_eq!(flat_trie.token_positions().collect::<Vec<usize>>(), vec![0]);
-    assert_eq!(
-        flat_trie.token_seeds().collect::<Vec<u64>>(),
-        vec![expected_seed]
-    );
+    assert_eq!(flat_trie.token_seeds().collect::<Vec<u64>>(), vec![expected_seed]);
 }
 
 #[test]
@@ -108,10 +105,7 @@ fn test_trie_from_speculator_stick() {
 
     let mut hs = HashMap::new();
     for i in 1..10 {
-        hs.insert(
-            (0..i).collect(),
-            vec![(i, 0.988), (888, 0.001), (999, 0.001)].into_iter().collect(),
-        );
+        hs.insert((0..i).collect(), vec![(i, 0.988), (888, 0.001), (999, 0.001)].into_iter().collect());
     }
     let speculator = StaticSpeculator::new(hs);
 
@@ -180,12 +174,7 @@ fn test_trie_from_speculator_bush() {
     let rng = PRng::new(0);
 
     let mut hs = HashMap::new();
-    hs.insert(
-        vec![0],
-        vec![(1, 0.33), (2, 0.33), (3, 0.33), (888, 0.005), (999, 0.005)]
-            .into_iter()
-            .collect(),
-    );
+    hs.insert(vec![0], vec![(1, 0.33), (2, 0.33), (3, 0.33), (888, 0.005), (999, 0.005)].into_iter().collect());
     let speculator = StaticSpeculator::new(hs);
 
     let trie_root = TrieNode::from_speculator(

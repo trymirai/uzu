@@ -15,10 +15,7 @@ fn test_tracer() {
     // Ensure traces file present, otherwise skip
     let traces_path = crate::common::get_traces_path();
     if !traces_path.exists() {
-        println!(
-            "Skipping tracer test: traces file missing at {:?}",
-            traces_path
-        );
+        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
         return;
     }
 
@@ -58,27 +55,17 @@ fn test_tracer() {
         );
         println!("{}: {}", result.name, text);
         if !valid {
-            println!(
-                "{}",
-                colored_text(result.metrics.message().as_str(), false)
-            );
+            println!("{}", colored_text(result.metrics.message().as_str(), false));
         }
     }
     println!("-------------------------");
     println!(
         "number_of_tokens_violations: {}",
         colored_text(
-            format!(
-                "{} / {}",
-                results.number_of_tokens_violations(),
-                results.number_of_allowed_tokens_violations()
-            )
-            .as_str(),
+            format!("{} / {}", results.number_of_tokens_violations(), results.number_of_allowed_tokens_violations())
+                .as_str(),
             results.is_valid(),
         )
     );
-    println!(
-        "tokens_violation_indices: {:?}",
-        results.tokens_violation_indices
-    );
+    println!("tokens_violation_indices: {:?}", results.tokens_violation_indices);
 }

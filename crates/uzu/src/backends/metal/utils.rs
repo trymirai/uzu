@@ -59,17 +59,11 @@ impl StdoutCapture {
                 self.stdout_thread = Some(std::thread::spawn(move || {
                     let mut buf = [0u8; 4096];
                     loop {
-                        let bytes_read = libc::read(
-                            read_fd,
-                            buf.as_mut_ptr() as *mut libc::c_void,
-                            buf.len(),
-                        );
+                        let bytes_read = libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
                         if bytes_read <= 0 {
                             break;
                         }
-                        if let Ok(s) =
-                            std::str::from_utf8(&buf[0..bytes_read as usize])
-                        {
+                        if let Ok(s) = std::str::from_utf8(&buf[0..bytes_read as usize]) {
                             let mut b = buffer_clone.lock().unwrap();
                             b.push_str(s);
                         }
@@ -92,17 +86,11 @@ impl StdoutCapture {
                 self.stderr_thread = Some(std::thread::spawn(move || {
                     let mut buf = [0u8; 4096];
                     loop {
-                        let bytes_read = libc::read(
-                            read_fd,
-                            buf.as_mut_ptr() as *mut libc::c_void,
-                            buf.len(),
-                        );
+                        let bytes_read = libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
                         if bytes_read <= 0 {
                             break;
                         }
-                        if let Ok(s) =
-                            std::str::from_utf8(&buf[0..bytes_read as usize])
-                        {
+                        if let Ok(s) = std::str::from_utf8(&buf[0..bytes_read as usize]) {
                             let mut b = buffer_clone.lock().unwrap();
                             b.push_str(s);
                         }

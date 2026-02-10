@@ -1,6 +1,4 @@
-use crate::backends::metal::{
-    MTLComputePipelineState, MTLSize, ProtocolObject,
-};
+use crate::backends::metal::{MTLComputePipelineState, MTLSize, ProtocolObject};
 
 /// Extensions for ComputePipelineState to provide optimized threadgroup sizes
 pub trait ComputePipelineStateThreads {
@@ -29,9 +27,7 @@ pub trait ComputePipelineStateThreads {
     ) -> MTLSize;
 }
 
-impl ComputePipelineStateThreads
-    for ProtocolObject<dyn MTLComputePipelineState>
-{
+impl ComputePipelineStateThreads for ProtocolObject<dyn MTLComputePipelineState> {
     fn execution_width_threadgroup_size(&self) -> MTLSize {
         let w = self.thread_execution_width();
 

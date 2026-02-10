@@ -1,5 +1,5 @@
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -7,13 +7,12 @@ use crate::{
     backends::{
         common::kernel::FullPrecisionEmbeddingLookupKernel,
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
-            forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::FullPrecisionEmbeddingLookupMetalKernel,
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
+            ProtocolObject, Retained, kernel::dsl::FullPrecisionEmbeddingLookupMetalKernel,
         },
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -34,41 +33,31 @@ impl FullPrecisionEmbeddingLookup {
         input_scale: Option<f32>,
         parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
-        let kernel = FullPrecisionEmbeddingLookupMetalKernel::new(
-            mtl_context,
-            data_type.into(),
-        )?;
+        let kernel = FullPrecisionEmbeddingLookupMetalKernel::new(mtl_context, data_type.into())?;
 
         let weights = match parameter_tree.leaf("weights") {
             Ok(weights) => weights,
             Err(_) => parameter_tree.leaf("input_weights").map_err(|e| {
-                EmbeddingError::MetalError(MTLError::Generic(format!(
-                    "Failed to load weights: {:?}",
-                    e
-                )))
+                EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load weights: {:?}", e)))
             })?,
         };
 
         if weights.shape() != [vocab_size, model_dim] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding lookup weights shape mismatch: got {:?}, \
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding lookup weights shape mismatch: got {:?}, \
                      expected [{}, {}]",
-                    weights.shape(),
-                    vocab_size,
-                    model_dim
-                ),
-            )));
+                weights.shape(),
+                vocab_size,
+                model_dim
+            ))));
         }
 
         if weights.data_type() != data_type {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Weights dtype mismatch: got {:?}, expected {:?}",
-                    weights.data_type(),
-                    data_type
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Weights dtype mismatch: got {:?}, expected {:?}",
+                weights.data_type(),
+                data_type
+            ))));
         }
 
         let weights_buffer = weights.buffer().to_owned();
@@ -86,13 +75,11 @@ impl FullPrecisionEmbeddingLookup {
 impl EncodableBlock<Metal> for FullPrecisionEmbeddingLookup {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -108,9 +95,9 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingLookup {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();

@@ -7,9 +7,7 @@ use super::{
     AllocError,
     scratch_pool::{ScratchPool, align_size},
 };
-use crate::backends::common::{
-    Backend, Buffer, BufferLifetime, Context, NativeBuffer,
-};
+use crate::backends::common::{Backend, Buffer, BufferLifetime, Context, NativeBuffer};
 
 pub struct Allocator<B: Backend> {
     context: Weak<B::Context>,
@@ -36,11 +34,9 @@ impl<B: Backend> Allocator<B> {
         &self,
         size: usize,
     ) -> Result<B::NativeBuffer, AllocError> {
-        let context = self.context.upgrade().ok_or_else(|| {
-            AllocError::AllocationFailed {
-                size,
-                reason: "context has been dropped".to_string(),
-            }
+        let context = self.context.upgrade().ok_or_else(|| AllocError::AllocationFailed {
+            size,
+            reason: "context has been dropped".to_string(),
         })?;
         context.create_buffer(size).map_err(|e| AllocError::AllocationFailed {
             size,
@@ -141,9 +137,7 @@ impl<B: Backend> Allocator<B> {
                 self.track_allocation(aligned_size);
                 (buffer, false)
             },
-            BufferLifetime::Scratch => {
-                (self.alloc_scratch_internal(aligned_size)?, true)
-            },
+            BufferLifetime::Scratch => (self.alloc_scratch_internal(aligned_size)?, true),
         };
 
         Ok(self.wrap_buffer(native, is_scratch))

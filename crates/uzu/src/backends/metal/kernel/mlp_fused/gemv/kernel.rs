@@ -1,15 +1,11 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained,
-        kernel::mlp_fused::common::MlpFusedArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, ProtocolObject, Retained, kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -22,9 +18,7 @@ fn kernel_name(
         DataType::BF16 => "bfloat16",
         DataType::F32 => "float32",
         _ => {
-            return Err(MTLError::Generic(format!(
-                "Unsupported data type for MLP fused GEMV: {data_type:?}"
-            )));
+            return Err(MTLError::Generic(format!("Unsupported data type for MLP fused GEMV: {data_type:?}")));
         },
     };
 
@@ -42,19 +36,13 @@ fn kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<
-        PipelineConfiguration,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
     pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP fused GEMV: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MLP fused GEMV: {data_type:?}")));
         }
         Ok(Self {
             data_type,
@@ -66,8 +54,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = kernel_name(self.data_type, configuration)?;
 
@@ -79,10 +66,7 @@ impl Kernel {
                 52,
             );
 
-            let pipeline_state = context.compute_pipeline_state(
-                &kernel_name,
-                Some(&function_constants),
-            )?;
+            let pipeline_state = context.compute_pipeline_state(&kernel_name, Some(&function_constants))?;
             self.pipelines.insert(*configuration, pipeline_state);
         }
         Ok(self.pipelines.get(configuration).unwrap())
@@ -95,18 +79,11 @@ impl Kernel {
         arguments: &MlpFusedArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<(), MTLError> {
-        let pipeline_state = self.get_or_compile_pipeline(
-            context,
-            &descriptor.pipeline_configuration,
-        )?;
+        let pipeline_state = self.get_or_compile_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
         encoder.set_buffer(Some(arguments.weights), 0, 0);
-        encoder.set_buffer(
-            Some(arguments.input),
-            arguments.input_offset as usize,
-            1,
-        );
+        encoder.set_buffer(Some(arguments.input), arguments.input_offset as usize, 1);
         encoder.set_buffer(Some(arguments.output), 0, 3);
 
         encoder.set_value(&descriptor.input_dim, 4);
@@ -115,10 +92,7 @@ impl Kernel {
         encoder.set_value(&descriptor.vector_batch_stride, 11);
         encoder.set_value(&descriptor.matrix_batch_stride, 12);
 
-        encoder.dispatch_threadgroups(
-            descriptor.threadgroups,
-            descriptor.threads_per_threadgroup,
-        );
+        encoder.dispatch_threadgroups(descriptor.threadgroups, descriptor.threads_per_threadgroup);
         Ok(())
     }
 }

@@ -7,9 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder,
-        MTLComputePipelineState, MTLContext, MTLError, ProtocolObject,
-        Retained, kernel::matmul::common::MatmulArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        ProtocolObject, Retained, kernel::matmul::common::MatmulArguments,
     },
 };
 
@@ -22,20 +21,19 @@ fn gemv_kernel_name(
         DataType::BF16 => "bfloat16",
         DataType::F32 => "float32",
         _ => {
-            return Err(MTLError::Generic(format!(
-                "Unsupported data type for GEMV: {:?}",
-                data_type
-            )));
+            return Err(MTLError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
         },
     };
 
     let prefix = if config.transpose_matrix {
         "gemv_t"
+    } else if config.batch_pack > 1 {
+        "gemv_bp"
     } else {
         "gemv"
     };
 
-    Ok(format!(
+    let suffix = format!(
         "{prefix}_{dtype_name}_bm{}_bn{}_sm{}_sn{}_tm{}_tn{}_nc{}_axpby{}",
         config.threadgroup_rows,
         config.threadgroup_cols,
@@ -45,25 +43,24 @@ fn gemv_kernel_name(
         config.elements_per_thread_col,
         config.non_contiguous_batch as u8,
         config.do_axpby as u8,
-    ))
+    );
+
+    if config.batch_pack > 1 && !config.transpose_matrix {
+        Ok(format!("{suffix}_bp{}", config.batch_pack))
+    } else {
+        Ok(suffix)
+    }
 }
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<
-        PipelineConfiguration,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
+    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 impl Kernel {
     pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported data type for GEMV: {:?}",
-                data_type
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
         }
         Ok(Self {
             data_type,
@@ -87,6 +84,7 @@ impl Kernel {
                 transpose_a: false,
                 transpose_b: true,
                 transpose_matrix: false,
+                batch_pack: 1,
                 threadgroup_rows,
                 threadgroup_cols: 1,
                 threads_per_simdgroup_row: 1,
@@ -106,12 +104,10 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.pipelines.contains_key(config) {
             let kernel_name = gemv_kernel_name(self.data_type, config)?;
-            let pipeline =
-                context.compute_pipeline_state(&kernel_name, None)?;
+            let pipeline = context.compute_pipeline_state(&kernel_name, None)?;
             self.pipelines.insert(*config, pipeline);
         }
         Ok(self.pipelines.get(config).unwrap())
@@ -124,8 +120,7 @@ impl Kernel {
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MTLError> {
-        let pipeline =
-            self.get_pipeline(context, &descriptor.pipeline_configuration)?;
+        let pipeline = self.get_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline);
 
         let (buf0, off0) = if descriptor.matrix_is_rhs {
@@ -146,24 +141,18 @@ impl Kernel {
             match descriptor.axpby_source {
                 AxpbySource::None => {
                     return Err(MTLError::Generic(
-                        "GEMV descriptor mismatch: do_axpby=true but axpby_source=None"
-                            .to_owned(),
+                        "GEMV descriptor mismatch: do_axpby=true but axpby_source=None".to_owned(),
                     ));
                 },
                 AxpbySource::Bias => {
-                    let bias = arguments.bias.ok_or_else(|| {
-                        MTLError::Generic(
-                            "GEMV descriptor requires bias buffer".to_owned(),
-                        )
-                    })?;
+                    let bias = arguments
+                        .bias
+                        .ok_or_else(|| MTLError::Generic("GEMV descriptor requires bias buffer".to_owned()))?;
                     encoder.set_buffer(Some(bias), 0, 2);
                 },
                 AxpbySource::C => {
-                    let c_buffer = arguments.c.ok_or_else(|| {
-                        MTLError::Generic(
-                            "GEMV descriptor requires C buffer".to_owned(),
-                        )
-                    })?;
+                    let c_buffer =
+                        arguments.c.ok_or_else(|| MTLError::Generic("GEMV descriptor requires C buffer".to_owned()))?;
                     encoder.set_buffer(Some(c_buffer), 0, 2);
                 },
             }
@@ -182,11 +171,11 @@ impl Kernel {
         encoder.set_slice(&descriptor.matrix_batch_stride, 12);
         encoder.set_slice(&descriptor.bias_batch_stride, 13);
         encoder.set_value(&descriptor.bias_stride, 14);
+        encoder.set_value(&descriptor.batch_rows, 15);
+        encoder.set_value(&descriptor.output_ld, 16);
+        encoder.set_value(&descriptor.vector_ld, 17);
 
-        encoder.dispatch_threadgroups(
-            descriptor.threadgroups,
-            descriptor.threads_per_threadgroup,
-        );
+        encoder.dispatch_threadgroups(descriptor.threadgroups, descriptor.threads_per_threadgroup);
 
         Ok(descriptor.bias_is_fused())
     }

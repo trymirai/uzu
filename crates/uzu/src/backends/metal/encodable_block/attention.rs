@@ -1,16 +1,16 @@
 //! Attention kernel encodable.
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::{
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
-    forward_pass::{ArrayId, ForwardPassState, HashMapId},
+    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
+    Retained,
     kernel::attention::{
-        AttentionError, AttentionGemmArguments, AttentionKernel,
-        AttentionKernelVariant, AttentionSinglePassArguments,
+        AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
         AttentionTwoPassArguments, KVCacheUpdateArguments,
     },
 };
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState, HashMapId};
 
 fn env_gemm_attention_enabled() -> bool {
     static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -62,13 +62,12 @@ impl Attention {
 impl EncodableBlock<Metal> for Attention {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -84,17 +83,11 @@ impl EncodableBlock<Metal> for Attention {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let (
-            suffix_length,
-            num_heads,
-            head_dim,
-            num_groups,
-            max_sequence_length,
-        ) = {
+        let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
             let suffix_length = qkv_array.shape()[0];
@@ -109,8 +102,7 @@ impl EncodableBlock<Metal> for Attention {
             let num_groups = keys_array.shape()[0];
 
             let max_sequence_length = if let Some(_kv) = state.cache_layers() {
-                let key_cache_binding =
-                    state.arrays(&[ArrayId::Keys(self.layer_index)]);
+                let key_cache_binding = state.arrays(&[ArrayId::Keys(self.layer_index)]);
                 let key_cache_array = key_cache_binding[0].borrow();
                 key_cache_array.shape()[1]
             } else {
@@ -118,70 +110,46 @@ impl EncodableBlock<Metal> for Attention {
                 suffix_length
             };
 
-            (
-                suffix_length,
-                num_heads,
-                head_dim,
-                num_groups,
-                max_sequence_length,
-            )
+            (suffix_length, num_heads, head_dim, num_groups, max_sequence_length)
         };
 
-        let (segment_prefix_length, window_length) =
-            if let Some(cache_layers) = state.cache_layers() {
-                let cache = cache_layers.borrow();
-                let layer = cache.data[self.layer_index]
-                    .as_transformer()
-                    .expect("Attention kernel expects transformer layer state");
-                (
-                    layer.projected_segment_prefix_length(
-                        parameters.projection_step.unwrap_or(0),
-                    ),
-                    layer.window_length(),
-                )
-            } else {
-                // For classifiers without KV cache: no prefix, use configured sliding window
-                (0, self.sliding_window_size)
-            };
+        let (segment_prefix_length, window_length) = if let Some(cache_layers) = state.cache_layers() {
+            let cache = cache_layers.borrow();
+            let layer = cache.data[self.layer_index]
+                .as_transformer()
+                .expect("Attention kernel expects transformer layer state");
+            (layer.projected_segment_prefix_length(parameters.projection_step.unwrap_or(0)), layer.window_length())
+        } else {
+            // For classifiers without KV cache: no prefix, use configured sliding window
+            (0, self.sliding_window_size)
+        };
 
         let use_mask = window_length.is_some();
 
         let sequence_length = segment_prefix_length + suffix_length;
 
         let gqa_factor = num_heads / num_groups;
-        let scale =
-            self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
+        let scale = self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
         let gemm_enabled = env_gemm_attention_enabled();
-        let use_gemm = gemm_enabled
-            && suffix_length > 8
-            && matches!(head_dim, 64 | 128 | 256);
+        let use_gemm = gemm_enabled && suffix_length > 8 && matches!(head_dim, 64 | 128 | 256);
         if !gemm_enabled {
             static PRINT_ONCE: std::sync::Once = std::sync::Once::new();
             PRINT_ONCE.call_once(|| {
-                eprintln!(
-                    "[uzu] Gemm attention disabled via UZU_USE_GEMM_ATTENTION"
-                );
+                eprintln!("[uzu] Gemm attention disabled via UZU_USE_GEMM_ATTENTION");
             });
         }
         let variant = if use_gemm {
             AttentionKernelVariant::SinglePass
         } else {
-            self.kernel.choose_variant(
-                sequence_length,
-                head_dim,
-                self.is_causal,
-                use_mask,
-            )
+            self.kernel.choose_variant(sequence_length, head_dim, self.is_causal, use_mask)
         };
 
         let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
         let qkv_binding = state.arrays(&[ArrayId::QKV]);
-        let attention_bias_binding =
-            state.hashmaps(&[HashMapId::AttentionBias]);
-        let attention_output_binding =
-            state.arrays(&[ArrayId::AttentionOutput]);
+        let attention_bias_binding = state.hashmaps(&[HashMapId::AttentionBias]);
+        let attention_output_binding = state.arrays(&[ArrayId::AttentionOutput]);
 
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
@@ -201,10 +169,8 @@ impl EncodableBlock<Metal> for Attention {
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
         let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
-            let key_cache_binding =
-                state.arrays(&[ArrayId::Keys(self.layer_index)]);
-            let value_cache_binding =
-                state.arrays(&[ArrayId::Values(self.layer_index)]);
+            let key_cache_binding = state.arrays(&[ArrayId::Keys(self.layer_index)]);
+            let value_cache_binding = state.arrays(&[ArrayId::Values(self.layer_index)]);
 
             let key_cache_array = key_cache_binding[0].borrow_mut();
             let key_cache_buf = key_cache_array.buffer().clone();
@@ -216,10 +182,8 @@ impl EncodableBlock<Metal> for Attention {
         } else {
             // For classifiers, we need a values buffer with [num_groups, suffix_length, head_dim] layout.
             // Use the KV cache update kernel to extract values from QKV into a dedicated extracted_values buffer.
-            let extracted_values_binding =
-                state.arrays(&[ArrayId::ExtractedValues]);
-            let extracted_values_array =
-                extracted_values_binding[0].borrow_mut();
+            let extracted_values_binding = state.arrays(&[ArrayId::ExtractedValues]);
+            let extracted_values_array = extracted_values_binding[0].borrow_mut();
             let extracted_values_buf = extracted_values_array.buffer().clone();
 
             // Reuse the KV cache update kernel to write values into extracted_values_buf.
@@ -260,10 +224,7 @@ impl EncodableBlock<Metal> for Attention {
                         array_ref.buffer().clone()
                     })
                     .unwrap_or_else(|| {
-                        panic!(
-                            "Attention bias buffer not found for window length {:?}",
-                            window_length
-                        );
+                        panic!("Attention bias buffer not found for window length {:?}", window_length);
                     }),
             )
         } else {
@@ -283,9 +244,7 @@ impl EncodableBlock<Metal> for Attention {
         let maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = maxs_array.buffer();
 
-        let sinks_buffer = sinks_binding
-            .as_ref()
-            .map(|binding| binding[0].borrow().buffer().clone());
+        let sinks_buffer = sinks_binding.as_ref().map(|binding| binding[0].borrow().buffer().clone());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
@@ -317,7 +276,7 @@ impl EncodableBlock<Metal> for Attention {
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if use_gemm {
-                    let mtl = &**state.mtl_context();
+                    let mtl = state.mtl_context();
                     if let Err(e) = self.kernel.encode_gemm(
                         mtl,
                         compute_encoder,
@@ -366,10 +325,7 @@ impl EncodableBlock<Metal> for Attention {
                         is_causal: self.is_causal,
                     },
                 ) {
-                    eprintln!(
-                        "Failed to encode single-pass attention: {:?}",
-                        e
-                    );
+                    eprintln!("Failed to encode single-pass attention: {:?}", e);
                 }
             },
             AttentionKernelVariant::TwoPass => {

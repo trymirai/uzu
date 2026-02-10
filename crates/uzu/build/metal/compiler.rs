@@ -19,10 +19,7 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{
-        caching, codegen::write_tokens, compiler::Compiler, envs,
-        kernel::Kernel,
-    },
+    common::{caching, codegen::write_tokens, compiler::Compiler, envs, kernel::Kernel},
     debug_log,
 };
 
@@ -55,10 +52,7 @@ impl ObjectInfo {
 }
 
 fn is_nax_source(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.contains("_nax"))
-        .unwrap_or(false)
+    path.file_name().and_then(|s| s.to_str()).map(|s| s.contains("_nax")).unwrap_or(false)
 }
 
 async fn hash_dependencies(
@@ -66,41 +60,28 @@ async fn hash_dependencies(
 ) -> anyhow::Result<HashMap<Box<str>, [u8; blake3::OUT_LEN]>> {
     let futures: Vec<_> = dependencies
         .map(|path| async move {
-            let mut file = tokio::fs::File::open(path.as_ref())
-                .await
-                .with_context(|| format!("cannot open file {}", path))?;
+            let mut file =
+                tokio::fs::File::open(path.as_ref()).await.with_context(|| format!("cannot open file {}", path))?;
             let mut contents = Vec::new();
-            file.read_to_end(&mut contents)
-                .await
-                .with_context(|| format!("cannot read file {}", path))?;
-            let hash = spawn_blocking(move || blake3::hash(&contents))
-                .await
-                .context("hash task panicked")?;
+            file.read_to_end(&mut contents).await.with_context(|| format!("cannot read file {}", path))?;
+            let hash = spawn_blocking(move || blake3::hash(&contents)).await.context("hash task panicked")?;
             Ok::<_, anyhow::Error>((path, hash.into()))
         })
         .collect();
     try_join_all(futures).await.map(|v| v.into_iter().collect())
 }
 
-fn objects_hash<'a>(
-    objects: impl IntoIterator<Item = &'a ObjectInfo>
-) -> anyhow::Result<blake3::Hash> {
+fn objects_hash<'a>(objects: impl IntoIterator<Item = &'a ObjectInfo>) -> anyhow::Result<blake3::Hash> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(
-        caching::build_system_hash()
-            .context("cannot get build system hash")?
-            .as_bytes(),
-    );
-    let mut paths: Vec<_> =
-        objects.into_iter().map(|o| &o.object_path).collect();
+    hasher.update(caching::build_system_hash().context("cannot get build system hash")?.as_bytes());
+    let mut paths: Vec<_> = objects.into_iter().map(|o| &o.object_path).collect();
     paths.sort();
     for path in paths {
         let path_bytes = path.to_string_lossy();
         let path_bytes = path_bytes.as_bytes();
         hasher.update(&(path_bytes.len() as u32).to_le_bytes());
         hasher.update(path_bytes);
-        let contents = fs::read(path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
+        let contents = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
         hasher.update(&(contents.len() as u32).to_le_bytes());
         hasher.update(&contents);
     }
@@ -117,22 +98,15 @@ pub struct MetalCompiler {
 
 impl MetalCompiler {
     pub fn new_with_include_dir(include_dir: PathBuf) -> anyhow::Result<Self> {
-        let src_dir = PathBuf::from(
-            env::var("CARGO_MANIFEST_DIR")
-                .context("missing CARGO_MANIFEST_DIR")?,
-        )
-        .join("src/backends/metal/kernel");
+        let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
+            .join("src/backends/metal/kernel");
 
-        let out_dir =
-            PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+        let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
         let build_dir = out_dir.join("metal");
-        fs::create_dir_all(&build_dir).with_context(|| {
-            format!("cannot create {}", build_dir.display())
-        })?;
+        fs::create_dir_all(&build_dir).with_context(|| format!("cannot create {}", build_dir.display()))?;
 
         let toolchain =
-            MetalToolchain::from_env_with_include_dir(Some(include_dir))
-                .context("cannot create toolchain")?;
+            MetalToolchain::from_env_with_include_dir(Some(include_dir)).context("cannot create toolchain")?;
 
         Ok(Self {
             src_dir,
@@ -146,55 +120,35 @@ impl MetalCompiler {
         &self,
         source_path: PathBuf,
     ) -> anyhow::Result<ObjectInfo> {
-        let buildsystem_hash = caching::build_system_hash()
-            .context("cannot get build system cache")?
-            .as_bytes()
-            .clone();
+        let buildsystem_hash =
+            caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
 
-        let source_path_pretty =
-            source_path.file_name().unwrap().to_str().unwrap();
+        let source_path_pretty = source_path.file_name().unwrap().to_str().unwrap();
         debug_log!("compile start: {source_path_pretty}");
 
         let source_path_display = source_path.display().to_string();
-        let source_path_hash =
-            blake3::hash(source_path.to_string_lossy().as_bytes());
-        let source_file_name = source_path
-            .with_extension("")
-            .file_name()
-            .context("source path has no file name")?
-            .to_os_string();
+        let source_path_hash = blake3::hash(source_path.to_string_lossy().as_bytes());
+        let source_file_name =
+            source_path.with_extension("").file_name().context("source path has no file name")?.to_os_string();
 
-        let source_path_rel = source_path
-            .strip_prefix(&self.src_dir)
-            .context("source is not in src_dir")?;
+        let source_path_rel = source_path.strip_prefix(&self.src_dir).context("source is not in src_dir")?;
 
         let build_dir = self.build_dir.join(source_path_hash.to_string());
-        let objectinfo_path =
-            build_dir.join(&source_file_name).with_extension("objectinfo");
+        let objectinfo_path = build_dir.join(&source_file_name).with_extension("objectinfo");
 
         if build_dir.exists() {
             if let Ok(contents) = tokio::fs::read(&objectinfo_path).await
-                && let Ok(cached) =
-                    serde_json::from_slice::<ObjectInfo>(&contents)
+                && let Ok(cached) = serde_json::from_slice::<ObjectInfo>(&contents)
                 && buildsystem_hash == cached.buildsystem_hash
-                && let Ok(dependency_hashes) =
-                    hash_dependencies(cached.dependency_hashes.keys().cloned())
-                        .await
+                && let Ok(dependency_hashes) = hash_dependencies(cached.dependency_hashes.keys().cloned()).await
                 && dependency_hashes == cached.dependency_hashes
             {
                 if envs::build_debug() {
-                    let kernel_list = cached
-                        .kernels
-                        .iter()
-                        .map(|k| k.name.as_ref())
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let kernel_list = cached.kernels.iter().map(|k| k.name.as_ref()).collect::<Vec<_>>().join(", ");
                     if kernel_list.is_empty() {
                         debug_log!("compile cached: {source_path_pretty}");
                     } else {
-                        debug_log!(
-                            "compile cached: {source_path_pretty} (kernels: [{kernel_list}])"
-                        );
+                        debug_log!("compile cached: {source_path_pretty} (kernels: [{kernel_list}])");
                     }
                 }
                 return Ok(cached);
@@ -202,35 +156,31 @@ impl MetalCompiler {
             fs::remove_dir_all(&build_dir).ok();
         }
 
-        fs::create_dir_all(&build_dir).with_context(|| {
-            format!("cannot create build directory {}", build_dir.display())
-        })?;
+        fs::create_dir_all(&build_dir)
+            .with_context(|| format!("cannot create build directory {}", build_dir.display()))?;
 
-        let (metal_kernel_infos, dependencies) =
-            self.toolchain.analyze(&source_path).await.with_context(|| {
-                format!("cannot analyze {}", source_path_display)
-            })?;
+        let (metal_kernel_infos, dependencies) = self
+            .toolchain
+            .analyze(&source_path)
+            .await
+            .with_context(|| format!("cannot analyze {}", source_path_display))?;
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
-        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos)
-            .context("cannot generate kernel wrappers")?;
+        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos).context("cannot generate kernel wrappers")?;
 
         let mut footer = String::new();
         for wrapper in wrapper_strs.iter() {
             footer.push_str(wrapper);
         }
 
-        let object_path =
-            build_dir.join(&source_file_name).with_extension("air");
+        let object_path = build_dir.join(&source_file_name).with_extension("air");
 
         let compile_output = self
             .toolchain
             .compile(&source_path, &footer, &object_path)
             .await
-            .with_context(|| {
-                format!("cannot compile {}", source_path_display)
-            })?;
+            .with_context(|| format!("cannot compile {}", source_path_display))?;
 
         if let Some(warnings) = &compile_output {
             for line in warnings.lines() {
@@ -238,9 +188,7 @@ impl MetalCompiler {
             }
         }
 
-        let dependency_hashes = hash_dependencies(dependencies)
-            .await
-            .context("cannot hash dependencies")?;
+        let dependency_hashes = hash_dependencies(dependencies).await.context("cannot hash dependencies")?;
 
         let object_info = ObjectInfo {
             src_rel_path: source_path_rel.into(),
@@ -253,27 +201,16 @@ impl MetalCompiler {
 
         fs::write(
             &objectinfo_path,
-            serde_json::to_string_pretty(&object_info)
-                .context("failed to serialize object info")?
-                .as_bytes(),
+            serde_json::to_string_pretty(&object_info).context("failed to serialize object info")?.as_bytes(),
         )
-        .with_context(|| {
-            format!("cannot write object info {}", objectinfo_path.display())
-        })?;
+        .with_context(|| format!("cannot write object info {}", objectinfo_path.display()))?;
 
         if envs::build_debug() {
-            let kernel_list = object_info
-                .kernels
-                .iter()
-                .map(|k| k.name.as_ref())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let kernel_list = object_info.kernels.iter().map(|k| k.name.as_ref()).collect::<Vec<_>>().join(", ");
             if kernel_list.is_empty() {
                 debug_log!("compile end: {source_path_pretty}");
             } else {
-                debug_log!(
-                    "compile end: {source_path_pretty} (kernels: [{kernel_list}])"
-                );
+                debug_log!("compile end: {source_path_pretty} (kernels: [{kernel_list}])");
             }
         }
 
@@ -310,9 +247,8 @@ impl MetalCompiler {
             }
         }
 
-        fs::write(&hash_path, hash.to_string()).with_context(|| {
-            format!("cannot write hash file {}", hash_path.display())
-        })?;
+        fs::write(&hash_path, hash.to_string())
+            .with_context(|| format!("cannot write hash file {}", hash_path.display()))?;
 
         debug_log!("linking end");
 
@@ -341,12 +277,10 @@ impl MetalCompiler {
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
-                super::bindgen::bindgen(k, specialize_indices).with_context(
-                    || format!("cannot generate bindings for {}", k.name),
-                )
+                super::bindgen::bindgen(k, specialize_indices)
+                    .with_context(|| format!("cannot generate bindings for {}", k.name))
             })
-            .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)>>(
-            )?;
+            .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)>>()?;
 
         let tokens = quote! {
             use crate::backends::metal::{
@@ -376,9 +310,8 @@ impl MetalCompiler {
 
         write_tokens(tokens, &out_path).context("cannot write bindings")?;
 
-        fs::write(&hash_path, hash.to_string()).with_context(|| {
-            format!("cannot write hash file {}", hash_path.display())
-        })?;
+        fs::write(&hash_path, hash.to_string())
+            .with_context(|| format!("cannot write hash file {}", hash_path.display()))?;
 
         debug_log!("bindgen end");
 
@@ -388,9 +321,7 @@ impl MetalCompiler {
 
 #[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(
-        &self
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(&self) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         let nax_enabled = cfg!(feature = "metal-nax");
         debug_log!(
             "metal nax {}",
@@ -404,18 +335,12 @@ impl Compiler for MetalCompiler {
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().is_file()
-                    && e.path().extension().and_then(|s| s.to_str())
-                        == Some("metal")
-            })
+            .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("metal"))
             .map(|e| e.into_path())
             .filter(|p| nax_enabled || !is_nax_source(p))
             .collect();
 
-        let num_concurrent_compiles =
-            std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4)
-                * 2;
+        let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
 
         let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
             .map(|p| self.compile(p))

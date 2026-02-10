@@ -157,11 +157,10 @@ impl<B> ScratchPool<B> {
             }
         }
 
-        let (key, slot, bucket_idx) =
-            match (found_key, found_slot, found_bucket_idx) {
-                (Some(k), Some(s), Some(i)) => (k, s, i),
-                _ => return None,
-            };
+        let (key, slot, bucket_idx) = match (found_key, found_slot, found_bucket_idx) {
+            (Some(k), Some(s), Some(i)) => (k, s, i),
+            _ => return None,
+        };
 
         self.remove_slot_from_bucket(key, slot, bucket_idx);
         self.remove_from_lru(slot);
@@ -248,8 +247,7 @@ impl<B> ScratchPool<B> {
         self.size_index.clear();
         self.lru_head = None;
         self.lru_tail = None;
-        self.total_allocated =
-            self.total_allocated.saturating_sub(self.pool_size);
+        self.total_allocated = self.total_allocated.saturating_sub(self.pool_size);
         self.pool_size = 0;
 
         count

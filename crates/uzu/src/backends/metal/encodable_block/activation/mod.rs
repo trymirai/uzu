@@ -1,18 +1,17 @@
 use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal,
-    ProtocolObject, Retained,
+    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, Metal, ProtocolObject, Retained,
 };
 
 use super::{
-    super::{
-        MTLContext, MTLError,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::dsl::ActivationMetalKernel,
-    },
-    EncodableBlock, EncodingParameters,
+    super::{MTLContext, MTLError, kernel::dsl::ActivationMetalKernel},
+    EncodableBlock,
 };
-use crate::backends::common::kernel::ActivationKernel;
 use crate::{DataType, config::Activation as ActivationConfig};
+use crate::{
+    backends::common::kernel::ActivationKernel,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
+};
 
 pub struct Activation {
     kernel: ActivationMetalKernel,
@@ -42,13 +41,11 @@ impl Activation {
 impl EncodableBlock<Metal> for Activation {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
         self.encode_with_shared_encoder(state, &encoder, _parameters);
 
@@ -61,9 +58,9 @@ impl EncodableBlock<Metal> for Activation {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow_mut();
@@ -84,12 +81,6 @@ impl EncodableBlock<Metal> for Activation {
             },
         };
 
-        self.kernel.encode(
-            input_buffer,
-            output_buffer,
-            n as u32,
-            act_type,
-            encoder,
-        );
+        self.kernel.encode(input_buffer, output_buffer, n as u32, act_type, encoder);
     }
 }

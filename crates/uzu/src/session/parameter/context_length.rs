@@ -1,6 +1,4 @@
-use crate::{
-    config::LanguageModelConfig, session::parameter::ConfigResolvableValue,
-};
+use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ContextLength {

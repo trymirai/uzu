@@ -1,5 +1,5 @@
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -7,14 +7,13 @@ use crate::{
     backends::{
         common::{Context, kernel::QuantizedEmbeddingLookupKernel},
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
-            forward_pass::{ArrayId, ForwardPassState},
-            kernel::dsl::QuantizedEmbeddingLookupMetalKernel,
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
+            ProtocolObject, Retained, kernel::dsl::QuantizedEmbeddingLookupMetalKernel,
         },
     },
     config::QuantizationMode,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -96,110 +95,80 @@ impl QuantizedEmbeddingLookup {
     ) -> Result<Self, EmbeddingError> {
         let packing_divisor = mode.packing_divisor();
 
-        let kernel = QuantizedEmbeddingLookupMetalKernel::new(
-            mtl_context,
-            data_type.into(),
-        )?;
+        let kernel = QuantizedEmbeddingLookupMetalKernel::new(mtl_context, data_type.into())?;
 
         // Load weights [vocab_size, model_dim/packing_divisor] as storage_type
-        let weights = parameter_tree.leaf(weights_name).map_err(|e| {
-            EmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load weights: {:?}",
-                e
-            )))
-        })?;
+        let weights = parameter_tree
+            .leaf(weights_name)
+            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load weights: {:?}", e))))?;
 
         if weights.data_type() != mode.storage_type() {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Expected packed weights of type {:?}, got {:?}",
-                    mode.storage_type(),
-                    weights.data_type()
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Expected packed weights of type {:?}, got {:?}",
+                mode.storage_type(),
+                weights.data_type()
+            ))));
         }
 
         // Load scales [vocab_size, num_groups]
-        let scales = parameter_tree.leaf(scales_name).map_err(|e| {
-            EmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load scales: {:?}",
-                e
-            )))
-        })?;
+        let scales = parameter_tree
+            .leaf(scales_name)
+            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load scales: {:?}", e))))?;
 
         // Validate shapes and types
         let num_groups = (model_dim + group_size - 1) / group_size;
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding lookup weights shape mismatch: got {:?}, expected [{}, {}]",
-                    weights.shape(),
-                    vocab_size,
-                    model_dim / packing_divisor
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding lookup weights shape mismatch: got {:?}, expected [{}, {}]",
+                weights.shape(),
+                vocab_size,
+                model_dim / packing_divisor
+            ))));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding lookup scales shape mismatch: got {:?}, expected [{}, {}]",
-                    scales.shape(),
-                    vocab_size,
-                    num_groups
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding lookup scales shape mismatch: got {:?}, expected [{}, {}]",
+                scales.shape(),
+                vocab_size,
+                num_groups
+            ))));
         }
         if scales.data_type() != data_type {
-            return Err(EmbeddingError::UnsupportedDataType(
-                scales.data_type(),
-            ));
+            return Err(EmbeddingError::UnsupportedDataType(scales.data_type()));
         }
 
         // Load or create biases buffer [vocab_size, num_groups] (MLX key: "biases")
-        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            match parameter_tree.leaf(biases_name) {
-                Ok(deq_biases) => {
-                    if deq_biases.shape() != [vocab_size, num_groups] {
-                        return Err(EmbeddingError::MetalError(
-                            MTLError::Generic(format!(
-                                "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
-                                deq_biases.shape(),
-                                vocab_size,
-                                num_groups
-                            )),
-                        ));
-                    }
-                    if deq_biases.data_type() != data_type {
-                        return Err(EmbeddingError::UnsupportedDataType(
-                            deq_biases.data_type(),
-                        ));
-                    }
-                    deq_biases.buffer().to_owned().into()
-                },
-                Err(_) => {
-                    let elem_size: usize = match data_type {
-                        DataType::F16 | DataType::BF16 => 2,
-                        DataType::F32 => 4,
-                        other => {
-                            return Err(EmbeddingError::UnsupportedDataType(
-                                other,
-                            ));
-                        },
-                    };
-                    let size_bytes = vocab_size * num_groups * elem_size;
-                    let buf = mtl_context
-                        .create_buffer(size_bytes)
-                        .expect("Failed to allocate buffer");
-                    unsafe {
-                        std::ptr::write_bytes(
-                            metal::MTLBuffer::contents(&*buf).as_ptr(),
-                            0,
-                            size_bytes as usize,
-                        );
-                    }
-                    buf
-                },
-            };
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
+            Ok(deq_biases) => {
+                if deq_biases.shape() != [vocab_size, num_groups] {
+                    return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                        "Embedding lookup deq_biases shape mismatch: got {:?}, expected [{}, {}]",
+                        deq_biases.shape(),
+                        vocab_size,
+                        num_groups
+                    ))));
+                }
+                if deq_biases.data_type() != data_type {
+                    return Err(EmbeddingError::UnsupportedDataType(deq_biases.data_type()));
+                }
+                deq_biases.buffer().to_owned().into()
+            },
+            Err(_) => {
+                let elem_size: usize = match data_type {
+                    DataType::F16 | DataType::BF16 => 2,
+                    DataType::F32 => 4,
+                    other => {
+                        return Err(EmbeddingError::UnsupportedDataType(other));
+                    },
+                };
+                let size_bytes = vocab_size * num_groups * elem_size;
+                let buf = mtl_context.create_buffer(size_bytes).expect("Failed to allocate buffer");
+                unsafe {
+                    std::ptr::write_bytes(metal::MTLBuffer::contents(&*buf).as_ptr(), 0, size_bytes as usize);
+                }
+                buf
+            },
+        };
 
         let weights_buffer = weights.buffer().to_owned().into();
         let scales_buffer = scales.buffer().to_owned().into();
@@ -221,13 +190,11 @@ impl QuantizedEmbeddingLookup {
 impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -243,9 +210,9 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingLookup {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();

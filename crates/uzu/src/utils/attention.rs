@@ -17,12 +17,7 @@ pub fn fill_attention_bias(
         _ => panic!("Unsupported data type for attention bias fill"),
     };
 
-    fill_typed_for_dtype(
-        dst,
-        suffix_length,
-        prefix_segment_length,
-        should_be_neg_inf,
-    );
+    fill_typed_for_dtype(dst, suffix_length, prefix_segment_length, should_be_neg_inf);
 }
 
 fn fill_typed<T: ArrayElement + Float>(

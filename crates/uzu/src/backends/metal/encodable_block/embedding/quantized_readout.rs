@@ -1,5 +1,5 @@
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
@@ -7,17 +7,14 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
-            forward_pass::{ArrayId, ForwardPassState},
-            kernel::quant_matmul::{
-                QuantizationType, QuantizedMatmulArguments,
-                QuantizedMatmulKernel,
-            },
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
+            ProtocolObject, Retained,
+            kernel::quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
         },
     },
     config::QuantizationMode,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -90,20 +87,14 @@ impl QuantizedEmbeddingReadout {
         parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, EmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
-        let weights = parameter_tree.leaf(weights_name).map_err(|e| {
-            EmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load weights: {:?}",
-                e
-            )))
-        })?;
+        let weights = parameter_tree
+            .leaf(weights_name)
+            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load weights: {:?}", e))))?;
 
         // Load scales [vocab_size, num_groups]
-        let scales = parameter_tree.leaf(scales_name).map_err(|e| {
-            EmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to load scales: {:?}",
-                e
-            )))
-        })?;
+        let scales = parameter_tree
+            .leaf(scales_name)
+            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load scales: {:?}", e))))?;
 
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -113,77 +104,58 @@ impl QuantizedEmbeddingReadout {
         let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
-                    weights.shape(),
-                    vocab_size,
-                    model_dim / packing_divisor
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
+                weights.shape(),
+                vocab_size,
+                model_dim / packing_divisor
+            ))));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(
-                format!(
-                    "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
-                    scales.shape(),
-                    vocab_size,
-                    num_groups
-                ),
-            )));
+            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
+                scales.shape(),
+                vocab_size,
+                num_groups
+            ))));
         }
         if scales.data_type() != data_type {
-            return Err(EmbeddingError::UnsupportedDataType(
-                scales.data_type(),
-            ));
+            return Err(EmbeddingError::UnsupportedDataType(scales.data_type()));
         }
 
         // MLX requires per-group biases; if missing, create a zero buffer of shape [vocab_size, num_groups]
-        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            match parameter_tree.leaf(biases_name) {
-                Ok(deq_biases) => {
-                    if deq_biases.shape() != [vocab_size, num_groups] {
-                        return Err(EmbeddingError::MetalError(
-                            MTLError::Generic(format!(
-                                "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
-                                deq_biases.shape(),
-                                vocab_size,
-                                num_groups
-                            )),
-                        ));
-                    }
-                    if deq_biases.data_type() != data_type {
-                        return Err(EmbeddingError::UnsupportedDataType(
-                            deq_biases.data_type(),
-                        ));
-                    }
-                    deq_biases.buffer().to_owned().into()
-                },
-                Err(_) => {
-                    // Allocate zero-initialized biases buffer
-                    let elem_size: usize = match data_type {
-                        DataType::F16 | DataType::BF16 => 2,
-                        DataType::F32 => 4,
-                        other => {
-                            return Err(EmbeddingError::UnsupportedDataType(
-                                other,
-                            ));
-                        },
-                    };
-                    let size_bytes = vocab_size * num_groups * elem_size;
-                    let buf = mtl_context
-                        .create_buffer(size_bytes)
-                        .expect("Failed to allocate buffer");
-                    unsafe {
-                        std::ptr::write_bytes(
-                            metal::MTLBuffer::contents(&*buf).as_ptr(),
-                            0,
-                            size_bytes as usize,
-                        );
-                    }
-                    buf
-                },
-            };
+        let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
+            Ok(deq_biases) => {
+                if deq_biases.shape() != [vocab_size, num_groups] {
+                    return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                        "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
+                        deq_biases.shape(),
+                        vocab_size,
+                        num_groups
+                    ))));
+                }
+                if deq_biases.data_type() != data_type {
+                    return Err(EmbeddingError::UnsupportedDataType(deq_biases.data_type()));
+                }
+                deq_biases.buffer().to_owned().into()
+            },
+            Err(_) => {
+                // Allocate zero-initialized biases buffer
+                let elem_size: usize = match data_type {
+                    DataType::F16 | DataType::BF16 => 2,
+                    DataType::F32 => 4,
+                    other => {
+                        return Err(EmbeddingError::UnsupportedDataType(other));
+                    },
+                };
+                let size_bytes = vocab_size * num_groups * elem_size;
+                let buf = mtl_context.create_buffer(size_bytes).expect("Failed to allocate buffer");
+                unsafe {
+                    std::ptr::write_bytes(metal::MTLBuffer::contents(&*buf).as_ptr(), 0, size_bytes as usize);
+                }
+                buf
+            },
+        };
 
         let weights_buffer = weights.buffer().to_owned().into();
         let scales_buffer = scales.buffer().to_owned().into();
@@ -198,12 +170,7 @@ impl QuantizedEmbeddingReadout {
             QuantizationType::Mlx,
             weights_transposed,
         )
-        .map_err(|e| {
-            EmbeddingError::MetalError(MTLError::Generic(format!(
-                "Failed to create kernel: {:?}",
-                e
-            )))
-        })?;
+        .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to create kernel: {:?}", e))))?;
 
         Ok(Self {
             kernel,
@@ -219,13 +186,11 @@ impl QuantizedEmbeddingReadout {
 impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -241,9 +206,9 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();
@@ -272,8 +237,6 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
             quantization_type: QuantizationType::Mlx,
         };
 
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized embedding readout kernel");
+        self.kernel.encode(encoder, args).expect("Failed to encode quantized embedding readout kernel");
     }
 }

@@ -91,16 +91,13 @@ pub fn run_long_simulation_with_config<A: AllocatorTrait>(
     let mut all_snapshots = Vec::new();
 
     for conv_idx in 0..num_conversations {
-        let prompt_len =
-            avg_prompt_length + (conv_idx % 3) * (avg_prompt_length / 4);
-        let gen_len =
-            avg_generate_length + (conv_idx % 5) * (avg_generate_length / 8);
+        let prompt_len = avg_prompt_length + (conv_idx % 3) * (avg_prompt_length / 4);
+        let gen_len = avg_generate_length + (conv_idx % 5) * (avg_generate_length / 8);
 
         let prefill_snapshots = sim.run_prefill(prompt_len, prefill_step_size);
         all_snapshots.extend(prefill_snapshots);
 
-        let gen_snapshots =
-            sim.run_generation_with_sampling(gen_len, snapshot_interval);
+        let gen_snapshots = sim.run_generation_with_sampling(gen_len, snapshot_interval);
         all_snapshots.extend(gen_snapshots);
 
         sim.current_prefix_len = 0;

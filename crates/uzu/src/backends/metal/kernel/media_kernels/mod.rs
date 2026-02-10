@@ -1,15 +1,15 @@
 use std::{mem, ptr::NonNull};
 
-use crate::backends::metal::Metal;
+use crate::{
+    backends::metal::Metal,
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
+};
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
-    ProtocolObject,
-    error::MTLError,
-    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
-    image::Image,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, error::MTLError, image::Image,
     metal_extensions::ComputeEncoderDispatch,
 };
 
@@ -39,8 +39,7 @@ pub struct ScalePadNormalizeImage {
 impl ScalePadNormalizeImage {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "scalePadNormalizeImage";
-        let pipeline_state =
-            context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -53,9 +52,8 @@ impl ScalePadNormalizeImage {
         image_params_ptr: *const std::ffi::c_void,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         compute_encoder.set_label(Some("ScalePadNormalizeImageEncoder"));
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);
@@ -83,9 +81,9 @@ impl ScalePadNormalizeImage {
 impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let _ = command_buffer;
     }
@@ -96,13 +94,11 @@ impl EncodableBlock<Metal> for ScalePadNormalizeImage {
 
     fn encode_with_shared_encoder(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
-        unreachable!(
-            "ScalePadNormalizeImage does not support shared compute encoder"
-        );
+        unreachable!("ScalePadNormalizeImage does not support shared compute encoder");
     }
 }
 
@@ -114,8 +110,7 @@ pub struct ExtractImagePatches {
 impl ExtractImagePatches {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "extractImagePatches";
-        let pipeline_state =
-            context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -128,14 +123,12 @@ impl ExtractImagePatches {
         patch_params_ptr: *const std::ffi::c_void,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         compute_encoder.set_label(Some("ExtractImagePatchesEncoder"));
 
         compute_encoder.set_compute_pipeline_state(&self.pipeline_state);
-        compute_encoder
-            .set_texture(Some(padded_normalized_image.texture_ref()), 0);
+        compute_encoder.set_texture(Some(padded_normalized_image.texture_ref()), 0);
         compute_encoder.set_buffer(Some(output_buffer_mtl), 0, 0);
         unsafe {
             compute_encoder.set_bytes(

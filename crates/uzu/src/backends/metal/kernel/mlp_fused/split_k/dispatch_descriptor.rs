@@ -1,15 +1,9 @@
-use super::{
-    pipeline_configuration::PipelineConfiguration,
-    tile_configuration::select_tile_configuration,
-};
+use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::select_tile_configuration};
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError, MTLSize,
-        kernel::{
-            matmul::common::GEMMSpiltKMlpFusedParams,
-            mlp_fused::common::MlpFusedArguments,
-        },
+        kernel::{matmul::common::GEMMSpiltKMlpFusedParams, mlp_fused::common::MlpFusedArguments},
     },
 };
 
@@ -37,11 +31,7 @@ impl DispatchDescriptor {
             return Ok(None);
         }
 
-        if !should_use_splitk(
-            arguments.batch,
-            arguments.hidden_dim,
-            arguments.input_dim,
-        ) {
+        if !should_use_splitk(arguments.batch, arguments.hidden_dim, arguments.input_dim) {
             return Ok(None);
         }
 
@@ -51,8 +41,7 @@ impl DispatchDescriptor {
 
         let tile = select_tile_configuration(batch, hidden_dim);
         let partition_count = compute_partition_count(input_dim);
-        let mn_aligned =
-            (batch % tile.tile_rows) == 0 && (hidden_dim % tile.tile_cols) == 0;
+        let mn_aligned = (batch % tile.tile_rows) == 0 && (hidden_dim % tile.tile_cols) == 0;
         let k_aligned = (input_dim % tile.tile_depth) == 0;
 
         let pipeline_configuration = PipelineConfiguration {
@@ -69,10 +58,8 @@ impl DispatchDescriptor {
         let k_elements_per_partition = gemm_k_iterations * tile.tile_depth;
         let output_elements_per_partition = batch * hidden_dim;
 
-        let accumulator_element_count =
-            partition_count * output_elements_per_partition;
-        let accumulator_bytes =
-            (accumulator_element_count as usize) * std::mem::size_of::<f32>();
+        let accumulator_element_count = partition_count * output_elements_per_partition;
+        let accumulator_bytes = (accumulator_element_count as usize) * std::mem::size_of::<f32>();
 
         let params = GEMMSpiltKMlpFusedParams {
             M: batch,
@@ -90,24 +77,12 @@ impl DispatchDescriptor {
             hidden_dim,
         };
 
-        let partial_threads_per_threadgroup = MTLSize::new(
-            32,
-            tile.warps_per_col as usize,
-            tile.warps_per_row as usize,
-        );
-        let partial_threadgroups = MTLSize::new(
-            tile_count_n as usize,
-            tile_count_m as usize,
-            partition_count as usize,
-        );
+        let partial_threads_per_threadgroup =
+            MTLSize::new(32, tile.warps_per_col as usize, tile.warps_per_row as usize);
+        let partial_threadgroups = MTLSize::new(tile_count_n as usize, tile_count_m as usize, partition_count as usize);
 
-        let accum_total_threads =
-            MTLSize::new(hidden_dim as usize, batch as usize, 1);
-        let accum_threads_per_threadgroup = MTLSize::new(
-            16.min(hidden_dim as usize),
-            16.min(batch as usize),
-            1,
-        );
+        let accum_total_threads = MTLSize::new(hidden_dim as usize, batch as usize, 1);
+        let accum_threads_per_threadgroup = MTLSize::new(16.min(hidden_dim as usize), 16.min(batch as usize), 1);
 
         Ok(Some(Self {
             pipeline_configuration,

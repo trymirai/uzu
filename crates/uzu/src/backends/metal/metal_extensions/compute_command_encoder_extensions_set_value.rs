@@ -25,8 +25,7 @@ impl ComputeEncoderSetValue for ProtocolObject<dyn MTLComputeCommandEncoder> {
         value: &T,
         index: usize,
     ) {
-        let ptr = NonNull::new(value as *const T as *mut c_void)
-            .expect("value pointer should never be null");
+        let ptr = NonNull::new(value as *const T as *mut c_void).expect("value pointer should never be null");
         self.set_bytes(ptr, size_of::<T>(), index);
     }
 
@@ -35,8 +34,7 @@ impl ComputeEncoderSetValue for ProtocolObject<dyn MTLComputeCommandEncoder> {
         slice: &[T],
         index: usize,
     ) {
-        let ptr = NonNull::new(slice.as_ptr() as *mut c_void)
-            .expect("slice pointer should never be null");
+        let ptr = NonNull::new(slice.as_ptr() as *mut c_void).expect("slice pointer should never be null");
         self.set_bytes(ptr, size_of::<T>() * slice.len(), index);
     }
 }

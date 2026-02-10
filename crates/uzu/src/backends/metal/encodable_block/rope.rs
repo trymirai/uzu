@@ -1,16 +1,14 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use crate::backends::metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained,
-};
+use crate::backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained};
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::{
     KernelDataType, MTLContext,
-    forward_pass::{ArrayId, ForwardPassState, RopeType},
     kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
 };
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState, RopeType};
 
 pub struct Rope {
     kernel: RopeKernel,
@@ -34,13 +32,12 @@ impl Rope {
 impl EncodableBlock<Metal> for Rope {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &compute_encoder, parameters);
         compute_encoder.end_encoding();
 
@@ -56,9 +53,9 @@ impl EncodableBlock<Metal> for Rope {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -74,8 +71,7 @@ impl EncodableBlock<Metal> for Rope {
             let keys_array = keys_binding[0].borrow();
             let num_groups = keys_array.shape()[0];
 
-            let cos_binding =
-                state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
+            let cos_binding = state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
             let cos_array = cos_binding[0].borrow();
             let cos_shape = cos_array.shape();
             let rope_max_seq_len = cos_shape[0];
@@ -95,12 +91,10 @@ impl EncodableBlock<Metal> for Rope {
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
         let rotated_keys = rotated_keys_binding[0].borrow_mut();
 
-        let cos_buffer_binding =
-            state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
+        let cos_buffer_binding = state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
         let rope_cosines = cos_buffer_binding[0].borrow_mut();
 
-        let sin_buffer_binding =
-            state.arrays(&[ArrayId::RopeSines(self.rope_type)]);
+        let sin_buffer_binding = state.arrays(&[ArrayId::RopeSines(self.rope_type)]);
         let rope_sines = sin_buffer_binding[0].borrow_mut();
 
         let token_positions_offset = token_positions.offset();

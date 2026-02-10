@@ -5,27 +5,24 @@ mod common;
 use std::mem::size_of;
 
 use bytemuck;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
 use uzu::backends::{
     common::Context,
     metal::{
         KernelDataType, MTLContext, ProtocolObject, Retained,
         kernel::attention::{
-            AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
-            AttentionSinglePassArguments, AttentionTwoPassArguments,
+            AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
+            AttentionTwoPassArguments,
         },
         metal_extensions::CommandBufferTimingExt,
     },
 };
 
 fn reference_attention(
-    queries: &Array4<f32>, // [batch, num_heads, seq_len, head_dim]
-    keys: &Array4<f32>,    // [batch, num_kv_heads, seq_len, head_dim]
-    values: &Array4<f32>,  // [batch, num_kv_heads, seq_len, head_dim]
+    queries: &Array4<f32>,      // [batch, num_heads, seq_len, head_dim]
+    keys: &Array4<f32>,         // [batch, num_kv_heads, seq_len, head_dim]
+    values: &Array4<f32>,       // [batch, num_kv_heads, seq_len, head_dim]
     mask: Option<&Array3<f32>>, // [batch, seq_len, seq_len] or None
     sinks: Option<&[f32]>,
     scale: f32,
@@ -44,8 +41,7 @@ fn reference_attention(
                 for repeat in 0..n_repeats {
                     let q_head = kv_head * n_repeats + repeat;
 
-                    let q =
-                        scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
+                    let q = scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
                     let k = keys.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
                     let v = values.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
 
@@ -53,28 +49,17 @@ fn reference_attention(
                     let mut scores = q.dot(&k.t());
 
                     if let Some(mask_data) = mask {
-                        let mask_slice = mask_data.slice(s![
-                            b,
-                            ..,
-                            ..kv_seq_len.min(seq_len)
-                        ]);
-                        scores
-                            .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
-                            .zip_mut_with(&mask_slice, |s, &m| *s += m);
+                        let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                        scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)]).zip_mut_with(&mask_slice, |s, &m| *s += m);
                     }
 
                     // Softmax with optional sink logit
                     for i in 0..seq_len {
                         let sink_logit = sinks.map(|s| s[q_head]);
                         let row = scores.row(i);
-                        let max_score = row.iter().fold(
-                            sink_logit.unwrap_or(f32::NEG_INFINITY),
-                            |acc, &x| acc.max(x),
-                        );
+                        let max_score = row.iter().fold(sink_logit.unwrap_or(f32::NEG_INFINITY), |acc, &x| acc.max(x));
 
-                        let mut sum_exp = sink_logit
-                            .map(|sink| (sink - max_score).exp())
-                            .unwrap_or(0.0);
+                        let mut sum_exp = sink_logit.map(|sink| (sink - max_score).exp()).unwrap_or(0.0);
                         for j in 0..kv_seq_len {
                             scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                             sum_exp += scores[[i, j]];
@@ -84,9 +69,7 @@ fn reference_attention(
 
                     // Efficient matrix multiplication: output = scores @ V
                     let head_output = scores.dot(&v);
-                    output
-                        .slice_mut(s![b, q_head, .., ..])
-                        .assign(&head_output);
+                    output.slice_mut(s![b, q_head, .., ..]).assign(&head_output);
                 }
             }
         } else {
@@ -99,25 +82,17 @@ fn reference_attention(
                 let mut scores = q.dot(&k.t());
 
                 if let Some(mask_data) = mask {
-                    let mask_slice =
-                        mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                    scores
-                        .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
-                        .zip_mut_with(&mask_slice, |s, &m| *s += m);
+                    let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                    scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)]).zip_mut_with(&mask_slice, |s, &m| *s += m);
                 }
 
                 // Softmax with optional sink logit
                 for i in 0..seq_len {
                     let sink_logit = sinks.map(|s| s[h]);
                     let row = scores.row(i);
-                    let max_score = row.iter().fold(
-                        sink_logit.unwrap_or(f32::NEG_INFINITY),
-                        |acc, &x| acc.max(x),
-                    );
+                    let max_score = row.iter().fold(sink_logit.unwrap_or(f32::NEG_INFINITY), |acc, &x| acc.max(x));
 
-                    let mut sum_exp = sink_logit
-                        .map(|sink| (sink - max_score).exp())
-                        .unwrap_or(0.0);
+                    let mut sum_exp = sink_logit.map(|sink| (sink - max_score).exp()).unwrap_or(0.0);
                     for j in 0..kv_seq_len {
                         scores[[i, j]] = (scores[[i, j]] - max_score).exp();
                         sum_exp += scores[[i, j]];
@@ -147,29 +122,19 @@ fn create_test_data(
 
     let mut rng = StdRng::seed_from_u64(seed);
 
-    let queries = Array4::from_shape_fn(
-        (batch_size, num_heads, seq_len, head_dim),
-        |_| rng.random_range(-0.5..0.5),
-    );
+    let queries = Array4::from_shape_fn((batch_size, num_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
-    let keys = Array4::from_shape_fn(
-        (batch_size, num_kv_heads, seq_len, head_dim),
-        |_| rng.random_range(-0.5..0.5),
-    );
+    let keys = Array4::from_shape_fn((batch_size, num_kv_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
-    let values = Array4::from_shape_fn(
-        (batch_size, num_kv_heads, seq_len, head_dim),
-        |_| rng.random_range(-0.5..0.5),
-    );
+    let values = Array4::from_shape_fn((batch_size, num_kv_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
-    let mask =
-        Array3::from_shape_fn((batch_size, seq_len, seq_len), |(_, i, j)| {
-            if j <= i {
-                0.0
-            } else {
-                -1e9
-            }
-        });
+    let mask = Array3::from_shape_fn((batch_size, seq_len, seq_len), |(_, i, j)| {
+        if j <= i {
+            0.0
+        } else {
+            -1e9
+        }
+    });
 
     (queries, keys, values, mask)
 }
@@ -195,10 +160,7 @@ fn create_query_buffer(
 
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&query_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&query_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -210,8 +172,7 @@ fn create_key_cache_buffer(
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
     // Our kernel expects key cache layout: [num_kv_heads, max_seq_len, head_dim]
-    let mut key_cache_data =
-        vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
+    let mut key_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
 
     for h in 0..num_kv_heads {
         for t in 0..seq_len {
@@ -224,10 +185,7 @@ fn create_key_cache_buffer(
 
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&key_cache_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&key_cache_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -239,8 +197,7 @@ fn create_value_cache_buffer(
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
     // Our kernel expects value cache layout: [num_kv_heads, max_seq_len, head_dim]
-    let mut value_cache_data =
-        vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
+    let mut value_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
 
     for h in 0..num_kv_heads {
         for t in 0..seq_len {
@@ -253,10 +210,7 @@ fn create_value_cache_buffer(
 
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&value_cache_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&value_cache_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -280,10 +234,7 @@ fn create_mask_buffer(
 
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&mask_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&mask_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -302,10 +253,7 @@ fn create_mask_2d_buffer(
 
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&mask_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&mask_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -315,10 +263,7 @@ fn create_sinks_buffer(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     context
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(&sinks),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(&sinks), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer")
 }
 
@@ -329,8 +274,7 @@ fn convert_kernel_output(
     seq_len: usize,
     head_dim: usize,
 ) -> Array4<f32> {
-    let mut kernel_output =
-        Array4::zeros((batch_size, num_heads, seq_len, head_dim));
+    let mut kernel_output = Array4::zeros((batch_size, num_heads, seq_len, head_dim));
     for h in 0..num_heads {
         for t in 0..seq_len {
             for d in 0..head_dim {
@@ -359,27 +303,18 @@ fn run_single_pass_attention(
 
     let query_buffer = create_query_buffer(queries, context);
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
-    let value_cache_buffer =
-        create_value_cache_buffer(values, seq_len, context);
+    let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let output_buffer = context
         .device
-        .new_buffer(
-            num_heads * seq_len * head_dim * size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionSinglePassArguments {
         queries_buffer: &query_buffer,
@@ -412,17 +347,9 @@ fn run_single_pass_attention(
     command_buffer.wait_until_completed();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe {
-        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
-    };
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
 
-    let kernel_output = convert_kernel_output(
-        output_slice,
-        batch_size,
-        num_heads,
-        seq_len,
-        head_dim,
-    );
+    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -443,27 +370,18 @@ fn run_single_pass_attention_with_is_causal(
 
     let query_buffer = create_query_buffer(queries, context);
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
-    let value_cache_buffer =
-        create_value_cache_buffer(values, seq_len, context);
+    let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let output_buffer = context
         .device
-        .new_buffer(
-            num_heads * seq_len * head_dim * size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionSinglePassArguments {
         queries_buffer: &query_buffer,
@@ -496,17 +414,9 @@ fn run_single_pass_attention_with_is_causal(
     command_buffer.wait_until_completed();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe {
-        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
-    };
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
 
-    let kernel_output = convert_kernel_output(
-        output_slice,
-        batch_size,
-        num_heads,
-        seq_len,
-        head_dim,
-    );
+    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -527,27 +437,18 @@ fn run_gemm_attention(
 
     let query_buffer = create_query_buffer(queries, context);
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
-    let value_cache_buffer =
-        create_value_cache_buffer(values, seq_len, context);
+    let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
     let mask_buffer = mask.map(|m| create_mask_2d_buffer(m, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let output_buffer = context
         .device
-        .new_buffer(
-            num_heads * seq_len * head_dim * size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionGemmArguments {
         queries_buffer: &query_buffer,
@@ -575,17 +476,9 @@ fn run_gemm_attention(
     command_buffer.wait_until_completed();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe {
-        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
-    };
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
 
-    let kernel_output = convert_kernel_output(
-        output_slice,
-        batch_size,
-        num_heads,
-        seq_len,
-        head_dim,
-    );
+    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -596,11 +489,7 @@ fn compare_results(
     tolerance: f32,
     test_name: &str,
 ) -> Result<(), String> {
-    let max_diff = kernel_output
-        .iter()
-        .zip(reference_output.iter())
-        .map(|(a, b)| (a - b).abs())
-        .fold(0.0f32, f32::max);
+    let max_diff = kernel_output.iter().zip(reference_output.iter()).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
 
     let relative_error = kernel_output
         .iter()
@@ -618,29 +507,15 @@ fn compare_results(
     println!("Max relative error ({}): {}", test_name, relative_error);
 
     println!("Debug - Sample values ({}):", test_name);
-    println!(
-        "Kernel output [0,0,0,0:4]: {:?}",
-        &kernel_output.slice(s![0, 0, 0, 0..4]).to_vec()
-    );
-    println!(
-        "Reference output [0,0,0,0:4]: {:?}",
-        &reference_output.slice(s![0, 0, 0, 0..4]).to_vec()
-    );
-    println!(
-        "Kernel output [0,0,1,0:4]: {:?}",
-        &kernel_output.slice(s![0, 0, 1, 0..4]).to_vec()
-    );
-    println!(
-        "Reference output [0,0,1,0:4]: {:?}",
-        &reference_output.slice(s![0, 0, 1, 0..4]).to_vec()
-    );
+    println!("Kernel output [0,0,0,0:4]: {:?}", &kernel_output.slice(s![0, 0, 0, 0..4]).to_vec());
+    println!("Reference output [0,0,0,0:4]: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
+    println!("Kernel output [0,0,1,0:4]: {:?}", &kernel_output.slice(s![0, 0, 1, 0..4]).to_vec());
+    println!("Reference output [0,0,1,0:4]: {:?}", &reference_output.slice(s![0, 0, 1, 0..4]).to_vec());
 
     let kernel_max = kernel_output.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
-    let kernel_min =
-        kernel_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
+    let kernel_min = kernel_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
     let ref_max = reference_output.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
-    let ref_min =
-        reference_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
+    let ref_min = reference_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
 
     println!("Kernel output range: [{}, {}]", kernel_min, kernel_max);
     println!("Reference output range: [{}, {}]", ref_min, ref_max);
@@ -668,27 +543,15 @@ fn test_single_pass_attention_basic() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        42,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     println!("Testing reference implementation without mask...");
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
     let ref_max = reference_output.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
-    let ref_min =
-        reference_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
+    let ref_min = reference_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
     println!("Reference output range (no mask): [{}, {}]", ref_min, ref_max);
-    println!(
-        "Reference sample values: {:?}",
-        &reference_output.slice(s![0, 0, 0, 0..4]).to_vec()
-    );
+    println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,
@@ -705,19 +568,14 @@ fn test_single_pass_attention_basic() {
         head_dim,
         kernel.supports_single_pass(head_dim, is_causal, false)
     );
-    println!(
-        "Supports two-pass for head_dim={}: {}",
-        head_dim,
-        kernel.supports_two_pass(head_dim, is_causal, false)
-    );
+    println!("Supports two-pass for head_dim={}: {}", head_dim, kernel.supports_two_pass(head_dim, is_causal, false));
 
     if !kernel.supports_single_pass(head_dim, false, false) {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let kernel_output = match run_single_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-    ) {
+    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
+    {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run single-pass attention: {:?}", e);
@@ -725,12 +583,7 @@ fn test_single_pass_attention_basic() {
     };
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Single-pass attention",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention") {
         panic!("{}", e);
     }
 }
@@ -747,34 +600,18 @@ fn test_gemm_attention_basic() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        123,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
-        .expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = run_gemm_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-        /*is_causal=*/ false,
-    )
-    .expect("run gemm attention");
+    let kernel_output =
+        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, None, scale, /*is_causal=*/ false)
+            .expect("run gemm attention");
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Gemm attention",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Gemm attention") {
         panic!("{}", e);
     }
 }
@@ -791,34 +628,18 @@ fn test_gemm_attention_f32_head_dim_128() {
     let head_dim = 128;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        456,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
-        .expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = run_gemm_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-        /*is_causal=*/ false,
-    )
-    .expect("run gemm attention f32 head_dim=128");
+    let kernel_output =
+        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, None, scale, /*is_causal=*/ false)
+            .expect("run gemm attention f32 head_dim=128");
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Gemm attention f32 head_dim=128",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Gemm attention f32 head_dim=128") {
         panic!("{}", e);
     }
 }
@@ -836,21 +657,12 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = true;
 
-    let (queries, keys, values, mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        2026,
-    );
+    let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32)
-        .expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
 
     // CPU reference (uses the same additive mask)
-    let reference_output =
-        reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
 
     // vector attention path (single-pass)
     let vector_output = run_single_pass_attention_with_is_causal(
@@ -867,46 +679,19 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     .expect("run vector attention");
 
     // matrix attention path (gemm)
-    let matrix_output = run_gemm_attention(
-        &kernel,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        Some(&mask),
-        None,
-        scale,
-        is_causal,
-    )
-    .expect("run matrix attention");
+    let matrix_output =
+        run_gemm_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale, is_causal)
+            .expect("run matrix attention");
 
     // Compare both to CPU
     let tol_cpu = 5e-2;
-    compare_results(
-        &vector_output,
-        &reference_output,
-        tol_cpu,
-        "vector single-pass attention vs CPU",
-    )
-    .unwrap();
-    compare_results(
-        &matrix_output,
-        &reference_output,
-        tol_cpu,
-        "matrix attention vs CPU",
-    )
-    .unwrap();
+    compare_results(&vector_output, &reference_output, tol_cpu, "vector single-pass attention vs CPU").unwrap();
+    compare_results(&matrix_output, &reference_output, tol_cpu, "matrix attention vs CPU").unwrap();
 
-    let max_diff_vector_matrix = vector_output
-        .iter()
-        .zip(matrix_output.iter())
-        .map(|(a, b)| (a - b).abs())
-        .fold(0.0f32, f32::max);
+    let max_diff_vector_matrix =
+        vector_output.iter().zip(matrix_output.iter()).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
     let tol_vector_matrix = 5e-2;
-    println!(
-        "Max absolute difference (vector single-pass attention vs matrix attention): {}",
-        max_diff_vector_matrix
-    );
+    println!("Max absolute difference (vector single-pass attention vs matrix attention): {}", max_diff_vector_matrix);
     assert!(
         max_diff_vector_matrix <= tol_vector_matrix,
         "vector single-pass attention and matrix attention differ too much: max_diff = {} (tol={})",
@@ -927,14 +712,7 @@ fn test_single_pass_attention_with_mask() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        42,
-    );
+    let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,
@@ -947,24 +725,15 @@ fn test_single_pass_attention_with_mask() {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let kernel_output = match run_single_pass_attention(
-        &kernel,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        Some(&mask),
-        None,
-        scale,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            panic!("Failed to run single-pass attention with mask: {:?}", e);
-        },
-    };
+    let kernel_output =
+        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale) {
+            Ok(output) => output,
+            Err(e) => {
+                panic!("Failed to run single-pass attention with mask: {:?}", e);
+            },
+        };
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
 
     println!("Mask values:");
     for i in 0..seq_len.min(4) {
@@ -975,12 +744,7 @@ fn test_single_pass_attention_with_mask() {
     }
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Single-pass attention with mask",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention with mask") {
         panic!("{}", e);
     }
 }
@@ -997,18 +761,9 @@ fn test_single_pass_attention_with_sinks() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        444,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 444);
 
-    let sinks: Vec<f32> = (0..num_heads)
-        .map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25)
-        .collect();
+    let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
@@ -1022,38 +777,18 @@ fn test_single_pass_attention_with_sinks() {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let reference_output = reference_attention(
-        &queries,
-        &keys,
-        &values,
-        None,
-        Some(&sinks),
-        scale,
-    );
+    let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
-    let kernel_output = match run_single_pass_attention(
-        &kernel,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        None,
-        Some(&sinks),
-        scale,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            panic!("Failed to run single-pass attention with sinks: {:?}", e);
-        },
-    };
+    let kernel_output =
+        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, Some(&sinks), scale) {
+            Ok(output) => output,
+            Err(e) => {
+                panic!("Failed to run single-pass attention with sinks: {:?}", e);
+            },
+        };
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Single-pass attention with sinks",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention with sinks") {
         panic!("{}", e);
     }
 }
@@ -1070,17 +805,9 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        777,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 777);
 
-    let sinks: Vec<f32> =
-        (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
+    let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
@@ -1094,33 +821,15 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let reference_output = reference_attention(
-        &queries,
-        &keys,
-        &values,
-        None,
-        Some(&sinks),
-        scale,
-    );
+    let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
-    let kernel_output = match run_single_pass_attention(
-        &kernel,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        None,
-        Some(&sinks),
-        scale,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            panic!(
-                "Failed to run single-pass attention long sequence with sinks: {:?}",
-                e
-            );
-        },
-    };
+    let kernel_output =
+        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, Some(&sinks), scale) {
+            Ok(output) => output,
+            Err(e) => {
+                panic!("Failed to run single-pass attention long sequence with sinks: {:?}", e);
+            },
+        };
 
     let tolerance = 5e-2;
     if let Err(e) = compare_results(
@@ -1145,14 +854,7 @@ fn test_single_pass_attention_gqa() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        42,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,
@@ -1169,25 +871,18 @@ fn test_single_pass_attention_gqa() {
         panic!("Single-pass kernel not supported for head_dim={}", head_dim);
     }
 
-    let kernel_output = match run_single_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-    ) {
+    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
+    {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run single-pass attention GQA: {:?}", e);
         },
     };
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Single-pass attention GQA",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention GQA") {
         panic!("{}", e);
     }
 }
@@ -1217,26 +912,17 @@ fn run_two_pass_attention(
 
     let partials_buffer = context
         .device
-        .new_buffer(
-            partials_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let sums_buffer = context
         .device
-        .new_buffer(
-            sums_maxs_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let maxs_buffer = context
         .device
-        .new_buffer(
-            sums_maxs_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let output_buffer = context
@@ -1247,13 +933,8 @@ fn run_two_pass_attention(
         )
         .expect("Failed to create buffer");
 
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionTwoPassArguments {
         queries_buffer: &queries_buffer,
@@ -1289,17 +970,9 @@ fn run_two_pass_attention(
     command_buffer.wait_until_completed();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe {
-        std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim)
-    };
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
 
-    let kernel_output = convert_kernel_output(
-        output_slice,
-        batch_size,
-        num_heads,
-        seq_len,
-        head_dim,
-    );
+    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -1330,27 +1003,14 @@ fn test_two_pass_attention() {
 
     let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        panic!(
-            "Two-pass not selected for seq_len={}. Got {:?}",
-            seq_len, variant
-        );
+        panic!("Two-pass not selected for seq_len={}. Got {:?}", seq_len, variant);
     }
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        42,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = match run_two_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-    ) {
+    let kernel_output = match run_two_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run two-pass attention: {:?}", e);
@@ -1358,12 +1018,7 @@ fn test_two_pass_attention() {
     };
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Two-pass attention",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Two-pass attention") {
         panic!("{}", e);
     }
 }
@@ -1394,27 +1049,14 @@ fn test_two_pass_attention_gqa() {
 
     let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        panic!(
-            "Two-pass not selected for GQA seq_len={}. Got {:?}",
-            seq_len, variant
-        );
+        panic!("Two-pass not selected for GQA seq_len={}. Got {:?}", seq_len, variant);
     }
 
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        42,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let reference_output =
-        reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = match run_two_pass_attention(
-        &kernel, &context, &queries, &keys, &values, None, None, scale,
-    ) {
+    let kernel_output = match run_two_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run two-pass attention GQA: {:?}", e);
@@ -1422,12 +1064,7 @@ fn test_two_pass_attention_gqa() {
     };
 
     let tolerance = 1e-2;
-    if let Err(e) = compare_results(
-        &kernel_output,
-        &reference_output,
-        tolerance,
-        "Two-pass attention GQA",
-    ) {
+    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Two-pass attention GQA") {
         panic!("{}", e);
     }
 }
@@ -1457,19 +1094,13 @@ fn perf_two_pass_attention() {
     let is_causal = false;
 
     if !kernel.supports_two_pass(head_dim, is_causal, false) {
-        println!(
-            "Skipping two-pass perf test: not supported for head_dim={}",
-            head_dim
-        );
+        println!("Skipping two-pass perf test: not supported for head_dim={}", head_dim);
         return;
     }
 
     let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
     if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        println!(
-            "Skipping two-pass perf test: variant {:?} selected instead",
-            variant
-        );
+        println!("Skipping two-pass perf test: variant {:?} selected instead", variant);
         return;
     }
 
@@ -1478,48 +1109,30 @@ fn perf_two_pass_attention() {
         seq_len - suffix_length,
         suffix_length
     );
-    let (queries, keys, values, _mask) = create_test_data(
-        batch_size,
-        num_heads,
-        num_kv_heads,
-        seq_len,
-        head_dim,
-        123,
-    );
+    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
     // ---- Create buffers ----
     // For realistic inference, we only process queries for the suffix (new tokens)
-    let queries_suffix =
-        queries.slice(s![.., .., (seq_len - suffix_length).., ..]).to_owned();
+    let queries_suffix = queries.slice(s![.., .., (seq_len - suffix_length).., ..]).to_owned();
     let queries_buffer = create_query_buffer(&queries_suffix, &context);
     let keys_buffer = create_key_cache_buffer(&keys, seq_len, &context);
     let values_buffer = create_value_cache_buffer(&values, seq_len, &context);
 
     let total_blocks_count = 32;
-    let partials_size =
-        num_heads * suffix_length * total_blocks_count * head_dim;
+    let partials_size = num_heads * suffix_length * total_blocks_count * head_dim;
     let sums_maxs_size = num_heads * suffix_length * total_blocks_count;
 
     let partials_buffer = context
         .device
-        .new_buffer(
-            partials_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let sums_buffer = context
         .device
-        .new_buffer(
-            sums_maxs_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let maxs_buffer = context
         .device
-        .new_buffer(
-            sums_maxs_size * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let output_buffer = context
         .device
@@ -1530,13 +1143,8 @@ fn perf_two_pass_attention() {
         .expect("Failed to create buffer");
 
     // ---- Launch and time ----
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer");
-    let compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
+    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionTwoPassArguments {
         queries_buffer: &queries_buffer,
@@ -1603,12 +1211,7 @@ fn perf_two_pass_attention() {
 
     // ---- Sanity check ----
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe {
-        std::slice::from_raw_parts(
-            output_ptr,
-            num_heads * suffix_length * head_dim,
-        )
-    };
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * suffix_length * head_dim) };
 
     // Check for NaN/Inf
     for &val in output_slice.iter().take(100) {

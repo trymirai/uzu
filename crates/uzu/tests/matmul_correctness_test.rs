@@ -2,10 +2,7 @@
 
 use bytemuck;
 use half::bf16;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::Array2;
 use uzu::{
     DataType,
@@ -29,24 +26,15 @@ fn run_metal_matmul(
 ) -> Vec<bf16> {
     let a_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(a_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(a_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let b_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(b_data),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let d_buf = ctx
         .device
-        .new_buffer(
-            m * n * core::mem::size_of::<bf16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(m * n * core::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let ldb = if transpose_b {
@@ -57,14 +45,8 @@ fn run_metal_matmul(
 
     let mut kernel = MatmulKernel::new(DataType::BF16).expect("kernel");
 
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer")
-        .to_owned();
-    let enc = cb
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
     let encode_result = kernel.encode(
         ctx,
         &enc,
@@ -129,17 +111,13 @@ fn generate_test_data(
     n: usize,
     transpose_b: bool,
 ) -> (Vec<bf16>, Vec<bf16>) {
-    let a: Vec<bf16> = (0..(m * k))
-        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.01 - 0.06))
-        .collect();
+    let a: Vec<bf16> = (0..(m * k)).map(|i| bf16::from_f32(((i % 13) as f32) * 0.01 - 0.06)).collect();
     let b_size = if transpose_b {
         n * k
     } else {
         k * n
     };
-    let b: Vec<bf16> = (0..b_size)
-        .map(|i| bf16::from_f32(((i % 17) as f32) * 0.02 - 0.15))
-        .collect();
+    let b: Vec<bf16> = (0..b_size).map(|i| bf16::from_f32(((i % 17) as f32) * 0.02 - 0.15)).collect();
     (a, b)
 }
 
@@ -154,8 +132,7 @@ struct TestCase {
 fn test_cases() -> Vec<TestCase> {
     let base_tolerance = 0.01;
 
-    let batch_sizes: [usize; 12] =
-        [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+    let batch_sizes: [usize; 12] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 
     let model_shapes: [(usize, usize); 51] = [
         // Qwen2.5-Coder-0.5B
@@ -221,10 +198,8 @@ fn test_cases() -> Vec<TestCase> {
         (17408, 5120),
     ];
 
-    let mut cases: Vec<(usize, usize, usize, bool)> = model_shapes
-        .iter()
-        .flat_map(|&(k, n)| batch_sizes.iter().map(move |&m| (m, k, n, true)))
-        .collect();
+    let mut cases: Vec<(usize, usize, usize, bool)> =
+        model_shapes.iter().flat_map(|&(k, n)| batch_sizes.iter().map(move |&m| (m, k, n, true))).collect();
 
     // Non-transposed B (for attention AV matmul)
     for &(k, n) in &[(1024, 1024), (2048, 2048), (4096, 4096)] {
@@ -267,8 +242,7 @@ fn compare_results(
     let mut max_diff_idx = 0;
     let mut diff_count = 0;
 
-    for (i, (&m_val, &r_val)) in metal.iter().zip(reference.iter()).enumerate()
-    {
+    for (i, (&m_val, &r_val)) in metal.iter().zip(reference.iter()).enumerate() {
         let mf = m_val.to_f32();
         let rf = r_val.to_f32();
         let diff = (mf - rf).abs();
@@ -301,25 +275,9 @@ fn matmul_correctness_comprehensive() {
     let mut failed = Vec::new();
 
     for case in &cases {
-        let (a, b) =
-            generate_test_data(case.m, case.k, case.n, case.transpose_b);
-        let metal_result = run_metal_matmul(
-            &ctx,
-            &a,
-            &b,
-            case.m,
-            case.k,
-            case.n,
-            case.transpose_b,
-        );
-        let reference = run_ndarray_matmul(
-            &a,
-            &b,
-            case.m,
-            case.k,
-            case.n,
-            case.transpose_b,
-        );
+        let (a, b) = generate_test_data(case.m, case.k, case.n, case.transpose_b);
+        let metal_result = run_metal_matmul(&ctx, &a, &b, case.m, case.k, case.n, case.transpose_b);
+        let reference = run_ndarray_matmul(&a, &b, case.m, case.k, case.n, case.transpose_b);
 
         let trans_str = if case.transpose_b {
             "T"
@@ -330,23 +288,13 @@ fn matmul_correctness_comprehensive() {
         match compare_results(&metal_result, &reference, case.tolerance) {
             Ok(()) => {
                 passed += 1;
-                eprintln!(
-                    "✓ m={} k={} n={} B={}",
-                    case.m, case.k, case.n, trans_str
-                );
+                eprintln!("✓ m={} k={} n={} B={}", case.m, case.k, case.n, trans_str);
             },
             Err((max_diff, idx, count)) => {
                 failed.push((case, max_diff, idx, count));
                 eprintln!(
                     "✗ m={} k={} n={} B={} max_diff={:.6} at idx {} ({} exceed tol {})",
-                    case.m,
-                    case.k,
-                    case.n,
-                    trans_str,
-                    max_diff,
-                    idx,
-                    count,
-                    case.tolerance
+                    case.m, case.k, case.n, trans_str, max_diff, idx, count, case.tolerance
                 );
             },
         }
@@ -364,14 +312,7 @@ fn matmul_correctness_comprehensive() {
             };
             eprintln!(
                 "  m={} k={} n={} B={}: max_diff={:.6} at idx {}, {} exceed tol {}",
-                case.m,
-                case.k,
-                case.n,
-                trans_str,
-                max_diff,
-                idx,
-                count,
-                case.tolerance
+                case.m, case.k, case.n, trans_str, max_diff, idx, count, case.tolerance
             );
         }
         panic!("{} tests failed", failed.len());

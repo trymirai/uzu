@@ -3,10 +3,7 @@
 
 use bytemuck;
 use half::f16;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLDeviceExt, MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use objc2::rc::autoreleasepool;
 use uzu::{
     DataType,
@@ -81,36 +78,21 @@ fn run_fused_gemv(
 ) -> Vec<f16> {
     let input_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(input),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(input), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let weights_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(weights),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(weights), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let output_buf = ctx
         .device
-        .new_buffer(
-            hidden_dim * core::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(hidden_dim * core::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer")
-        .to_owned();
-    let enc = cb
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = MlpFusedArguments {
         input: &input_buf,
@@ -150,36 +132,21 @@ fn run_fused_gemm(
 ) -> Vec<f16> {
     let input_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(input),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(input), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let weights_buf = ctx
         .device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(weights),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer_with_data(bytemuck::cast_slice(weights), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let output_buf = ctx
         .device
-        .new_buffer(
-            m * hidden_dim * core::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(m * hidden_dim * core::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
     let mut kernel = MlpFusedKernel::new(DataType::F16, true).expect("kernel");
 
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer")
-        .to_owned();
-    let enc = cb
-        .new_compute_command_encoder()
-        .expect("Failed to create compute encoder");
+    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = MlpFusedArguments {
         input: &input_buf,
@@ -252,47 +219,25 @@ fn test_mlp_fused_gemv_silu_small() {
         let m = 1;
 
         // Generate random-ish test data
-        let input: Vec<f32> =
-            (0..k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
-        let weights_up: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.017).cos() * 0.3)
-            .collect();
-        let weights_gate: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.023).sin() * 0.3)
-            .collect();
+        let input: Vec<f32> = (0..k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        let weights_up: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.017).cos() * 0.3).collect();
+        let weights_gate: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.023).sin() * 0.3).collect();
 
         // Create concatenated weights [up; gate] row-major
-        let mut weights_concat: Vec<f32> =
-            Vec::with_capacity(2 * hidden_dim * k);
+        let mut weights_concat: Vec<f32> = Vec::with_capacity(2 * hidden_dim * k);
         weights_concat.extend(&weights_up);
         weights_concat.extend(&weights_gate);
 
         // CPU reference
-        let expected = mlp_fused_reference(
-            &input,
-            &weights_up,
-            &weights_gate,
-            m,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let expected =
+            mlp_fused_reference(&input, &weights_up, &weights_gate, m, k, hidden_dim, MlpActivationType::SiLU);
 
         // Convert to f16
-        let input_f16: Vec<f16> =
-            input.iter().map(|&x| f16::from_f32(x)).collect();
-        let weights_f16: Vec<f16> =
-            weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
+        let input_f16: Vec<f16> = input.iter().map(|&x| f16::from_f32(x)).collect();
+        let weights_f16: Vec<f16> = weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
 
         // Run fused kernel
-        let actual = run_fused_gemv(
-            &ctx,
-            &input_f16,
-            &weights_f16,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let actual = run_fused_gemv(&ctx, &input_f16, &weights_f16, k, hidden_dim, MlpActivationType::SiLU);
 
         let (close, max_diff) = compare_outputs(&expected, &actual, 0.01, 0.01);
         println!("GEMV SiLU small: max_diff = {}", max_diff);
@@ -315,43 +260,21 @@ fn test_mlp_fused_gemv_gelu_small() {
         let hidden_dim = 32;
         let m = 1;
 
-        let input: Vec<f32> =
-            (0..k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
-        let weights_up: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.017).cos() * 0.3)
-            .collect();
-        let weights_gate: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.023).sin() * 0.3)
-            .collect();
+        let input: Vec<f32> = (0..k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        let weights_up: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.017).cos() * 0.3).collect();
+        let weights_gate: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.023).sin() * 0.3).collect();
 
-        let mut weights_concat: Vec<f32> =
-            Vec::with_capacity(2 * hidden_dim * k);
+        let mut weights_concat: Vec<f32> = Vec::with_capacity(2 * hidden_dim * k);
         weights_concat.extend(&weights_up);
         weights_concat.extend(&weights_gate);
 
-        let expected = mlp_fused_reference(
-            &input,
-            &weights_up,
-            &weights_gate,
-            m,
-            k,
-            hidden_dim,
-            MlpActivationType::Gelu,
-        );
+        let expected =
+            mlp_fused_reference(&input, &weights_up, &weights_gate, m, k, hidden_dim, MlpActivationType::Gelu);
 
-        let input_f16: Vec<f16> =
-            input.iter().map(|&x| f16::from_f32(x)).collect();
-        let weights_f16: Vec<f16> =
-            weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
+        let input_f16: Vec<f16> = input.iter().map(|&x| f16::from_f32(x)).collect();
+        let weights_f16: Vec<f16> = weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
 
-        let actual = run_fused_gemv(
-            &ctx,
-            &input_f16,
-            &weights_f16,
-            k,
-            hidden_dim,
-            MlpActivationType::Gelu,
-        );
+        let actual = run_fused_gemv(&ctx, &input_f16, &weights_f16, k, hidden_dim, MlpActivationType::Gelu);
 
         let (close, max_diff) = compare_outputs(&expected, &actual, 0.01, 0.01);
         println!("GEMV GELU small: max_diff = {}", max_diff);
@@ -374,44 +297,21 @@ fn test_mlp_fused_gemm_silu_medium() {
         let k = 64;
         let hidden_dim = 64;
 
-        let input: Vec<f32> =
-            (0..m * k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
-        let weights_up: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.017).cos() * 0.3)
-            .collect();
-        let weights_gate: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.023).sin() * 0.3)
-            .collect();
+        let input: Vec<f32> = (0..m * k).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        let weights_up: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.017).cos() * 0.3).collect();
+        let weights_gate: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.023).sin() * 0.3).collect();
 
-        let mut weights_concat: Vec<f32> =
-            Vec::with_capacity(2 * hidden_dim * k);
+        let mut weights_concat: Vec<f32> = Vec::with_capacity(2 * hidden_dim * k);
         weights_concat.extend(&weights_up);
         weights_concat.extend(&weights_gate);
 
-        let expected = mlp_fused_reference(
-            &input,
-            &weights_up,
-            &weights_gate,
-            m,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let expected =
+            mlp_fused_reference(&input, &weights_up, &weights_gate, m, k, hidden_dim, MlpActivationType::SiLU);
 
-        let input_f16: Vec<f16> =
-            input.iter().map(|&x| f16::from_f32(x)).collect();
-        let weights_f16: Vec<f16> =
-            weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
+        let input_f16: Vec<f16> = input.iter().map(|&x| f16::from_f32(x)).collect();
+        let weights_f16: Vec<f16> = weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
 
-        let actual = run_fused_gemm(
-            &ctx,
-            &input_f16,
-            &weights_f16,
-            m,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let actual = run_fused_gemm(&ctx, &input_f16, &weights_f16, m, k, hidden_dim, MlpActivationType::SiLU);
 
         let (close, max_diff) = compare_outputs(&expected, &actual, 0.05, 0.05);
         println!("GEMM SiLU medium: max_diff = {}", max_diff);
@@ -435,43 +335,21 @@ fn test_mlp_fused_gemv_realistic_dimensions() {
         let hidden_dim = 256; // hidden dim (half of up+gate)
         let m = 1;
 
-        let input: Vec<f32> =
-            (0..k).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
-        let weights_up: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.001).cos() * 0.1)
-            .collect();
-        let weights_gate: Vec<f32> = (0..hidden_dim * k)
-            .map(|i| (i as f32 * 0.002).sin() * 0.1)
-            .collect();
+        let input: Vec<f32> = (0..k).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
+        let weights_up: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.001).cos() * 0.1).collect();
+        let weights_gate: Vec<f32> = (0..hidden_dim * k).map(|i| (i as f32 * 0.002).sin() * 0.1).collect();
 
-        let mut weights_concat: Vec<f32> =
-            Vec::with_capacity(2 * hidden_dim * k);
+        let mut weights_concat: Vec<f32> = Vec::with_capacity(2 * hidden_dim * k);
         weights_concat.extend(&weights_up);
         weights_concat.extend(&weights_gate);
 
-        let expected = mlp_fused_reference(
-            &input,
-            &weights_up,
-            &weights_gate,
-            m,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let expected =
+            mlp_fused_reference(&input, &weights_up, &weights_gate, m, k, hidden_dim, MlpActivationType::SiLU);
 
-        let input_f16: Vec<f16> =
-            input.iter().map(|&x| f16::from_f32(x)).collect();
-        let weights_f16: Vec<f16> =
-            weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
+        let input_f16: Vec<f16> = input.iter().map(|&x| f16::from_f32(x)).collect();
+        let weights_f16: Vec<f16> = weights_concat.iter().map(|&x| f16::from_f32(x)).collect();
 
-        let actual = run_fused_gemv(
-            &ctx,
-            &input_f16,
-            &weights_f16,
-            k,
-            hidden_dim,
-            MlpActivationType::SiLU,
-        );
+        let actual = run_fused_gemv(&ctx, &input_f16, &weights_f16, k, hidden_dim, MlpActivationType::SiLU);
 
         let (close, max_diff) = compare_outputs(&expected, &actual, 0.05, 0.02);
         println!("GEMV realistic: max_diff = {}", max_diff);

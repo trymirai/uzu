@@ -1,33 +1,22 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::{
         common::Context,
         metal::{
-            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
-            MTLComputePipelineState, MTLContext, MTLError,
+            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
             MTLFunctionConstantValues, ProtocolObject, Retained,
-            kernel::{
-                mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments,
-            },
+            kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
         },
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<
-        PipelineConfiguration,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
-    accum_pipelines: HashMap<
-        MlpActivationType,
-        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    >,
+    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accum_pipelines: HashMap<MlpActivationType, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     up_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     gate_accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
@@ -36,9 +25,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(data_type: DataType) -> Result<Self, MTLError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16) {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP fused Split-K: {data_type:?}"
-            )));
+            return Err(MTLError::Generic(format!("Unsupported dtype for MLP fused Split-K: {data_type:?}")));
         }
         Ok(Self {
             data_type,
@@ -54,10 +41,7 @@ impl Kernel {
         match self.data_type {
             DataType::F16 => Ok("float16"),
             DataType::BF16 => Ok("bfloat16"),
-            _ => Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP Fused Split-K: {:?}",
-                self.data_type
-            ))),
+            _ => Err(MTLError::Generic(format!("Unsupported dtype for MLP Fused Split-K: {:?}", self.data_type))),
         }
     }
 
@@ -98,14 +82,11 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.partial_pipelines.contains_key(configuration) {
             let kernel_name = self.partial_kernel_name(configuration)?;
-            let pipeline_state =
-                context.compute_pipeline_state(&kernel_name, None)?;
-            self.partial_pipelines
-                .insert(configuration.clone(), pipeline_state);
+            let pipeline_state = context.compute_pipeline_state(&kernel_name, None)?;
+            self.partial_pipelines.insert(configuration.clone(), pipeline_state);
         }
         Ok(self.partial_pipelines.get(configuration).unwrap())
     }
@@ -114,8 +95,7 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         activation: MlpActivationType,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
-    {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         if !self.accum_pipelines.contains_key(&activation) {
             let kernel_name = self.accum_kernel_name()?;
             let function_constants = MTLFunctionConstantValues::new();
@@ -125,10 +105,7 @@ impl Kernel {
                 metal::MTLDataType::UInt,
                 52,
             );
-            let pipeline_state = context.compute_pipeline_state(
-                &kernel_name,
-                Some(&function_constants),
-            )?;
+            let pipeline_state = context.compute_pipeline_state(&kernel_name, Some(&function_constants))?;
             self.accum_pipelines.insert(activation, pipeline_state);
         }
         Ok(self.accum_pipelines.get(&activation).unwrap())
@@ -146,8 +123,7 @@ impl Kernel {
             return;
         }
         self.up_accumulator_buffer = context.create_buffer(required_bytes).ok();
-        self.gate_accumulator_buffer =
-            context.create_buffer(required_bytes).ok();
+        self.gate_accumulator_buffer = context.create_buffer(required_bytes).ok();
         self.accumulator_buffer_bytes = required_bytes;
     }
 
@@ -160,10 +136,7 @@ impl Kernel {
     ) -> Result<(), MTLError> {
         self.ensure_accumulator_buffers(context, descriptor.accumulator_bytes);
         self.get_partial_pipeline(context, &descriptor.pipeline_configuration)?;
-        self.get_accum_pipeline(
-            context,
-            descriptor.pipeline_configuration.activation,
-        )?;
+        self.get_accum_pipeline(context, descriptor.pipeline_configuration.activation)?;
 
         let partial_pipeline_state = self
             .partial_pipelines
@@ -173,29 +146,18 @@ impl Kernel {
             .accum_pipelines
             .get(&descriptor.pipeline_configuration.activation)
             .expect("Accum pipeline must be initialized");
-        let up_accumulator_buffer = self
-            .up_accumulator_buffer
-            .as_ref()
-            .expect("Up accumulator buffer must be initialized");
-        let gate_accumulator_buffer = self
-            .gate_accumulator_buffer
-            .as_ref()
-            .expect("Gate accumulator buffer must be initialized");
+        let up_accumulator_buffer =
+            self.up_accumulator_buffer.as_ref().expect("Up accumulator buffer must be initialized");
+        let gate_accumulator_buffer =
+            self.gate_accumulator_buffer.as_ref().expect("Gate accumulator buffer must be initialized");
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
-        encoder.set_buffer(
-            Some(arguments.input),
-            arguments.input_offset as usize,
-            0,
-        );
+        encoder.set_buffer(Some(arguments.input), arguments.input_offset as usize, 0);
         encoder.set_buffer(Some(arguments.weights), 0, 1);
         encoder.set_buffer(Some(up_accumulator_buffer), 0, 2);
         encoder.set_buffer(Some(gate_accumulator_buffer), 0, 3);
         encoder.set_value(&descriptor.params, 4);
-        encoder.dispatch_threadgroups(
-            descriptor.partial_threadgroups,
-            descriptor.partial_threads_per_threadgroup,
-        );
+        encoder.dispatch_threadgroups(descriptor.partial_threadgroups, descriptor.partial_threads_per_threadgroup);
 
         encoder.set_compute_pipeline_state(accum_pipeline_state);
         encoder.set_buffer(Some(up_accumulator_buffer), 0, 0);
@@ -205,10 +167,7 @@ impl Kernel {
         encoder.set_value(&descriptor.output_elements_per_partition, 4);
         encoder.set_value(&descriptor.ldd, 5);
 
-        encoder.dispatch_threads(
-            descriptor.accum_total_threads,
-            descriptor.accum_threads_per_threadgroup,
-        );
+        encoder.dispatch_threads(descriptor.accum_total_threads, descriptor.accum_threads_per_threadgroup);
 
         Ok(())
     }

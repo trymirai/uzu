@@ -1,16 +1,14 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 use bytemuck;
-use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array, Array3, s};
 use uzu::backends::{
-    common::Context,
-    metal::{
-        KVCacheUpdate, KernelDataType, MTLContext,
-        kernel::kv_cache_update::{KVLayerData, Swap, create_swaps_direct},
+    common::{
+        Context,
+        gpu_types::Swap,
+        kernel::kv_cache_update::{KVLayerData, create_swaps_direct},
     },
+    metal::{KVCacheUpdate, MTLContext, Metal},
 };
 
 fn apply_swaps_3d<T: Clone>(
@@ -24,8 +22,7 @@ fn apply_swaps_3d<T: Clone>(
                 let src = swap.source as usize;
                 let dst = swap.destination as usize;
                 let temp = array[(head, src, channel)].clone();
-                array[(head, src, channel)] =
-                    array[(head, dst, channel)].clone();
+                array[(head, src, channel)] = array[(head, dst, channel)].clone();
                 array[(head, dst, channel)] = temp;
             }
         }
@@ -49,17 +46,10 @@ fn test_random_pattern(context: &MTLContext) {
     println!("Testing with random pattern...");
 
     let max_sequence_length = 256usize;
-    let kv_cache_update = match KVCacheUpdate::new(
-        context,
-        KernelDataType::Float32,
-        max_sequence_length,
-    ) {
+    let kv_cache_update = match KVCacheUpdate::new(context, uzu::DataType::F32, max_sequence_length) {
         Ok(update) => update,
         Err(e) => {
-            println!(
-                "Warning: Failed to create KV cache update: {:?}. Skipping test.",
-                e
-            );
+            println!("Warning: Failed to create KV cache update: {:?}. Skipping test.", e);
             return;
         },
     };
@@ -68,15 +58,13 @@ fn test_random_pattern(context: &MTLContext) {
     let seq_len = 15usize;
     let head_dim = 7usize;
 
-    let key_data = Array3::<f32>::from_shape_fn(
-        (num_heads, seq_len, head_dim),
-        |(h, t, c)| (h * 1_000_000 + t * 100 + c * 10) as f32,
-    );
+    let key_data = Array3::<f32>::from_shape_fn((num_heads, seq_len, head_dim), |(h, t, c)| {
+        (h * 1_000_000 + t * 100 + c * 10) as f32
+    });
 
-    let value_data = Array3::<f32>::from_shape_fn(
-        (num_heads, seq_len, head_dim),
-        |(h, t, c)| (h * 1_000_000 + t * 100 + c * 10 + 1_000) as f32,
-    );
+    let value_data = Array3::<f32>::from_shape_fn((num_heads, seq_len, head_dim), |(h, t, c)| {
+        (h * 1_000_000 + t * 100 + c * 10 + 1_000) as f32
+    });
 
     let source_indices = vec![0, 3, 6, 9, 12, 2, 5, 8, 11, 14];
     let destination_indices = vec![14, 11, 8, 5, 2, 12, 9, 6, 3, 0];
@@ -104,30 +92,18 @@ fn test_random_pattern(context: &MTLContext) {
         )
         .expect("Failed to create buffer");
 
-    let kv_layer_data = KVLayerData {
+    let kv_layer_data = KVLayerData::<Metal> {
         key_buffer: key_buffer.clone(),
         key_shape: [num_heads, seq_len, head_dim],
         value_buffer: value_buffer.clone(),
         value_shape: [num_heads, seq_len, head_dim],
     };
 
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .expect("Failed to create command buffer")
-        .to_owned();
-    match kv_cache_update.encode(
-        &[kv_layer_data],
-        &source_indices,
-        &destination_indices,
-        &command_buffer,
-    ) {
+    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &command_buffer) {
         Ok(_) => {},
         Err(e) => {
-            println!(
-                "Warning: Failed to encode KV cache update: {:?}. Skipping test.",
-                e
-            );
+            println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
             return;
         },
     }
@@ -140,22 +116,14 @@ fn test_random_pattern(context: &MTLContext) {
 
     let total_elems = num_heads * seq_len * head_dim;
 
-    let key_result_slice =
-        unsafe { std::slice::from_raw_parts(key_result_ptr, total_elems) };
-    let value_result_slice =
-        unsafe { std::slice::from_raw_parts(value_result_ptr, total_elems) };
+    let key_result_slice = unsafe { std::slice::from_raw_parts(key_result_ptr, total_elems) };
+    let value_result_slice = unsafe { std::slice::from_raw_parts(value_result_ptr, total_elems) };
 
-    let key_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        key_result_slice.to_vec(),
-    )
-    .expect("Failed to convert key result to ndarray");
+    let key_result = Array::from_shape_vec((num_heads, seq_len, head_dim), key_result_slice.to_vec())
+        .expect("Failed to convert key result to ndarray");
 
-    let value_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        value_result_slice.to_vec(),
-    )
-    .expect("Failed to convert value result to ndarray");
+    let value_result = Array::from_shape_vec((num_heads, seq_len, head_dim), value_result_slice.to_vec())
+        .expect("Failed to convert value result to ndarray");
 
     println!("Original keys head 0 rows 0,14:");
     println!("Row 0: {:?}", key_data.slice(s![0, 0, ..]));

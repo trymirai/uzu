@@ -2,27 +2,22 @@ use crate::backends::metal::Metal;
 
 use crate::backends::{
     common::kernel::TensorAddBiasKernel,
-    metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, ProtocolObject, Retained,
-    },
+    metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
 };
 
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError,
-        encodable_block::{EncodableBlock, EncodingParameters},
-        forward_pass::{ArrayId, ForwardPassState},
+        encodable_block::EncodableBlock,
         kernel::{
             dsl::TensorAddBiasMetalKernel,
-            quant_matmul::{
-                QuantizationType, QuantizedMatmulArguments,
-                QuantizedMatmulKernel,
-            },
+            quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
         },
     },
     config::QuantizationConfig,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -52,19 +47,16 @@ impl QuantizedLinear {
     ) -> Result<Self, MTLError> {
         let kernel_data_type: DataType = config.activation_precision.into();
 
-        if !matches!(
-            kernel_data_type,
-            DataType::F16 | DataType::BF16 | DataType::F32
-        ) {
+        if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MTLError::Generic(format!(
                 "Unsupported data type for quantized kernel: {:?}",
                 kernel_data_type
             )));
         }
 
-        let weights = parameter_tree.leaf("weights").map_err(|e| {
-            MTLError::Generic(format!("Failed to load weights: {:?}", e))
-        })?;
+        let weights = parameter_tree
+            .leaf("weights")
+            .map_err(|e| MTLError::Generic(format!("Failed to load weights: {:?}", e)))?;
 
         let packing_divisor = config.weight_quantization_mode.packing_divisor();
         let storage_type = config.weight_quantization_mode.storage_type();
@@ -77,9 +69,8 @@ impl QuantizedLinear {
             )));
         }
 
-        let scales = parameter_tree.leaf("scales").map_err(|e| {
-            MTLError::Generic(format!("Failed to load scales: {:?}", e))
-        })?;
+        let scales =
+            parameter_tree.leaf("scales").map_err(|e| MTLError::Generic(format!("Failed to load scales: {:?}", e)))?;
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
 
         let w_shape = weights.shape();
@@ -116,23 +107,16 @@ impl QuantizedLinear {
                             kernel_data_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        scales.buffer().clone();
-                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        deq_biases.buffer().clone();
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = scales.buffer().clone();
+                    let biases_buf: Retained<ProtocolObject<dyn MTLBuffer>> = deq_biases.buffer().clone();
                     (QuantizationType::Mlx, biases_buf, scales_buffer)
                 },
                 Err(_) => {
-                    let zero_points =
-                        parameter_tree.leaf("zero_points").map_err(|e| {
-                            MTLError::Generic(format!(
-                                "Failed to load zero_points: {:?}",
-                                e
-                            ))
-                        })?;
+                    let zero_points = parameter_tree
+                        .leaf("zero_points")
+                        .map_err(|e| MTLError::Generic(format!("Failed to load zero_points: {:?}", e)))?;
                     let zp_shape = zero_points.shape();
-                    let expected_zp_entries =
-                        (k_g + packing_divisor - 1) / packing_divisor;
+                    let expected_zp_entries = (k_g + packing_divisor - 1) / packing_divisor;
                     if !(w_shape == [output_dim, input_dim / packing_divisor]
                         && s_shape == [output_dim, k_g]
                         && zp_shape == [output_dim, expected_zp_entries])
@@ -154,46 +138,38 @@ impl QuantizedLinear {
                             storage_type
                         )));
                     }
-                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        scales.buffer().clone();
-                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        zero_points.buffer().clone();
+                    let scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = scales.buffer().clone();
+                    let zps_buf: Retained<ProtocolObject<dyn MTLBuffer>> = zero_points.buffer().clone();
                     (QuantizationType::ZeroPoint, zps_buf, scales_buffer)
                 },
             }
         };
 
-        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            weights.buffer().to_owned().into();
+        let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = weights.buffer().to_owned().into();
 
         // Optional trainable bias support
-        let (bias_add_kernel, biases_buffer) =
-            match parameter_tree.leaf("biases") {
-                Ok(biases) => {
-                    if biases.shape() != [output_dim] {
-                        return Err(MTLError::Generic(format!(
-                            "Bias shape mismatch: got {:?}, expected [{:?}]",
-                            biases.shape(),
-                            output_dim
-                        )));
-                    }
-                    if biases.data_type() != kernel_data_type {
-                        return Err(MTLError::Generic(format!(
-                            "Bias dtype mismatch: got {:?}, expected {:?}",
-                            biases.data_type(),
-                            kernel_data_type
-                        )));
-                    }
-                    let bias_add_kernel = Some(TensorAddBiasMetalKernel::new(
-                        mtl_context,
-                        kernel_data_type,
-                    )?);
-                    let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                        biases.buffer().to_owned().into();
-                    (bias_add_kernel, Some(biases_buffer))
-                },
-                Err(_) => (None, None),
-            };
+        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf("biases") {
+            Ok(biases) => {
+                if biases.shape() != [output_dim] {
+                    return Err(MTLError::Generic(format!(
+                        "Bias shape mismatch: got {:?}, expected [{:?}]",
+                        biases.shape(),
+                        output_dim
+                    )));
+                }
+                if biases.data_type() != kernel_data_type {
+                    return Err(MTLError::Generic(format!(
+                        "Bias dtype mismatch: got {:?}, expected {:?}",
+                        biases.data_type(),
+                        kernel_data_type
+                    )));
+                }
+                let bias_add_kernel = Some(TensorAddBiasMetalKernel::new(mtl_context, kernel_data_type)?);
+                let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = biases.buffer().to_owned().into();
+                (bias_add_kernel, Some(biases_buffer))
+            },
+            Err(_) => (None, None),
+        };
 
         let g = config.group_size;
         let mode = config.weight_quantization_mode;
@@ -229,9 +205,9 @@ impl QuantizedLinear {
 impl EncodableBlock<Metal> for QuantizedLinear {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -242,9 +218,7 @@ impl EncodableBlock<Metal> for QuantizedLinear {
         let input_buffer = input_array_mut.buffer();
         let output_buffer = output_array_mut.buffer();
 
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
@@ -259,19 +233,15 @@ impl EncodableBlock<Metal> for QuantizedLinear {
             quantization_type: self.quantization_type,
         };
 
-        self.kernel
-            .encode(&encoder, args)
-            .expect("Failed to encode quantized matmul kernel");
+        self.kernel.encode(&encoder, args).expect("Failed to encode quantized matmul kernel");
 
         encoder.end_encoding();
 
-        if let (Some(bias_add), Some(bias_buf)) =
-            (&self.bias_add_kernel, &self.biases_buffer)
-        {
+        if let (Some(bias_add), Some(bias_buf)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_if(
                 output_buffer,
-                &bias_buf,
+                bias_buf,
                 output_buffer,
                 self.output_dim as u32,
                 total_len as u32,
@@ -292,9 +262,9 @@ impl EncodableBlock<Metal> for QuantizedLinear {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -318,17 +288,13 @@ impl EncodableBlock<Metal> for QuantizedLinear {
             quantization_type: self.quantization_type,
         };
 
-        self.kernel
-            .encode(encoder, args)
-            .expect("Failed to encode quantized matmul kernel");
+        self.kernel.encode(encoder, args).expect("Failed to encode quantized matmul kernel");
 
-        if let (Some(bias_add), Some(bias_buf)) =
-            (&self.bias_add_kernel, &self.biases_buffer)
-        {
+        if let (Some(bias_add), Some(bias_buf)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_len = batch_size * self.output_dim;
             bias_add.encode_if(
                 output_buffer,
-                &bias_buf,
+                bias_buf,
                 output_buffer,
                 self.output_dim as u32,
                 total_len as u32,

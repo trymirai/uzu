@@ -1,8 +1,6 @@
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-    MTLSize, ProtocolObject, Retained,
-    metal_extensions::ComputeEncoderSetValue,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLContext, MTLError, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 const THREADS_PER_THREADGROUP: usize = 256;
@@ -30,9 +28,9 @@ pub struct MoeRouterTopKKernel {
 
 #[derive(Debug)]
 pub struct MoeRouterTopKArguments<'a> {
-    pub input_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, d_model]
+    pub input_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // [T, d_model]
     pub weight_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [E, d_model]
-    pub bias_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // [E]
+    pub bias_buffer: &'a ProtocolObject<dyn MTLBuffer>,   // [E]
     pub topk_ids_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, K]
     pub topk_probs_buffer: &'a ProtocolObject<dyn MTLBuffer>, // [T, K]
     pub t: usize,
@@ -44,12 +42,9 @@ pub struct MoeRouterTopKArguments<'a> {
 
 impl MoeRouterTopKKernel {
     pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeRouterTopKError> {
-        let pipeline_f16 =
-            mtl_context.compute_pipeline_state("moe_router_topk_f16", None)?;
-        let pipeline_f32 =
-            mtl_context.compute_pipeline_state("moe_router_topk_f32", None)?;
-        let pipeline_bf16 =
-            mtl_context.compute_pipeline_state("moe_router_topk_bf16", None)?;
+        let pipeline_f16 = mtl_context.compute_pipeline_state("moe_router_topk_f16", None)?;
+        let pipeline_f32 = mtl_context.compute_pipeline_state("moe_router_topk_f32", None)?;
+        let pipeline_bf16 = mtl_context.compute_pipeline_state("moe_router_topk_bf16", None)?;
         Ok(Self {
             pipeline_f16,
             pipeline_f32,
@@ -83,19 +78,12 @@ impl MoeRouterTopKKernel {
             });
         }
 
-        let compute_encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         match dtype {
-            KernelDataType::Float16 => {
-                compute_encoder.set_compute_pipeline_state(&self.pipeline_f16)
-            },
-            KernelDataType::Float32 => {
-                compute_encoder.set_compute_pipeline_state(&self.pipeline_f32)
-            },
-            KernelDataType::BFloat16 => {
-                compute_encoder.set_compute_pipeline_state(&self.pipeline_bf16)
-            },
+            KernelDataType::Float16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f16),
+            KernelDataType::Float32 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f32),
+            KernelDataType::BFloat16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_bf16),
         }
 
         compute_encoder.set_buffer(Some(args.input_buffer), 0, 0);

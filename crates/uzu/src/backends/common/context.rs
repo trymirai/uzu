@@ -12,15 +12,9 @@ pub trait Context: Sized {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<
-        <Self::Backend as Backend>::NativeBuffer,
-        <Self::Backend as Backend>::Error,
-    >;
+    ) -> Result<<Self::Backend as Backend>::NativeBuffer, <Self::Backend as Backend>::Error>;
 
     fn create_command_buffer(
         &self
-    ) -> Result<
-        <Self::Backend as Backend>::CommandBuffer,
-        <Self::Backend as Backend>::Error,
-    >;
+    ) -> Result<<Self::Backend as Backend>::CommandBuffer, <Self::Backend as Backend>::Error>;
 }

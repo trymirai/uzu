@@ -2,18 +2,13 @@
 
 use crate::backends::{
     common::kernel::TensorAddSwapKernel,
-    metal::{
-        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-        ProtocolObject, Retained,
-    },
+    metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
 };
 
-use super::{EncodableBlock, EncodingParameters, Metal};
-use crate::backends::metal::{
-    MTLContext, MTLError,
-    forward_pass::{ArrayId, ForwardPassState},
-    kernel::dsl::TensorAddSwapMetalKernel,
-};
+use super::{EncodableBlock, Metal};
+use crate::backends::metal::{MTLContext, MTLError, kernel::dsl::TensorAddSwapMetalKernel};
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState};
 
 pub struct TensorAddSwap {
     kernel: TensorAddSwapMetalKernel,
@@ -37,13 +32,11 @@ impl TensorAddSwap {
 impl EncodableBlock<Metal> for TensorAddSwap {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
 
@@ -59,9 +52,9 @@ impl EncodableBlock<Metal> for TensorAddSwap {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorAddSwap expects exactly 2 arrays");
@@ -73,11 +66,6 @@ impl EncodableBlock<Metal> for TensorAddSwap {
         let skip_mtl_buffer = skip_array.buffer();
         let main_mtl_buffer = main_array.buffer();
 
-        self.kernel.encode(
-            &skip_mtl_buffer,
-            &main_mtl_buffer,
-            length as u32,
-            encoder,
-        );
+        self.kernel.encode(skip_mtl_buffer, main_mtl_buffer, length as u32, encoder);
     }
 }

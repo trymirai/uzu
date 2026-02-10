@@ -12,9 +12,7 @@ impl DeviceClass {
     pub fn detect() -> Self {
         use metal::MTLDeviceExt as _;
         let device: crate::backends::metal::Retained<
-            crate::backends::metal::ProtocolObject<
-                dyn crate::backends::metal::MTLDevice,
-            >,
+            crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLDevice>,
         > = match <dyn metal::MTLDevice>::system_default() {
             Some(dev) => dev,
             None => return DeviceClass::Unknown,

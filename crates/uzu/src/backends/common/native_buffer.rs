@@ -1,8 +1,8 @@
-use std::{os::raw::c_void, ptr::NonNull};
+use std::{fmt::Debug, os::raw::c_void, ptr::NonNull};
 
 use super::Backend;
 
-pub trait NativeBuffer: Send + Sync + Clone {
+pub trait NativeBuffer: Send + Sync + Debug + Clone {
     type Backend: Backend;
 
     fn set_label(

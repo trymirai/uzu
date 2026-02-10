@@ -1,10 +1,6 @@
-use crate::backends::common::kernel::{
-    MoeExpertsDecodeSinglePassAKernel as _,
-    MoeExpertsDecodeSinglePassBKernel as _,
-};
+use crate::backends::common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _};
 use crate::backends::metal::kernel::dsl::{
-    MoeExpertsDecodeSinglePassAMetalKernel,
-    MoeExpertsDecodeSinglePassBMetalKernel,
+    MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel,
 };
 use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
@@ -12,11 +8,7 @@ use objc2::__framework_prelude::ProtocolObject;
 use objc2::Message;
 use objc2::rc::Retained;
 
-static DTYPES: [KernelDataType; 3] = [
-    KernelDataType::Float16,
-    KernelDataType::BFloat16,
-    KernelDataType::Float32,
-];
+static DTYPES: [KernelDataType; 3] = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
 #[derive(Debug)]
@@ -72,11 +64,7 @@ impl MoeExpertsSingleDecodeKernels {
         for gate in 0..4 {
             let mut kernels = vec![];
             for dtype in &DTYPES {
-                let kernel = MoeExpertsDecodeSinglePassAMetalKernel::new(
-                    ctx,
-                    (*dtype).into(),
-                    gate,
-                )?;
+                let kernel = MoeExpertsDecodeSinglePassAMetalKernel::new(ctx, (*dtype).into(), gate)?;
                 kernels.push(kernel)
             }
             pass_a.push(kernels);
@@ -84,10 +72,7 @@ impl MoeExpertsSingleDecodeKernels {
 
         let mut pass_b = Vec::with_capacity(DTYPES.len());
         for dtype in &DTYPES {
-            pass_b.push(MoeExpertsDecodeSinglePassBMetalKernel::new(
-                ctx,
-                (*dtype).into(),
-            )?);
+            pass_b.push(MoeExpertsDecodeSinglePassBMetalKernel::new(ctx, (*dtype).into())?);
         }
 
         Ok(Self {
@@ -106,15 +91,13 @@ impl MoeExpertsSingleDecodeKernels {
         }
 
         let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx =
-            DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
+        let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
 
         // Pass A: x @ W13[expert] -> hidden
         {
             let kernel = &self.pass_a[gate_idx][dtype_idx];
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             kernel.encode(
                 &args.x.retain(),
                 &args.topk_ids.retain(),
@@ -137,9 +120,8 @@ impl MoeExpertsSingleDecodeKernels {
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
         {
             let kernel = &self.pass_b[dtype_idx];
-            let encoder = command_buffer
-                .new_compute_command_encoder()
-                .expect("Failed to create compute command encoder");
+            let encoder =
+                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             kernel.encode(
                 &args.hidden.retain(),
                 &args.topk_ids.retain(),

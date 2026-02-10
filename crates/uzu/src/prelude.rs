@@ -9,13 +9,11 @@
 pub use crate::session::config::{DecodingConfig, RunConfig, SpeculatorConfig};
 // Session Parameters
 pub use crate::session::parameter::{
-    ContextLength, ContextMode, PrefillStepSize, SamplingMethod,
-    SamplingPolicy, SamplingSeed,
+    ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
 };
 // Session Types
 pub use crate::session::types::{
-    Error, FinishReason, Input, Message, Output, ParsedText, Role, RunStats,
-    Stats, StepStats, Text, TotalStats,
+    Error, FinishReason, Input, Message, Output, ParsedText, Role, RunStats, Stats, StepStats, Text, TotalStats,
 };
 // Speculators
 pub use crate::speculators::speculator::Speculator;

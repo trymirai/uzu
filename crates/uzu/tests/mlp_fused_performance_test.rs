@@ -4,10 +4,7 @@
 use std::time::{Duration, Instant};
 
 use half::f16;
-use metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
-};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use objc2::rc::autoreleasepool;
 use uzu::{
     DataType,
@@ -16,14 +13,10 @@ use uzu::{
         metal::{
             MTLContext,
             kernel::{
-                matmul::{
-                    MatmulArguments, MatmulKernel,
-                    determine_kernel_variant as determine_matmul_variant,
-                },
+                matmul::{MatmulArguments, MatmulKernel, determine_kernel_variant as determine_matmul_variant},
                 mlp::MlpActivationType,
                 mlp_fused::{
-                    MlpFusedArguments, MlpFusedKernel,
-                    determine_kernel_variant as determine_mlp_fused_variant,
+                    MlpFusedArguments, MlpFusedKernel, determine_kernel_variant as determine_mlp_fused_variant,
                 },
             },
         },
@@ -66,10 +59,7 @@ fn benchmark_gemv_fused(
 ) -> BenchmarkResult {
     let input_buffer = context
         .device
-        .new_buffer(
-            input_dimension * std::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(input_dimension * std::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let weights_buffer = context
         .device
@@ -80,21 +70,14 @@ fn benchmark_gemv_fused(
         .expect("Failed to create buffer");
     let output_buffer = context
         .device
-        .new_buffer(
-            hidden_dimension * std::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(hidden_dimension * std::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let fused_up_buffer = context
         .device
-        .new_buffer(
-            2 * hidden_dimension * std::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(2 * hidden_dimension * std::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut fused_kernel =
-        MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
+    let mut fused_kernel = MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
     let mut matmul_kernel = MatmulKernel::new(DataType::F16).expect("matmul");
 
     let fused_args = MlpFusedArguments {
@@ -114,14 +97,9 @@ fn benchmark_gemv_fused(
 
     // Warmup fused
     for _ in 0..warmup_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -131,14 +109,9 @@ fn benchmark_gemv_fused(
     // Benchmark fused
     let fused_start = Instant::now();
     for _ in 0..iteration_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -167,25 +140,16 @@ fn benchmark_gemv_fused(
     };
 
     let fused_kernel_name =
-        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args)
-            .map(|v| v.as_str())
-            .unwrap_or("?");
+        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args).map(|v| v.as_str()).unwrap_or("?");
 
     let unfused_kernel_name =
-        determine_matmul_variant(context, DataType::F16, &matmul_args)
-            .map(|v| v.as_str())
-            .unwrap_or("?");
+        determine_matmul_variant(context, DataType::F16, &matmul_args).map(|v| v.as_str()).unwrap_or("?");
 
     // Warmup unfused
     for _ in 0..warmup_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -195,14 +159,9 @@ fn benchmark_gemv_fused(
     // Benchmark unfused
     let unfused_start = Instant::now();
     for _ in 0..iteration_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -210,12 +169,7 @@ fn benchmark_gemv_fused(
     }
     let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchmarkResult::new(
-        fused_duration,
-        unfused_duration,
-        fused_kernel_name,
-        unfused_kernel_name,
-    )
+    BenchmarkResult::new(fused_duration, unfused_duration, fused_kernel_name, unfused_kernel_name)
 }
 
 fn benchmark_gemm_fused(
@@ -228,10 +182,7 @@ fn benchmark_gemm_fused(
 ) -> BenchmarkResult {
     let input_buffer = context
         .device
-        .new_buffer(
-            batch_size * input_dimension * std::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(batch_size * input_dimension * std::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let weights_buffer = context
         .device
@@ -242,10 +193,7 @@ fn benchmark_gemm_fused(
         .expect("Failed to create buffer");
     let output_buffer = context
         .device
-        .new_buffer(
-            batch_size * hidden_dimension * std::mem::size_of::<f16>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
+        .new_buffer(batch_size * hidden_dimension * std::mem::size_of::<f16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let fused_up_buffer = context
         .device
@@ -255,8 +203,7 @@ fn benchmark_gemm_fused(
         )
         .expect("Failed to create buffer");
 
-    let mut fused_kernel =
-        MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
+    let mut fused_kernel = MlpFusedKernel::new(DataType::F16, true).expect("fused kernel");
     let mut matmul_kernel = MatmulKernel::new(DataType::F16).expect("matmul");
 
     let fused_args = MlpFusedArguments {
@@ -276,14 +223,9 @@ fn benchmark_gemm_fused(
 
     // Warmup fused
     for _ in 0..warmup_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -292,14 +234,9 @@ fn benchmark_gemm_fused(
 
     let fused_start = Instant::now();
     for _ in 0..iteration_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         fused_kernel.encode(context, &encoder, &fused_args).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -328,25 +265,16 @@ fn benchmark_gemm_fused(
     };
 
     let fused_kernel_name =
-        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args)
-            .map(|v| v.as_str())
-            .unwrap_or("?");
+        determine_mlp_fused_variant(context, DataType::F16, true, &fused_args).map(|v| v.as_str()).unwrap_or("?");
 
     let unfused_kernel_name =
-        determine_matmul_variant(context, DataType::F16, &matmul_args)
-            .map(|v| v.as_str())
-            .unwrap_or("?");
+        determine_matmul_variant(context, DataType::F16, &matmul_args).map(|v| v.as_str()).unwrap_or("?");
 
     // Warmup unfused
     for _ in 0..warmup_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -355,14 +283,9 @@ fn benchmark_gemm_fused(
 
     let unfused_start = Instant::now();
     for _ in 0..iteration_count {
-        let command_buffer = context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
-        let encoder = command_buffer
-            .new_compute_command_encoder()
-            .expect("Failed to create compute encoder");
+        let command_buffer =
+            context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
         matmul_kernel.encode(context, &encoder, matmul_args.clone()).unwrap();
         encoder.end_encoding();
         command_buffer.commit();
@@ -370,12 +293,7 @@ fn benchmark_gemm_fused(
     }
     let unfused_duration = unfused_start.elapsed() / iteration_count as u32;
 
-    BenchmarkResult::new(
-        fused_duration,
-        unfused_duration,
-        fused_kernel_name,
-        unfused_kernel_name,
-    )
+    BenchmarkResult::new(fused_duration, unfused_duration, fused_kernel_name, unfused_kernel_name)
 }
 
 /// MLP shapes from real model configs
@@ -425,27 +343,14 @@ fn mlp_fused_performance_benchmark() {
 
         println!(
             "{:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>12} {:>10}",
-            "batch",
-            "input",
-            "hidden",
-            "Fused",
-            "Fused (µs)",
-            "Unfused",
-            "Unfused (µs)",
-            "Speedup"
+            "batch", "input", "hidden", "Fused", "Fused (µs)", "Unfused", "Unfused (µs)", "Speedup"
         );
         println!("{}", "-".repeat(98));
 
         for &batch_size in BATCH_SIZES {
             for &(input_dimension, hidden_dimension) in MLP_SHAPES {
                 let result = if batch_size == 1 {
-                    benchmark_gemv_fused(
-                        &context,
-                        input_dimension,
-                        hidden_dimension,
-                        iteration_count,
-                        warmup_count,
-                    )
+                    benchmark_gemv_fused(&context, input_dimension, hidden_dimension, iteration_count, warmup_count)
                 } else {
                     benchmark_gemm_fused(
                         &context,

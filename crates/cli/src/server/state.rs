@@ -36,19 +36,11 @@ pub fn load_session(
     let style_bold = Style::new().bold();
 
     let model_path_buf = PathBuf::from(model_path);
-    let model_name = style_bold
-        .apply_to(
-            model_path_buf.file_name().unwrap().to_str().unwrap().to_string(),
-        )
-        .to_string();
+    let model_name = style_bold.apply_to(model_path_buf.file_name().unwrap().to_str().unwrap().to_string()).to_string();
 
     let progress_bar = ProgressBar::new_spinner();
     progress_bar.enable_steady_tick(std::time::Duration::from_millis(100));
-    progress_bar.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} Loading: {msg}")
-            .unwrap(),
-    );
+    progress_bar.set_style(ProgressStyle::default_spinner().template("{spinner:.green} Loading: {msg}").unwrap());
     progress_bar.set_message(model_name.clone());
 
     let prefill_step_size_config: PrefillStepSize;
@@ -58,18 +50,14 @@ pub fn load_session(
         prefill_step_size_config = PrefillStepSize::Default;
     }
 
-    let decoding_config = DecodingConfig::default()
-        .with_prefill_step_size(prefill_step_size_config)
-        .with_sampling_seed(match seed {
+    let decoding_config =
+        DecodingConfig::default().with_prefill_step_size(prefill_step_size_config).with_sampling_seed(match seed {
             Some(seed) => SamplingSeed::Custom(seed),
             None => SamplingSeed::Default,
         });
-    let session = Session::new(model_path_buf, decoding_config)
-        .expect("Failed to create session");
+    let session = Session::new(model_path_buf, decoding_config).expect("Failed to create session");
 
-    progress_bar.set_style(
-        ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap(),
-    );
+    progress_bar.set_style(ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap());
     progress_bar.finish_with_message(model_name.clone());
 
     session

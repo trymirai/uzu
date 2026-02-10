@@ -1,14 +1,9 @@
-use super::{
-    pipeline_configuration::PipelineConfiguration,
-    tile_configuration::select_tile_configuration,
-};
+use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::select_tile_configuration};
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError, MTLSize,
-        kernel::{
-            matmul::common::GEMMParams, mlp_fused::common::MlpFusedArguments,
-        },
+        kernel::{matmul::common::GEMMParams, mlp_fused::common::MlpFusedArguments},
     },
 };
 
@@ -28,18 +23,13 @@ impl DispatchDescriptor {
         weights_transposed: bool,
         arguments: &MlpFusedArguments,
     ) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MLP fused GEMM: {data_type:?}"
-            )));
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MTLError::Generic(format!("Unsupported dtype for MLP fused GEMM: {data_type:?}")));
         }
 
-        let tile =
-            select_tile_configuration(arguments.batch, arguments.hidden_dim);
+        let tile = select_tile_configuration(arguments.batch, arguments.hidden_dim);
 
-        let mn_aligned = arguments.batch % tile.block_rows == 0
-            && arguments.hidden_dim % tile.block_cols == 0;
+        let mn_aligned = arguments.batch % tile.block_rows == 0 && arguments.hidden_dim % tile.block_cols == 0;
         let k_aligned = arguments.input_dim % tile.block_depth == 0;
 
         let pipeline_configuration = PipelineConfiguration {
@@ -51,10 +41,8 @@ impl DispatchDescriptor {
         };
 
         let tiles_m = (arguments.batch + tile.block_rows - 1) / tile.block_rows;
-        let tiles_n =
-            (arguments.hidden_dim + tile.block_cols - 1) / tile.block_cols;
-        let gemm_k_iterations =
-            (arguments.input_dim + tile.block_depth - 1) / tile.block_depth;
+        let tiles_n = (arguments.hidden_dim + tile.block_cols - 1) / tile.block_cols;
+        let gemm_k_iterations = (arguments.input_dim + tile.block_depth - 1) / tile.block_depth;
 
         let params = GEMMParams {
             M: arguments.batch,
