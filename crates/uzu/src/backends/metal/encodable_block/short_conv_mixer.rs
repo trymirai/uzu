@@ -1,17 +1,21 @@
 use std::rc::Rc;
 
-use super::{EncodableBlock, EncodingParameters, transformer_layer};
+use super::{EncodableBlock, EncodingParameters, Metal, transformer_layer};
 use crate::{
     DataType,
-    backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLResource,
-        MTLResourceOptions, MetalArray, ProtocolObject,
-        compilation_parameters::CompilationConfig,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::short_conv::{
-            ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments,
-            ShortConvPrefillArguments, ShortConvTrieArguments,
+    backends::{
+        common::Context,
+        metal::{
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
+            MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
+            compilation_parameters::CompilationConfig,
+            forward_pass::{ArrayId, ForwardPassState},
+            kernel::short_conv::{
+                ShortConvDecodeArguments, ShortConvKernel,
+                ShortConvPackArguments, ShortConvPrefillArguments,
+                ShortConvTrieArguments,
+            },
         },
     },
     config::{DecoderLayerType, ShortConvConfig},
@@ -22,17 +26,17 @@ pub(crate) struct ShortConvMixer {
     layer_index: usize,
     config: ShortConvConfig,
     model_dim: usize,
-    in_projection: Box<dyn EncodableBlock>,
-    out_projection: Box<dyn EncodableBlock>,
+    in_projection: Box<dyn EncodableBlock<Metal>>,
+    out_projection: Box<dyn EncodableBlock<Metal>>,
     short_conv_kernel: ShortConvKernel,
     conv_weight: MetalArray,
     conv_bias: Option<MetalArray>,
 }
 
 fn resolve_subtree<'tree>(
-    tree: &'tree ParameterTree<Rc<MTLContext>>,
+    tree: &'tree ParameterTree<MTLContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, Rc<MTLContext>> {
+) -> ParameterTree<'tree, MTLContext> {
     for candidate in candidates {
         if let Ok(subtree) = tree.subtree(candidate) {
             return subtree;
@@ -50,7 +54,7 @@ impl ShortConvMixer {
         _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<Rc<MTLContext>>,
+        decoder_layer_loader: &ParameterTree<MTLContext>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!(
@@ -118,7 +122,7 @@ impl ShortConvMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -246,15 +250,15 @@ impl ShortConvMixer {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.mtl_buffer_cloned();
-        let state_buf = conv_state.mtl_buffer_cloned();
-        let out_buf = out.mtl_buffer_cloned();
+        let in_proj_buf = in_proj.buffer().clone();
+        let state_buf = conv_state.buffer().clone();
+        let out_buf = out.buffer().clone();
 
         let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let weight_buf = conv_weight.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|b| {
             let b = b.clone();
-            b.mtl_buffer_cloned()
+            b.buffer().clone()
         });
 
         let kernel_size = self.config.kernel_size;
@@ -266,9 +270,9 @@ impl ShortConvMixer {
         let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
-        let device = in_proj_buf.device();
-        let padded_buf = device
-            .new_buffer(padded_size, MTLResourceOptions::STORAGE_MODE_PRIVATE)
+        let padded_buf = state
+            .mtl_context()
+            .create_buffer(padded_size)
             .expect("Failed to create padded buffer");
         self.short_conv_kernel
             .encode_pack(
@@ -330,11 +334,11 @@ impl ShortConvMixer {
         let suffix_state = arrays[3].borrow_mut();
         let out = arrays[4].borrow_mut();
 
-        let in_proj_buf = in_proj.mtl_buffer_cloned();
-        let parents_buf = parents.mtl_buffer_cloned();
-        let base_state_buf = conv_state.mtl_buffer_cloned();
-        let suffix_state_buf = suffix_state.mtl_buffer_cloned();
-        let out_buf = out.mtl_buffer_cloned();
+        let in_proj_buf = in_proj.buffer().clone();
+        let parents_buf = parents.buffer().clone();
+        let base_state_buf = conv_state.buffer().clone();
+        let suffix_state_buf = suffix_state.buffer().clone();
+        let out_buf = out.buffer().clone();
 
         let data_type: DataType =
             self.config.in_projection_config.activation_precision().into();
@@ -344,21 +348,20 @@ impl ShortConvMixer {
         let state_stride = kernel_size.saturating_sub(1);
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset = in_proj.buffer_offset()
+        let in_proj_offset = in_proj.offset()
             + sampling_start * in_proj_stride * elem_bytes;
-        let out_offset =
-            out.buffer_offset() + sampling_start * self.model_dim * elem_bytes;
-        let suffix_state_offset = suffix_state.buffer_offset()
+        let out_offset = out.offset() + sampling_start * self.model_dim * elem_bytes;
+        let suffix_state_offset = suffix_state.offset()
             + sampling_start * self.model_dim * state_stride * elem_bytes;
-        let base_state_offset = conv_state.buffer_offset();
-        let parents_offset = parents.buffer_offset()
+        let base_state_offset = conv_state.offset();
+        let parents_offset = parents.offset()
             + sampling_start * std::mem::size_of::<i32>();
 
         let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let weight_buf = conv_weight.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|b| {
             let b = b.clone();
-            b.mtl_buffer_cloned()
+            b.buffer().clone()
         });
 
         self.short_conv_kernel
@@ -402,15 +405,15 @@ impl ShortConvMixer {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.mtl_buffer_cloned();
-        let state_buf = conv_state.mtl_buffer_cloned();
-        let out_buf = out.mtl_buffer_cloned();
+        let in_proj_buf = in_proj.buffer().clone();
+        let state_buf = conv_state.buffer().clone();
+        let out_buf = out.buffer().clone();
 
         let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.mtl_buffer_cloned();
+        let weight_buf = conv_weight.buffer().clone();
         let bias_buf = self.conv_bias.as_ref().map(|b| {
             let b = b.clone();
-            b.mtl_buffer_cloned()
+            b.buffer().clone()
         });
 
         let kernel_size = self.config.kernel_size;
@@ -437,11 +440,11 @@ impl ShortConvMixer {
     }
 }
 
-impl EncodableBlock for ShortConvMixer {
+impl EncodableBlock<Metal> for ShortConvMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {

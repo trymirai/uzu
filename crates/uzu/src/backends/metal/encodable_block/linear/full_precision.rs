@@ -1,15 +1,16 @@
-use std::{cell::RefCell, rc::Rc};
+use crate::backends::metal::Metal;
+use std::cell::RefCell;
 
 use crate::{
     DataType,
     backends::metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
+        MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        Retained,
         encodable_block::{EncodableBlock, EncodingParameters},
         forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
     },
-    device::array::Array,
     parameters::ParameterTree,
 };
 
@@ -29,7 +30,7 @@ impl FullPrecisionLinear {
         precision: DataType,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<Rc<MTLContext>>,
+        parameter_tree: &ParameterTree<MTLContext>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, MTLError> {
@@ -41,7 +42,7 @@ impl FullPrecisionLinear {
             )));
         }
 
-        let mut weights = parameter_tree.leaf("weights").map_err(|e| {
+        let weights = parameter_tree.leaf("weights").map_err(|e| {
             MTLError::Generic(format!("Failed to load weights: {:?}", e))
         })?;
 
@@ -62,10 +63,10 @@ impl FullPrecisionLinear {
         }
 
         let weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-            unsafe { weights.mtl_buffer() }.to_owned().into();
+            weights.buffer().to_owned().into();
 
         let bias_buffer = match parameter_tree.leaf("biases") {
-            Ok(mut biases) => {
+            Ok(biases) => {
                 if biases.shape() != [output_dim] {
                     return Err(MTLError::Generic(format!(
                         "Bias shape mismatch: got {:?}, expected [{:?}]",
@@ -81,7 +82,7 @@ impl FullPrecisionLinear {
                     )));
                 }
                 let bias_buffer: Retained<ProtocolObject<dyn MTLBuffer>> =
-                    unsafe { biases.mtl_buffer() }.to_owned().into();
+                    biases.buffer().to_owned().into();
                 Some(bias_buffer)
             },
             Err(_) => None,
@@ -102,21 +103,21 @@ impl FullPrecisionLinear {
     }
 }
 
-impl EncodableBlock for FullPrecisionLinear {
+impl EncodableBlock<Metal> for FullPrecisionLinear {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -128,7 +129,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
-            bias: self.bias_buffer.as_ref().map(|v| v.as_ref()),
+            bias: self.bias_buffer.as_ref(),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,
@@ -168,11 +169,11 @@ impl EncodableBlock for FullPrecisionLinear {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
 
-        let mut input_array_mut = arrays[0].borrow_mut();
-        let mut output_array_mut = arrays[1].borrow_mut();
+        let input_array_mut = arrays[0].borrow_mut();
+        let output_array_mut = arrays[1].borrow_mut();
 
-        let input_buffer = unsafe { input_array_mut.mtl_buffer() };
-        let output_buffer = unsafe { output_array_mut.mtl_buffer() };
+        let input_buffer = input_array_mut.buffer();
+        let output_buffer = output_array_mut.buffer();
 
         let args = MatmulArguments {
             a: input_buffer,
@@ -180,7 +181,7 @@ impl EncodableBlock for FullPrecisionLinear {
             b: &self.weights_buffer,
             c: None,
             d: output_buffer,
-            bias: self.bias_buffer.as_ref().map(|v| v.as_ref()),
+            bias: self.bias_buffer.as_ref(),
             batch: batch_size as i32,
             input_dim: self.input_dim as i32,
             output_dim: self.output_dim as i32,

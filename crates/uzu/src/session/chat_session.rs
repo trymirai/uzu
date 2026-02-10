@@ -653,8 +653,12 @@ impl ChatSession {
         if let Some(ctx) = context {
             let mut llm_state =
                 language_model_generator.context.cache_layers.borrow_mut();
-            for (ctx_layer, gen_layer) in
-                ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut())
+            for (_layer_idx, (ctx_layer, gen_layer)) in ctx
+                .cache_layers
+                .data
+                .iter()
+                .zip(llm_state.data.iter_mut())
+                .enumerate()
             {
                 match (ctx_layer, gen_layer) {
                     (

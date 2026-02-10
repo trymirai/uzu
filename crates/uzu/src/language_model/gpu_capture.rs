@@ -3,12 +3,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use objc2_foundation::NSURL;
+use objc2_foundation::{NSString, NSURL};
 
 use crate::{
     backends::metal::{
-        MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt,
-        MTLContext,
+        MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
+        MTLCommandQueueExt, MTLContext,
     },
     utils::env_utils::MetalEnvVar,
 };
@@ -81,16 +81,20 @@ impl GpuCaptureManager {
 
         // Set output URL using NSURL
         let url_string = format!("file://{}", trace_path.display());
-        if let Some(url) = NSURL::URLWithString(&objc2_foundation::NSString::from_str(
-            &url_string,
-        )) {
-            capture_descriptor.set_output_url(Some(&url));
+        unsafe {
+            if let Some(url) =
+                NSURL::URLWithString(&NSString::from_str(&url_string))
+            {
+                capture_descriptor.set_output_url(Some(&url));
+            }
         }
 
         mtl_context.command_queue.set_label(Some("uzu_command_queue"));
         use objc2::rc::Retained;
         unsafe {
-            capture_descriptor.set_capture_object(Some(&*(Retained::as_ptr(&mtl_context.command_queue).cast())));
+            capture_descriptor.set_capture_object(Some(
+                &*(Retained::as_ptr(&mtl_context.command_queue).cast()),
+            ));
         }
 
         capture_manager

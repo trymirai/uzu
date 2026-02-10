@@ -3,8 +3,9 @@ use std::ptr::NonNull;
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLDataType, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLDataType,
+        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
         metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,
@@ -52,8 +53,10 @@ pub struct Conv1dScanKernel {
     pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pack_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_no_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    decode_pipeline_with_bias: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_no_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    decode_pipeline_with_bias:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 pub struct Conv1dScanArguments<'a> {

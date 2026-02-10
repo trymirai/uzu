@@ -1,6 +1,7 @@
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLSize, ProtocolObject, Retained,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+    MTLSize, ProtocolObject, Retained,
     metal_extensions::ComputeEncoderSetValue,
 };
 
@@ -58,7 +59,7 @@ impl MoeRouterTopKKernel {
 
     pub fn encode(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         dtype: KernelDataType,
         args: MoeRouterTopKArguments,
     ) -> Result<(), MoeRouterTopKError> {

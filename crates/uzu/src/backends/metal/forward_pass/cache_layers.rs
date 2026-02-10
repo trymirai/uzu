@@ -9,17 +9,16 @@ use super::{
         AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
         KVSlice,
     },
-    model_shape::ModelShape,
     short_conv_layer::ShortConvLayer,
     ssm_layer::SSMLayer,
 };
 use crate::{
-    DeviceContext,
-    array::Array,
+    array::ArrayContextExt,
     backends::metal::{
-        MTLCommandBuffer, ProtocolObject, kernel::KVCacheUpdate,
+        MTLCommandBuffer, ProtocolObject, Retained, kernel::KVCacheUpdate,
     },
     config::DecoderLayerType,
+    forward_pass::model_shape::ModelShape,
 };
 
 #[derive(Debug)]
@@ -141,17 +140,17 @@ impl CacheLayers {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: RefCell::new(context.array(
+                        keys: RefCell::new(context.create_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            format!(
+                            &format!(
                                 "{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"
                             ),
                         )),
-                        values: RefCell::new(context.array(
+                        values: RefCell::new(context.create_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            format!(
+                            &format!(
                                 "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
                             ),
                         )),
@@ -182,17 +181,17 @@ impl CacheLayers {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: RefCell::new(context.array(
+                        conv_state: RefCell::new(context.create_array(
                             &conv_shape,
                             dtype,
-                            format!(
+                            &format!(
                                 "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
                             ),
                         )),
-                        ssm_state: RefCell::new(context.array(
+                        ssm_state: RefCell::new(context.create_array(
                             &ssm_shape,
                             dtype,
-                            format!(
+                            &format!(
                                 "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
                             ),
                         )),
@@ -213,17 +212,17 @@ impl CacheLayers {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: RefCell::new(context.array(
+                        conv_state: RefCell::new(context.create_array(
                             &conv_shape,
                             dtype,
-                            format!(
+                            &format!(
                                 "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
                             ),
                         )),
-                        suffix_state: RefCell::new(context.array(
+                        suffix_state: RefCell::new(context.create_array(
                             &suffix_state_shape,
                             dtype,
-                            format!(
+                            &format!(
                                 "{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"
                             ),
                         )),
@@ -280,28 +279,37 @@ impl CacheLayers {
         dst: &mut HashMap<Option<usize>, MetalArray>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        context: &MTLContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
-                let key: Option<usize> = match &layer.state {
-                    KVCacheLayerState::Full {
-                        ..
-                    } => None,
-                    KVCacheLayerState::Windowed {
-                        window_length,
-                        ..
-                    } => Some(*window_length),
-                };
-
-                if let Some(array) = dst.get_mut(&key) {
+                if let Some(array) = dst.get_mut(&layer.window_length()) {
                     layer.fill_attention_bias(
                         array,
                         suffix_token_positions,
                         suffix_length,
-                        context,
                         external_bias_fn,
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn fill_attention_bias_scratch(
+        &self,
+        dst: &HashMap<Option<usize>, RefCell<MetalArray>>,
+        suffix_token_positions: &[usize],
+        suffix_length: usize,
+        _context: &MTLContext,
+    ) {
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(layer) = layer {
+                if let Some(cell) = dst.get(&layer.window_length()) {
+                    layer.fill_attention_bias(
+                        &mut cell.borrow_mut(),
+                        suffix_token_positions,
+                        suffix_length,
+                        None,
                     );
                 }
             }
@@ -312,7 +320,7 @@ impl CacheLayers {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         kv_cache_update: &KVCacheUpdate,
     ) {
         let short_conv_commit_index =
@@ -429,15 +437,17 @@ impl CacheLayers {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.array(
+                    let mut new_keys = context.create_array(
                         &new_shape,
                         dtype,
-                        format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
+                        &format!(
+                            "{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"
+                        ),
                     );
-                    let mut new_values = context.array(
+                    let mut new_values = context.create_array(
                         &new_shape,
                         dtype,
-                        format!(
+                        &format!(
                             "{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"
                         ),
                     );
@@ -466,10 +476,10 @@ impl CacheLayers {
                 CacheLayer::StateSpace(layer) => {
                     let conv_shape = layer.conv_state.borrow().shape().to_vec();
                     let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(
+                    let mut new_conv = context.create_array(
                         &conv_shape,
                         conv_dtype,
-                        format!(
+                        &format!(
                             "{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"
                         ),
                     );
@@ -480,10 +490,10 @@ impl CacheLayers {
 
                     let ssm_shape = layer.ssm_state.borrow().shape().to_vec();
                     let ssm_dtype = layer.ssm_state.borrow().data_type();
-                    let mut new_ssm = context.array(
+                    let mut new_ssm = context.create_array(
                         &ssm_shape,
                         ssm_dtype,
-                        format!(
+                        &format!(
                             "{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"
                         ),
                     );
@@ -500,10 +510,10 @@ impl CacheLayers {
                 CacheLayer::ShortConv(layer) => {
                     let conv_shape = layer.conv_state.borrow().shape().to_vec();
                     let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.array(
+                    let mut new_conv = context.create_array(
                         &conv_shape,
                         conv_dtype,
-                        format!(
+                        &format!(
                             "{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"
                         ),
                     );
@@ -515,15 +525,15 @@ impl CacheLayers {
                     let suffix_shape =
                         layer.suffix_state.borrow().shape().to_vec();
                     let suffix_dtype = layer.suffix_state.borrow().data_type();
-                    let mut new_suffix = context.array(
+                    let mut new_suffix = context.create_array(
                         &suffix_shape,
                         suffix_dtype,
-                        format!(
+                        &format!(
                             "{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"
                         ),
                     );
                     {
-                        new_suffix.buffer_mut().fill(0);
+                        new_suffix.as_bytes_mut().fill(0);
                     }
 
                     CacheLayer::ShortConv(ShortConvLayer {

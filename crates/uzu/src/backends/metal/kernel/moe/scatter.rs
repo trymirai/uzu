@@ -1,7 +1,7 @@
 use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLSize, ProtocolObject, Retained,
-    metal_extensions::ComputeEncoderSetValue,
+    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -16,11 +16,15 @@ pub struct MoeScatterKernels {
     pipeline_bases: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_scatter_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_bf16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     // map variants
-    pipeline_scatter_map_f16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_f32: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pipeline_scatter_map_bf16: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_f32:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_scatter_map_bf16:
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 #[derive(Debug)]
@@ -85,7 +89,7 @@ impl MoeScatterKernels {
 
     pub fn encode_block_bases(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeBlockBasesArguments,
     ) -> Result<(), MoeScatterError> {
         let compute_encoder = command_buffer
@@ -117,7 +121,7 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {
@@ -168,7 +172,7 @@ impl MoeScatterKernels {
 
     pub fn encode_scatter_with_map(
         &self,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterWithMapArguments,
         dtype: KernelDataType,
     ) -> Result<(), MoeScatterError> {

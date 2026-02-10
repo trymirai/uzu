@@ -7,9 +7,9 @@ use crate::backends::metal::{
     ProtocolObject, Retained,
 };
 
-use super::{EncodableBlock, EncodingParameters};
+use super::{EncodableBlock, EncodingParameters, Metal};
 use crate::{
-    Array, DataType,
+    DataType,
     backends::metal::{
         MTLContext,
         forward_pass::{ArrayId, ForwardPassState},
@@ -26,16 +26,16 @@ use crate::{
 };
 
 pub struct MlpBlock {
-    up: Box<dyn EncodableBlock>,
+    up: Box<dyn EncodableBlock<Metal>>,
     gate: MlpGateActMulEncodable,
-    down: Box<dyn EncodableBlock>,
+    down: Box<dyn EncodableBlock<Metal>>,
 }
 
 impl MlpBlock {
     pub fn new(
-        up: Box<dyn EncodableBlock>,
+        up: Box<dyn EncodableBlock<Metal>>,
         gate: MlpGateActMulEncodable,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
     ) -> Self {
         Self {
             up,
@@ -45,16 +45,17 @@ impl MlpBlock {
     }
 }
 
-impl EncodableBlock for MlpBlock {
+impl EncodableBlock<Metal> for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -65,14 +66,15 @@ impl EncodableBlock for MlpBlock {
             {
                 let arrays =
                     state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-                let mut fused = arrays[0].borrow_mut();
-                let mut hidden = arrays[1].borrow_mut();
+                let fused = arrays[0].borrow_mut();
+                let hidden = arrays[1].borrow_mut();
                 let m = fused.shape()[0] as i32;
-                let fused_buf = unsafe { fused.mtl_buffer() };
-                let hidden_buf = unsafe { hidden.mtl_buffer() };
+                let fused_buf = fused.buffer();
+                let hidden_buf = hidden.buffer();
 
-                let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+                let encoder = command_buffer
+                    .new_compute_command_encoder()
+                    .expect("Failed to create compute command encoder");
                 self.gate
                     .encode(&encoder, fused_buf, hidden_buf, m)
                     .expect("Failed to encode MLP activation/mul kernel");
@@ -104,11 +106,11 @@ impl EncodableBlock for MlpBlock {
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-        let mut fused = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
+        let fused = arrays[0].borrow_mut();
+        let hidden = arrays[1].borrow_mut();
         let m = fused.shape()[0] as i32;
-        let fused_buf = unsafe { fused.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
+        let fused_buf = fused.buffer();
+        let hidden_buf = hidden.buffer();
         self.gate
             .encode(encoder, fused_buf, hidden_buf, m)
             .expect("Failed to encode MLP activation/mul kernel");
@@ -137,10 +139,11 @@ pub enum MlpFusedUpKernel {
 pub struct MlpFusedBlock {
     context: Rc<MTLContext>,
     fused_up: MlpFusedUpKernel,
-    down: Box<dyn EncodableBlock>,
+    down: Box<dyn EncodableBlock<Metal>>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
-    zero_points_or_biases_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
+    zero_points_or_biases_buffer:
+        Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     input_dim: usize,
     hidden_dim: usize,
     activation: MlpActivationType,
@@ -157,7 +160,7 @@ impl MlpFusedBlock {
         input_dim: usize,
         hidden_dim: usize,
         activation: &Activation,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
@@ -193,7 +196,7 @@ impl MlpFusedBlock {
         mode: crate::config::QuantizationMode,
         quantization_type: crate::backends::metal::kernel::quant_matmul::QuantizationType,
         activation: &Activation,
-        down: Box<dyn EncodableBlock>,
+        down: Box<dyn EncodableBlock<Metal>>,
         input_array_id: ArrayId,
         hidden_array_id: ArrayId,
     ) -> Result<Self, crate::backends::metal::MTLError> {
@@ -240,9 +243,9 @@ impl MlpFusedBlock {
     fn encode_fused_up(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        input: &ProtocolObject<dyn MTLBuffer>,
+        input: &Retained<ProtocolObject<dyn MTLBuffer>>,
         input_offset: u64,
-        output: &ProtocolObject<dyn MTLBuffer>,
+        output: &Retained<ProtocolObject<dyn MTLBuffer>>,
         batch: i32,
     ) {
         match &self.fused_up {
@@ -311,16 +314,17 @@ impl MlpFusedBlock {
     }
 }
 
-impl EncodableBlock for MlpFusedBlock {
+impl EncodableBlock<Metal> for MlpFusedBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters,
     ) {
         if self.supports_shared_encoder() {
-            let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+            let encoder = command_buffer
+                .new_compute_command_encoder()
+                .expect("Failed to create compute command encoder");
             self.encode_with_shared_encoder(state, &encoder, params);
             encoder.end_encoding();
         } else {
@@ -328,14 +332,15 @@ impl EncodableBlock for MlpFusedBlock {
             {
                 let arrays =
                     state.arrays(&[self.input_array_id, self.hidden_array_id]);
-                let mut input = arrays[0].borrow_mut();
-                let mut hidden = arrays[1].borrow_mut();
+                let input = arrays[0].borrow_mut();
+                let hidden = arrays[1].borrow_mut();
                 let batch = input.shape()[0] as i32;
-                let input_buf = unsafe { input.mtl_buffer() };
-                let hidden_buf = unsafe { hidden.mtl_buffer() };
+                let input_buf = input.buffer();
+                let hidden_buf = hidden.buffer();
 
-                let encoder = command_buffer.new_compute_command_encoder()
-            .expect("Failed to create compute command encoder");
+                let encoder = command_buffer
+                    .new_compute_command_encoder()
+                    .expect("Failed to create compute command encoder");
                 self.encode_fused_up(&encoder, input_buf, 0, hidden_buf, batch);
                 encoder.end_encoding();
             }
@@ -362,11 +367,11 @@ impl EncodableBlock for MlpFusedBlock {
     ) {
         // Fused up + activation
         let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);
-        let mut input = arrays[0].borrow_mut();
-        let mut hidden = arrays[1].borrow_mut();
+        let input = arrays[0].borrow_mut();
+        let hidden = arrays[1].borrow_mut();
         let batch = input.shape()[0] as i32;
-        let input_buf = unsafe { input.mtl_buffer() };
-        let hidden_buf = unsafe { hidden.mtl_buffer() };
+        let input_buf = input.buffer();
+        let hidden_buf = hidden.buffer();
 
         self.encode_fused_up(encoder, input_buf, 0, hidden_buf, batch);
 

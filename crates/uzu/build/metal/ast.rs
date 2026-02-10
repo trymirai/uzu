@@ -1,7 +1,10 @@
-use std::collections::HashMap;
-
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
+
+use crate::common::kernel::{
+    Kernel, KernelArgument, KernelArgumentType, KernelParameter,
+    KernelParameterType,
+};
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
 
@@ -17,7 +20,9 @@ pub struct ParmVarDeclType {
 pub enum MetalAstKind {
     TranslationUnitDecl,
     FunctionTemplateDecl,
-    TemplateTypeParmDecl,
+    TemplateTypeParmDecl {
+        name: Option<Box<str>>,
+    },
     FunctionDecl {
         name: Box<str>,
     },
@@ -99,12 +104,25 @@ fn annotation_from_ast_node(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum MetalConstantType {
+    Scalar,
+    Array,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MetalGroupsType {
+    Direct(Box<str>),
+    Indirect,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer,
-    Constant(Box<str>),
-    Shared(Box<str>),
+    Constant((Box<str>, MetalConstantType)),
+    Shared(Option<Box<str>>),
+    Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
-    Groups(Box<str>),
+    Groups(MetalGroupsType),
     Threads(Box<str>),
 }
 
@@ -117,6 +135,20 @@ pub struct MetalArgument {
 }
 
 impl MetalArgument {
+    fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<&'static str> {
+        let mut tokens: Vec<_> = c_type.split_whitespace().collect();
+        if tokens.first() == Some(&"const") {
+            tokens.remove(0);
+        }
+        match tokens.as_slice() {
+            ["bool"] => Ok("bool"),
+            ["uint"] | ["uint32_t"] | ["unsigned", "int"] => Ok("u32"),
+            ["int"] | ["int32_t"] => Ok("i32"),
+            ["float"] => Ok("f32"),
+            _ => bail!("unknown scalar type: {c_type}"),
+        }
+    }
+
     fn from_ast_node_and_source(
         argument_node: MetalAstNode,
         source: &str,
@@ -182,6 +214,16 @@ impl MetalArgument {
             let annotation_key = annotation.remove(0);
 
             match &*annotation_key {
+                "dsl.specialize" => {
+                    if !annotation.is_empty() {
+                        bail!(
+                            "dsl.specialize takes no arguments, got {}",
+                            annotation.len()
+                        );
+                    }
+                    let rust_type = Self::scalar_type_to_rust(&self.c_type)?;
+                    Ok(MetalArgumentType::Specialize(rust_type.into()))
+                },
                 "dsl.axis" => {
                     if annotation.len() != 2 {
                         bail!(
@@ -201,7 +243,15 @@ impl MetalArgument {
                             annotation.len()
                         );
                     }
-                    Ok(MetalArgumentType::Groups(annotation.remove(0)))
+                    let dim = annotation.remove(0);
+                    match dim.as_ref() {
+                        "INDIRECT" => Ok(MetalArgumentType::Groups(
+                            MetalGroupsType::Indirect,
+                        )),
+                        _ => Ok(MetalArgumentType::Groups(
+                            MetalGroupsType::Direct(dim),
+                        )),
+                    }
                 },
                 "dsl.threads" => {
                     if annotation.len() != 1 {
@@ -214,8 +264,7 @@ impl MetalArgument {
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
-        } else if (self.c_type.contains("device")
-            || self.c_type.contains("constant"))
+        } else if self.c_type.contains("device")
             && self.c_type.contains('*')
             && !self.c_type.contains('&')
         {
@@ -223,15 +272,17 @@ impl MetalArgument {
         } else if let ["const", "constant", c_type_scalar, "&"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
         {
-            let rust_type = match *c_type_scalar {
-                "uint" | "uint32_t" => "u32",
-                "int" | "int32_t" => "i32",
-                "float" => "f32",
-                _ => {
-                    bail!("unknown scalar type: {c_type_scalar}")
-                },
-            };
-            Ok(MetalArgumentType::Constant(rust_type.into()))
+            Ok(MetalArgumentType::Constant((
+                Self::scalar_type_to_rust(c_type_scalar)?.into(),
+                MetalConstantType::Scalar,
+            )))
+        } else if let ["const", "constant", c_type_scalar, "*"] =
+            self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
+        {
+            Ok(MetalArgumentType::Constant((
+                Self::scalar_type_to_rust(c_type_scalar)?.into(),
+                MetalConstantType::Array,
+            )))
         } else if self.c_type.contains("threadgroup")
             && self.c_type.contains('*')
         {
@@ -245,9 +296,38 @@ impl MetalArgument {
                 .rfind(']')
                 .context("threadgroup missing size bracket")?;
             let size_expr = &self.source[lbracket..rbracket];
-            Ok(MetalArgumentType::Shared(size_expr.into()))
+            Ok(MetalArgumentType::Shared(Some(size_expr.into())))
+        } else if self.c_type.contains("threadgroup")
+            && self.c_type.contains('&')
+        {
+            Ok(MetalArgumentType::Shared(None))
         } else {
             bail!("cannot parse c type: {}", self.c_type);
+        }
+    }
+
+    fn to_parameter(&self) -> Option<KernelParameter> {
+        match self.argument_type() {
+            Ok(MetalArgumentType::Specialize(ty)) => Some(KernelParameter {
+                name: self.name.clone(),
+                ty: KernelParameterType::Specialization(ty),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetalTypeParameter {
+    pub name: Box<str>,
+    pub variants: Box<[Box<str>]>,
+}
+
+impl MetalTypeParameter {
+    fn to_parameter(&self) -> KernelParameter {
+        KernelParameter {
+            name: self.name.clone(),
+            ty: KernelParameterType::DType,
         }
     }
 }
@@ -256,7 +336,7 @@ impl MetalArgument {
 pub struct MetalKernelInfo {
     pub name: Box<str>,
     pub arguments: Box<[MetalArgument]>,
-    pub specializations: Option<(Box<str>, Box<[Box<str>]>)>,
+    pub variants: Option<Box<[MetalTypeParameter]>>,
 }
 
 impl MetalKernelInfo {
@@ -272,10 +352,78 @@ impl MetalKernelInfo {
         })
     }
 
+    pub fn has_groups_direct(&self) -> bool {
+        self.arguments.iter().any(|a| {
+            matches!(
+                a.argument_type(),
+                Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(_)))
+            )
+        })
+    }
+
+    pub fn has_groups_indirect(&self) -> bool {
+        self.arguments.iter().any(|a| {
+            matches!(
+                a.argument_type(),
+                Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect))
+            )
+        })
+    }
+
     pub fn has_threads(&self) -> bool {
         self.arguments.iter().any(|a| {
             matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_)))
         })
+    }
+
+    pub fn to_kernel(&self) -> Kernel {
+        let mut indirect_flag = false;
+
+        Kernel {
+            name: self.name.clone(),
+            parameters: self
+                .variants
+                .as_ref()
+                .map(|v| v.iter().map(|p| p.to_parameter()).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .chain(self.arguments.iter().filter_map(|a| a.to_parameter()))
+                .collect(),
+            arguments: self
+                .arguments
+                .iter()
+                .filter_map(|a| match a.argument_type() {
+                    Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Buffer,
+                    }),
+                    Ok(MetalArgumentType::Groups(
+                        MetalGroupsType::Indirect,
+                    )) if !indirect_flag => {
+                        indirect_flag = true;
+                        Some(KernelArgument {
+                            name: "__dsl_indirect_dispatch_buffer".into(),
+                            ty: KernelArgumentType::Buffer,
+                        })
+                    },
+                    Ok(MetalArgumentType::Constant((
+                        ty,
+                        MetalConstantType::Scalar,
+                    ))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Scalar(ty),
+                    }),
+                    Ok(MetalArgumentType::Constant((
+                        ty,
+                        MetalConstantType::Array,
+                    ))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        ty: KernelArgumentType::Constant(ty),
+                    }),
+                    _ => None,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -284,26 +432,36 @@ impl MetalKernelInfo {
         node: MetalAstNode,
         source: &str,
     ) -> anyhow::Result<Option<Self>> {
-        let (is_template, node) =
+        let (is_template, template_parameters, node) =
             if matches!(node.kind, MetalAstKind::FunctionTemplateDecl) {
-                let node = node
-                .inner
-                .into_iter()
-                .find(|c| {
-                    matches!(
-                        c.kind,
+                let mut template_parameters = Vec::new();
+                let mut function_node = None;
+
+                for child in node.inner {
+                    match child.kind {
+                        MetalAstKind::TemplateTypeParmDecl {
+                            name,
+                        } => {
+                            let name = name
+                                .context("template parameter missing name")?;
+                            template_parameters.push(name);
+                        },
                         MetalAstKind::FunctionDecl {
-                            name: _
-                        }
-                    )
-                })
-                .context(
+                            name: _,
+                        } => {
+                            function_node = Some(child);
+                        },
+                        _ => (),
+                    }
+                }
+
+                let node = function_node.context(
                     "unexpected kind of root node: template without function",
                 )?;
 
-                (true, node)
+                (true, template_parameters, node)
             } else if matches!(node.kind, MetalAstKind::FunctionDecl { .. }) {
-                (false, node)
+                (false, Vec::new(), node)
             } else {
                 return Ok(None);
             };
@@ -345,34 +503,58 @@ impl MetalKernelInfo {
                     bail!("zero length annotation");
                 }
             })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
-        if !annotations.contains_key("dsl.kernel") {
+        if !annotations.iter().any(|(k, _)| k.as_ref() == "dsl.kernel") {
             return Ok(None);
         }
 
-        if annotations.contains_key("dsl.specialize") != is_template {
-            bail!("mismatch between AST nodes and specialization annotation");
+        let variants: Box<[MetalTypeParameter]> = annotations
+            .iter()
+            .filter(|(k, _)| k.as_ref() == "dsl.variants")
+            .map(|(_, v)| {
+                let [typename, variant_values] = v.as_ref() else {
+                    bail!("malformed dsl.variants annotation");
+                };
+
+                let variants = variant_values
+                    .split(',')
+                    .map(|v| v.trim().into())
+                    .collect::<Box<[Box<str>]>>();
+
+                Ok(MetalTypeParameter {
+                    name: typename.clone(),
+                    variants,
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        if variants.is_empty() != !is_template {
+            bail!("mismatch between AST nodes and variants annotation");
         }
 
-        let specializations = if is_template {
-            let specialize = annotations
-                .get("dsl.specialize")
-                .context("missing dsl.specialize annotation")?;
-            let [specialization_typename, specialization_variants] =
-                specialize.as_ref()
-            else {
-                bail!("malformed dsl.specialize annotation");
-            };
+        if is_template {
+            let template_names = template_parameters
+                .iter()
+                .map(|name| name.as_ref())
+                .collect::<Vec<_>>();
+            let variant_names = variants
+                .iter()
+                .map(|variant| variant.name.as_ref())
+                .collect::<Vec<_>>();
+            if template_names != variant_names {
+                bail!(
+                    "template parameters {:?} do not match dsl.variants order {:?}",
+                    template_names,
+                    variant_names
+                );
+            }
+        }
 
-            let specialization_variants = specialization_variants
-                .split(',')
-                .map(|v| v.trim().into())
-                .collect::<Box<[Box<str>]>>();
-
-            Some((specialization_typename.clone(), specialization_variants))
-        } else {
+        let variants = if variants.is_empty() {
             None
+        } else {
+            Some(variants)
         };
 
         let arguments = arg_nodes
@@ -383,7 +565,7 @@ impl MetalKernelInfo {
         Ok(Some(MetalKernelInfo {
             name,
             arguments,
-            specializations,
+            variants,
         }))
     }
 }

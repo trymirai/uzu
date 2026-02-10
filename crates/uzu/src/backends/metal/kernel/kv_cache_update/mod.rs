@@ -6,10 +6,13 @@ use super::{
     super::MTLError, KernelDataType, MTLContext,
     metal_extensions::ComputeEncoderDispatch,
 };
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDeviceExt,
-    MTLResourceOptions, MTLSize, ProtocolObject, Retained,
+use crate::backends::{
+    common::Context,
+    metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+        ProtocolObject, Retained,
+    },
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -65,12 +68,8 @@ impl KVCacheUpdate {
             .map_err(|e| KVCacheUpdateError::MetalError(e))?;
 
         let indices_buffer = context
-            .device
-            .new_buffer(
-                max_sequence_length * size_of::<Swap>(),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .ok_or(KVCacheUpdateError::BufferCreationFailed)?;
+            .create_buffer(max_sequence_length * size_of::<Swap>())
+            .map_err(|_| KVCacheUpdateError::BufferCreationFailed)?;
 
         Ok(Self {
             pipeline_state,

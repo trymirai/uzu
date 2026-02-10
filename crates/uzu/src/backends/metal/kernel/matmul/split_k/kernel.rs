@@ -1,19 +1,31 @@
 use std::collections::HashMap;
 
-use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
+use super::{
+    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
+};
 use crate::{
     DataType,
-    backends::metal::{
-        ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLDeviceExt, MTLError, MTLResourceOptions, ProtocolObject, Retained,
-        kernel::matmul::common::{MatmulArguments, transpose_configuration},
+    backends::{
+        common::Context,
+        metal::{
+            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLContext, MTLError, ProtocolObject,
+            Retained,
+            kernel::matmul::common::{
+                MatmulArguments, transpose_configuration,
+            },
+        },
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    accum_pipeline: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    partial_pipelines: HashMap<
+        PipelineConfiguration,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
+    accum_pipeline:
+        Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
@@ -158,7 +170,8 @@ impl Kernel {
         &mut self,
         mtl: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -170,7 +183,8 @@ impl Kernel {
     fn get_accum_pipeline(
         &mut self,
         mtl: &MTLContext,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -257,11 +271,7 @@ impl Kernel {
             return;
         }
         self.accumulator_buffer = Some(
-            mtl.device
-                .new_buffer(
-                    required_bytes as usize,
-                    MTLResourceOptions::STORAGE_MODE_PRIVATE,
-                )
+            mtl.create_buffer(required_bytes)
                 .expect("Failed to create accumulator buffer"),
         );
         self.accumulator_buffer_bytes = required_bytes;

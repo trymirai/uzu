@@ -1,9 +1,8 @@
-
-
 #pragma once
 
 #include <metal_stdlib>
 #include "type_traits.h"
+#include "../../../../definitions.metal"
 
 #pragma METAL internals : enable
 
@@ -104,7 +103,7 @@ void dispatch_bool(bool v, F f) {
 
 template <int start, int stop, int step, typename F>
 constexpr void const_for_loop(F f) {
-  if constexpr (start < stop) {
+  IF_CONSTEXPR(start < stop) {
     constexpr auto idx = Int<start>{};
     f(idx);
     const_for_loop<start + step, stop, step, F>(f);

@@ -1,10 +1,11 @@
 use std::{mem, ptr::NonNull};
 
+use crate::backends::metal::Metal;
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoderExt,
-    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
+    MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
     ProtocolObject,
     error::MTLError,
     forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
@@ -38,7 +39,8 @@ pub struct ScalePadNormalizeImage {
 impl ScalePadNormalizeImage {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "scalePadNormalizeImage";
-        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state =
+            context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -49,7 +51,7 @@ impl ScalePadNormalizeImage {
         input_image: &Image,
         output_image: &Image,
         image_params_ptr: *const std::ffi::c_void,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -78,11 +80,11 @@ impl ScalePadNormalizeImage {
     }
 }
 
-impl EncodableBlock for ScalePadNormalizeImage {
+impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters,
     ) {
         let _ = command_buffer;
@@ -112,7 +114,8 @@ pub struct ExtractImagePatches {
 impl ExtractImagePatches {
     pub fn new(context: &MTLContext) -> Result<Self, MTLError> {
         let function_name = "extractImagePatches";
-        let pipeline_state = context.compute_pipeline_state(&function_name, None)?;
+        let pipeline_state =
+            context.compute_pipeline_state(&function_name, None)?;
         Ok(Self {
             pipeline_state,
         })
@@ -121,9 +124,9 @@ impl ExtractImagePatches {
     pub fn encode_internal(
         &self,
         padded_normalized_image: &Image,
-        output_buffer_mtl: &ProtocolObject<dyn MTLBuffer>,
+        output_buffer_mtl: &Retained<ProtocolObject<dyn MTLBuffer>>,
         patch_params_ptr: *const std::ffi::c_void,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()

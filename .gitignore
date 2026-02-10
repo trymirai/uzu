@@ -1,6 +1,7 @@
 *.pdb
 **/mutants.out*/
 *.DS_Store
+.idea/
 
 # Metal traces
 *.gputrace

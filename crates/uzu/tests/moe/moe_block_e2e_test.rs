@@ -1,16 +1,19 @@
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    MTLContext,
-    kernel::{
-        KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-        MoeCountsOffsetsFusedKernel, MoeFinalizeArguments, MoeFinalizeKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments,
-        moe::{
-            MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
-            MoeGatherArguments, MoeGatherKernel, MoeRouterTopKArguments,
-            MoeRouterTopKKernel,
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::backends::{
+    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+    metal::{
+        MTLContext,
+        kernel::{
+            KernelDataType, MoeBlockBasesArguments, MoeScatterKernels,
+            MoeScatterWithMapArguments,
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+            moe::{
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel,
+                MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+                MoeRouterTopKKernel,
+            },
         },
     },
 };
@@ -405,21 +408,19 @@ fn run_moe_parity_test_internal(
         .expect("router+topk encode");
 
     let fused_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    fused_kernel
-        .encode(
-            &cb,
-            MoeCountsOffsetsFusedArguments {
-                topk_ids_buffer: &topk_ids_buf,
-                offsets_buffer: &offsets_buf,
-                sum_k_buffer: &sumk_buf,
-                partials_buffer: &partials_buf,
-                t,
-                e,
-                k,
-            },
-        )
-        .expect("fused encode");
+        MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let encoder = cb.new_compute_command_encoder().expect("encoder");
+    fused_kernel.encode(
+        &topk_ids_buf,
+        &offsets_buf,
+        &sumk_buf,
+        &partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &encoder,
+    );
+    encoder.end_encoding();
 
     let scatter = MoeScatterKernels::new(&ctx).expect("scatter");
     scatter
@@ -460,22 +461,20 @@ fn run_moe_parity_test_internal(
         )
         .expect("scatter");
 
-    let gather = MoeGatherKernel::new(&ctx).expect("gather");
-    gather
-        .encode(
-            &cb,
-            KernelDataType::BFloat16,
-            MoeGatherArguments {
-                x_buffer: &x_buf,
-                bucketed_ids_buffer: &bucketed_ids_buf,
-                x_perm_buffer: &x_perm_buf,
-                sumk_buffer: &sumk_buf,
-                t,
-                k,
-                d_model,
-            },
-        )
-        .expect("gather");
+    let gather = MoeGatherKernels::new(&ctx).expect("gather");
+    gather.encode(
+        &cb,
+        KernelDataType::BFloat16,
+        &MoeGatherArguments {
+            x_buffer: &x_buf,
+            bucketed_ids_buffer: &bucketed_ids_buf,
+            x_perm_buffer: &x_perm_buf,
+            sumk_buffer: &sumk_buf,
+            t,
+            k,
+            d_model,
+        },
+    );
 
     // Additional buffers for 2-pass
     let total_rows = t * k;
@@ -518,22 +517,21 @@ fn run_moe_parity_test_internal(
         )
         .expect("experts encode");
 
-    let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize");
-    finalize
-        .encode(
-            &cb,
-            MoeFinalizeArguments {
-                tok2row_buffer: &tok2row_buf,
-                probs_buffer: &topk_probs_buf,
-                y_partial_buffer: &y_partial_buf,
-                y_out_buffer: &y_out_buf,
-                t,
-                d_model,
-                k,
-            },
-            KernelDataType::BFloat16,
-        )
-        .expect("finalize");
+    let finalize =
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
+            .expect("finalize");
+    let encoder = cb.new_compute_command_encoder().expect("encoder");
+    finalize.encode(
+        &tok2row_buf,
+        &topk_probs_buf,
+        &y_partial_buf,
+        &y_out_buf,
+        t as u32,
+        d_model as u32,
+        k as u32,
+        &encoder,
+    );
+    encoder.end_encoding();
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
     cb.commit();

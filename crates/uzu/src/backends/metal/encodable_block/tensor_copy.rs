@@ -1,21 +1,22 @@
 //! Tensor copy encodable.
 
-use crate::backends::metal::{ProtocolObject,
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-};
-
-use super::{EncodableBlock, EncodingParameters};
-use crate::{
-    Array,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::TensorCopyKernel,
+use crate::backends::{
+    common::kernel::TensorCopyKernel,
+    metal::{
+        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+        ProtocolObject, Retained,
     },
 };
 
+use super::{EncodableBlock, EncodingParameters, Metal};
+use crate::backends::metal::{
+    MTLContext, MTLError,
+    forward_pass::{ArrayId, ForwardPassState},
+    kernel::dsl::TensorCopyMetalKernel,
+};
+
 pub struct TensorCopy {
-    kernel: TensorCopyKernel,
+    kernel: TensorCopyMetalKernel,
     argument_arrays: Box<[ArrayId]>,
 }
 
@@ -25,7 +26,7 @@ impl TensorCopy {
         data_type: crate::backends::metal::KernelDataType,
         argument_arrays: Box<[ArrayId]>,
     ) -> Result<Self, MTLError> {
-        let kernel = TensorCopyKernel::new(context, data_type)?;
+        let kernel = TensorCopyMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
             argument_arrays,
@@ -33,14 +34,15 @@ impl TensorCopy {
     }
 }
 
-impl EncodableBlock for TensorCopy {
+impl EncodableBlock<Metal> for TensorCopy {
     fn encode(
         &self,
         state: &mut ForwardPassState,
-        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters,
     ) {
-        let encoder = command_buffer.new_compute_command_encoder()
+        let encoder = command_buffer
+            .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");
         self.encode_with_shared_encoder(state, &encoder, parameters);
         encoder.end_encoding();
@@ -66,15 +68,15 @@ impl EncodableBlock for TensorCopy {
 
         let length = arrays[0].borrow().num_elements();
 
-        let mut source_array = arrays[0].borrow_mut();
-        let mut destination_array = arrays[1].borrow_mut();
-        let source_mtl_buffer = unsafe { source_array.mtl_buffer() };
-        let destination_mtl_buffer = unsafe { destination_array.mtl_buffer() };
+        let source_array = arrays[0].borrow_mut();
+        let destination_array = arrays[1].borrow_mut();
+        let source_mtl_buffer = source_array.buffer();
+        let destination_mtl_buffer = destination_array.buffer();
 
-        self.kernel.encode_with_encoder(
+        self.kernel.encode(
             &source_mtl_buffer,
             &destination_mtl_buffer,
-            length,
+            length as u32,
             encoder,
         );
     }

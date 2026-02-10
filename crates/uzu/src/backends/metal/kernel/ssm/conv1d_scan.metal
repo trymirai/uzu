@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
+#include "ssm_common.h"
 
 using namespace metal;
 
@@ -11,14 +12,6 @@ constant int ACTIVATION_SILU = 1;
 constant int ACTIVATION_GELU = 2;
 
 constant uint CONV_SCAN_THREADS = 32u;
-
-template <typename T>
-inline T apply_silu(T x) {
-  float xf = float(x);
-  float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
-  float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
-  return static_cast<T>(out);
-}
 
 template <typename T>
 inline T apply_gelu(T x) {
@@ -76,11 +69,12 @@ template <typename T>
 void conv1d_scan_kernel(
     device const T* padded [[buffer(0)]], // (prefix+suffix, channels)
     device const T* w [[buffer(1)]],      // (channels, kernel)
-    device const T* b [[buffer(2), function_constant(has_bias)]], // optional (channels)
-    device T* x_out [[buffer(3)]],        // (suffix, inner_dim)
-    device T* b_out [[buffer(4)]],        // (suffix, proj_dim)
-    device T* c_out [[buffer(5)]],        // (suffix, proj_dim)
-    device T* state_out [[buffer(6)]],    // (channels, kernel-1)
+    device const T* b
+    [[buffer(2), function_constant(has_bias)]], // optional (channels)
+    device T* x_out [[buffer(3)]],              // (suffix, inner_dim)
+    device T* b_out [[buffer(4)]],              // (suffix, proj_dim)
+    device T* c_out [[buffer(5)]],              // (suffix, proj_dim)
+    device T* state_out [[buffer(6)]],          // (channels, kernel-1)
     constant const size_t& suffix_len [[buffer(7)]],
     constant const int& kernel_size [[buffer(8)]],
     constant const size_t& row_stride [[buffer(9)]],

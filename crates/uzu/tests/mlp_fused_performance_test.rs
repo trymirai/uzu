@@ -5,33 +5,30 @@ use std::time::{Duration, Instant};
 
 use half::f16;
 use metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDeviceExt, MTLResourceOptions,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
+    MTLResourceOptions,
 };
 use objc2::rc::autoreleasepool;
 use uzu::{
     DataType,
-    backends::metal::{
-        MTLContext,
-        kernel::{
-            matmul::{
-                MatmulArguments, MatmulKernel,
-                determine_kernel_variant as determine_matmul_variant,
-            },
-            mlp::MlpActivationType,
-            mlp_fused::{
-                MlpFusedArguments, MlpFusedKernel,
-                determine_kernel_variant as determine_mlp_fused_variant,
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext,
+            kernel::{
+                matmul::{
+                    MatmulArguments, MatmulKernel,
+                    determine_kernel_variant as determine_matmul_variant,
+                },
+                mlp::MlpActivationType,
+                mlp_fused::{
+                    MlpFusedArguments, MlpFusedKernel,
+                    determine_kernel_variant as determine_mlp_fused_variant,
+                },
             },
         },
     },
 };
-
-fn create_test_context() -> Option<MTLContext> {
-    let device = <dyn MTLDevice>::system_default()?;
-    let command_queue = device.new_command_queue()?;
-    MTLContext::new(device, command_queue).ok()
-}
 
 struct BenchmarkResult {
     fused_time_microseconds: f64,
@@ -77,9 +74,7 @@ fn benchmark_gemv_fused(
     let weights_buffer = context
         .device
         .new_buffer(
-            2 * hidden_dimension
-                * input_dimension
-                * std::mem::size_of::<f16>(),
+            2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -241,9 +236,7 @@ fn benchmark_gemm_fused(
     let weights_buffer = context
         .device
         .new_buffer(
-            2 * hidden_dimension
-                * input_dimension
-                * std::mem::size_of::<f16>(),
+            2 * hidden_dimension * input_dimension * std::mem::size_of::<f16>(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create buffer");
@@ -419,7 +412,7 @@ const BATCH_SIZES: &[usize] = &[1, 8, 16, 32, 64, 128, 256, 512];
 #[ignore] // Run with: cargo test --package uzu --test mlp_fused_performance_test -- --ignored --nocapture
 fn mlp_fused_performance_benchmark() {
     autoreleasepool(|_| {
-        let context = match create_test_context() {
+        let context = match MTLContext::new().ok() {
             Some(context) => context,
             None => {
                 eprintln!("No Metal device available");

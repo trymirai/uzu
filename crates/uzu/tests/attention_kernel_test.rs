@@ -6,17 +6,20 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDeviceExt,
-    MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDeviceExt, MTLResourceOptions,
 };
 use ndarray::{Array3, Array4, s};
-use uzu::backends::metal::{
-    KernelDataType, MTLContext, ProtocolObject, Retained,
-    kernel::attention::{
-        AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
-        AttentionSinglePassArguments, AttentionTwoPassArguments,
+use uzu::backends::{
+    common::Context,
+    metal::{
+        KernelDataType, MTLContext, ProtocolObject, Retained,
+        kernel::attention::{
+            AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
+            AttentionSinglePassArguments, AttentionTwoPassArguments,
+        },
+        metal_extensions::CommandBufferTimingExt,
     },
-    metal_extensions::CommandBufferTimingExt,
 };
 
 fn reference_attention(
@@ -41,7 +44,8 @@ fn reference_attention(
                 for repeat in 0..n_repeats {
                     let q_head = kv_head * n_repeats + repeat;
 
-                    let q = scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
+                    let q =
+                        scaled_queries.slice(s![b, q_head, .., ..]).to_owned(); // [L, D]
                     let k = keys.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
                     let v = values.slice(s![b, kv_head, .., ..]).to_owned(); // [L_kv, D]
 
@@ -49,8 +53,13 @@ fn reference_attention(
                     let mut scores = q.dot(&k.t());
 
                     if let Some(mask_data) = mask {
-                        let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                        scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                        let mask_slice = mask_data.slice(s![
+                            b,
+                            ..,
+                            ..kv_seq_len.min(seq_len)
+                        ]);
+                        scores
+                            .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
                             .zip_mut_with(&mask_slice, |s, &m| *s += m);
                     }
 
@@ -75,7 +84,9 @@ fn reference_attention(
 
                     // Efficient matrix multiplication: output = scores @ V
                     let head_output = scores.dot(&v);
-                    output.slice_mut(s![b, q_head, .., ..]).assign(&head_output);
+                    output
+                        .slice_mut(s![b, q_head, .., ..])
+                        .assign(&head_output);
                 }
             }
         } else {
@@ -88,8 +99,10 @@ fn reference_attention(
                 let mut scores = q.dot(&k.t());
 
                 if let Some(mask_data) = mask {
-                    let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                    scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)])
+                    let mask_slice =
+                        mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
+                    scores
+                        .slice_mut(s![.., ..kv_seq_len.min(seq_len)])
                         .zip_mut_with(&mask_slice, |s, &m| *s += m);
                 }
 
@@ -130,7 +143,7 @@ fn create_test_data(
     head_dim: usize,
     seed: u64,
 ) -> (Array4<f32>, Array4<f32>, Array4<f32>, Array3<f32>) {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let mut rng = StdRng::seed_from_u64(seed);
 
@@ -646,16 +659,7 @@ fn compare_results(
 #[test]
 #[ignore]
 fn test_single_pass_attention_basic() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -734,16 +738,7 @@ fn test_single_pass_attention_basic() {
 #[test]
 #[ignore]
 fn test_gemm_attention_basic() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -787,16 +782,7 @@ fn test_gemm_attention_basic() {
 #[test]
 #[ignore]
 fn test_gemm_attention_f32_head_dim_128() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -840,16 +826,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 #[test]
 #[ignore]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -941,16 +918,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_mask() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -1020,16 +988,7 @@ fn test_single_pass_attention_with_mask() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_sinks() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -1102,16 +1061,7 @@ fn test_single_pass_attention_with_sinks() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_sinks_long_sequence() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -1186,16 +1136,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_gqa() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -1366,16 +1307,7 @@ fn run_two_pass_attention(
 #[test]
 #[ignore]
 fn test_two_pass_attention() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,
@@ -1439,16 +1371,7 @@ fn test_two_pass_attention() {
 #[test]
 #[ignore]
 fn test_two_pass_attention_gqa() {
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,
@@ -1514,16 +1437,7 @@ fn test_two_pass_attention_gqa() {
 fn perf_two_pass_attention() {
     use std::time::Instant;
 
-    let device =
-        <dyn MTLDevice>::system_default().expect("No Metal device found");
-    let command_queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    let context = match MTLContext::new(device, command_queue) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            panic!("Failed to create MTLContext: {:?}", e);
-        },
-    };
+    let context = MTLContext::new().expect("Failed to create MTLContext");
 
     let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
         Ok(k) => k,

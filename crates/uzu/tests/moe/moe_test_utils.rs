@@ -5,17 +5,19 @@
 
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use std::rc::Rc;
+
 use bytemuck;
 use half::bf16;
-use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
-use uzu::backends::metal::{MTLBuffer, MTLContext, ProtocolObject, Retained};
+use metal::{MTLDeviceExt, MTLResourceOptions};
+use uzu::backends::{
+    common::Context,
+    metal::{MTLBuffer, MTLContext, ProtocolObject, Retained},
+};
 
 /// Create Metal context for testing
-pub fn create_ctx() -> MTLContext {
-    let device = <dyn MTLDevice>::system_default().expect("No Metal device");
-    let queue =
-        device.new_command_queue().expect("Failed to create command queue");
-    MTLContext::new(device, queue).expect("Failed to create MTLContext")
+pub fn create_ctx() -> Rc<MTLContext> {
+    MTLContext::new().expect("Failed to create MTLContext")
 }
 
 /// Helper to allocate buffer with data
@@ -25,9 +27,7 @@ pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     if data.is_empty() {
         // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
-        ctx.device
-            .new_buffer(1, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create empty buffer")
+        ctx.create_buffer(1).expect("Failed to create empty buffer")
     } else {
         ctx.device
             .new_buffer_with_data(
@@ -43,12 +43,7 @@ pub fn alloc_buffer<T>(
     ctx: &MTLContext,
     count: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    ctx.device
-        .new_buffer(
-            count * std::mem::size_of::<T>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
-        .expect("Failed to create buffer")
+    ctx.create_buffer(count * size_of::<T>()).expect("Failed to create buffer")
 }
 
 /// Compare two bf16 slices with tolerance

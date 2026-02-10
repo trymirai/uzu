@@ -3,9 +3,9 @@ use std::{collections::HashMap, ptr::NonNull};
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
-        metal_extensions::ComputeEncoderSetValue,
+        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLFunctionConstantValues, MTLSize,
+        ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
     },
     config::QuantizationMode,
 };
@@ -37,7 +37,10 @@ pub enum QuantizedMatmulError {
 }
 
 pub struct QuantizedMatmulKernel {
-    pipelines: HashMap<KernelKind, (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64)>,
+    pipelines: HashMap<
+        KernelKind,
+        (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64),
+    >,
     output_dim: usize,
     weights_transposed: bool,
 }

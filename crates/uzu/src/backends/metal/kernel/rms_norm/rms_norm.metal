@@ -259,8 +259,14 @@ FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
 // Strategy:
 // - One SIMD-group (32 threads) processes one head.
 // - A threadgroup processes multiple heads for a given token (batch).
-// - No threadgroup-wide reductions/barriers: we only use simd_sum within a SIMD-group.
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT, bool FULL_LAYER>
+// - No threadgroup-wide reductions/barriers: we only use simd_sum within a
+// SIMD-group.
+template <
+    typename InputT,
+    typename ScaleT,
+    typename OutputT,
+    typename AccumT,
+    bool FULL_LAYER>
 static inline void qk_norm_head_core(
     const device InputT* input_data,
     const device ScaleT* scales_data,
@@ -281,8 +287,7 @@ static inline void qk_norm_head_core(
     AccumT vals[GRAIN_SIZE];
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] =
-          (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
     }
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       partial_sum += vals[j] * vals[j];
@@ -303,8 +308,7 @@ static inline void qk_norm_head_core(
     AccumT vals[GRAIN_SIZE];
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] =
-          (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
     }
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
@@ -374,7 +378,7 @@ static inline void qk_norm_head_core(
     if (logical_head_idx >= total_heads_in_buffer)                             \
       return;                                                                  \
                                                                                \
-    const ulong slice_offset =                                                  \
+    const ulong slice_offset =                                                 \
         (ulong)batch_idx * (ulong)total_heads_in_buffer * (ulong)head_dim +    \
         (ulong)logical_head_idx * (ulong)head_dim;                             \
                                                                                \

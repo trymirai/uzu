@@ -4196,6 +4196,20 @@ qmm_transposed<bfloat, 128, 4, true, 128, 32, 64>(
 /// MLP Fused QMV - Quantized Matrix-Vector with Fused Activation
 ///////////////////////////////////////////////////////////////////////////////
 
+template <typename U>
+static inline U extract_zp(
+    const device uint8_t* zps,
+    int row_offset,
+    int zp_stride,
+    int bits,
+    bool high_nibble
+) {
+  uint8_t zp_byte = zps[row_offset * zp_stride];
+  return bits == 4
+             ? static_cast<U>(high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F))
+             : static_cast<U>(zp_byte);
+};
+
 // MLP fused QMV kernel for decode path (M=1).
 // Computes paired up and gate projections, then applies: out = up *
 // activation(gate) Weight layout: [up_weights (hidden_dim rows), gate_weights
@@ -4381,26 +4395,15 @@ void qmv_mlp_fused_impl(
             sum
         );
       } else {
-        auto extract_zp = [&](const device uint8_t* zps, int row_offset) -> U {
-          uint8_t zp_byte = zps[row_offset * zp_stride];
-          if (bits == 4) {
-            return static_cast<U>(
-                high_nibble ? (zp_byte >> 4) : (zp_byte & 0x0F)
-            );
-          } else {
-            return static_cast<U>(zp_byte);
-          }
-        };
+        U zp_up0 = extract_zp<U>(zps_up, 0, zp_stride, bits, high_nibble);
+        U zp_up1 = extract_zp<U>(zps_up, 1, zp_stride, bits, high_nibble);
+        U zp_up2 = extract_zp<U>(zps_up, 2, zp_stride, bits, high_nibble);
+        U zp_up3 = extract_zp<U>(zps_up, 3, zp_stride, bits, high_nibble);
 
-        U zp_up0 = extract_zp(zps_up, 0);
-        U zp_up1 = extract_zp(zps_up, 1);
-        U zp_up2 = extract_zp(zps_up, 2);
-        U zp_up3 = extract_zp(zps_up, 3);
-
-        U zp_gate0 = extract_zp(zps_gate, 0);
-        U zp_gate1 = extract_zp(zps_gate, 1);
-        U zp_gate2 = extract_zp(zps_gate, 2);
-        U zp_gate3 = extract_zp(zps_gate, 3);
+        U zp_gate0 = extract_zp<U>(zps_gate, 0, zp_stride, bits, high_nibble);
+        U zp_gate1 = extract_zp<U>(zps_gate, 1, zp_stride, bits, high_nibble);
+        U zp_gate2 = extract_zp<U>(zps_gate, 2, zp_stride, bits, high_nibble);
+        U zp_gate3 = extract_zp<U>(zps_gate, 3, zp_stride, bits, high_nibble);
 
         result_up[0] += qdot_zero_point<U, values_per_thread, bits>(
             wl_up0,

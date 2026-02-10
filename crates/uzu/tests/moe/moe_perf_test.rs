@@ -1,16 +1,21 @@
-use metal::{MTLCommandBuffer, MTLCommandQueue};
 use std::time::Instant;
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType,
-    kernel::moe::{
-        MoeCountsOffsetsFusedArguments, MoeCountsOffsetsFusedKernel,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-        MoeFinalizeArguments, MoeFinalizeKernel, MoeGatherArguments,
-        MoeGatherKernel, MoeRouterTopKArguments, MoeRouterTopKKernel,
-        MoeScatterKernels, MoeScatterWithMapArguments,
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::backends::{
+    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+    metal::{
+        KernelDataType,
+        kernel::{
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+            moe::{
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
+                MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+                MoeRouterTopKKernel, MoeScatterKernels,
+                MoeScatterWithMapArguments,
+            },
+        },
     },
 };
 
@@ -135,7 +140,10 @@ fn test_moe_e2e_decode_perf() {
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk
                 .encode(
                     &cb,
@@ -208,7 +216,10 @@ fn test_moe_e2e_prefill_perf() {
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk
                 .encode(
                     &cb,
@@ -337,20 +348,25 @@ fn test_moe_pipeline_breakdown_decode() {
     let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
     // Create kernel structs (use production-validated encoding logic)
-    let counts_offsets_kernel =
-        MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
+    let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx)
+        .expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
-    let gather_kernel = MoeGatherKernel::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsTwoPassDecodeKernel::new(&ctx)
+    let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
+    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx)
         .expect("experts two-pass decode");
-    let finalize_kernel = MoeFinalizeKernel::new(&ctx).expect("finalize");
+    let finalize_kernel =
+        MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into())
+            .expect("finalize");
     let router_topk_fused_kernel =
         MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf =
         time_kernel("Router+TopK (FUSED)", 2, 5, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
             router_topk_fused_kernel
                 .encode(
                     &cb,
@@ -375,27 +391,31 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let counts_offsets_perf =
         time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            counts_offsets_kernel
-                .encode(
-                    &cb,
-                    MoeCountsOffsetsFusedArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        offsets_buffer: &offsets_buf,
-                        sum_k_buffer: &sumk_buf,
-                        partials_buffer: &partials_buf,
-                        t,
-                        e,
-                        k,
-                    },
-                )
-                .expect("counts+offsets fused");
+            let cb = ctx
+                .command_queue
+                .command_buffer()
+                .expect("Failed to create command buffer");
+            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            counts_offsets_kernel.encode(
+                &topk_ids_buf,
+                &offsets_buf,
+                &sumk_buf,
+                &partials_buf,
+                t as u32,
+                e as u32,
+                k as u32,
+                &encoder,
+            );
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
         });
 
     let scatter_perf = time_kernel("Scatter", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
         scatter_kernel
             .encode_block_bases(
                 &cb,
@@ -438,82 +458,84 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let gather_perf = time_kernel("Gather", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        gather_kernel
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeGatherArguments {
-                    x_buffer: &x_buf,
-                    bucketed_ids_buffer: &bucketed_ids_buf,
-                    x_perm_buffer: &x_perm_buf,
-                    sumk_buffer: &sumk_buf,
-                    t,
-                    k,
-                    d_model,
-                },
-            )
-            .expect("gather");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        gather_kernel.encode(
+            &cb,
+            KernelDataType::BFloat16,
+            &MoeGatherArguments {
+                x_buffer: &x_buf,
+                bucketed_ids_buffer: &bucketed_ids_buf,
+                x_perm_buffer: &x_perm_buf,
+                sumk_buffer: &sumk_buf,
+                t,
+                k,
+                d_model,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     });
 
     let experts_perf = time_kernel("Experts (MAIN COMPUTE)", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        experts_kernel
-            .encode(
-                &cb,
-                MoeExpertsTwoPassArguments {
-                    x_perm_buffer: &x_perm_buf,
-                    expert_offsets: &offsets_buf,
-                    row_expert_map: &row_expert_map_buf,
-                    hidden_buffer: &hidden_buf,
-                    output_buffer: &y_partial_buf,
-                    w13_all: &w13_buf,
-                    w2_all: &w2_buf,
-                    up_biases: &up_biases_buf,
-                    down_biases: &down_biases_buf,
-                    tile_counts: &tile_counts_buf,
-                    tile_offsets: &tile_offsets_buf,
-                    tile_map: &tile_map_buf,
-                    total_tiles: &total_tiles_buf,
-                    dispatch_args: &dispatch_args_buf,
-                    total_rows: sum_k,
-                    d_model,
-                    d_ff,
-                    e,
-                    num_tiles_k: num_tiles_k as u32,
-                    gating_code: 2, // SILU
-                    gate_clip_min: f32::NEG_INFINITY,
-                    gate_clip_max: 20.0,
-                    up_clip_min: -19.0,
-                    up_clip_max: 21.0,
-                    silu_alpha: 1.702,
-                    data_type: KernelDataType::BFloat16,
-                },
-            )
-            .expect("experts");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        experts_kernel.encode(
+            &cb,
+            &MoeExpertsTwoPassArguments {
+                x_perm_buffer: &x_perm_buf,
+                expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                output_buffer: &y_partial_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                tile_counts: &tile_counts_buf,
+                tile_offsets: &tile_offsets_buf,
+                tile_map: &tile_map_buf,
+                total_tiles: &total_tiles_buf,
+                dispatch_args: &dispatch_args_buf,
+                total_rows: sum_k,
+                d_model,
+                d_ff,
+                e,
+                num_tiles_k: num_tiles_k as u32,
+                gating_code: 2, // SILU
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: 20.0,
+                up_clip_min: -19.0,
+                up_clip_max: 21.0,
+                silu_alpha: 1.702,
+                data_type: KernelDataType::BFloat16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     });
 
     let finalize_perf = time_kernel("Finalize", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        finalize_kernel
-            .encode(
-                &cb,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &topk_probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &y_out_buf,
-                    t,
-                    d_model,
-                    k,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("finalize");
+        let cb = ctx
+            .command_queue
+            .command_buffer()
+            .expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        finalize_kernel.encode(
+            &tok2row_buf,
+            &topk_probs_buf,
+            &y_partial_buf,
+            &y_out_buf,
+            t as u32,
+            d_model as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
     });

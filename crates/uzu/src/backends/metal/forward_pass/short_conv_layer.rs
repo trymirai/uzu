@@ -3,7 +3,6 @@ use std::cell::Cell;
 use bytemuck::fill_zeroes;
 
 use super::kv_cache_layer::ArrayCell;
-use crate::device::array::Array;
 
 #[derive(Debug)]
 pub struct ShortConvLayer {
@@ -24,11 +23,11 @@ impl ShortConvLayer {
     pub fn zero(&self) {
         {
             let mut conv = self.conv_state.borrow_mut();
-            fill_zeroes(conv.buffer_mut());
+            fill_zeroes(conv.as_bytes_mut());
         }
         {
             let mut suffix = self.suffix_state.borrow_mut();
-            fill_zeroes(suffix.buffer_mut());
+            fill_zeroes(suffix.as_bytes_mut());
         }
         self.clear_suffix_state_valid_range();
     }
@@ -102,8 +101,8 @@ impl ShortConvLayer {
         let src_start = commit_index.saturating_mul(bytes_per_token);
         let src_end = src_start.saturating_add(bytes_per_token);
 
-        let src = &suffix.buffer()[src_start..src_end];
-        let dst = conv.buffer_mut();
+        let src = &suffix.as_bytes()[src_start..src_end];
+        let dst = conv.as_bytes_mut();
         dst.copy_from_slice(src);
     }
 }

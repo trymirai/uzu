@@ -43,7 +43,6 @@ impl DeviceFeatures for ProtocolObject<dyn MTLDevice> {
                     self.supports_feature_set(MTLFeatureSet::iOS_GPUFamily4_v1)
                 }
                 #[cfg(target_os = "macos")]
-                #[allow(deprecated)]
                 {
                     self.supports_feature_set(
                         MTLFeatureSet::macOS_GPUFamily1_v3,

@@ -7,8 +7,9 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLError, ProtocolObject, Retained, kernel::matmul::common::MatmulArguments,
+        ComputeEncoderSetValue, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLError, ProtocolObject,
+        Retained, kernel::matmul::common::MatmulArguments,
     },
 };
 
@@ -57,7 +58,10 @@ fn gemv_kernel_name(
 
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    pipelines: HashMap<
+        PipelineConfiguration,
+        Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    >,
 }
 
 impl Kernel {
@@ -112,7 +116,8 @@ impl Kernel {
         &mut self,
         context: &MTLContext,
         config: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>
+    {
         if !self.pipelines.contains_key(config) {
             let kernel_name = gemv_kernel_name(self.data_type, config)?;
             let pipeline =
