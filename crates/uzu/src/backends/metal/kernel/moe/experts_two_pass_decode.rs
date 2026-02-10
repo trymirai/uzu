@@ -22,7 +22,6 @@ use crate::{
                     MoePassARowMapArguments, MoePassATileBuildArguments,
                     MoePassATileCountsArguments, MoePassATileDispatchArguments,
                     MoePassATileKernels, MoePassATileScanArguments,
-                    dtype_index,
                 },
             },
         },
@@ -128,7 +127,8 @@ impl MoeExpertsTwoPassDecodeKernels {
 
         // pass a
         let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx = dtype_index(args.data_type);
+        let dtype_idx =
+            DTYPES.iter().position(|&t| t == args.data_type.into()).unwrap();
         let pass_a_encoder = command_buffer
             .new_compute_command_encoder()
             .expect("Failed to create compute command encoder");

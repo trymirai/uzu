@@ -32,11 +32,11 @@ pub use data_type::KernelDataType;
 pub use kv_cache_update::KVCacheUpdate;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
-    MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError,
-    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
-    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
-    MoeScatterError, MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeBlockBasesArguments, MoeExpertsTwoPassArguments,
+    MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernels,
+    MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments,
+    MoeRouterTopKKernel, MoeScatterArguments, MoeScatterKernels,
+    MoeScatterWithMapArguments,
 };
 pub use rms_norm::{
     QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormError,
