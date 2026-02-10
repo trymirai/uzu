@@ -51,24 +51,10 @@ pub fn bindgen(
                 MetalArgumentType::Specialize(t) => format_ident!("{t}"),
                 _ => unreachable!(),
             };
-            let mtl_type = match a.argument_type().unwrap() {
-                MetalArgumentType::Specialize(ref t) => match t.as_ref() {
-                    "bool" => quote! { Bool },
-                    "u32" => quote! { UInt },
-                    "i32" => quote! { Int },
-                    "f32" => quote! { Float },
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            };
             let idx = base_index.unwrap_or(0) + i;
             let arg_def = quote! { #arg_name: #rust_type };
             let setup = quote! {
-                function_constants.set_constant_value_type_at_index(
-                    std::ptr::NonNull::from(&#arg_name).cast(),
-                    MTLDataType::#mtl_type,
-                    #idx,
-                );
+                function_constants.set_value(&#arg_name, #idx);
             };
             (arg_def, setup)
         })

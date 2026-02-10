@@ -285,9 +285,9 @@ impl MetalCompiler {
         let tokens = quote! {
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
+                FunctionConstantValuesSetValue,
                 KernelDataType,
                 MTLContext,
-                MTLDataType,
                 MTLError,
                 MTLFunctionConstantValues,
                 MTLSize,
