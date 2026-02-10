@@ -1,16 +1,17 @@
 //! Attention kernel encodable.
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::{
     KernelDataType, MTLCommandBuffer, MTLCommandEncoder,
     MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
-    forward_pass::{ArrayId, ForwardPassState, HashMapId},
     kernel::attention::{
         AttentionError, AttentionGemmArguments, AttentionKernel,
         AttentionKernelVariant, AttentionSinglePassArguments,
         AttentionTwoPassArguments, KVCacheUpdateArguments,
     },
 };
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState, HashMapId};
 
 fn env_gemm_attention_enabled() -> bool {
     static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -62,9 +63,9 @@ impl Attention {
 impl EncodableBlock<Metal> for Attention {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -84,9 +85,9 @@ impl EncodableBlock<Metal> for Attention {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let (
             suffix_length,
@@ -317,7 +318,7 @@ impl EncodableBlock<Metal> for Attention {
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if use_gemm {
-                    let mtl = &**state.mtl_context();
+                    let mtl = state.mtl_context();
                     if let Err(e) = self.kernel.encode_gemm(
                         mtl,
                         compute_encoder,

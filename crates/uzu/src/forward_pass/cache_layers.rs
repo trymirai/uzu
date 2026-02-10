@@ -1,33 +1,30 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use super::{
-    super::{MTLContext, MetalArray},
-    kv_cache_layer::{
-        AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
-        KVSlice,
-    },
-    short_conv_layer::ShortConvLayer,
-    ssm_layer::SSMLayer,
-};
 use crate::{
-    array::ArrayContextExt,
-    backends::metal::{
-        MTLCommandBuffer, ProtocolObject, Retained, kernel::KVCacheUpdate,
-    },
+    array::{Array, ArrayContextExt},
+    backends::common::{Backend, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
-    forward_pass::model_shape::ModelShape,
+    forward_pass::{
+        kv_cache_layer::{
+            AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer,
+            KVCacheLayerState, KVSlice,
+        },
+        model_shape::ModelShape,
+        short_conv_layer::ShortConvLayer,
+        ssm_layer::SSMLayer,
+    },
 };
 
 #[derive(Debug)]
-pub enum CacheLayer {
-    Transformer(KVCacheLayer),
-    StateSpace(SSMLayer),
-    ShortConv(ShortConvLayer),
+pub enum CacheLayer<B: Backend> {
+    Transformer(KVCacheLayer<B>),
+    StateSpace(SSMLayer<B>),
+    ShortConv(ShortConvLayer<B>),
 }
 
 #[derive(Clone)]
-pub enum CacheLayerSlice {
-    Transformer(KVSlice),
+pub enum CacheLayerSlice<B: Backend> {
+    Transformer(KVSlice<B>),
     StateSpace,
     ShortConv,
 }
@@ -41,43 +38,43 @@ const ARRAY_STATE_SPACE_SSM_STATE_LABEL: &str =
 const ARRAY_SHORT_CONV_CONV_STATE_LABEL: &str =
     "cache_layers_short_conv_conv_state";
 
-impl CacheLayer {
-    pub fn as_transformer(&self) -> Option<&KVCacheLayer> {
+impl<B: Backend> CacheLayer<B> {
+    pub fn as_transformer(&self) -> Option<&KVCacheLayer<B>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_transformer_mut(&mut self) -> Option<&mut KVCacheLayer> {
+    pub fn as_transformer_mut(&mut self) -> Option<&mut KVCacheLayer<B>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_state_space(&self) -> Option<&SSMLayer> {
+    pub fn as_state_space(&self) -> Option<&SSMLayer<B>> {
         match self {
             CacheLayer::StateSpace(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_state_space_mut(&mut self) -> Option<&mut SSMLayer> {
+    pub fn as_state_space_mut(&mut self) -> Option<&mut SSMLayer<B>> {
         match self {
             CacheLayer::StateSpace(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_short_conv(&self) -> Option<&ShortConvLayer> {
+    pub fn as_short_conv(&self) -> Option<&ShortConvLayer<B>> {
         match self {
             CacheLayer::ShortConv(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer> {
+    pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer<B>> {
         match self {
             CacheLayer::ShortConv(layer) => Some(layer),
             _ => None,
@@ -85,20 +82,20 @@ impl CacheLayer {
     }
 }
 
-pub struct CacheLayers {
+pub struct CacheLayers<B: Backend> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[CacheLayer]>,
+    pub data: Box<[CacheLayer<B>]>,
 }
 
 #[derive(Clone)]
-pub struct CacheLayersSlice {
-    pub layers: Vec<CacheLayerSlice>,
+pub struct CacheLayersSlice<B: Backend> {
+    pub layers: Vec<CacheLayerSlice<B>>,
 }
 
-impl CacheLayers {
+impl<B: Backend> CacheLayers<B> {
     pub fn new(
-        context: &MTLContext,
+        context: &B::Context,
         model_shape: &ModelShape,
         max_prefix_length: usize,
         max_suffix_length: usize,
@@ -108,7 +105,7 @@ impl CacheLayers {
             .kv_cache_layer_shapes(max_prefix_length, max_suffix_length)
             .collect();
 
-        let data: Box<[CacheLayer]> = model_shape
+        let data: Box<[CacheLayer<B>]> = model_shape
             .layer_types()
             .iter()
             .enumerate()
@@ -257,7 +254,7 @@ impl CacheLayers {
 
     pub fn fill_attention_bias(
         &self,
-        dst: &mut HashMap<Option<usize>, MetalArray>,
+        dst: &mut HashMap<Option<usize>, Array<B>>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
@@ -278,10 +275,10 @@ impl CacheLayers {
 
     pub fn fill_attention_bias_scratch(
         &self,
-        dst: &HashMap<Option<usize>, RefCell<MetalArray>>,
+        dst: &HashMap<Option<usize>, RefCell<Array<B>>>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
-        _context: &MTLContext,
+        _context: &B::Context,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
@@ -301,8 +298,8 @@ impl CacheLayers {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        kv_cache_update: &KVCacheUpdate,
+        command_buffer: &B::CommandBuffer,
+        kv_cache_update: &KVCacheUpdate<B>,
     ) {
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
@@ -344,9 +341,9 @@ impl CacheLayers {
 
     pub fn slice(
         &self,
-        context: &MTLContext,
+        context: &B::Context,
         range: std::ops::Range<usize>,
-    ) -> Option<CacheLayersSlice> {
+    ) -> Option<CacheLayersSlice<B>> {
         let mut layers = Vec::with_capacity(self.data.len());
         for layer in self.data.iter() {
             match layer {
@@ -372,7 +369,7 @@ impl CacheLayers {
 
     pub fn apply_slice(
         &mut self,
-        slice: &CacheLayersSlice,
+        slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
@@ -381,7 +378,7 @@ impl CacheLayers {
                     CacheLayer::Transformer(kv),
                     CacheLayerSlice::Transformer(s),
                 ) => {
-                    kv.apply_slice(s, range.clone());
+                    kv.apply_slice(&s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -392,10 +389,10 @@ impl CacheLayers {
 
     pub fn clone(
         &self,
-        context: &MTLContext,
+        context: &B::Context,
     ) -> Self {
         let mut max_prefix_capacity_across_layers = 0usize;
-        let data: Box<[CacheLayer]> = self
+        let data: Box<[CacheLayer<B>]> = self
             .data
             .iter()
             .enumerate()

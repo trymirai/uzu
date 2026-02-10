@@ -1,26 +1,14 @@
-mod mode;
-
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-pub use mode::{
-    ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
-};
-
-use super::cache_layers::CacheLayers;
 #[cfg(feature = "tracing")]
-use super::traces::ActivationTrace;
+use crate::forward_pass::traces::ActivationTrace;
+
 use crate::{
     DataType, DecoderConfig,
-    array::ArrayCellExt,
-    backends::{
-        common::Context,
-        metal::{
-            MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
-            MTLCommandEncoder, MTLContext, Metal, MetalArray, ProtocolObject,
-            Retained,
-        },
-    },
+    array::{Array, ArrayCell, ArrayCellExt},
+    backends::common::{Backend, CommandBuffer, Context, CopyEncoder},
     forward_pass::{
+        cache_layers::CacheLayers,
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
         state::{
@@ -32,29 +20,55 @@ use crate::{
     utils::attention::fill_attention_bias,
 };
 
-pub type ArrayCell = RefCell<MetalArray>;
-
-pub struct ForwardPassState {
-    context: Rc<MTLContext>,
-    token_ids: ArrayCell,
-    token_positions: ArrayCell,
-    token_bitmask: Option<ArrayCell>,
-    attention_bias: HashMap<Option<usize>, ArrayCell>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
-    common_aux: CommonAuxBuffers<Metal>,
-    llm_aux: Option<LanguageModelGeneratorAuxBuffers<Metal>>,
-    mode: ForwardPassMode,
+pub enum ForwardPassMode<B: Backend> {
+    LanguageModelGenerator(LanguageModelGeneratorModeState<B>),
+    Classifier(ClassifierModeState<B>),
 }
 
-impl ForwardPassState {
+pub struct LanguageModelGeneratorModeState<B: Backend> {
+    pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
+    pub token_seeds: ArrayCell<B>,
+    pub logits: ArrayCell<B>,
+    pub sampling_output: Option<ArrayCell<B>>,
+    pub sampling_method: Option<SamplingMethod>,
+    #[cfg(feature = "tracing")]
+    pub traces: Rc<RefCell<ActivationTrace<B>>>,
+    pub active_suffix_length: usize,
+    pub sampling_start: usize,
+    pub sampling_length: usize,
+    pub is_prefilling: bool,
+}
+
+pub struct ClassifierModeState<B: Backend> {
+    pub pooling: ArrayCell<B>,
+    pub dense: ArrayCell<B>,
+    pub norm: ArrayCell<B>,
+    pub classifier_logits: ArrayCell<B>,
+    #[cfg(feature = "tracing")]
+    pub traces: Rc<RefCell<ActivationTrace<B>>>,
+}
+
+pub struct ForwardPassState<B: Backend> {
+    context: Rc<B::Context>,
+    token_ids: ArrayCell<B>,
+    token_positions: ArrayCell<B>,
+    token_bitmask: Option<ArrayCell<B>>,
+    attention_bias: HashMap<Option<usize>, ArrayCell<B>>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    common_aux: CommonAuxBuffers<B>,
+    llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
+    mode: ForwardPassMode<B>,
+}
+
+impl<B: Backend> ForwardPassState<B> {
     // ========================================================================
     // Common initialization helpers
     // ========================================================================
 
     fn init_token_ids(
-        scratch: &ScratchBuffers<Metal>,
+        scratch: &ScratchBuffers<B>,
         token_ids: &[u64],
-    ) -> ArrayCell {
+    ) -> ArrayCell<B> {
         let suffix_length = token_ids.len();
         let token_ids_array = scratch.token_ids.view(&[suffix_length]);
         token_ids_array.borrow_mut().copy_from_view(token_ids.into());
@@ -62,9 +76,9 @@ impl ForwardPassState {
     }
 
     fn init_token_positions(
-        scratch: &ScratchBuffers<Metal>,
+        scratch: &ScratchBuffers<B>,
         token_positions: &[usize],
-    ) -> ArrayCell {
+    ) -> ArrayCell<B> {
         let suffix_length = token_positions.len();
         let token_positions_array =
             scratch.token_positions.view(&[suffix_length]);
@@ -82,12 +96,12 @@ impl ForwardPassState {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_llm(
-        context: Rc<MTLContext>,
+        context: Rc<B::Context>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<Metal>,
-        cache_layers: Rc<RefCell<CacheLayers>>,
-        shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+        scratch: &ScratchBuffers<B>,
+        cache_layers: Rc<RefCell<CacheLayers<B>>>,
+        shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
         token_ids: &[u64],
         token_positions: &[usize],
         token_bitmask: Option<&[u32]>,
@@ -99,11 +113,8 @@ impl ForwardPassState {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         should_fill_attention_bias: bool,
-        async_positions: Option<(
-            &Retained<ProtocolObject<dyn MTLBuffer>>,
-            usize,
-        )>,
-        async_seeds: Option<(&Retained<ProtocolObject<dyn MTLBuffer>>, usize)>,
+        async_positions: Option<(&B::NativeBuffer, usize)>,
+        async_seeds: Option<(&B::NativeBuffer, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(
@@ -127,7 +138,7 @@ impl ForwardPassState {
         let token_positions_cell =
             if let Some((async_buf, offset)) = async_positions {
                 let array = unsafe {
-                    MetalArray::from_parts(
+                    Array::from_parts(
                         async_buf.clone(),
                         offset * std::mem::size_of::<i32>(),
                         &[suffix_length],
@@ -151,7 +162,7 @@ impl ForwardPassState {
         // Token seeds - use async buffer if provided
         let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
             let array = unsafe {
-                MetalArray::from_parts(
+                Array::from_parts(
                     async_buf.clone(),
                     offset * std::mem::size_of::<u64>(),
                     &[suffix_length],
@@ -198,7 +209,7 @@ impl ForwardPassState {
         // Traces
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(
-            &context,
+            context.as_ref(),
             model_shape,
             suffix_length,
         )));
@@ -232,27 +243,26 @@ impl ForwardPassState {
     }
 
     fn init_llm_attention_bias(
-        scratch: &ScratchBuffers<Metal>,
-        cache_layers: &Rc<RefCell<CacheLayers>>,
+        scratch: &ScratchBuffers<B>,
+        cache_layers: &Rc<RefCell<CacheLayers<B>>>,
         suffix_length: usize,
         token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         should_fill_attention_bias: bool,
-    ) -> HashMap<Option<usize>, ArrayCell> {
+    ) -> HashMap<Option<usize>, ArrayCell<B>> {
         let cache_ref = cache_layers.borrow();
-        let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
-            scratch
-                .attention_window_size_to_bias
-                .iter()
-                .map(|(window_size, buffer)| {
-                    let prefix_length =
-                        window_size.unwrap_or(cache_ref.max_prefix_length());
-                    let attention_bias_shape =
-                        [suffix_length, suffix_length + prefix_length];
-                    let array = buffer.borrow().view(&attention_bias_shape);
-                    (*window_size, array)
-                })
-                .collect();
+        let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
+            .attention_window_size_to_bias
+            .iter()
+            .map(|(window_size, buffer)| {
+                let prefix_length =
+                    window_size.unwrap_or(cache_ref.max_prefix_length());
+                let attention_bias_shape =
+                    [suffix_length, suffix_length + prefix_length];
+                let array = buffer.borrow().view(&attention_bias_shape);
+                (*window_size, array)
+            })
+            .collect();
         drop(cache_ref);
 
         // Use cache_layers' fill_attention_bias which properly handles
@@ -279,10 +289,10 @@ impl ForwardPassState {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_classifier(
-        context: Rc<MTLContext>,
+        context: Rc<B::Context>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<Metal>,
-        shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+        scratch: &ScratchBuffers<B>,
+        shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
         token_ids: &[u64],
         token_positions: &[usize],
         bidirectional_attention: bool,
@@ -309,7 +319,7 @@ impl ForwardPassState {
         // Classifier-specific buffers
         let model_dim = model_shape.main_shape(1)[1];
         let classifier_state = Self::init_classifier_buffers(
-            &context,
+            context.as_ref(),
             model_shape,
             model_dim,
             num_labels,
@@ -332,20 +342,19 @@ impl ForwardPassState {
     }
 
     fn init_classifier_attention_bias(
-        scratch: &ScratchBuffers<Metal>,
+        scratch: &ScratchBuffers<B>,
         suffix_length: usize,
         bidirectional_attention: bool,
-    ) -> HashMap<Option<usize>, ArrayCell> {
-        let mut attention_bias_map: HashMap<Option<usize>, MetalArray> =
-            scratch
-                .attention_window_size_to_bias
-                .iter()
-                .map(|(window_size, buffer)| {
-                    let attention_bias_shape = [suffix_length, suffix_length];
-                    let array = buffer.borrow().view(&attention_bias_shape);
-                    (*window_size, array)
-                })
-                .collect();
+    ) -> HashMap<Option<usize>, ArrayCell<B>> {
+        let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
+            .attention_window_size_to_bias
+            .iter()
+            .map(|(window_size, buffer)| {
+                let attention_bias_shape = [suffix_length, suffix_length];
+                let array = buffer.borrow().view(&attention_bias_shape);
+                (*window_size, array)
+            })
+            .collect();
 
         for (window, bias_array) in attention_bias_map.iter_mut() {
             if bidirectional_attention {
@@ -386,22 +395,22 @@ impl ForwardPassState {
 
     #[cfg(feature = "tracing")]
     fn init_classifier_buffers(
-        context: &MTLContext,
+        context: &B::Context,
         model_shape: &ModelShape,
         model_dim: usize,
         num_labels: usize,
         suffix_length: usize,
-    ) -> ClassifierModeState {
+    ) -> ClassifierModeState<B> {
         let data_type = model_shape.activation_data_type();
         let batch_size = 1;
 
-        let create_buffer = |size: usize| -> ArrayCell {
+        let create_buffer = |size: usize| -> ArrayCell<B> {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context
                 .create_buffer(buffer_size)
                 .expect("Failed to create buffer");
             RefCell::new(unsafe {
-                MetalArray::from_parts(
+                Array::from_parts(
                     buffer,
                     0,
                     &[batch_size, size / batch_size],
@@ -421,7 +430,7 @@ impl ForwardPassState {
                     .create_buffer(buffer_size)
                     .expect("Failed to create buffer");
                 RefCell::new(unsafe {
-                    MetalArray::from_parts(
+                    Array::from_parts(
                         buffer,
                         0,
                         &[batch_size, num_labels],
@@ -440,23 +449,23 @@ impl ForwardPassState {
 
     #[cfg(not(feature = "tracing"))]
     fn init_classifier_buffers(
-        context: &MTLContext,
+        context: &B::Context,
         model_shape: &ModelShape,
         model_dim: usize,
         num_labels: usize,
         _suffix_length: usize,
-    ) -> ClassifierModeState {
+    ) -> ClassifierModeState<B> {
         let data_type = model_shape.activation_data_type();
         let batch_size = 1;
 
-        let create_buffer = |dims: &[usize]| -> ArrayCell {
+        let create_buffer = |dims: &[usize]| -> ArrayCell<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context
                 .create_buffer(buffer_size)
                 .expect("Failed to create buffer");
             RefCell::new(unsafe {
-                MetalArray::from_parts(buffer, 0, dims, data_type)
+                Array::from_parts(buffer, 0, dims, data_type)
             })
         };
 
@@ -472,8 +481,8 @@ impl ForwardPassState {
     // Accessors
     // ========================================================================
 
-    pub fn mtl_context(&self) -> &Rc<MTLContext> {
-        &self.context
+    pub fn mtl_context(&self) -> &B::Context {
+        self.context.as_ref()
     }
 
     pub fn aux_buffers_suffix_length(&self) -> usize {
@@ -488,25 +497,25 @@ impl ForwardPassState {
         matches!(self.mode, ForwardPassMode::Classifier(_))
     }
 
-    pub fn token_bitmask(&self) -> Option<&ArrayCell> {
+    pub fn token_bitmask(&self) -> Option<&ArrayCell<B>> {
         self.token_bitmask.as_ref()
     }
 
-    pub fn llm_state(&self) -> &LanguageModelGeneratorModeState {
+    pub fn llm_state(&self) -> &LanguageModelGeneratorModeState<B> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
     }
 
-    pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState {
+    pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState<B> {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
     }
 
-    pub fn classifier_state(&self) -> &ClassifierModeState {
+    pub fn classifier_state(&self) -> &ClassifierModeState<B> {
         match &self.mode {
             ForwardPassMode::Classifier(state) => state,
             _ => panic!("Not in classifier mode"),
@@ -516,7 +525,7 @@ impl ForwardPassState {
     pub fn array_cell(
         &self,
         id: ArrayId,
-    ) -> ArrayCell {
+    ) -> ArrayCell<B> {
         match id {
             // Common arrays
             ArrayId::TokenIds => self.token_ids.clone(),
@@ -752,7 +761,7 @@ impl ForwardPassState {
     fn shared_buffer_array(
         &self,
         id: ArrayId,
-    ) -> Option<ArrayCell> {
+    ) -> Option<ArrayCell<B>> {
         let shared = self.shared_buffers.borrow();
         match id {
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
@@ -787,11 +796,11 @@ impl ForwardPassState {
         }
     }
 
-    pub fn conv_padded_buffer(&self) -> Option<ArrayCell> {
+    pub fn conv_padded_buffer(&self) -> Option<ArrayCell<B>> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
-    pub fn short_conv_padded_buffer(&self) -> Option<ArrayCell> {
+    pub fn short_conv_padded_buffer(&self) -> Option<ArrayCell<B>> {
         self.llm_aux.as_ref().and_then(|aux| aux.short_conv_padded.clone())
     }
 
@@ -802,14 +811,14 @@ impl ForwardPassState {
     pub fn arrays(
         &self,
         ids: &[ArrayId],
-    ) -> Box<[ArrayCell]> {
+    ) -> Box<[ArrayCell<B>]> {
         ids.iter().map(|id| self.array_cell(*id)).collect()
     }
 
     pub fn hashmaps(
         &self,
         ids: &[HashMapId],
-    ) -> Box<[HashMap<Option<usize>, ArrayCell>]> {
+    ) -> Box<[HashMap<Option<usize>, ArrayCell<B>>]> {
         ids.iter()
             .map(|id| match id {
                 HashMapId::AttentionBias => self.attention_bias.clone(),
@@ -855,7 +864,7 @@ impl ForwardPassState {
         }
     }
 
-    pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers>>> {
+    pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers<B>>>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
                 Some(&state.cache_layers)
@@ -864,7 +873,7 @@ impl ForwardPassState {
         }
     }
 
-    pub fn sampling_output(&self) -> Option<&ArrayCell> {
+    pub fn sampling_output(&self) -> Option<&ArrayCell<B>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => {
                 state.sampling_output.as_ref()
@@ -874,7 +883,7 @@ impl ForwardPassState {
     }
 
     #[cfg(feature = "tracing")]
-    pub fn traces(&self) -> &Rc<RefCell<ActivationTrace>> {
+    pub fn traces(&self) -> &Rc<RefCell<ActivationTrace<B>>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => &state.traces,
             ForwardPassMode::Classifier(state) => &state.traces,
@@ -904,7 +913,7 @@ impl ForwardPassState {
     pub fn copy_array(
         &self,
         source_array_id: ArrayId,
-        destination_array: RefCell<MetalArray>,
+        destination_array: RefCell<Array<B>>,
     ) {
         destination_array
             .borrow_mut()
@@ -913,30 +922,22 @@ impl ForwardPassState {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        command_buffer: &B::CommandBuffer,
         source_array_id: ArrayId,
-        destination_array: RefCell<MetalArray>,
+        destination_array: RefCell<Array<B>>,
     ) {
         let source_ref = self.arrays(&[source_array_id])[0].clone();
         let src_borrow = source_ref.borrow();
         let dst_borrow = destination_array.borrow();
 
-        let src_buf = src_borrow.buffer().clone();
-        let dst_buf = dst_borrow.buffer().clone();
+        let src_buf = src_borrow.buffer();
+        let dst_buf = dst_borrow.buffer();
 
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
-        let blit_encoder = command_buffer
-            .new_blit_command_encoder()
-            .expect("Failed to create blit command encoder");
-        blit_encoder.copy_buffer_to_buffer(
-            &src_buf,
-            0,
-            &dst_buf,
-            0,
-            copy_size_bytes,
-        );
-        blit_encoder.end_encoding();
+        command_buffer.with_copy_encoder(|encoder| {
+            encoder.encode_copy(src_buf, dst_buf, copy_size_bytes);
+        });
     }
 }

@@ -1,14 +1,14 @@
 use bytemuck::fill_zeroes;
 
-use super::kv_cache_layer::ArrayCell;
+use crate::{array::ArrayCell, backends::common::Backend};
 
 #[derive(Debug)]
-pub struct SSMLayer {
-    pub conv_state: ArrayCell,
-    pub ssm_state: ArrayCell,
+pub struct SSMLayer<B: Backend> {
+    pub conv_state: ArrayCell<B>,
+    pub ssm_state: ArrayCell<B>,
 }
 
-impl SSMLayer {
+impl<B: Backend> SSMLayer<B> {
     pub fn zero(&self) {
         {
             let mut conv = self.conv_state.borrow_mut();

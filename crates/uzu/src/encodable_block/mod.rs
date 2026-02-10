@@ -1,6 +1,6 @@
-use crate::backends::{
-    common::{Backend, CommandBuffer},
-    metal::ForwardPassState,
+use crate::{
+    backends::common::{Backend, CommandBuffer},
+    forward_pass::state::ForwardPassState,
 };
 
 mod sampling;
@@ -55,8 +55,8 @@ impl<'a, B: Backend> EncodingParameters<'a, B> {
 pub trait EncodableBlock<B: Backend> {
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
-        encoder: &B::EncoderRef,
+        state: &mut ForwardPassState<B>,
+        encoder: &B::ComputeEncoder,
         parameters: &EncodingParameters<B>,
     );
 
@@ -66,11 +66,11 @@ pub trait EncodableBlock<B: Backend> {
 
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<B>,
         command_buffer: &B::CommandBuffer,
         parameters: &EncodingParameters<B>,
     ) {
-        command_buffer.with_encoder(|encoder| {
+        command_buffer.with_compute_encoder(|encoder| {
             self.encode_with_shared_encoder(state, encoder, parameters)
         });
     }

@@ -1,58 +1,36 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
+#include "kv_cache_update.h"
+
 template <typename T>
-void swap(device T* buffer, const int sourceIdx, const int destIdx) {
+void swap(device T* buffer, const uint sourceIdx, const uint destIdx) {
   const T temp = buffer[sourceIdx];
   buffer[sourceIdx] = buffer[destIdx];
   buffer[destIdx] = temp;
 }
 
 template <typename T>
-void updateKVCache(
-    device T* inPlaceKeys,
-    device T* inPlaceValues,
-    const constant int2* swaps,
-    const constant int& swapCount,
-    const constant int& numHeads,
-    const constant int& maxSequenceLength,
-    const constant int& headDim,
-    const uint2 position
+VARIANTS(T, float, bfloat, half)
+KERNEL(KVCacheUpdate) (
+    device T* in_place_keys,
+    device T* in_place_values,
+    const constant uzu::kv_cache_update::Swap* swaps,
+    const constant uint& swap_count,
+    const constant uint& num_heads,
+    const constant uint& max_sequence_length,
+    const constant uint& head_dim,
+    const uint head_idx AXIS(num_heads, 32),
+    const uint channel_idx AXIS(head_dim, 32)
 ) {
-  for (int i = 0; i < swapCount; ++i) {
-    // [headIdx: 0..numHeads, tokenIdx: 0..maxSequenceLength, channelIdx:
-    // 0..headDim]
-    const int headOffset = position.x * maxSequenceLength * headDim;
-    const int channelOffset = position.y;
-    const int sourceIdx = headOffset + swaps[i].x * headDim + channelOffset;
-    const int destIdx = headOffset + swaps[i].y * headDim + channelOffset;
+  for (uint i = 0; i < swap_count; ++i) {
+    // [headIdx: 0..num_heads, tokenIdx: 0..max_sequence_length, channelIdx:
+    // 0..head_dim]
+    const uint head_offset = head_idx * max_sequence_length * head_dim;
+    const uint sourceIdx = head_offset + swaps[i].source * head_dim + channel_idx;
+    const uint destIdx = head_offset + swaps[i].destination * head_dim + channel_idx;
 
-    swap(inPlaceKeys, sourceIdx, destIdx);
-    swap(inPlaceValues, sourceIdx, destIdx);
+    swap(in_place_keys, sourceIdx, destIdx);
+    swap(in_place_values, sourceIdx, destIdx);
   }
 }
-
-#define outerArguments(T)                                                      \
-  (device T * inPlaceKeys [[buffer(0)]],                                       \
-   device T * inPlaceValues [[buffer(1)]],                                     \
-   const constant int2* swaps [[buffer(2)]],                                   \
-   const constant int& swapCount [[buffer(3)]],                                \
-   const constant int& numHeads [[buffer(4)]],                                 \
-   const constant int& maxSequenceLength [[buffer(5)]],                        \
-   const constant int& headDim [[buffer(6)]],                                  \
-   const uint2 position [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (inPlaceKeys,                                                                \
-   inPlaceValues,                                                              \
-   swaps,                                                                      \
-   swapCount,                                                                  \
-   numHeads,                                                                   \
-   maxSequenceLength,                                                          \
-   headDim,                                                                    \
-   position)
-
-generateKernels(1024, updateKVCache)
-
-#undef outerArguments
-#undef innerArguments

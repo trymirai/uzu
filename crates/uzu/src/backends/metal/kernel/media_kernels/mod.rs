@@ -1,15 +1,16 @@
 use std::{mem, ptr::NonNull};
 
-use crate::backends::metal::Metal;
+use crate::{
+    backends::metal::Metal,
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
+};
 use objc2::rc::Retained;
 
 use crate::backends::metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandEncoderExt,
     MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLSize,
-    ProtocolObject,
-    error::MTLError,
-    forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
-    image::Image,
+    ProtocolObject, error::MTLError, image::Image,
     metal_extensions::ComputeEncoderDispatch,
 };
 
@@ -83,9 +84,9 @@ impl ScalePadNormalizeImage {
 impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let _ = command_buffer;
     }
@@ -96,9 +97,9 @@ impl EncodableBlock<Metal> for ScalePadNormalizeImage {
 
     fn encode_with_shared_encoder(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         unreachable!(
             "ScalePadNormalizeImage does not support shared compute encoder"

@@ -1,12 +1,16 @@
 //! Prediction head encodable for classification output.
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
-use crate::backends::metal::{MTLBlitCommandEncoder, forward_pass::ArrayId};
+use crate::backends::metal::MTLBlitCommandEncoder;
 use crate::backends::metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    ProtocolObject, Retained, forward_pass::ForwardPassState,
+    ProtocolObject, Retained,
 };
+use crate::encodable_block::EncodingParameters;
+#[cfg(feature = "tracing")]
+use crate::forward_pass::state::ArrayId;
+use crate::forward_pass::state::ForwardPassState;
 
 pub struct ClassifierPredictionHead {
     dense: Box<dyn EncodableBlock<Metal>>,
@@ -38,9 +42,9 @@ impl ClassifierPredictionHead {
 impl EncodableBlock<Metal> for ClassifierPredictionHead {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -100,9 +104,9 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         self.dense.encode_with_shared_encoder(state, encoder, parameters);
         self.activation.encode_with_shared_encoder(state, encoder, parameters);

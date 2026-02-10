@@ -11,6 +11,4 @@ pub use crate::backends::metal::encodable_block::{
     ClassifierLayer, ClassifierPredictionHead, Pooling,
 };
 #[cfg(feature = "tracing")]
-pub use crate::backends::metal::forward_pass::traces::{
-    ActivationTrace, LayerActivationTrace,
-};
+pub use crate::forward_pass::traces::{ActivationTrace, LayerActivationTrace};

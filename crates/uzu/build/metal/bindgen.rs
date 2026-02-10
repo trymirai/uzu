@@ -4,7 +4,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::LitInt;
+use syn::{LitInt, Type};
 
 use crate::metal::ast::MetalGroupsType;
 
@@ -135,7 +135,7 @@ pub fn bindgen(
                     Some((def, set, quote! { #arg_name }))
                 }
                 MetalArgumentType::Constant((r_type, constant_type)) => {
-                    let arg_dtype = format_ident!("{r_type}");
+                    let arg_dtype: Type = syn::parse_str(&r_type).unwrap();
 
                     let (def, set) = match constant_type {
                         MetalConstantType::Scalar => (

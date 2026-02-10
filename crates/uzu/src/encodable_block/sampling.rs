@@ -2,16 +2,11 @@
 
 use crate::{
     DataType,
-    backends::{
-        common::{
-            Backend,
-            kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
-        },
-        metal::{
-            MTLComputeCommandEncoder, Metal, ProtocolObject,
-            forward_pass::{ArrayId, ForwardPassState},
-        },
+    backends::common::{
+        Backend,
+        kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
     },
+    forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 use super::{EncodableBlock, EncodingParameters};
@@ -58,12 +53,12 @@ impl<B: Backend> Sampling<B> {
     }
 }
 
-impl EncodableBlock<Metal> for Sampling<Metal> {
+impl<B: Backend> EncodableBlock<B> for Sampling<B> {
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters<Metal>,
+        state: &mut ForwardPassState<B>,
+        encoder: &B::ComputeEncoder,
+        _parameters: &EncodingParameters<B>,
     ) {
         assert!(
             state.sampling_output().is_some(),

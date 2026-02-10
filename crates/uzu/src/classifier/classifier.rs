@@ -7,14 +7,12 @@ use objc2::rc::autoreleasepool;
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
+use crate::backends::metal::Metal;
 use crate::{
     DataType,
-    backends::metal::{
-        MTLCommandBuffer,
-        forward_pass::{
-            ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
-        },
-    },
+    backends::metal::MTLCommandBuffer,
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
 };
 
@@ -83,7 +81,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
         self.forward_pass(token_ids, token_positions)
     }
 
@@ -92,7 +90,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
@@ -241,7 +239,7 @@ impl Classifier {
 
     fn copy_logits_from_state(
         &self,
-        state: &ForwardPassState,
+        state: &ForwardPassState<Metal>,
     ) -> Result<Box<[f32]>, Error> {
         let logits_arrays =
             state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);

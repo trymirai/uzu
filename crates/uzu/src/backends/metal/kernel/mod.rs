@@ -6,7 +6,6 @@ pub mod dsl {
 pub(super) const MTLB: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
-pub mod kv_cache_update;
 pub mod matmul;
 pub mod media_kernels;
 pub mod mlp;
@@ -29,7 +28,6 @@ pub use attention::{
     KVCacheUpdateArguments,
 };
 pub use data_type::KernelDataType;
-pub use kv_cache_update::KVCacheUpdate;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError,
@@ -52,8 +50,6 @@ pub use ssm::{
     SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
 };
 pub use token_copy::TokenCopyKernel;
-
-use super::{MTLContext, metal_extensions};
 
 pub mod media {
     pub use super::media_kernels::{
