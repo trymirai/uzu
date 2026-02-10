@@ -1,32 +1,28 @@
-use std::cell::RefCell;
-
-use super::super::{ModelShape, ScratchBuffers};
 use crate::{
-    array::ArrayCellExt,
-    backends::metal::{MTLContext, MetalArray},
+    array::{ArrayCell, ArrayCellExt},
+    backends::common::Backend,
+    forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 
-type ArrayCell = RefCell<MetalArray>;
-
-pub struct CommonAuxBuffers {
+pub struct CommonAuxBuffers<B: Backend> {
     pub suffix_length: usize,
-    pub main: ArrayCell,
-    pub shortcut: ArrayCell,
-    pub qkv: ArrayCell,
-    pub attention_output: ArrayCell,
-    pub mlp_fused_up: ArrayCell,
-    pub mlp_hidden: ArrayCell,
-    pub rotated_queries: ArrayCell,
-    pub rotated_keys: ArrayCell,
-    pub extracted_values: ArrayCell,
-    pub attention_partials: ArrayCell,
-    pub attention_sums: ArrayCell,
-    pub attention_maxs: ArrayCell,
+    pub main: ArrayCell<B>,
+    pub shortcut: ArrayCell<B>,
+    pub qkv: ArrayCell<B>,
+    pub attention_output: ArrayCell<B>,
+    pub mlp_fused_up: ArrayCell<B>,
+    pub mlp_hidden: ArrayCell<B>,
+    pub rotated_queries: ArrayCell<B>,
+    pub rotated_keys: ArrayCell<B>,
+    pub extracted_values: ArrayCell<B>,
+    pub attention_partials: ArrayCell<B>,
+    pub attention_sums: ArrayCell<B>,
+    pub attention_maxs: ArrayCell<B>,
 }
 
-impl CommonAuxBuffers {
+impl<B: Backend> CommonAuxBuffers<B> {
     pub fn new(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<B>,
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {

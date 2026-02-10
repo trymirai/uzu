@@ -1,28 +1,14 @@
-mod array_id;
-mod common_aux_buffers;
-mod hash_map_id;
-mod language_model_generator_aux_buffers;
 mod mode;
-mod rope_buffers;
-mod rope_type;
-mod shared_buffers;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-pub use array_id::ArrayId;
-pub use common_aux_buffers::CommonAuxBuffers;
-pub use hash_map_id::HashMapId;
-pub use language_model_generator_aux_buffers::LanguageModelGeneratorAuxBuffers;
 pub use mode::{
     ClassifierModeState, ForwardPassMode, LanguageModelGeneratorModeState,
 };
-pub use rope_buffers::RopeBuffers;
-pub use rope_type::RopeType;
-pub use shared_buffers::{MoeExpertWeights, SharedBuffers};
 
+use super::cache_layers::CacheLayers;
 #[cfg(feature = "tracing")]
 use super::traces::ActivationTrace;
-use super::{ModelShape, ScratchBuffers, cache_layers::CacheLayers};
 use crate::{
     DataType, DecoderConfig,
     array::ArrayCellExt,
@@ -30,8 +16,16 @@ use crate::{
         common::Context,
         metal::{
             MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
-            MTLCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            MTLCommandEncoder, MTLContext, Metal, MetalArray, ProtocolObject,
             Retained,
+        },
+    },
+    forward_pass::{
+        model_shape::ModelShape,
+        scratch_buffers::ScratchBuffers,
+        state::{
+            ArrayId, CommonAuxBuffers, HashMapId,
+            LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers,
         },
     },
     session::parameter::SamplingMethod,
@@ -46,9 +40,9 @@ pub struct ForwardPassState {
     token_positions: ArrayCell,
     token_bitmask: Option<ArrayCell>,
     attention_bias: HashMap<Option<usize>, ArrayCell>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers>>,
-    common_aux: CommonAuxBuffers,
-    llm_aux: Option<LanguageModelGeneratorAuxBuffers>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+    common_aux: CommonAuxBuffers<Metal>,
+    llm_aux: Option<LanguageModelGeneratorAuxBuffers<Metal>>,
     mode: ForwardPassMode,
 }
 
@@ -58,7 +52,7 @@ impl ForwardPassState {
     // ========================================================================
 
     fn init_token_ids(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<Metal>,
         token_ids: &[u64],
     ) -> ArrayCell {
         let suffix_length = token_ids.len();
@@ -68,7 +62,7 @@ impl ForwardPassState {
     }
 
     fn init_token_positions(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<Metal>,
         token_positions: &[usize],
     ) -> ArrayCell {
         let suffix_length = token_positions.len();
@@ -91,9 +85,9 @@ impl ForwardPassState {
         context: Rc<MTLContext>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<Metal>,
         cache_layers: Rc<RefCell<CacheLayers>>,
-        shared_buffers: Rc<RefCell<SharedBuffers>>,
+        shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
         token_ids: &[u64],
         token_positions: &[usize],
         token_bitmask: Option<&[u32]>,
@@ -238,7 +232,7 @@ impl ForwardPassState {
     }
 
     fn init_llm_attention_bias(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<Metal>,
         cache_layers: &Rc<RefCell<CacheLayers>>,
         suffix_length: usize,
         token_positions: &[usize],
@@ -287,8 +281,8 @@ impl ForwardPassState {
     pub fn new_classifier(
         context: Rc<MTLContext>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<MTLContext>,
-        shared_buffers: Rc<RefCell<SharedBuffers>>,
+        scratch: &ScratchBuffers<Metal>,
+        shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
         token_ids: &[u64],
         token_positions: &[usize],
         bidirectional_attention: bool,
@@ -338,7 +332,7 @@ impl ForwardPassState {
     }
 
     fn init_classifier_attention_bias(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<Metal>,
         suffix_length: usize,
         bidirectional_attention: bool,
     ) -> HashMap<Option<usize>, ArrayCell> {

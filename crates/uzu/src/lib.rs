@@ -4,6 +4,7 @@ pub mod classifier;
 pub mod config;
 pub mod data_type;
 pub mod encodable_block;
+pub mod forward_pass;
 pub mod language_model;
 pub mod parameters;
 pub mod prelude;

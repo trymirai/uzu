@@ -3,7 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     DataType,
     array::ArrayContextExt,
-    backends::metal::{MTLContext, MetalArray, ModelShape},
+    backends::metal::{MTLContext, MetalArray},
+    forward_pass::model_shape::ModelShape,
 };
 
 type ArrayCell = RefCell<MetalArray>;

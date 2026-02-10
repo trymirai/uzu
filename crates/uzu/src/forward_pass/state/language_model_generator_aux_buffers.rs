@@ -1,50 +1,46 @@
-use std::cell::RefCell;
-
-use super::super::{ModelShape, ScratchBuffers};
 use crate::{
     DecoderConfig,
-    array::ArrayCellExt,
-    backends::metal::{MTLContext, MetalArray},
+    array::{ArrayCell, ArrayCellExt},
+    backends::common::Backend,
     config::MLPConfig,
+    forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 
-type ArrayCell = RefCell<MetalArray>;
-
-pub struct LanguageModelGeneratorAuxBuffers {
-    pub ssm_inproj: Option<ArrayCell>,
-    pub ssm_packed: Option<ArrayCell>,
-    pub ssm_conv_padded: Option<ArrayCell>,
-    pub short_conv_padded: Option<ArrayCell>,
-    pub ssm_x: Option<ArrayCell>,
-    pub ssm_b: Option<ArrayCell>,
-    pub ssm_c: Option<ArrayCell>,
-    pub ssm_dt: Option<ArrayCell>,
-    pub ssm_z: Option<ArrayCell>,
+pub struct LanguageModelGeneratorAuxBuffers<B: Backend> {
+    pub ssm_inproj: Option<ArrayCell<B>>,
+    pub ssm_packed: Option<ArrayCell<B>>,
+    pub ssm_conv_padded: Option<ArrayCell<B>>,
+    pub short_conv_padded: Option<ArrayCell<B>>,
+    pub ssm_x: Option<ArrayCell<B>>,
+    pub ssm_b: Option<ArrayCell<B>>,
+    pub ssm_c: Option<ArrayCell<B>>,
+    pub ssm_dt: Option<ArrayCell<B>>,
+    pub ssm_z: Option<ArrayCell<B>>,
     // MoE buffers
-    pub moe_topk_ids: Option<ArrayCell>,
-    pub moe_topk_probs: Option<ArrayCell>,
-    pub moe_offsets: Option<ArrayCell>,
-    pub moe_sumk: Option<ArrayCell>,
-    pub moe_bucketed_token_ids: Option<ArrayCell>,
-    pub moe_bucketed_probs: Option<ArrayCell>,
-    pub moe_x_perm: Option<ArrayCell>,
-    pub moe_tok2row: Option<ArrayCell>,
-    pub moe_y_partial: Option<ArrayCell>,
-    pub moe_hidden: Option<ArrayCell>,
-    pub moe_two_pass_row_expert_map: Option<ArrayCell>,
-    pub moe_tile_counts: Option<ArrayCell>,
-    pub moe_tile_offsets: Option<ArrayCell>,
-    pub moe_tile_map: Option<ArrayCell>,
-    pub moe_total_tiles: Option<ArrayCell>,
-    pub moe_dispatch_args: Option<ArrayCell>,
-    pub moe_scatter_partials: Option<ArrayCell>,
-    pub moe_scatter_block_bases: Option<ArrayCell>,
-    pub moe_block_alloc: Option<ArrayCell>,
+    pub moe_topk_ids: Option<ArrayCell<B>>,
+    pub moe_topk_probs: Option<ArrayCell<B>>,
+    pub moe_offsets: Option<ArrayCell<B>>,
+    pub moe_sumk: Option<ArrayCell<B>>,
+    pub moe_bucketed_token_ids: Option<ArrayCell<B>>,
+    pub moe_bucketed_probs: Option<ArrayCell<B>>,
+    pub moe_x_perm: Option<ArrayCell<B>>,
+    pub moe_tok2row: Option<ArrayCell<B>>,
+    pub moe_y_partial: Option<ArrayCell<B>>,
+    pub moe_hidden: Option<ArrayCell<B>>,
+    pub moe_two_pass_row_expert_map: Option<ArrayCell<B>>,
+    pub moe_tile_counts: Option<ArrayCell<B>>,
+    pub moe_tile_offsets: Option<ArrayCell<B>>,
+    pub moe_tile_map: Option<ArrayCell<B>>,
+    pub moe_total_tiles: Option<ArrayCell<B>>,
+    pub moe_dispatch_args: Option<ArrayCell<B>>,
+    pub moe_scatter_partials: Option<ArrayCell<B>>,
+    pub moe_scatter_block_bases: Option<ArrayCell<B>>,
+    pub moe_block_alloc: Option<ArrayCell<B>>,
 }
 
-impl LanguageModelGeneratorAuxBuffers {
+impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
     pub fn new(
-        scratch: &ScratchBuffers<MTLContext>,
+        scratch: &ScratchBuffers<B>,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         suffix_length: usize,
@@ -53,14 +49,14 @@ impl LanguageModelGeneratorAuxBuffers {
             MLPConfig::MixtureOfExperts(moe) => Some(moe),
             _ => None,
         };
-        let num_experts_per_token = moe.map(|moe| moe.num_experts_per_token);
-        let mixture_size = moe.map(|moe| moe.mixture_size);
-        let max_routed = num_experts_per_token.map(|k| suffix_length * k);
+        let max_routed =
+            moe.map(|moe| suffix_length * moe.num_experts_per_token);
         let num_blocks = suffix_length.div_ceil(256).max(1);
-        let scatter_entries =
-            mixture_size.map(|e| num_blocks * e.div_ceil(512).max(1) * 512);
+        let scatter_entries = moe.map(|moe| {
+            num_blocks * moe.mixture_size.div_ceil(512).max(1) * 512
+        });
         let block_alloc_entries =
-            mixture_size.map(|e| num_blocks * e.div_ceil(512).max(1));
+            moe.map(|moe| num_blocks * moe.mixture_size.div_ceil(512).max(1));
 
         Self {
             ssm_inproj: scratch
@@ -108,21 +104,27 @@ impl LanguageModelGeneratorAuxBuffers {
                 .as_ref()
                 .zip(model_shape.ssm_z_shape(suffix_length))
                 .map(|(buf, shape)| buf.view(&shape)),
-            moe_topk_ids: num_experts_per_token
-                .zip(scratch.moe_topk_ids.as_ref())
-                .map(|(k, buf)| {
-                    buf.view(&model_shape.moe_topk_ids_shape(suffix_length, k))
-                }),
-            moe_topk_probs: num_experts_per_token
-                .zip(scratch.moe_topk_probs.as_ref())
-                .map(|(k, buf)| {
-                    buf.view(
-                        &model_shape.moe_topk_probs_shape(suffix_length, k),
-                    )
-                }),
-            moe_offsets: mixture_size
-                .zip(scratch.moe_offsets.as_ref())
-                .map(|(e, buf)| buf.view(&model_shape.moe_offsets_shape(e))),
+            moe_topk_ids: moe.zip(scratch.moe_topk_ids.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_topk_ids_shape(
+                        suffix_length,
+                        moe.num_experts_per_token,
+                    ))
+                },
+            ),
+            moe_topk_probs: moe.zip(scratch.moe_topk_probs.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_topk_probs_shape(
+                        suffix_length,
+                        moe.num_experts_per_token,
+                    ))
+                },
+            ),
+            moe_offsets: moe.zip(scratch.moe_offsets.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_offsets_shape(moe.mixture_size))
+                },
+            ),
             moe_sumk: moe
                 .and(scratch.moe_sumk.as_ref())
                 .map(|buf| buf.view(&model_shape.moe_sumk_shape())),
@@ -143,11 +145,14 @@ impl LanguageModelGeneratorAuxBuffers {
                     buf.view(&model_shape.moe_x_perm_shape(max_routed))
                 },
             ),
-            moe_tok2row: num_experts_per_token
-                .zip(scratch.moe_tok2row.as_ref())
-                .map(|(k, buf)| {
-                    buf.view(&model_shape.moe_tok2row_shape(suffix_length, k))
-                }),
+            moe_tok2row: moe.zip(scratch.moe_tok2row.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_tok2row_shape(
+                        suffix_length,
+                        moe.num_experts_per_token,
+                    ))
+                },
+            ),
             moe_y_partial: max_routed.zip(scratch.moe_y_partial.as_ref()).map(
                 |(max_routed, buf)| {
                     buf.view(&model_shape.moe_y_partial_shape(max_routed))
@@ -161,12 +166,16 @@ impl LanguageModelGeneratorAuxBuffers {
             moe_two_pass_row_expert_map: max_routed
                 .zip(scratch.moe_two_pass_row_expert_map.as_ref())
                 .map(|(max_routed, buf)| buf.view(&[max_routed])),
-            moe_tile_counts: mixture_size
-                .zip(scratch.moe_tile_counts.as_ref())
-                .map(|(e, buf)| buf.view(&model_shape.moe_counts_shape(e))),
-            moe_tile_offsets: mixture_size
-                .zip(scratch.moe_tile_offsets.as_ref())
-                .map(|(e, buf)| buf.view(&model_shape.moe_offsets_shape(e))),
+            moe_tile_counts: moe.zip(scratch.moe_tile_counts.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_counts_shape(moe.mixture_size))
+                },
+            ),
+            moe_tile_offsets: moe.zip(scratch.moe_tile_offsets.as_ref()).map(
+                |(moe, buf)| {
+                    buf.view(&model_shape.moe_offsets_shape(moe.mixture_size))
+                },
+            ),
             moe_tile_map: max_routed.zip(scratch.moe_tile_map.as_ref()).map(
                 |(max_routed, buf)| {
                     buf.view(&model_shape.moe_tile_map_shape(max_routed))

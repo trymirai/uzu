@@ -1,78 +1,77 @@
-use std::{cell::RefCell, collections::HashMap};
-
-use super::model_shape::ModelShape;
-use crate::{
-    DataType,
-    array::ArrayContextExt,
-    backends::common::Context,
-    config::{DecoderConfig, MLPConfig},
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
 };
 
-type Array<C> = RefCell<crate::array::Array<<C as Context>::Backend>>;
+use crate::{
+    DataType,
+    array::{ArrayCell, ArrayContextExt},
+    backends::common::Backend,
+    config::{DecoderConfig, MLPConfig},
+    forward_pass::model_shape::ModelShape,
+};
 
-pub struct ScratchBuffers<C: Context> {
+pub struct ScratchBuffers<B: Backend> {
     // 1-D
-    pub token_ids: Array<C>,
-    pub token_positions: Array<C>,
-    pub token_bitmask: Array<C>,
-    pub token_seeds: Array<C>,
-    pub sampling_output: Array<C>,
+    pub token_ids: ArrayCell<B>,
+    pub token_positions: ArrayCell<B>,
+    pub token_bitmask: ArrayCell<B>,
+    pub token_seeds: ArrayCell<B>,
+    pub sampling_output: ArrayCell<B>,
 
     // 2-D
-    pub attention_window_size_to_bias: HashMap<Option<usize>, Array<C>>,
-    pub logits: Array<C>,
-    pub main: Array<C>,
-    pub shortcut: Array<C>,
-    pub qkv: Array<C>,
-    pub attention_output: Array<C>,
-    pub mlp_fused_up: Array<C>,
-    pub mlp_hidden: Array<C>,
-    pub ssm_inproj: Option<Array<C>>,
-    pub ssm_packed: Option<Array<C>>,
-    pub ssm_conv_padded: Option<Array<C>>,
-    pub short_conv_padded: Option<Array<C>>,
-    pub ssm_x: Option<Array<C>>,
-    pub ssm_b: Option<Array<C>>,
-    pub ssm_c: Option<Array<C>>,
-    pub ssm_dt: Option<Array<C>>,
-    pub ssm_z: Option<Array<C>>,
+    pub attention_window_size_to_bias: HashMap<Option<usize>, ArrayCell<B>>,
+    pub logits: ArrayCell<B>,
+    pub main: ArrayCell<B>,
+    pub shortcut: ArrayCell<B>,
+    pub qkv: ArrayCell<B>,
+    pub attention_output: ArrayCell<B>,
+    pub mlp_fused_up: ArrayCell<B>,
+    pub mlp_hidden: ArrayCell<B>,
+    pub ssm_inproj: Option<ArrayCell<B>>,
+    pub ssm_packed: Option<ArrayCell<B>>,
+    pub ssm_conv_padded: Option<ArrayCell<B>>,
+    pub short_conv_padded: Option<ArrayCell<B>>,
+    pub ssm_x: Option<ArrayCell<B>>,
+    pub ssm_b: Option<ArrayCell<B>>,
+    pub ssm_c: Option<ArrayCell<B>>,
+    pub ssm_dt: Option<ArrayCell<B>>,
+    pub ssm_z: Option<ArrayCell<B>>,
 
     // 3-D
-    pub rotated_queries: Array<C>,
-    pub rotated_keys: Array<C>,
-    pub extracted_values: Array<C>,
+    pub rotated_queries: ArrayCell<B>,
+    pub rotated_keys: ArrayCell<B>,
+    pub extracted_values: ArrayCell<B>,
 
     // 2-pass attention intermediate buffers
-    pub attention_partials: Array<C>, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
-    pub attention_sums: Array<C>, // [num_heads * max_suffix_len * total_blocks_count]
-    pub attention_maxs: Array<C>, // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_partials: ArrayCell<B>, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
+    pub attention_sums: ArrayCell<B>, // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_maxs: ArrayCell<B>, // [num_heads * max_suffix_len * total_blocks_count]
 
-    pub moe_topk_ids: Option<Array<C>>,
-    pub moe_topk_probs: Option<Array<C>>,
-    pub moe_offsets: Option<Array<C>>,
-    pub moe_sumk: Option<Array<C>>,
-    pub moe_bucketed_token_ids: Option<Array<C>>,
-    pub moe_bucketed_probs: Option<Array<C>>,
-    pub moe_x_perm: Option<Array<C>>,
-    pub moe_tok2row: Option<Array<C>>,
-    pub moe_y_partial: Option<Array<C>>,
-    pub moe_hidden: Option<Array<C>>,
-    pub moe_two_pass_row_expert_map: Option<Array<C>>,
-    pub moe_tile_counts: Option<Array<C>>,
-    pub moe_tile_offsets: Option<Array<C>>,
-    pub moe_tile_map: Option<Array<C>>,
-    pub moe_total_tiles: Option<Array<C>>,
-    pub moe_dispatch_args: Option<Array<C>>,
-    pub moe_scatter_partials: Option<Array<C>>,
-    pub moe_scatter_block_bases: Option<Array<C>>,
-    pub moe_block_alloc: Option<Array<C>>,
+    pub moe_topk_ids: Option<ArrayCell<B>>,
+    pub moe_topk_probs: Option<ArrayCell<B>>,
+    pub moe_offsets: Option<ArrayCell<B>>,
+    pub moe_sumk: Option<ArrayCell<B>>,
+    pub moe_bucketed_token_ids: Option<ArrayCell<B>>,
+    pub moe_bucketed_probs: Option<ArrayCell<B>>,
+    pub moe_x_perm: Option<ArrayCell<B>>,
+    pub moe_tok2row: Option<ArrayCell<B>>,
+    pub moe_y_partial: Option<ArrayCell<B>>,
+    pub moe_hidden: Option<ArrayCell<B>>,
+    pub moe_two_pass_row_expert_map: Option<ArrayCell<B>>,
+    pub moe_tile_counts: Option<ArrayCell<B>>,
+    pub moe_tile_offsets: Option<ArrayCell<B>>,
+    pub moe_tile_map: Option<ArrayCell<B>>,
+    pub moe_total_tiles: Option<ArrayCell<B>>,
+    pub moe_dispatch_args: Option<ArrayCell<B>>,
+    pub moe_scatter_partials: Option<ArrayCell<B>>,
+    pub moe_scatter_block_bases: Option<ArrayCell<B>>,
+    pub moe_block_alloc: Option<ArrayCell<B>>,
 }
 
-impl<C: Context> ScratchBuffers<C> {
-    // TODO: use device arrays instead of MTLBuffers
-    /// Allocate the buffers with `StorageModeShared` so that they are CPU-accessible as well.
+impl<B: Backend> ScratchBuffers<B> {
     pub fn new(
-        context: &C,
+        context: &B::Context,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         max_prefix_len: usize,
@@ -80,7 +79,7 @@ impl<C: Context> ScratchBuffers<C> {
     ) -> Self {
         // Helper closure for allocation
         let alloc =
-            |shape: &[usize], dtype: DataType, label: &str| -> Array<C> {
+            |shape: &[usize], dtype: DataType, label: &str| -> ArrayCell<B> {
                 let array = context.create_array(
                     shape,
                     dtype,
@@ -91,8 +90,6 @@ impl<C: Context> ScratchBuffers<C> {
 
         let act_ty = model_shape.activation_data_type();
 
-        let partials_shape =
-            model_shape.attention_partials_shape(max_suffix_len);
         let sums_maxs_shape = model_shape.attention_sums_shape(max_suffix_len);
         let moe = match &decoder_config.layer_config.mlp_config {
             MLPConfig::MixtureOfExperts(moe) => Some(moe),
@@ -100,7 +97,6 @@ impl<C: Context> ScratchBuffers<C> {
         };
         let moe_max_routed =
             moe.map(|moe| max_suffix_len * moe.num_experts_per_token);
-        let moe_mixture_size = moe.map(|moe| moe.mixture_size);
         let moe_scatter_entries = moe.map(|moe| {
             let num_blocks = ((max_suffix_len + 255) / 256).max(1);
             let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
@@ -128,40 +124,26 @@ impl<C: Context> ScratchBuffers<C> {
             ),
 
             // 2-D
-            attention_window_size_to_bias: {
-                // Collect unique window sizes across all layers
-                let unique_window_sizes: std::collections::HashSet<
-                    Option<usize>,
-                > = model_shape
-                    .sliding_window_length_per_layer
-                    .iter()
-                    .copied()
-                    .collect();
-
-                // Create one buffer per unique window size
-                unique_window_sizes
-                    .into_iter()
-                    .map(|window_size| {
-                        (window_size, {
-                            let label = match window_size {
-                                Some(window_size) => format!(
-                                    "attention_bias_for_window_size_{window_size}"
-                                ),
-                                None => "attention_bias_for_window_size_none".to_string(),
-                            };
-                            alloc(
-                                &[
-                                    max_suffix_len,
-                                    max_suffix_len + max_prefix_len,
-                                ],
-                                act_ty,
-                                label
-                                .as_str(),
-                            )
-                        })
-                    })
-                    .collect::<HashMap<Option<usize>, Array<C>>>()
-            },
+            attention_window_size_to_bias: model_shape
+                .sliding_window_length_per_layer
+                .iter()
+                .copied()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .map(|window_size| {
+                    let label = match window_size {
+                        Some(ws) => {
+                            format!("attention_bias_for_window_size_{ws}")
+                        },
+                        None => {
+                            "attention_bias_for_window_size_none".to_string()
+                        },
+                    };
+                    let shape =
+                        [max_suffix_len, max_suffix_len + max_prefix_len];
+                    (window_size, alloc(&shape, act_ty, &label))
+                })
+                .collect(),
             logits: alloc(
                 &model_shape.logits_shape(max_suffix_len),
                 act_ty,
@@ -238,7 +220,7 @@ impl<C: Context> ScratchBuffers<C> {
             ),
 
             attention_partials: alloc(
-                &partials_shape,
+                &model_shape.attention_partials_shape(max_suffix_len),
                 act_ty,
                 "attention_partials",
             ),
@@ -246,54 +228,79 @@ impl<C: Context> ScratchBuffers<C> {
             attention_maxs: alloc(&sums_maxs_shape, act_ty, "attention_maxs"),
 
             moe_topk_ids: moe.map(|moe| {
-                let shape = model_shape.moe_topk_ids_shape(
-                    max_suffix_len,
-                    moe.num_experts_per_token,
-                );
-                alloc(&shape, DataType::U32, "moe_topk_ids")
+                alloc(
+                    &model_shape.moe_topk_ids_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    ),
+                    DataType::U32,
+                    "moe_topk_ids",
+                )
             }),
             moe_topk_probs: moe.map(|moe| {
-                let shape = model_shape.moe_topk_probs_shape(
-                    max_suffix_len,
-                    moe.num_experts_per_token,
-                );
-                alloc(&shape, act_ty, "moe_topk_probs")
+                alloc(
+                    &model_shape.moe_topk_probs_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    ),
+                    act_ty,
+                    "moe_topk_probs",
+                )
             }),
-            moe_offsets: moe_mixture_size.map(|mixture_size| {
-                let shape = model_shape.moe_offsets_shape(mixture_size);
-                alloc(&shape, DataType::U32, "moe_offsets")
+            moe_offsets: moe.map(|moe| {
+                alloc(
+                    &model_shape.moe_offsets_shape(moe.mixture_size),
+                    DataType::U32,
+                    "moe_offsets",
+                )
             }),
             moe_sumk: moe.map(|_| {
-                let shape = model_shape.moe_sumk_shape();
-                alloc(&shape, DataType::U32, "moe_sumk")
+                alloc(&model_shape.moe_sumk_shape(), DataType::U32, "moe_sumk")
             }),
             moe_bucketed_token_ids: moe_max_routed.map(|max_routed| {
-                let shape =
-                    model_shape.moe_bucketed_token_ids_shape(max_routed);
-                alloc(&shape, DataType::U32, "moe_bucketed_token_ids")
+                alloc(
+                    &model_shape.moe_bucketed_token_ids_shape(max_routed),
+                    DataType::U32,
+                    "moe_bucketed_token_ids",
+                )
             }),
             moe_bucketed_probs: moe_max_routed.map(|max_routed| {
-                let shape = model_shape.moe_bucketed_probs_shape(max_routed);
-                alloc(&shape, act_ty, "moe_bucketed_probs")
+                alloc(
+                    &model_shape.moe_bucketed_probs_shape(max_routed),
+                    act_ty,
+                    "moe_bucketed_probs",
+                )
             }),
             moe_x_perm: moe_max_routed.map(|max_routed| {
-                let shape = model_shape.moe_x_perm_shape(max_routed);
-                alloc(&shape, DataType::F16, "moe_x_perm")
+                alloc(
+                    &model_shape.moe_x_perm_shape(max_routed),
+                    DataType::F16,
+                    "moe_x_perm",
+                )
             }),
             moe_tok2row: moe.map(|moe| {
-                let shape = model_shape.moe_tok2row_shape(
-                    max_suffix_len,
-                    moe.num_experts_per_token,
-                );
-                alloc(&shape, DataType::I32, "moe_tok2row")
+                alloc(
+                    &model_shape.moe_tok2row_shape(
+                        max_suffix_len,
+                        moe.num_experts_per_token,
+                    ),
+                    DataType::I32,
+                    "moe_tok2row",
+                )
             }),
             moe_y_partial: moe_max_routed.map(|max_routed| {
-                let shape = model_shape.moe_y_partial_shape(max_routed);
-                alloc(&shape, DataType::F16, "moe_y_partial")
+                alloc(
+                    &model_shape.moe_y_partial_shape(max_routed),
+                    DataType::F16,
+                    "moe_y_partial",
+                )
             }),
             moe_hidden: moe_max_routed.map(|max_routed| {
-                let shape = model_shape.moe_hidden_shape(max_routed);
-                alloc(&shape, DataType::F32, "moe_hidden")
+                alloc(
+                    &model_shape.moe_hidden_shape(max_routed),
+                    DataType::F32,
+                    "moe_hidden",
+                )
             }),
             moe_two_pass_row_expert_map: moe_max_routed.map(|max_routed| {
                 alloc(
@@ -302,25 +309,40 @@ impl<C: Context> ScratchBuffers<C> {
                     "moe_two_pass_row_expert_map",
                 )
             }),
-            moe_tile_counts: moe_mixture_size.map(|mixture_size| {
-                let shape = model_shape.moe_counts_shape(mixture_size);
-                alloc(&shape, DataType::U32, "moe_tile_counts")
+            moe_tile_counts: moe.map(|moe| {
+                alloc(
+                    &model_shape.moe_counts_shape(moe.mixture_size),
+                    DataType::U32,
+                    "moe_tile_counts",
+                )
             }),
-            moe_tile_offsets: moe_mixture_size.map(|mixture_size| {
-                let shape = model_shape.moe_offsets_shape(mixture_size);
-                alloc(&shape, DataType::U32, "moe_tile_offsets")
+            moe_tile_offsets: moe.map(|moe| {
+                alloc(
+                    &model_shape.moe_offsets_shape(moe.mixture_size),
+                    DataType::U32,
+                    "moe_tile_offsets",
+                )
             }),
             moe_tile_map: moe_max_routed.map(|max_routed| {
-                let shape = model_shape.moe_tile_map_shape(max_routed);
-                alloc(&shape, DataType::U32, "moe_tile_map")
+                alloc(
+                    &model_shape.moe_tile_map_shape(max_routed),
+                    DataType::U32,
+                    "moe_tile_map",
+                )
             }),
             moe_total_tiles: moe.map(|_| {
-                let shape = model_shape.moe_total_tiles_shape();
-                alloc(&shape, DataType::U32, "moe_total_tiles")
+                alloc(
+                    &model_shape.moe_total_tiles_shape(),
+                    DataType::U32,
+                    "moe_total_tiles",
+                )
             }),
             moe_dispatch_args: moe.map(|_| {
-                let shape = model_shape.moe_dispatch_args_shape();
-                alloc(&shape, DataType::U32, "moe_dispatch_args")
+                alloc(
+                    &model_shape.moe_dispatch_args_shape(),
+                    DataType::U32,
+                    "moe_dispatch_args",
+                )
             }),
             moe_scatter_partials: moe_scatter_entries.map(|entries| {
                 alloc(&[entries], DataType::U32, "moe_scatter_partials")

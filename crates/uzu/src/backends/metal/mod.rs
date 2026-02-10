@@ -23,7 +23,7 @@ pub use context::{
 };
 pub use encodable_block::Decoder;
 pub use error::MTLError;
-pub use forward_pass::{CacheLayers, ForwardPassState, ModelShape};
+pub use forward_pass::{CacheLayers, ForwardPassState};
 pub use kernel::{
     KVCacheUpdate, KernelDataType, RopeKernel, dsl::MetalKernels,
 };

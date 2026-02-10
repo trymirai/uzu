@@ -22,12 +22,13 @@ use crate::{
         MTLCommandQueue, MTLContext, MetalArray,
         forward_pass::{
             ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
-            ScratchBuffers, traces::ActivationTrace,
+            traces::ActivationTrace,
         },
     },
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::Sampling,
+    forward_pass::scratch_buffers::ScratchBuffers,
     language_model::{
         LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -1003,7 +1004,7 @@ impl TraceValidator {
 
         let decoder_config = &context.decoder_config;
         context.scratch_buffers = ScratchBuffers::new(
-            &context.mtl_context,
+            context.mtl_context.as_ref(),
             decoder_config,
             &context.model_shape,
             resolved_prefix_length,
