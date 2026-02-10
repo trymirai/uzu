@@ -2,9 +2,10 @@ use std::{mem::size_of, ptr::NonNull};
 
 use super::{dtype_index, dtype_suffix};
 use crate::backends::metal::{
-    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, NSRange,
-    ProtocolObject, Retained,
+    FunctionConstantValuesSetValue, KernelDataType, MTLBlitCommandEncoderExt,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
+    MTLSize, ProtocolObject, Retained,
     kernel::moe::tiles_map::{
         MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
         MoeTileScanArguments,
@@ -97,7 +98,7 @@ impl MoeExpertsTwoPassPrefillKernel {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
                 let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_type_at_index(NonNull::from(&gate).cast(), MTLDataType::UInt, 30);
+                fcv.set_value(&gate, 30);
                 let kernel_name = format!("moe_two_pass_prefill_pass_a_indirect_{}", dtype_suffix);
                 let cache_key = format!("{}_gate_{}", kernel_name, gate);
                 pass_a_indirect[gate as usize].push(ctx.compute_pipeline_state_cached(
@@ -136,7 +137,7 @@ impl MoeExpertsTwoPassPrefillKernel {
         };
         let hidden_bytes = args.total_rows * args.d_ff * dtype_size;
         let blit_encoder = command_buffer.new_blit_command_encoder().expect("Failed to create blit command encoder");
-        blit_encoder.fill_buffer_range_value(args.hidden_buffer, NSRange::new(0, hidden_bytes), 0);
+        blit_encoder.fill_buffer_range_value(args.hidden_buffer, 0..hidden_bytes, 0);
         blit_encoder.end_encoding();
         self.tile_map.encode_counts(
             command_buffer,

@@ -11,8 +11,9 @@ use crate::{
     backends::{
         common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
-            KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MetalArray, NSRange, ProtocolObject, Retained,
+            KernelDataType, MTLBlitCommandEncoderExt, MTLBuffer,
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+            MTLContext, MetalArray, ProtocolObject, Retained,
             kernel::{
                 MoeGatherKernels,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
@@ -289,13 +290,17 @@ impl EncodableBlock<Metal> for MoeBlock {
             }
 
             // Clear hidden buffer
-            let hidden_bytes = (suffix_length * k * self.hidden_dim * dtype_size) as u64;
+            let hidden_bytes = suffix_length * k * self.hidden_dim * dtype_size;
             if hidden_bytes > 0 {
-                blit_encoder.fill_buffer_range_value(&hidden_buf, NSRange::new(0, hidden_bytes.try_into().unwrap()), 0);
+                blit_encoder.fill_buffer_range_value(
+                    &hidden_buf,
+                    0..hidden_bytes,
+                    0,
+                );
             }
 
             // Clear y_partial buffer
-            let y_partial_bytes = (suffix_length * k * self.model_dim * dtype_size) as u64;
+            let y_partial_bytes = suffix_length * k * self.model_dim * dtype_size;
             if y_partial_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(
                     &y_partial_buf,
@@ -305,9 +310,13 @@ impl EncodableBlock<Metal> for MoeBlock {
             }
 
             // Clear x_perm buffer
-            let x_perm_bytes = (suffix_length * k * self.model_dim * dtype_size) as u64;
+            let x_perm_bytes = suffix_length * k * self.model_dim * dtype_size;
             if x_perm_bytes > 0 {
-                blit_encoder.fill_buffer_range_value(&x_perm_buf, NSRange::new(0, x_perm_bytes.try_into().unwrap()), 0);
+                blit_encoder.fill_buffer_range_value(
+                    &x_perm_buf,
+                    0..x_perm_bytes,
+                    0,
+                );
             }
         }
 

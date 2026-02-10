@@ -1,5 +1,4 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::NSError;
 
 use crate::backends::metal::{
     MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt,
@@ -24,10 +23,11 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         constants: Option<&MTLFunctionConstantValues>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
         let function = match constants {
-            Some(const_values) => {
-                let mut error: *mut NSError = std::ptr::null_mut();
-                self.new_function_with_name_constant_values_error(function_name, const_values, &mut error)
-            },
+            Some(const_values) => self.new_function_with_name_constant_values_error(
+                function_name,
+                const_values,
+                std::ptr::null_mut(),
+            ),
             None => self.new_function_with_name(function_name),
         }
         .ok_or(MTLError::Library(LibraryError::FunctionCreationFailed))?;

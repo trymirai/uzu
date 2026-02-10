@@ -64,14 +64,7 @@ impl GpuCaptureManager {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
-
-        // Set output URL using NSURL
-        let url_string = format!("file://{}", trace_path.display());
-        unsafe {
-            if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url_string)) {
-                capture_descriptor.set_output_url(Some(&url));
-            }
-        }
+        capture_descriptor.set_output_path(Some(&trace_path));
 
         mtl_context.command_queue.set_label(Some("uzu_command_queue"));
         use objc2::rc::Retained;

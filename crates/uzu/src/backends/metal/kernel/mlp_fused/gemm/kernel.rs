@@ -1,11 +1,13 @@
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
 
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained, kernel::mlp_fused::common::MlpFusedArguments,
+        ComputeEncoderSetValue, FunctionConstantValuesSetValue,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
+        MTLFunctionConstantValues, ProtocolObject, Retained,
+        kernel::mlp_fused::common::MlpFusedArguments,
     },
 };
 
@@ -82,11 +84,7 @@ impl Kernel {
 
             let function_constants = MTLFunctionConstantValues::new();
             let activation_val = configuration.activation as u32;
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&activation_val).cast(),
-                metal::MTLDataType::UInt,
-                52,
-            );
+            function_constants.set_value(&activation_val, 52);
 
             let pipeline_state = context.compute_pipeline_state(&kernel_name, Some(&function_constants))?;
             self.pipelines.insert(configuration.clone(), pipeline_state);
