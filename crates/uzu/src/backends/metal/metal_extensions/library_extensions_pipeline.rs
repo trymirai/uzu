@@ -39,13 +39,3 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
             .map_err(|e| MTLError::Library(LibraryError::Custom(format!("Pipeline state creation failed: {}", e))))
     }
 }
-
-impl LibraryPipelineExtensions for Retained<ProtocolObject<dyn MTLLibrary>> {
-    fn compute_pipeline_state(
-        &self,
-        function_name: &str,
-        constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
-        (**self).compute_pipeline_state(function_name, constants)
-    }
-}

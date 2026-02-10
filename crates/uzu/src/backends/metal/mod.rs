@@ -26,5 +26,7 @@ pub use kernel::{KernelDataType, RopeKernel, dsl::MetalKernels};
 pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{ImagePreprocessingParams, ImagePreprocessingRequirements, MetalImagePreprocessor};
 pub use metal::prelude::*;
-pub use metal_extensions::ComputeEncoderSetValue;
+pub use metal_extensions::{
+    ComputeEncoderSetValue, FunctionConstantValuesSetValue,
+};
 pub use placement_analysis::PlacementAnalysis;

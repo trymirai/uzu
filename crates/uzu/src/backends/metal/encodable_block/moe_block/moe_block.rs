@@ -276,14 +276,14 @@ impl EncodableBlock<Metal> for MoeBlock {
             if topk_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(
                     &topk_ids_buf,
-                    NSRange::new(0, (topk_bytes as u64).try_into().unwrap()),
+                    0..topk_bytes,
                     0xFF,
                 );
             }
             if tok2row_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(
                     &tok2row_buf,
-                    NSRange::new(0, (tok2row_bytes as u64).try_into().unwrap()),
+                    0..tok2row_bytes,
                     0xFF,
                 );
             }
@@ -299,7 +299,7 @@ impl EncodableBlock<Metal> for MoeBlock {
             if y_partial_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(
                     &y_partial_buf,
-                    NSRange::new(0, y_partial_bytes.try_into().unwrap()),
+                    0..y_partial_bytes,
                     0,
                 );
             }

@@ -1,5 +1,3 @@
-use std::ptr::NonNull;
-
 use crate::{
     DataType,
     backends::{
@@ -61,23 +59,9 @@ impl MlpFusedConfig {
     /// Create function constants for MLP fused matmul
     pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
         let fcv = MTLFunctionConstantValues::new();
-        let fused = true;
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&fused).cast(),
-            MTLDataType::Bool,
-            MLP_FUSED_FC_INDEX as usize,
-        );
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&self.hidden_dim).cast(),
-            MTLDataType::UInt,
-            MLP_HIDDEN_DIM_FC_INDEX as usize,
-        );
-        let act_val = self.activation as u32;
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&act_val).cast(),
-            MTLDataType::UInt,
-            MLP_ACTIVATION_FC_INDEX as usize,
-        );
+        fcv.set_bool(true, MLP_FUSED_FC_INDEX as usize);
+        fcv.set_uint(self.hidden_dim, MLP_HIDDEN_DIM_FC_INDEX as usize);
+        fcv.set_uint(self.activation as u32, MLP_ACTIVATION_FC_INDEX as usize);
         fcv
     }
 }

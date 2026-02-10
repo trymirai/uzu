@@ -3,8 +3,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use objc2_foundation::{NSString, NSURL};
-
 use crate::{
     backends::metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt, MTLContext},
     utils::env_utils::MetalEnvVar,
