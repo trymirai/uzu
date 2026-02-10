@@ -11,10 +11,10 @@ use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError,
-        forward_pass::ArrayId,
         kernel::{mlp::MlpGateActMulEncodable, quant_matmul::QuantizationType},
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
+    forward_pass::state::ArrayId,
     parameters::ParameterTree,
 };
 

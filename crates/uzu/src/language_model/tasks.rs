@@ -1,12 +1,13 @@
 use std::mem::size_of;
 
 use super::LanguageModelGeneratorContext;
-use crate::backends::{
-    common::Context,
-    metal::{
-        BufferExt, MTLBuffer, ProtocolObject, Retained,
-        forward_pass::{EncodableBlock, EncodingParameters, ForwardPassState},
+use crate::{
+    backends::{
+        common::Context,
+        metal::{BufferExt, MTLBuffer, Metal, ProtocolObject, Retained},
     },
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
@@ -85,7 +86,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         context: &mut LanguageModelGeneratorContext,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         should_fill_attention_bias: bool,
-    ) -> ForwardPassState {
+    ) -> ForwardPassState<Metal> {
         ForwardPassState::new_llm(
             context.mtl_context.clone(),
             &context.decoder_config,
@@ -112,8 +113,8 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
     pub fn build_encoded_task(
         &self,
         context: &LanguageModelGeneratorContext,
-        state: &mut ForwardPassState,
-        parameters: &EncodingParameters,
+        state: &mut ForwardPassState<Metal>,
+        parameters: &EncodingParameters<Metal>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask {
         context.executables.encode(state, &context.command_buffer, parameters);

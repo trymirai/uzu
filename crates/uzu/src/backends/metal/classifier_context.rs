@@ -10,7 +10,6 @@ use super::{
         Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
     },
-    forward_pass::{ArrayId, EncodableBlock, RopeType},
     kernel::dsl::SigmoidMetalKernel,
 };
 use crate::{
@@ -20,9 +19,11 @@ use crate::{
         metal::error::ClassifierError,
     },
     config::{ClassifierModelConfig, ModelMetadata},
+    encodable_block::EncodableBlock,
     forward_pass::{
-        model_shape::ModelShape, scratch_buffers::ScratchBuffers,
-        state::SharedBuffers,
+        model_shape::ModelShape,
+        scratch_buffers::ScratchBuffers,
+        state::{ArrayId, RopeType, SharedBuffers},
     },
     parameters::ParameterLoader,
     session::types::Error,

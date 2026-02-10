@@ -17,12 +17,13 @@ use crate::{
         common::kernel::MaskUpdateKernel,
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-            MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue,
-            forward_pass::{
-                AttentionBiasUpdate, EncodableBlock, EncodingParameters,
-                ForwardPassState, INVALID_POSITION,
-            },
+            MTLCommandBufferHandler, MTLCommandEncoder, MTLCommandQueue, Metal,
         },
+    },
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::{
+        kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
+        state::ForwardPassState,
     },
     session::{
         config::DecodingConfig,
@@ -132,7 +133,7 @@ impl LanguageModelGenerator {
             .chain(flat_trie.token_seeds())
             .chunks(prefill_step_size);
 
-        let mut last_state: Option<ForwardPassState> = None;
+        let mut last_state: Option<ForwardPassState<Metal>> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -726,7 +727,7 @@ impl LanguageModelGenerator {
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
-    ) -> (ForwardPassState, f64) {
+    ) -> (ForwardPassState<Metal>, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
@@ -812,7 +813,7 @@ impl LanguageModelGenerator {
 
     fn sample(
         &mut self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
     ) -> Result<Vec<u64>, Error> {
         let sampling_output = state.sampling_output()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");

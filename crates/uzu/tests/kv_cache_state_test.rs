@@ -6,10 +6,10 @@ use uzu::{
     array::ArrayContextExt,
     backends::{
         common::Context,
-        metal::{
-            KVCacheUpdate, KernelDataType, MTLContext,
-            forward_pass::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
-        },
+        metal::{KVCacheUpdate, MTLContext, Metal},
+    },
+    forward_pass::kv_cache_layer::{
+        INVALID_POSITION, KVCacheLayer, KVCacheLayerState,
     },
 };
 
@@ -37,7 +37,7 @@ fn make_test_layer(
     state: KVCacheLayerState,
     prefix_capacity: usize,
     suffix_capacity: usize,
-) -> KVCacheLayer {
+) -> KVCacheLayer<Metal> {
     let total_len = match &state {
         KVCacheLayerState::Full {
             ..
@@ -79,7 +79,7 @@ fn make_test_layer(
     }
 }
 
-fn fill_arrays(layer: &mut KVCacheLayer) -> (Vec<f32>, Vec<f32>) {
+fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let mut keys_ref = layer.keys.borrow_mut();
         let slice = keys_ref.as_slice_mut::<f32>();
@@ -143,7 +143,7 @@ fn expected_after_update(
 }
 
 fn collect_mask(
-    layer: &KVCacheLayer,
+    layer: &KVCacheLayer<Metal>,
     suffix_positions: &[usize],
 ) -> Vec<Vec<bool>> {
     let suffix_length = suffix_positions.len();
@@ -205,19 +205,17 @@ fn run_scenario(
         scenario.name
     );
 
-    let kv_cache_update = match KVCacheUpdate::new(
-        context,
-        KernelDataType::Float32,
-        total_sequence_length,
-    ) {
-        Ok(update) => update,
-        Err(e) => {
-            panic!(
-                "Failed to create KV cache update for scenario {}: {:?}",
-                scenario.name, e
-            );
-        },
-    };
+    let kv_cache_update =
+        match KVCacheUpdate::new(context, DataType::F32, total_sequence_length)
+        {
+            Ok(update) => update,
+            Err(e) => {
+                panic!(
+                    "Failed to create KV cache update for scenario {}: {:?}",
+                    scenario.name, e
+                );
+            },
+        };
 
     let command_buffer = context
         .command_queue

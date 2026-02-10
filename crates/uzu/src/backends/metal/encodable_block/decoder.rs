@@ -3,9 +3,7 @@
 use crate::backends::metal::Metal;
 use std::rc::Rc;
 
-use super::{
-    EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
-};
+use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
@@ -13,10 +11,13 @@ use crate::{
         ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
-        forward_pass::{ArrayId, ForwardPassState, RopeType},
     },
     config::{DecoderLayerType, MixerConfig},
-    forward_pass::model_shape::ModelShape,
+    encodable_block::EncodingParameters,
+    forward_pass::{
+        model_shape::ModelShape,
+        state::{ArrayId, ForwardPassState, RopeType},
+    },
     parameters::ParameterTree,
 };
 
@@ -202,18 +203,18 @@ impl Decoder {
 impl EncodableBlock<Metal> for Decoder {
     fn encode_with_shared_encoder(
         &self,
-        _state: &mut ForwardPassState,
+        _state: &mut ForwardPassState<Metal>,
         _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         unimplemented!("Decoder does not support shared encoder")
     }
 
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         self.embed.encode(state, command_buffer, parameters);
 

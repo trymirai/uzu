@@ -1,19 +1,20 @@
 //! QK Normalization encodable.
 
-use super::super::{EncodableBlock, EncodingParameters, Metal};
+use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::metal::{
         MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
         MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
         MTLResourceOptions, ProtocolObject, Retained,
-        forward_pass::{ArrayId, ForwardPassState},
         kernel::rms_norm::{
             QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel,
             RMSNormKernelType,
         },
     },
     config::{NormalizationConfig, UpcastMode},
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -157,9 +158,9 @@ impl QKNorm {
 impl EncodableBlock<Metal> for QKNorm {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -179,9 +180,9 @@ impl EncodableBlock<Metal> for QKNorm {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {

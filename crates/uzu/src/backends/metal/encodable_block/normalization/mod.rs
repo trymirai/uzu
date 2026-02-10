@@ -8,17 +8,17 @@ pub use layer_norm::LayerNorm;
 pub use qk_norm::QKNorm;
 pub use rms_norm::RMSNorm;
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::MTLError;
 use crate::{
     DataType,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-        Retained,
-        forward_pass::{ArrayId, ForwardPassState},
-        kernel::RMSNormError,
+        Retained, kernel::RMSNormError,
     },
     config::NormalizationConfig,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -75,9 +75,9 @@ impl Normalization {
 impl EncodableBlock<Metal> for Normalization {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         match self {
             Normalization::LayerNorm(layer_norm) => {
@@ -102,9 +102,9 @@ impl EncodableBlock<Metal> for Normalization {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         match self {
             Normalization::LayerNorm(layer_norm) => layer_norm

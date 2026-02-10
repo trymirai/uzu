@@ -182,22 +182,6 @@ impl ModelShape {
         [suffix_length, self.vocabulary_size]
     }
 
-    pub fn embeddings_input_shape(&self) -> [usize; 2] {
-        [self.vocabulary_size, self.model_dim]
-    }
-
-    pub fn embeddings_output_shape(&self) -> [usize; 2] {
-        [self.vocabulary_size, self.model_dim]
-    }
-
-    pub fn quantized_embeddings_weights_shape(&self) -> [usize; 2] {
-        [self.vocabulary_size, self.model_dim]
-    }
-
-    pub fn quantized_embeddings_scales_shape(&self) -> [usize; 1] {
-        [self.vocabulary_size]
-    }
-
     pub fn attention_output_shape(
         &self,
         suffix_length: usize,
@@ -264,14 +248,6 @@ impl ModelShape {
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
         [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
-    }
-
-    pub fn moe_router_logits_shape(
-        &self,
-        suffix_length: usize,
-        num_experts: usize,
-    ) -> [usize; 2] {
-        [suffix_length, num_experts]
     }
 
     pub fn moe_topk_ids_shape(

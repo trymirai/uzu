@@ -5,12 +5,13 @@ use crate::backends::metal::{
     ProtocolObject, Retained,
 };
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 use crate::backends::metal::{
     KernelDataType, MTLContext,
-    forward_pass::{ArrayId, ForwardPassState, RopeType},
     kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
 };
+use crate::encodable_block::EncodingParameters;
+use crate::forward_pass::state::{ArrayId, ForwardPassState, RopeType};
 
 pub struct Rope {
     kernel: RopeKernel,
@@ -34,9 +35,9 @@ impl Rope {
 impl EncodableBlock<Metal> for Rope {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -56,9 +57,9 @@ impl EncodableBlock<Metal> for Rope {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);

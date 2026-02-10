@@ -1,6 +1,6 @@
 //! LayerNorm encodable.
 
-use super::super::{EncodableBlock, EncodingParameters, Metal};
+use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::{
@@ -9,11 +9,12 @@ use crate::{
             MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
             MTLResourceOptions, ProtocolObject, Retained,
-            forward_pass::{ArrayId, ForwardPassState},
             kernel::dsl::LayerNormMetalKernel,
         },
     },
     config::{NormalizationConfig, UpcastMode},
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -77,9 +78,9 @@ impl LayerNorm {
 impl EncodableBlock<Metal> for LayerNorm {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let compute_encoder = command_buffer
             .new_compute_command_encoder()
@@ -99,9 +100,9 @@ impl EncodableBlock<Metal> for LayerNorm {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);

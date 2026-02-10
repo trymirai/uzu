@@ -6,11 +6,12 @@ use metal::{
 };
 use ndarray::{Array, Array3, s};
 use uzu::backends::{
-    common::Context,
-    metal::{
-        KVCacheUpdate, KernelDataType, MTLContext,
-        kernel::kv_cache_update::{KVLayerData, Swap, create_swaps_direct},
+    common::{
+        Context,
+        gpu_types::Swap,
+        kernel::kv_cache_update::{KVLayerData, create_swaps_direct},
     },
+    metal::{KVCacheUpdate, MTLContext, Metal},
 };
 
 fn apply_swaps_3d<T: Clone>(
@@ -51,7 +52,7 @@ fn test_random_pattern(context: &MTLContext) {
     let max_sequence_length = 256usize;
     let kv_cache_update = match KVCacheUpdate::new(
         context,
-        KernelDataType::Float32,
+        uzu::DataType::F32,
         max_sequence_length,
     ) {
         Ok(update) => update,
@@ -104,7 +105,7 @@ fn test_random_pattern(context: &MTLContext) {
         )
         .expect("Failed to create buffer");
 
-    let kv_layer_data = KVLayerData {
+    let kv_layer_data = KVLayerData::<Metal> {
         key_buffer: key_buffer.clone(),
         key_shape: [num_heads, seq_len, head_dim],
         value_buffer: value_buffer.clone(),

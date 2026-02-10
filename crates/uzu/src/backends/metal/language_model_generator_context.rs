@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{
-    CacheLayers, Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
+    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal,
     compilation_parameters::CompilationConfig, kernel::TokenCopyKernel,
 };
 use crate::{
@@ -23,8 +23,8 @@ use crate::{
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::Sampling,
     forward_pass::{
-        model_shape::ModelShape, scratch_buffers::ScratchBuffers,
-        state::SharedBuffers,
+        cache_layers::CacheLayers, model_shape::ModelShape,
+        scratch_buffers::ScratchBuffers, state::SharedBuffers,
     },
     language_model::rng::PRng,
     parameters::ParameterLoader,
@@ -136,7 +136,7 @@ pub struct LanguageModelGeneratorContext {
     pub mtl_context: Rc<MTLContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
-    pub cache_layers: Rc<RefCell<CacheLayers>>,
+    pub cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
     pub scratch_buffers: ScratchBuffers<Metal>,
 
@@ -144,7 +144,7 @@ pub struct LanguageModelGeneratorContext {
     pub decoder_config: Rc<DecoderConfig>,
     pub model_shape: ModelShape,
     pub executables: Decoder,
-    pub kv_cache_update: Box<KVCacheUpdate>,
+    pub kv_cache_update: Box<KVCacheUpdate<Metal>>,
     pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,
 
@@ -234,7 +234,7 @@ impl LanguageModelGeneratorContext {
         );
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
-            &context,
+            context.as_ref(),
             &model_shape,
             max_prefix_length,
             max_suffix_length,
@@ -244,8 +244,12 @@ impl LanguageModelGeneratorContext {
             decoder_config.output_norm_config.scale_precision.into();
         let kernel_data_type: KernelDataType = intermediate_data_type.into();
         let kv_cache_update = Box::new(
-            KVCacheUpdate::new(&context, kernel_data_type, max_prefix_length)
-                .map_err(|_| Error::UnableToCreateMetalContext)?,
+            KVCacheUpdate::new(
+                context.as_ref(),
+                intermediate_data_type,
+                max_prefix_length,
+            )
+            .map_err(|_| Error::UnableToCreateMetalContext)?,
         );
 
         let gpu_sampler = Sampling::<Metal>::new(

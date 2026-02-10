@@ -7,7 +7,6 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 pub use super::Metal;
-use super::forward_pass::ForwardPassState;
 pub use crate::encodable_block::EncodableBlock;
 
 mod activation;
@@ -15,7 +14,6 @@ mod attention;
 mod classifier_layer;
 mod decoder;
 mod embedding;
-mod encoding_parameters;
 mod layer;
 mod linear;
 mod mamba_mixer;
@@ -39,7 +37,6 @@ pub use embedding::{
     FullPrecisionEmbeddingReadout, QuantizedEmbeddingLookup,
     QuantizedEmbeddingReadout,
 };
-pub use encoding_parameters::EncodingParameters;
 pub use layer::LayerExecutables;
 pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;

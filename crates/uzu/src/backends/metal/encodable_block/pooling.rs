@@ -1,6 +1,6 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use super::{EncodableBlock, EncodingParameters, Metal};
+use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
 use crate::backends::metal::MTLBlitCommandEncoder;
 use crate::{
@@ -10,11 +10,12 @@ use crate::{
             KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
             MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
             Retained,
-            forward_pass::{ArrayId, ForwardPassState},
             kernel::dsl::{PoolingClsMetalKernel, PoolingMeanMetalKernel},
         },
     },
     config::PoolingType,
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 enum PoolingKernel {
@@ -74,9 +75,9 @@ impl Pooling {
 impl EncodableBlock<Metal> for Pooling {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -124,9 +125,9 @@ impl EncodableBlock<Metal> for Pooling {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();

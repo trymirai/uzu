@@ -6,16 +6,17 @@ use crate::backends::metal::{
 };
 
 use super::{
-    super::{EncodableBlock, EncodingParameters, Metal},
+    super::{EncodableBlock, Metal},
     EmbeddingError,
 };
 use crate::{
     DataType,
     backends::metal::{
         MTLContext, MTLError,
-        forward_pass::{ArrayId, ForwardPassState},
         kernel::matmul::{MatmulArguments, MatmulKernel},
     },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -88,9 +89,9 @@ impl FullPrecisionEmbeddingReadout {
 impl EncodableBlock<Metal> for FullPrecisionEmbeddingReadout {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let encoder = command_buffer
             .new_compute_command_encoder()
@@ -110,9 +111,9 @@ impl EncodableBlock<Metal> for FullPrecisionEmbeddingReadout {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        _parameters: &EncodingParameters,
+        _parameters: &EncodingParameters<Metal>,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();

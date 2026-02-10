@@ -1,6 +1,6 @@
 //! Mamba2 SSM mixer encodable.
 
-use super::{EncodableBlock, EncodingParameters, Metal, transformer_layer};
+use super::{EncodableBlock, Metal, transformer_layer};
 use crate::backends::metal::kernel::ssm::ssd_prefill::{
     SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
 };
@@ -13,7 +13,6 @@ use crate::{
             MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
             Retained,
             compilation_parameters::CompilationConfig,
-            forward_pass::{ArrayId, ForwardPassState},
             kernel::dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
             kernel::ssm::{
                 Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
@@ -22,6 +21,8 @@ use crate::{
         },
     },
     config::{DecoderLayerType, Mamba2Config},
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 use std::{env, rc::Rc};
@@ -149,9 +150,9 @@ impl MambaMixer {
 
     fn encode_pipeline_with_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
@@ -175,7 +176,7 @@ impl MambaMixer {
 
     fn run_split_inproj(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
@@ -219,7 +220,7 @@ impl MambaMixer {
 
     fn run_conv_scan(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
@@ -335,7 +336,7 @@ impl MambaMixer {
 
     fn run_prefill_ssm(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
@@ -413,7 +414,7 @@ impl MambaMixer {
 
     fn run_decode_ssm(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
@@ -501,9 +502,9 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 impl EncodableBlock<Metal> for MambaMixer {
     fn encode(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         if self.supports_shared_encoder() {
             let encoder = command_buffer
@@ -553,9 +554,9 @@ impl EncodableBlock<Metal> for MambaMixer {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState,
+        state: &mut ForwardPassState<Metal>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters,
+        parameters: &EncodingParameters<Metal>,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
     }

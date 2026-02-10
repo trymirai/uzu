@@ -62,8 +62,4 @@ impl<B: Backend> CommonAuxBuffers<B> {
                 .view(&model_shape.attention_maxs_shape(suffix_length)),
         }
     }
-
-    pub fn suffix_length(&self) -> usize {
-        self.suffix_length
-    }
 }
