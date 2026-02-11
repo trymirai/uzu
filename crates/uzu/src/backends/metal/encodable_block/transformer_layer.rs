@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
-use super::Metal;
 use super::{
-    EncodableBlock, FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock,
+    EncodableBlock, FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, Metal, MlpBlock,
     MlpFusedBlock, MoeBlock, QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{

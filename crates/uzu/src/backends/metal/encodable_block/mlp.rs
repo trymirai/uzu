@@ -2,15 +2,11 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::backends::metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
-};
-
 use super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
         kernel::{
             mlp::{MlpActivationType, MlpGateActMulEncodable},
             mlp_fused::{MlpFusedArguments, MlpFusedKernel},

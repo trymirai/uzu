@@ -1,8 +1,6 @@
-use std::ptr::NonNull;
-
 use crate::backends::metal::{
-    ComputeEncoderSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-    MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+    ComputeEncoderSetValue, FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -17,7 +15,7 @@ fn fn_suffix(dt: KernelDataType) -> &'static str {
 
 fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
     let function_constants = MTLFunctionConstantValues::new();
-    function_constants.set_constant_value_type_at_index(NonNull::from(&has_bias).cast(), MTLDataType::Bool, 0);
+    function_constants.set_value(&has_bias, 0);
     function_constants
 }
 

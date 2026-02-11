@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
 
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
@@ -6,8 +6,8 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-            MTLFunctionConstantValues, ProtocolObject, Retained,
+            ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
             kernel::{mlp::MlpActivationType, mlp_fused::common::MlpFusedArguments},
         },
     },
@@ -100,11 +100,7 @@ impl Kernel {
             let kernel_name = self.accum_kernel_name()?;
             let function_constants = MTLFunctionConstantValues::new();
             let activation_val = activation as u32;
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&activation_val).cast(),
-                metal::MTLDataType::UInt,
-                52,
-            );
+            function_constants.set_value(&activation_val, 52);
             let pipeline_state = context.compute_pipeline_state(&kernel_name, Some(&function_constants))?;
             self.accum_pipelines.insert(activation, pipeline_state);
         }

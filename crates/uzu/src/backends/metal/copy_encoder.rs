@@ -1,9 +1,8 @@
 use metal::{MTLBlitCommandEncoder, MTLBuffer};
 use objc2::runtime::ProtocolObject;
 
-use crate::backends::common::CopyEncoder;
-
 use super::Metal;
+use crate::backends::common::CopyEncoder;
 
 impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
     type Backend = Metal;

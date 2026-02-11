@@ -1,10 +1,11 @@
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
 
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+        FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
     },
     config::QuantizationMode,
 };
@@ -109,11 +110,7 @@ impl QuantizedMatmulKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let mut pipelines = HashMap::new();
 
@@ -347,11 +344,7 @@ impl MlpFusedQmvKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let pipeline = context
             .compute_pipeline_state(&kernel_name, Some(&function_constants))
@@ -441,11 +434,7 @@ impl MlpFusedQmmKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let pipeline = context
             .compute_pipeline_state(&kernel_name, Some(&function_constants))

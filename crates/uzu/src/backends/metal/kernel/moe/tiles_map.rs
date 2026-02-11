@@ -1,3 +1,9 @@
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
+use objc2::{
+    __framework_prelude::{ProtocolObject, Retained},
+    Message,
+};
+
 use crate::backends::{
     common::kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
     metal::{
@@ -8,9 +14,6 @@ use crate::backends::{
         },
     },
 };
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
-use objc2::__framework_prelude::Retained;
-use objc2::{__framework_prelude::ProtocolObject, Message};
 
 pub struct MoeTileMapKernels {
     counts: MoeTileCountsMetalKernel,

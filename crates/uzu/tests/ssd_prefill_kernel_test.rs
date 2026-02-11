@@ -6,17 +6,19 @@ use bytemuck;
 use metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
-use uzu::backends::{
-    common::Context,
-    metal::{
-        KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
-        kernel::ssm::{
-            SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
-            conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
+use uzu::{
+    backends::{
+        common::Context,
+        metal::{
+            KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
+            kernel::ssm::{
+                SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
+                conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
+            },
         },
     },
+    config::Activation,
 };
-use uzu::config::Activation;
 
 const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::STORAGE_MODE_SHARED;
 

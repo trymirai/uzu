@@ -1,12 +1,13 @@
-use crate::backends::common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _};
-use crate::backends::metal::kernel::dsl::{
-    MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel,
-};
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
-use objc2::__framework_prelude::ProtocolObject;
-use objc2::Message;
-use objc2::rc::Retained;
+use objc2::{__framework_prelude::ProtocolObject, Message, rc::Retained};
+
+use crate::backends::{
+    common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
+    metal::{
+        KernelDataType, MTLContext, MTLError,
+        kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
+    },
+};
 
 static DTYPES: [KernelDataType; 3] = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
 

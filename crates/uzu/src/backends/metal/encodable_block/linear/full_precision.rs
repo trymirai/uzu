@@ -1,11 +1,10 @@
-use crate::backends::metal::Metal;
 use std::cell::RefCell;
 
 use crate::{
     DataType,
     backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-        Retained,
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, Metal,
+        ProtocolObject, Retained,
         encodable_block::EncodableBlock,
         kernel::matmul::{MatmulArguments, MatmulKernel},
     },

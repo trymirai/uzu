@@ -1,18 +1,21 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
-use uzu::backends::metal::{
-    MTLContext, ProtocolObject, Retained,
-    kernel::{
-        KernelDataType,
-        dsl::MoeCountsOffsetsFusedMetalKernel,
-        moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+use uzu::backends::{
+    common::kernel::MoeCountsOffsetsFusedKernel,
+    metal::{
+        MTLContext, ProtocolObject, Retained,
+        kernel::{
+            KernelDataType,
+            dsl::MoeCountsOffsetsFusedMetalKernel,
+            moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+        },
     },
 };
+
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(
     topk_ids: &[i32],

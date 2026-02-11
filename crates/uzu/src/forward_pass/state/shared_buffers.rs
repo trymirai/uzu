@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use half::{bf16, f16};
 
+use super::RopeBuffers;
 use crate::{
     DataType,
     array::{ArrayCell, ArrayContextExt},
@@ -10,8 +11,6 @@ use crate::{
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
-
-use super::RopeBuffers;
 
 pub struct SharedBuffers<B: Backend> {
     pub global_rope: Option<RopeBuffers<B>>,

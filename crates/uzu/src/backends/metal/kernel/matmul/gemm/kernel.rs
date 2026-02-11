@@ -1,11 +1,11 @@
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
 
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-        MTLFunctionConstantValues, ProtocolObject, Retained,
+        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
@@ -111,36 +111,12 @@ impl Kernel {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = MTLFunctionConstantValues::new();
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.has_batch).cast(),
-                metal::MTLDataType::Bool,
-                10,
-            );
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.use_out_source).cast(),
-                metal::MTLDataType::Bool,
-                100,
-            );
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.do_axpby).cast(),
-                metal::MTLDataType::Bool,
-                110,
-            );
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.align_m).cast(),
-                metal::MTLDataType::Bool,
-                200,
-            );
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.align_n).cast(),
-                metal::MTLDataType::Bool,
-                201,
-            );
-            function_constants.set_constant_value_type_at_index(
-                NonNull::from(&configuration.align_k).cast(),
-                metal::MTLDataType::Bool,
-                202,
-            );
+            function_constants.set_value(&configuration.has_batch, 10);
+            function_constants.set_value(&configuration.use_out_source, 100);
+            function_constants.set_value(&configuration.do_axpby, 110);
+            function_constants.set_value(&configuration.align_m, 200);
+            function_constants.set_value(&configuration.align_n, 201);
+            function_constants.set_value(&configuration.align_k, 202);
 
             let cache_key = format!(
                 "{}_am{}_an{}_ak{}_hb{}_uo{}_ax{}",

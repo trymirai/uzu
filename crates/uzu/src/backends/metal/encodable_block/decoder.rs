@@ -1,13 +1,12 @@
 //! Decoder executables - combines embedding, layers, normalization, and readout.
 
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
 use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
+        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },

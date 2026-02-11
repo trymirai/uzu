@@ -1,10 +1,9 @@
-use std::ptr::NonNull;
-
 use super::{SSMKernelError, fn_suffix};
 use crate::{
     backends::metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType,
-        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
+        MTLContext, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,
 };
@@ -32,9 +31,8 @@ fn make_function_constants(
     let function_constants = MTLFunctionConstantValues::new();
     let activation_type = activation_to_int(activation);
 
-    function_constants.set_constant_value_type_at_index(NonNull::from(&activation_type).cast(), MTLDataType::Int, 0);
-
-    function_constants.set_constant_value_type_at_index(NonNull::from(&has_bias).cast(), MTLDataType::Bool, 1);
+    function_constants.set_value(&activation_type, 0);
+    function_constants.set_value(&has_bias, 1);
 
     function_constants
 }

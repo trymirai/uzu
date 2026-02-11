@@ -1,5 +1,3 @@
-use crate::backends::metal::{MTLComputeCommandEncoder, ProtocolObject};
-
 use super::{
     common::MlpFusedArguments,
     dispatch_descriptor::{MlpFusedDispatchDescriptor, choose_dispatch_descriptor},
@@ -9,7 +7,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject},
 };
 
 pub struct MlpFusedKernel {

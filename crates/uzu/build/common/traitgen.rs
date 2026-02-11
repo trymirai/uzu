@@ -6,12 +6,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, Type};
 
+use super::kernel::Kernel;
 use crate::common::{
     codegen::write_tokens,
     kernel::{KernelArgumentType, KernelParameterType},
 };
-
-use super::kernel::Kernel;
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let kernel_name = kernel.name.as_ref();

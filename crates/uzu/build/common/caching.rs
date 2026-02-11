@@ -1,5 +1,6 @@
-use anyhow::Context;
 use std::{fs, sync::OnceLock};
+
+use anyhow::Context;
 
 static BUILD_SYSTEM_HASH: OnceLock<blake3::Hash> = OnceLock::new();
 

@@ -2,7 +2,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
-
 use crate::{
     DataType, DecoderConfig,
     array::{Array, ArrayCell, ArrayCellExt},

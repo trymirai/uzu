@@ -1,14 +1,15 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use crate::backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained};
-
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
+use crate::{
+    backends::metal::{
+        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
+        Retained,
+        kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
+    },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState, RopeType},
 };
-use crate::encodable_block::EncodingParameters;
-use crate::forward_pass::state::{ArrayId, ForwardPassState, RopeType};
 
 pub struct Rope {
     kernel: RopeKernel,

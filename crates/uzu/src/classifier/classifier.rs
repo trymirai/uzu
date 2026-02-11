@@ -7,10 +7,9 @@ use objc2::rc::autoreleasepool;
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
-use crate::backends::metal::Metal;
 use crate::{
     DataType,
-    backends::metal::MTLCommandBuffer,
+    backends::metal::{MTLCommandBuffer, Metal},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,

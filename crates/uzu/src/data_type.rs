@@ -1,7 +1,6 @@
 use bytemuck::Pod;
 use half::{bf16, f16};
 use num_traits::NumCast;
-
 use xgrammar::{DLDataType, DLDataTypeCode};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]

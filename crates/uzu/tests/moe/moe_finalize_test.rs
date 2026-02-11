@@ -1,11 +1,12 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
-
 use half::bf16;
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeFinalizeKernel;
-use uzu::backends::metal::{KernelDataType, kernel::dsl::MoeFinalizeMetalKernel};
+use uzu::backends::{
+    common::kernel::MoeFinalizeKernel,
+    metal::{KernelDataType, kernel::dsl::MoeFinalizeMetalKernel},
+};
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
 

@@ -1,14 +1,17 @@
 //! Tensor copy encodable.
 
-use crate::backends::{
-    common::kernel::TensorCopyKernel,
-    metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
-};
-
 use super::{EncodableBlock, Metal};
-use crate::backends::metal::{MTLContext, MTLError, kernel::dsl::TensorCopyMetalKernel};
-use crate::encodable_block::EncodingParameters;
-use crate::forward_pass::state::{ArrayId, ForwardPassState};
+use crate::{
+    backends::{
+        common::kernel::TensorCopyKernel,
+        metal::{
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            Retained, kernel::dsl::TensorCopyMetalKernel,
+        },
+    },
+    encodable_block::EncodingParameters,
+    forward_pass::state::{ArrayId, ForwardPassState},
+};
 
 pub struct TensorCopy {
     kernel: TensorCopyMetalKernel,

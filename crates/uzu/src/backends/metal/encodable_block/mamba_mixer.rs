@@ -1,7 +1,8 @@
 //! Mamba2 SSM mixer encodable.
 
+use std::{env, rc::Rc};
+
 use super::{EncodableBlock, Metal, transformer_layer};
-use crate::backends::metal::kernel::ssm::ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode};
 use crate::{
     DataType,
     backends::{
@@ -10,9 +11,13 @@ use crate::{
             KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
             ProtocolObject, Retained,
             compilation_parameters::CompilationConfig,
-            kernel::dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
-            kernel::ssm::{
-                Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, conv1d_scan::Conv1dDecodeArguments,
+            kernel::{
+                dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
+                ssm::{
+                    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel,
+                    conv1d_scan::Conv1dDecodeArguments,
+                    ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
+                },
             },
         },
     },
@@ -21,7 +26,6 @@ use crate::{
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
-use std::{env, rc::Rc};
 
 pub(crate) struct MambaMixer {
     layer_index: usize,

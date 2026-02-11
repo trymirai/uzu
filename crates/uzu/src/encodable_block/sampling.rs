@@ -1,5 +1,6 @@
 //! Sampling kernel encodable.
 
+use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -8,8 +9,6 @@ use crate::{
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
-
-use super::{EncodableBlock, EncodingParameters};
 
 pub struct Sampling<B: Backend> {
     kernel: SamplingKernel<B>,

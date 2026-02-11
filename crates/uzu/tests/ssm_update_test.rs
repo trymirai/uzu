@@ -4,8 +4,7 @@ use bytemuck;
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use uzu::backends::{
-    common::Context,
-    common::kernel::SSDUpdateKernel,
+    common::{Context, kernel::SSDUpdateKernel},
     metal::{KernelDataType, MTLContext, kernel::dsl::SSDUpdateMetalKernel},
 };
 
