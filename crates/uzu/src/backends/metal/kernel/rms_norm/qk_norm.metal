@@ -3,7 +3,6 @@
 
 using namespace metal;
 
-#define BLOCK_SIZE 1024
 #define SIMD_SIZE 32
 #define GRAIN_SIZE 4
 
@@ -11,9 +10,7 @@ using namespace metal;
 //
 // Strategy:
 // - One SIMD-group (32 threads) processes one head.
-// - A threadgroup processes multiple heads for a given token (batch).
-// - No threadgroup-wide reductions/barriers: we only use simd_sum within a
-// SIMD-group.
+// - One threadgroup (one SIMD-group) is dispatched per head.
 template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
 VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
@@ -32,24 +29,11 @@ KERNEL(QKNorm)(
     constant uint& head_offset,
     constant uint& head_count,
     constant bool& full_layer,
-    constant uint& threads_per_threadgroup_x,
-    const uint tgid_x GROUPS(batch_size),
-    const uint tgid_y GROUPS(head_count.div_ceil(num_traits::clamp(head_count, 1, BLOCK_SIZE / SIMD_SIZE))),
-    const uint lid THREADS(1024)
+    const uint batch_idx GROUPS(batch_size),
+    const uint head_idx GROUPS(head_count),
+    const uint lane_id THREADS(SIMD_SIZE)
 ) {
   if (head_count == 0u || head_dim == 0u)
-    return;
-
-  const uint batch_idx = tgid_x;
-  const uint tile_idx = tgid_y;
-  const uint heads_per_tg = threads_per_threadgroup_x / SIMD_SIZE;
-  if (heads_per_tg == 0u)
-    return;
-
-  const uint simd_group_id = lid / SIMD_SIZE;
-  const uint lane_id = lid % SIMD_SIZE;
-  const uint head_idx = tile_idx * heads_per_tg + simd_group_id;
-  if (head_idx >= head_count)
     return;
 
   const uint total_heads_in_buffer = num_q_heads + 2u * num_kv_heads;

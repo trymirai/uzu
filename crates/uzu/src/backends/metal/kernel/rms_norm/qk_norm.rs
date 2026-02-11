@@ -1,5 +1,4 @@
 use metal::{MTLBuffer, MTLComputeCommandEncoder};
-use num_traits::clamp;
 use objc2::{__framework_prelude::ProtocolObject, Message};
 
 use crate::{
@@ -55,12 +54,7 @@ impl QKNormBlock {
             return;
         }
 
-        // One SIMD-group per head, multiple heads per threadgroup.
-        let simd_width = 32usize;
-        let max_threads = 1024usize;
-        let max_heads_per_threadgroup = (max_threads / simd_width).max(1);
-        let heads_per_threadgroup = clamp(head_count as usize, 1, max_heads_per_threadgroup);
-
+        // One SIMD-group (one threadgroup) per head.
         self.kernel.encode(
             &args.qkv_input_buffer.retain(),
             &args.scales_buffer.retain(),
@@ -74,7 +68,6 @@ impl QKNormBlock {
             head_offset,
             head_count,
             self.full_layer,
-            (heads_per_threadgroup * simd_width) as u32,
             compute_encoder,
         )
     }
