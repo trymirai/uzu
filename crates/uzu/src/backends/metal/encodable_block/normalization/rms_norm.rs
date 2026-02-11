@@ -1,12 +1,13 @@
 //! RMS Normalization encodable.
 use super::super::{EncodableBlock, Metal};
-use crate::backends::common::kernel::RMSNormKernel;
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
-        kernel::{dsl::RMSNormMetalKernel, rms_norm::RMSNormError},
+    backends::{
+        common::kernel::RMSNormKernel,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt,
+            MTLError, MTLResourceOptions, ProtocolObject, Retained, kernel::dsl::RMSNormMetalKernel,
+        },
     },
     config::{NormalizationConfig, UpcastMode},
     encodable_block::EncodingParameters,
@@ -31,13 +32,13 @@ impl RMSNorm {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<MTLContext>,
-    ) -> Result<Self, RMSNormError> {
+    ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+            MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
                 "Failed to load scales: {:?}",
                 e
-            ))))
+            )))
         })?;
 
         // TODO: Don't create buffers dynamically, we need to use forward pass storage for thing like this

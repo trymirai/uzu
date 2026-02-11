@@ -41,7 +41,7 @@ pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
 pub use moe_block::{MoeBlock, SharedMoeWeights};
-pub use normalization::{LayerNorm, Normalization, NormalizationError, QKNorm, RMSNorm};
+pub use normalization::{LayerNorm, Normalization, QKNorm, RMSNorm};
 pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;
 pub use rope::Rope;

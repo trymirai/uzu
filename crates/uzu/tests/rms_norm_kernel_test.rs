@@ -4,16 +4,16 @@
 use bytemuck;
 use half::{bf16, f16};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
-use uzu::backends::common::kernel::RMSNormKernel;
-use uzu::backends::metal::kernel::dsl::RMSNormMetalKernel;
-use uzu::backends::metal::kernel::rms_norm;
 use uzu::{
     DataType,
     backends::{
-        common::Context,
+        common::{Context, kernel::RMSNormKernel},
         metal::{
             MTLContext,
-            kernel::rms_norm::{QKNormArguments, QKNormTarget, RMSNormKernelType},
+            kernel::{
+                dsl::RMSNormMetalKernel,
+                rms_norm::{QKNormArguments, QKNormBlock, QKNormTarget},
+            },
             metal_extensions::CommandBufferTimingExt,
         },
     },
@@ -767,36 +767,20 @@ fn qk_norm_test() {
         .expect("Failed to create buffer");
 
     // Create QK norm kernels
-    let q_kernel = rms_norm::RMSNormKernel::new_with_mode(
-        &mtl_context,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        RMSNormKernelType::QueryKey,
-        false,
-    )
-    .expect("Failed to create Q norm kernel");
+    let q_kernel = QKNormBlock::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32, false)
+        .expect("Failed to create Q norm kernel");
 
-    let k_kernel = rms_norm::RMSNormKernel::new_with_mode(
-        &mtl_context,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        RMSNormKernelType::QueryKey,
-        false,
-    )
-    .expect("Failed to create K norm kernel");
+    let k_kernel = QKNormBlock::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32, false)
+        .expect("Failed to create K norm kernel");
 
     // Test Q head normalization
     {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-        let _ = q_kernel.encode_qk_norm(
+        q_kernel.encode(
             &compute_encoder,
-            QKNormArguments {
+            &QKNormArguments {
                 qkv_input_buffer: &qkv_buffer,
                 scales_buffer: &q_scales_buffer,
                 qkv_output_buffer: &qkv_buffer,
@@ -856,9 +840,9 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-        let _ = k_kernel.encode_qk_norm(
+        k_kernel.encode(
             &compute_encoder,
-            QKNormArguments {
+            &QKNormArguments {
                 qkv_input_buffer: &qkv_buffer,
                 scales_buffer: &k_scales_buffer,
                 qkv_output_buffer: &qkv_buffer,
