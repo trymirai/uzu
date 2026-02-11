@@ -205,8 +205,12 @@ impl LayerExecutables {
                 };
 
             let main_shortcut_add_swap: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(

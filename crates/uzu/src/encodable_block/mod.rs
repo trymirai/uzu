@@ -4,9 +4,11 @@ use crate::{
 };
 
 mod sampling;
+mod tensor_add_swap;
 mod tensor_copy;
 
 pub use sampling::Sampling;
+pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 
 #[derive(Clone)]

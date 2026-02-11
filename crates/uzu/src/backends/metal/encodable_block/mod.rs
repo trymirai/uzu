@@ -7,7 +7,7 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 pub use super::Metal;
-pub use crate::encodable_block::{EncodableBlock, TensorCopy};
+pub use crate::encodable_block::{EncodableBlock, TensorAddSwap, TensorCopy};
 
 mod activation;
 mod attention;
@@ -24,7 +24,6 @@ mod pooling;
 mod prediction_head;
 mod rope;
 mod short_conv_mixer;
-mod tensor_add_swap;
 pub mod transformer_layer;
 
 pub use activation::Activation;
@@ -45,4 +44,3 @@ pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;
 pub use rope::Rope;
 pub(crate) use short_conv_mixer::ShortConvMixer;
-pub use tensor_add_swap::TensorAddSwap;

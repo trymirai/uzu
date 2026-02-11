@@ -150,8 +150,12 @@ impl ClassifierLayer {
                 };
 
             let mixer_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -215,8 +219,12 @@ impl ClassifierLayer {
             );
 
             let mlp_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             Self {
