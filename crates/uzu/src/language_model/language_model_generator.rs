@@ -640,11 +640,11 @@ impl LanguageModelGenerator {
 
             if !warmup {
                 if !task.is_prefilling {
-                self.context.gpu_sampler.encode(
-                    &mut state,
-                    &EncodingParameters::new(warmup, true, false),
-                    &self.context.command_buffer,
-                );
+                    self.context.gpu_sampler.encode(
+                        &mut state,
+                        &EncodingParameters::new(warmup, true, false),
+                        &self.context.command_buffer,
+                    );
                 }
             }
 

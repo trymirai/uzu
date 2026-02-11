@@ -48,7 +48,6 @@ impl<B: Backend> EncodableBlock<B> for TensorAddSwap<B> {
         let skip_array = arrays[0].borrow_mut();
         let main_array = arrays[1].borrow_mut();
 
-        self.kernel
-            .encode(skip_array.buffer(), main_array.buffer(), length as u32, encoder);
+        self.kernel.encode(skip_array.buffer(), main_array.buffer(), length as u32, encoder);
     }
 }

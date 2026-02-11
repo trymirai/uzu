@@ -48,7 +48,6 @@ impl<B: Backend> EncodableBlock<B> for TensorCopy<B> {
         let source_array = arrays[0].borrow_mut();
         let destination_array = arrays[1].borrow_mut();
 
-        self.kernel
-            .encode(source_array.buffer(), destination_array.buffer(), length as u32, encoder);
+        self.kernel.encode(source_array.buffer(), destination_array.buffer(), length as u32, encoder);
     }
 }
