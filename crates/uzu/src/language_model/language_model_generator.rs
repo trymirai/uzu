@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     backends::{
-        common::kernel::MaskUpdateKernel,
+        common::kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder,
             MTLCommandQueue, Metal,
@@ -482,8 +482,9 @@ impl LanguageModelGenerator {
 
         let encoder =
             root_command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.context.token_copy.encode_to_token_ids(&sampling_output_buffer, &token_ids_buffer, &encoder);
-        self.context.token_copy.encode_to_results(&sampling_output_buffer, &results_buffer, slot, &encoder);
+        self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, &encoder);
+        let results_offset = slot * size_of::<u32>();
+        self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), &encoder);
         encoder.end_encoding();
 
         // Scatter + register for all transformer layers
