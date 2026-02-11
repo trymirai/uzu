@@ -3,10 +3,12 @@
 use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
-        kernel::rms_norm::{QKNormArguments, QKNormTarget, RMSNormError, RMSNormKernel, RMSNormKernelType},
+    backends::{
+        common::kernel::QKNormKernel,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt,
+            MTLError, MTLResourceOptions, ProtocolObject, Retained, kernel::dsl::QKNormMetalKernel,
+        },
     },
     config::{NormalizationConfig, UpcastMode},
     encodable_block::EncodingParameters,
@@ -15,8 +17,8 @@ use crate::{
 };
 
 pub struct QKNorm {
-    query_kernel: Option<RMSNormKernel>,
-    key_kernel: Option<RMSNormKernel>,
+    query_kernel: Option<QKNormMetalKernel>,
+    key_kernel: Option<QKNormMetalKernel>,
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
@@ -38,7 +40,7 @@ impl QKNorm {
         num_q_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-    ) -> Result<Self, RMSNormError> {
+    ) -> Result<Self, MTLError> {
         let mut query_kernel = None;
         let mut key_kernel = None;
         let mut query_scales_buffer = None;
@@ -47,8 +49,9 @@ impl QKNorm {
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
             let scales_param = parameter_tree.leaf("query_norm.scales").map_err(|e| {
-                RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(
-                    format!("Failed to load query scales: {:?}", e),
+                MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+                    "Failed to load query scales: {:?}",
+                    e
                 )))
             })?;
 
@@ -64,15 +67,7 @@ impl QKNorm {
                 UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
             };
 
-            let kernel = RMSNormKernel::new_with_mode(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                RMSNormKernelType::QueryKey,
-                q_config.upcast_mode == UpcastMode::FullLayer,
-            )?;
+            let kernel = QKNormMetalKernel::new(context, input_type, scales_type, output_type, accumulation_data_type)?;
 
             query_kernel = Some(kernel);
             query_scales_buffer = Some(scales_buffer);
@@ -81,8 +76,9 @@ impl QKNorm {
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
             let scales_param = parameter_tree.leaf("key_norm.scales").map_err(|e| {
-                RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(
-                    format!("Failed to load key scales: {:?}", e),
+                MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+                    "Failed to load key scales: {:?}",
+                    e
                 )))
             })?;
 
@@ -98,15 +94,7 @@ impl QKNorm {
                 UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
             };
 
-            let kernel = RMSNormKernel::new_with_mode(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                RMSNormKernelType::QueryKey,
-                k_config.upcast_mode == UpcastMode::FullLayer,
-            )?;
+            let kernel = QKNormMetalKernel::new(context, input_type, scales_type, output_type, accumulation_data_type)?;
 
             key_kernel = Some(kernel);
             key_scales_buffer = Some(scales_buffer);
@@ -171,48 +159,44 @@ impl EncodableBlock<Metal> for QKNorm {
         if let (Some(query_kernel), Some(query_scales_buffer), Some(query_config)) =
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
-            if let Err(e) = query_kernel.encode_qk_norm(
+            let query_head_count = self.num_q_heads as u32;
+            query_kernel.encode(
+                qkv_buffer,
+                query_scales_buffer,
+                qkv_buffer,
+                batch_size as u32,
+                self.num_q_heads as u32,
+                self.num_kv_heads as u32,
+                head_dim as u32,
+                query_config.epsilon,
+                query_config.scale_offset.unwrap_or(0.0),
+                0,
+                query_head_count,
+                query_config.upcast_mode == UpcastMode::FullLayer,
                 compute_encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: query_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    // Always pass actual head counts (needed for correct buffer addressing)
-                    num_q_heads: self.num_q_heads as i32,
-                    num_kv_heads: self.num_kv_heads as i32,
-                    head_dim,
-                    epsilon: query_config.epsilon,
-                    scale_offset: query_config.scale_offset.unwrap_or(0.0),
-                    target: QKNormTarget::QueryHeads,
-                },
-            ) {
-                eprintln!("Failed to encode query normalization kernel: {:?}", e);
-            }
+            );
         }
 
         // Process key normalization if configured
         if let (Some(key_kernel), Some(key_scales_buffer), Some(key_config)) =
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
-            if let Err(e) = key_kernel.encode_qk_norm(
+            let key_head_count = self.num_kv_heads as u32;
+            key_kernel.encode(
+                qkv_buffer,
+                key_scales_buffer,
+                qkv_buffer,
+                batch_size as u32,
+                self.num_q_heads as u32,
+                self.num_kv_heads as u32,
+                head_dim as u32,
+                key_config.epsilon,
+                key_config.scale_offset.unwrap_or(0.0),
+                self.num_q_heads as u32,
+                key_head_count,
+                key_config.upcast_mode == UpcastMode::FullLayer,
                 compute_encoder,
-                QKNormArguments {
-                    qkv_input_buffer: &qkv_buffer,
-                    scales_buffer: key_scales_buffer,
-                    qkv_output_buffer: &qkv_buffer,
-                    batch_size,
-                    // Always pass actual head counts (needed for correct buffer addressing)
-                    num_q_heads: self.num_q_heads as i32,
-                    num_kv_heads: self.num_kv_heads as i32,
-                    head_dim,
-                    epsilon: key_config.epsilon,
-                    scale_offset: key_config.scale_offset.unwrap_or(0.0),
-                    target: QKNormTarget::KeyHeads,
-                },
-            ) {
-                eprintln!("Failed to encode key normalization kernel: {:?}", e);
-            }
+            );
         }
     }
 }

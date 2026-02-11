@@ -1,12 +1,13 @@
 //! RMS Normalization encodable.
-
 use super::super::{EncodableBlock, Metal};
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt, MTLError,
-        MTLResourceOptions, ProtocolObject, Retained,
-        kernel::rms_norm::{RMSNormArguments, RMSNormError, RMSNormKernel, RMSNormKernelType},
+    backends::{
+        common::kernel::RMSNormKernel,
+        metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLDeviceExt,
+            MTLError, MTLResourceOptions, ProtocolObject, Retained, kernel::dsl::RMSNormMetalKernel,
+        },
     },
     config::{NormalizationConfig, UpcastMode},
     encodable_block::EncodingParameters,
@@ -15,7 +16,7 @@ use crate::{
 };
 
 pub struct RMSNorm {
-    kernel: RMSNormKernel,
+    kernel: RMSNormMetalKernel,
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -31,13 +32,13 @@ impl RMSNorm {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<MTLContext>,
-    ) -> Result<Self, RMSNormError> {
+    ) -> Result<Self, MTLError> {
         // Load scales from parameter tree
         let scales_param = parameter_tree.leaf("scales").map_err(|e| {
-            RMSNormError::MetalError(MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
+            MTLError::Library(crate::backends::metal::error::LibraryError::Custom(format!(
                 "Failed to load scales: {:?}",
                 e
-            ))))
+            )))
         })?;
 
         // TODO: Don't create buffers dynamically, we need to use forward pass storage for thing like this
@@ -61,16 +62,7 @@ impl RMSNorm {
             },
         };
 
-        let kernel = RMSNormKernel::new_with_mode(
-            context,
-            input_type,
-            scales_type,
-            output_type,
-            accumulation_data_type,
-            RMSNormKernelType::Standard,
-            config.upcast_mode == UpcastMode::FullLayer,
-        )?;
-
+        let kernel = RMSNormMetalKernel::new(context, input_type, scales_type, output_type, accumulation_data_type)?;
         Ok(Self {
             kernel,
             config,
@@ -145,29 +137,24 @@ impl EncodableBlock<Metal> for RMSNorm {
         }
 
         let row_size_in_bytes = input_shape[1] * input_elem_size;
-        let input_offset = (batch_start * row_size_in_bytes) as u64;
+        let input_offset = batch_start * row_size_in_bytes;
 
         let output_row_size_in_bytes = input_shape[1] * output_elem_size;
-        let output_offset = (batch_start * output_row_size_in_bytes) as u64;
+        let output_offset = batch_start * output_row_size_in_bytes;
 
         let batch_size = batch_len as i32;
         let model_dim = input_shape[1] as i32;
 
-        if let Err(e) = self.kernel.encode(
+        self.kernel.encode(
+            (input_buffer, input_offset),
+            &self.scales_buffer,
+            (output_buffer, output_offset),
+            batch_size as u32,
+            model_dim as u32,
+            self.config.epsilon,
+            self.config.scale_offset.unwrap_or(0.0),
+            self.config.upcast_mode == UpcastMode::FullLayer,
             compute_encoder,
-            RMSNormArguments {
-                input_buffer: &input_buffer,
-                input_offset,
-                scales_buffer: &self.scales_buffer,
-                output_buffer: &output_buffer,
-                output_offset,
-                batch_size,
-                model_dim,
-                epsilon: self.config.epsilon,
-                scale_offset: self.config.scale_offset.unwrap_or(0.0),
-            },
-        ) {
-            eprintln!("Failed to encode RMS norm kernel: {:?}", e);
-        }
+        )
     }
 }

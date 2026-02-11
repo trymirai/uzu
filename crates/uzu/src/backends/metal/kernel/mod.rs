@@ -15,7 +15,6 @@ pub use mlp::{
 pub mod mlp_fused;
 pub mod moe;
 pub mod quant_matmul;
-pub mod rms_norm;
 pub mod rope;
 pub mod short_conv;
 pub mod ssm;
@@ -33,7 +32,6 @@ pub use moe::{
     MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
-pub use rms_norm::{QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormError, RMSNormKernel, RMSNormKernelType};
 pub use rope::{RopeError, RopeKernel, RopeKernelArguments};
 pub use short_conv::{ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelError, ShortConvPrefillArguments};
 pub use ssm::{
