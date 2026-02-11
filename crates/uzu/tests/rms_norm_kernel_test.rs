@@ -7,13 +7,13 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTL
 use uzu::{
     DataType,
     backends::{
-        common::{Context, kernel::RMSNormKernel},
+        common::{
+            Context,
+            kernel::{QKNormKernel, RMSNormKernel},
+        },
         metal::{
             MTLContext,
-            kernel::{
-                dsl::RMSNormMetalKernel,
-                rms_norm::{QKNormArguments, QKNormBlock, QKNormTarget},
-            },
+            kernel::dsl::{QKNormMetalKernel, RMSNormMetalKernel},
             metal_extensions::CommandBufferTimingExt,
         },
     },
@@ -767,10 +767,10 @@ fn qk_norm_test() {
         .expect("Failed to create buffer");
 
     // Create QK norm kernels
-    let q_kernel = QKNormBlock::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32, false)
+    let q_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
         .expect("Failed to create Q norm kernel");
 
-    let k_kernel = QKNormBlock::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32, false)
+    let k_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
         .expect("Failed to create K norm kernel");
 
     // Test Q head normalization
@@ -779,19 +779,19 @@ fn qk_norm_test() {
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         q_kernel.encode(
+            &qkv_buffer,
+            &q_scales_buffer,
+            &qkv_buffer,
+            batch_size as u32,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            head_dim as u32,
+            epsilon,
+            0.0,
+            0,
+            num_q_heads as u32,
+            false,
             &compute_encoder,
-            &QKNormArguments {
-                qkv_input_buffer: &qkv_buffer,
-                scales_buffer: &q_scales_buffer,
-                qkv_output_buffer: &qkv_buffer,
-                batch_size,
-                num_q_heads,  // Now correctly passes actual head count
-                num_kv_heads, // Now correctly passes actual head count
-                head_dim,
-                epsilon,
-                scale_offset: 0.0,
-                target: QKNormTarget::QueryHeads, // Only process Q heads
-            },
         );
 
         compute_encoder.end_encoding();
@@ -841,19 +841,19 @@ fn qk_norm_test() {
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         k_kernel.encode(
+            &qkv_buffer,
+            &k_scales_buffer,
+            &qkv_buffer,
+            batch_size as u32,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            head_dim as u32,
+            epsilon,
+            0.0,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            false,
             &compute_encoder,
-            &QKNormArguments {
-                qkv_input_buffer: &qkv_buffer,
-                scales_buffer: &k_scales_buffer,
-                qkv_output_buffer: &qkv_buffer,
-                batch_size,
-                num_q_heads,  // Now correctly passes actual head count
-                num_kv_heads, // Now correctly passes actual head count
-                head_dim,
-                epsilon,
-                scale_offset: 0.0,
-                target: QKNormTarget::KeyHeads, // Only process K heads
-            },
         );
 
         compute_encoder.end_encoding();

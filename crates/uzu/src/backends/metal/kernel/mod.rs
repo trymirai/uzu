@@ -15,7 +15,6 @@ pub use mlp::{
 pub mod mlp_fused;
 pub mod moe;
 pub mod quant_matmul;
-pub mod rms_norm;
 pub mod rope;
 pub mod short_conv;
 pub mod ssm;
