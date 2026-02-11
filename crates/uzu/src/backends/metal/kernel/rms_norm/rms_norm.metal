@@ -7,96 +7,6 @@ using namespace metal;
 #define SIMD_SIZE 32
 #define GRAIN_SIZE 4
 
-// Main template kernel - single implementation for all types
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
-void rms_norm_core(
-    const device InputT* input_data,
-    const device ScaleT* scales_data,
-    device OutputT* output_data,
-    uint element_count,
-    constant float& epsilon,
-    constant float& scale_offset,
-    threadgroup AccumT* shared_sum,
-    uint thread_in_row,
-    bool full_layer
-) {
-  AccumT partial_sum = static_cast<AccumT>(0.0f);
-
-  // Compute thread local partial sum
-  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
-       base_i += BLOCK_SIZE * GRAIN_SIZE) {
-    AccumT vals[GRAIN_SIZE];
-
-    for (uint j = 0; j < GRAIN_SIZE; ++j) {
-      uint i = base_i + j;
-      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
-    }
-
-    for (uint j = 0; j < GRAIN_SIZE; ++j) {
-      partial_sum += vals[j] * vals[j];
-    }
-  }
-
-  // Compute total sum across threadgroup
-  AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum,
-      shared_sum,
-      thread_in_row
-  );
-
-  // Compute RMS norm factor
-  AccumT mean_square =
-      static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
-  AccumT rms_norm = rsqrt(mean_square + static_cast<AccumT>(epsilon));
-
-  // Apply normalization and scaling using the same vectorized pattern
-  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
-       base_i += BLOCK_SIZE * GRAIN_SIZE) {
-    AccumT vals[GRAIN_SIZE];
-    AccumT scaled_vals[GRAIN_SIZE];
-
-    // Load GRAIN_SIZE input elements
-    for (uint j = 0; j < GRAIN_SIZE; ++j) {
-      uint i = base_i + j;
-      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
-    }
-
-    // Process GRAIN_SIZE elements: normalize and scale
-    for (uint j = 0; j < GRAIN_SIZE; ++j) {
-      uint i = base_i + j;
-      if (i >= element_count) {
-        continue;
-      }
-
-      AccumT normalized_high = vals[j] * rms_norm;
-
-      if (full_layer) {
-        // Full-layer: keep everything in accumulation precision
-        AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) +
-                                  static_cast<AccumT>(scale_offset);
-        scaled_vals[j] = normalized_high * scale_value_high;
-      } else {
-        // Only-normalization: cast down for the scale multiply
-        OutputT normalized_low = static_cast<OutputT>(normalized_high);
-        OutputT scale_value_low = static_cast<OutputT>(
-            static_cast<AccumT>(scales_data[i]) +
-            static_cast<AccumT>(scale_offset)
-        );
-        OutputT product_low = normalized_low * scale_value_low;
-        scaled_vals[j] = static_cast<AccumT>(product_low);
-      }
-    }
-
-    // Store GRAIN_SIZE output elements
-    for (uint j = 0; j < GRAIN_SIZE; ++j) {
-      uint i = base_i + j;
-      if (i < element_count) {
-        output_data[i] = static_cast<OutputT>(scaled_vals[j]);
-      }
-    }
-  }
-}
-
 // X-macro table defining all supported type combinations
 // Format: (InputType, ScaleType, OutputType, AccumType, full_layer_mode,
 // suffix)
@@ -219,40 +129,6 @@ void rms_norm_core(
   _(bfloat, bfloat, bfloat, half, false, bf16_bf16_bf16_f16_norm)              \
   _(bfloat, bfloat, bfloat, half, true, bf16_bf16_bf16_f16_full)
 
-// Generate RMS norm kernels
-#define DEFINE_RMS_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF)                   \
-  [[max_total_threads_per_threadgroup(1024)]] kernel void rms_norm_##SUF(      \
-      const device IN* input [[buffer(0)]],                                    \
-      const device SC* scales [[buffer(1)]],                                   \
-      device OUT* output [[buffer(2)]],                                        \
-      constant uint& batch_size [[buffer(3)]],                                 \
-      constant uint& model_dim [[buffer(4)]],                                  \
-      constant float& epsilon [[buffer(5)]],                                   \
-      constant float& scale_offset [[buffer(6)]],                              \
-      uint batch_idx [[threadgroup_position_in_grid]],                         \
-      uint thread_in_row [[thread_position_in_threadgroup]]                    \
-  ) {                                                                          \
-    if (batch_idx >= batch_size)                                               \
-      return;                                                                  \
-                                                                               \
-    threadgroup ACC shared_sum[SIMD_SIZE];                                     \
-    const uint input_offset = batch_idx * model_dim;                           \
-                                                                               \
-    rms_norm_core<IN, SC, OUT, ACC>(                                           \
-        input + input_offset,                                                  \
-        scales,                                                                \
-        output + input_offset,                                                 \
-        model_dim,                                                             \
-        epsilon,                                                               \
-        scale_offset,                                                          \
-        shared_sum,                                                            \
-        thread_in_row,                                                         \
-        FULL_LAYER                                                             \
-    );                                                                         \
-  }
-
-FOREACH_RMS_COMBO(DEFINE_RMS_KERNEL)
-#undef DEFINE_RMS_KERNEL
 
 template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
 VARIANTS(InputT, float, half, bfloat)

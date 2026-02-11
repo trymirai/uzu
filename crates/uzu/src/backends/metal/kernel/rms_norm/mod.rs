@@ -172,45 +172,6 @@ impl RMSNormKernel {
         }
     }
 
-    pub fn encode(
-        &self,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        args: RMSNormArguments,
-    ) -> Result<(), RMSNormError> {
-        if self.kernel_type != RMSNormKernelType::Standard {
-            return Err(RMSNormError::InvalidKernelType);
-        }
-
-        compute_encoder.set_compute_pipeline_state(&self.pipeline);
-
-        // Set buffers
-        compute_encoder.set_buffer(Some(args.input_buffer), args.input_offset as usize, 0);
-        compute_encoder.set_buffer(Some(args.scales_buffer), 0, 1);
-        compute_encoder.set_buffer(Some(args.output_buffer), args.output_offset as usize, 2);
-
-        // Set parameters
-        compute_encoder.set_value(&args.batch_size, 3);
-        compute_encoder.set_value(&args.model_dim, 4);
-        compute_encoder.set_value(&args.epsilon, 5);
-        compute_encoder.set_value(&args.scale_offset, 6);
-
-        let threads_per_threadgroup = MTLSize {
-            width: 1024,
-            height: 1,
-            depth: 1,
-        };
-
-        let threadgroups_per_grid = MTLSize {
-            width: args.batch_size as usize,
-            height: 1,
-            depth: 1,
-        };
-
-        compute_encoder.dispatch_threadgroups(threadgroups_per_grid, threads_per_threadgroup);
-
-        Ok(())
-    }
-
     pub fn encode_qk_norm(
         &self,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
