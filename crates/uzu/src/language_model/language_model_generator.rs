@@ -483,7 +483,7 @@ impl LanguageModelGenerator {
         let encoder =
             root_command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, &encoder);
-        let results_offset = slot * size_of::<u32>();
+        let results_offset = slot * std::mem::size_of::<u32>();
         self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), &encoder);
         encoder.end_encoding();
 
