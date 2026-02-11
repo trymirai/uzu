@@ -42,17 +42,17 @@ impl EncodableBlock<Metal> for MlpBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         if self.supports_shared_encoder() {
             let encoder =
                 command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-            self.encode_with_shared_encoder(state, &encoder, params);
+            self.encode_with_shared_encoder(state, params, &encoder);
             encoder.end_encoding();
         } else {
             // Up
-            self.up.encode(state, command_buffer, params);
+            self.up.encode(state, params, command_buffer);
 
             // Gate act+mul (fused_up -> hidden)
             {
@@ -72,7 +72,7 @@ impl EncodableBlock<Metal> for MlpBlock {
             }
 
             // Down
-            self.down.encode(state, command_buffer, params);
+            self.down.encode(state, params, command_buffer);
         }
 
         if params.wait_until_completed {
@@ -88,11 +88,11 @@ impl EncodableBlock<Metal> for MlpBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         params: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         // Up
-        self.up.encode_with_shared_encoder(state, encoder, params);
+        self.up.encode_with_shared_encoder(state, params, encoder);
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
@@ -106,7 +106,7 @@ impl EncodableBlock<Metal> for MlpBlock {
         drop(hidden);
 
         // Down
-        self.down.encode_with_shared_encoder(state, encoder, params);
+        self.down.encode_with_shared_encoder(state, params, encoder);
     }
 }
 
@@ -283,13 +283,13 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         params: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         if self.supports_shared_encoder() {
             let encoder =
                 command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-            self.encode_with_shared_encoder(state, &encoder, params);
+            self.encode_with_shared_encoder(state, params, &encoder);
             encoder.end_encoding();
         } else {
             // Fused up + activation
@@ -308,7 +308,7 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
             }
 
             // Down
-            self.down.encode(state, command_buffer, params);
+            self.down.encode(state, params, command_buffer);
         }
 
         if params.wait_until_completed {
@@ -324,8 +324,8 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         params: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         // Fused up + activation
         let arrays = state.arrays(&[self.input_array_id, self.hidden_array_id]);
@@ -341,6 +341,6 @@ impl EncodableBlock<Metal> for MlpFusedBlock {
         drop(hidden);
 
         // Down
-        self.down.encode_with_shared_encoder(state, encoder, params);
+        self.down.encode_with_shared_encoder(state, params, encoder);
     }
 }

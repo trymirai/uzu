@@ -199,8 +199,8 @@ impl EncodableBlock<Metal> for MoeBlock {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -512,8 +512,8 @@ impl EncodableBlock<Metal> for MoeBlock {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState<Metal>,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unreachable!("MoeBlock does not support shared compute encoder");
     }

@@ -171,8 +171,8 @@ impl EncodableBlock<Metal> for Decoder {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState<Metal>,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unimplemented!("Decoder does not support shared encoder")
     }
@@ -180,27 +180,27 @@ impl EncodableBlock<Metal> for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
-        self.embed.encode(state, command_buffer, parameters);
+        self.embed.encode(state, parameters, command_buffer);
 
         for layer in self.layers.iter() {
-            layer.encode(state, command_buffer, parameters);
+            layer.encode(state, parameters, command_buffer);
         }
 
         if state.is_prefilling() {
             return;
         }
 
-        self.norm.encode(state, command_buffer, parameters);
+        self.norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.readout.encode(state, command_buffer, parameters);
+        self.readout.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();

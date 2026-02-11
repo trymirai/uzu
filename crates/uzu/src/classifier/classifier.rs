@@ -105,8 +105,8 @@ impl Classifier {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(&mut state, &self.context.command_buffer, &encoding_params);
-            self.context.embedding_norm.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.embed.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.embedding_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -118,9 +118,9 @@ impl Classifier {
             }
 
             for layer in self.context.layers.iter() {
-                layer.encode(&mut state, &self.context.command_buffer, &encoding_params);
+                layer.encode(&mut state, &encoding_params, &self.context.command_buffer);
             }
-            self.context.output_norm.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.output_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -131,9 +131,9 @@ impl Classifier {
                 );
             }
 
-            self.context.pooling.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
-            self.context.prediction_head.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
             self.context.command_buffer.commit();
             self.context.command_buffer.wait_until_completed();
@@ -168,14 +168,14 @@ impl Classifier {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(&mut state, &self.context.command_buffer, &encoding_params);
-            self.context.embedding_norm.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.embed.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.embedding_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             for layer in self.context.layers.iter() {
-                layer.encode(&mut state, &self.context.command_buffer, &encoding_params);
+                layer.encode(&mut state, &encoding_params, &self.context.command_buffer);
             }
-            self.context.output_norm.encode(&mut state, &self.context.command_buffer, &encoding_params);
-            self.context.pooling.encode(&mut state, &self.context.command_buffer, &encoding_params);
-            self.context.prediction_head.encode(&mut state, &self.context.command_buffer, &encoding_params);
+            self.context.output_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
             self.context.command_buffer.commit();
             self.context.command_buffer.wait_until_completed();

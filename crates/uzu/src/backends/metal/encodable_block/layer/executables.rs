@@ -65,8 +65,12 @@ impl LayerExecutables {
             let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_attention_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -201,8 +205,12 @@ impl LayerExecutables {
                 };
 
             let main_shortcut_add_swap: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -262,8 +270,8 @@ impl EncodableBlock<Metal> for LayerExecutables {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
@@ -272,7 +280,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             if self.supports_shared_encoder() {
                 let encoder =
                     command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-                self.encode_with_shared_encoder(state, &encoder, parameters);
+                self.encode_with_shared_encoder(state, parameters, &encoder);
                 encoder.end_encoding();
                 return;
             }
@@ -286,10 +294,10 @@ impl EncodableBlock<Metal> for LayerExecutables {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
+        self.copy_main_to_shortcut.encode(state, parameters, command_buffer);
         // shortcut = input
 
-        self.pre_attention_norm.encode(state, command_buffer, parameters);
+        self.pre_attention_norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
@@ -303,13 +311,13 @@ impl EncodableBlock<Metal> for LayerExecutables {
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode(state, command_buffer, parameters);
+                qkv_projection.encode(state, parameters, command_buffer);
                 if let Some(norm) = qk_norm {
-                    norm.encode(state, command_buffer, parameters);
+                    norm.encode(state, parameters, command_buffer);
                 }
-                rope.encode(state, command_buffer, parameters);
-                attention.encode(state, command_buffer, parameters);
-                out_projection.encode(state, command_buffer, parameters);
+                rope.encode(state, parameters, command_buffer);
+                attention.encode(state, parameters, command_buffer);
+                out_projection.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -318,7 +326,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer, parameters);
+                mixer.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -327,7 +335,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer, parameters);
+                mixer.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -336,7 +344,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode(state, command_buffer, parameters);
+            post_attention_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -348,7 +356,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
         //main = attention_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer);
         // shortcut = input + attention_result
         // main = input + attention_result
         #[cfg(feature = "tracing")]
@@ -356,20 +364,20 @@ impl EncodableBlock<Metal> for LayerExecutables {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.pre_mlp_norm.encode(state, command_buffer, parameters);
+        self.pre_mlp_norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer, parameters);
+        self.mlp.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer, parameters);
+            post_mlp_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
@@ -377,7 +385,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
         // main = mlp_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer);
         // shortcut = input + attention_result + mlp_result
         // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
@@ -432,16 +440,16 @@ impl EncodableBlock<Metal> for LayerExecutables {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),
             "encode_with_shared_encoder called on unsupported LayerExecutables"
         );
 
-        self.copy_main_to_shortcut.encode_with_shared_encoder(state, encoder, parameters);
-        self.pre_attention_norm.encode_with_shared_encoder(state, encoder, parameters);
+        self.copy_main_to_shortcut.encode_with_shared_encoder(state, parameters, encoder);
+        self.pre_attention_norm.encode_with_shared_encoder(state, parameters, encoder);
 
         match &self.mixer {
             MixerExecutables::Attention {
@@ -451,39 +459,39 @@ impl EncodableBlock<Metal> for LayerExecutables {
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode_with_shared_encoder(state, encoder, parameters);
+                qkv_projection.encode_with_shared_encoder(state, parameters, encoder);
                 if let Some(norm) = qk_norm {
-                    norm.encode_with_shared_encoder(state, encoder, parameters);
+                    norm.encode_with_shared_encoder(state, parameters, encoder);
                 }
-                rope.encode_with_shared_encoder(state, encoder, parameters);
-                attention.encode_with_shared_encoder(state, encoder, parameters);
-                out_projection.encode_with_shared_encoder(state, encoder, parameters);
+                rope.encode_with_shared_encoder(state, parameters, encoder);
+                attention.encode_with_shared_encoder(state, parameters, encoder);
+                out_projection.encode_with_shared_encoder(state, parameters, encoder);
             },
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode_with_shared_encoder(state, encoder, parameters);
+                mixer.encode_with_shared_encoder(state, parameters, encoder);
             },
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode_with_shared_encoder(state, encoder, parameters);
+                mixer.encode_with_shared_encoder(state, parameters, encoder);
             },
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_attention_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.main_shortcut_add_swap.encode_with_shared_encoder(state, encoder, parameters);
+        self.main_shortcut_add_swap.encode_with_shared_encoder(state, parameters, encoder);
 
-        self.pre_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
-        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+        self.pre_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
+        self.mlp.encode_with_shared_encoder(state, parameters, encoder);
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.main_shortcut_add_swap.encode_with_shared_encoder(state, encoder, parameters);
+        self.main_shortcut_add_swap.encode_with_shared_encoder(state, parameters, encoder);
     }
 }

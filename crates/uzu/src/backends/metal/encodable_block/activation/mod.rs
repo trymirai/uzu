@@ -42,12 +42,12 @@ impl EncodableBlock<Metal> for Activation {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
 
-        self.encode_with_shared_encoder(state, &encoder, _parameters);
+        self.encode_with_shared_encoder(state, _parameters, &encoder);
 
         encoder.end_encoding();
     }
@@ -59,8 +59,8 @@ impl EncodableBlock<Metal> for Activation {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow_mut();

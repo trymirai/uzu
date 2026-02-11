@@ -117,7 +117,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         parameters: &EncodingParameters<Metal>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask {
-        context.executables.encode(state, &context.command_buffer, parameters);
+        context.executables.encode(state, parameters, &context.command_buffer);
 
         LanguageModelGeneratorEncodedTask {
             key,

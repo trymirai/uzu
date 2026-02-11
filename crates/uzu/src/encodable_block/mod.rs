@@ -4,8 +4,12 @@ use crate::{
 };
 
 mod sampling;
+mod tensor_add_swap;
+mod tensor_copy;
 
 pub use sampling::Sampling;
+pub use tensor_add_swap::TensorAddSwap;
+pub use tensor_copy::TensorCopy;
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a, B: Backend> {
@@ -56,8 +60,8 @@ pub trait EncodableBlock<B: Backend> {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
         parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     );
 
     fn supports_shared_encoder(&self) -> bool {
@@ -67,9 +71,9 @@ pub trait EncodableBlock<B: Backend> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &B::CommandBuffer,
         parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, encoder, parameters));
+        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
     }
 }

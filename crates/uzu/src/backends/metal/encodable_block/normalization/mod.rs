@@ -63,12 +63,12 @@ impl EncodableBlock<Metal> for Normalization {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => layer_norm.encode(state, command_buffer, parameters),
-            Normalization::RMSNorm(rms_norm) => rms_norm.encode(state, command_buffer, parameters),
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode(state, parameters, command_buffer),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode(state, parameters, command_buffer),
         }
     }
 
@@ -82,12 +82,12 @@ impl EncodableBlock<Metal> for Normalization {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         match self {
-            Normalization::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, encoder, parameters),
-            Normalization::RMSNorm(rms_norm) => rms_norm.encode_with_shared_encoder(state, encoder, parameters),
+            Normalization::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, parameters, encoder),
+            Normalization::RMSNorm(rms_norm) => rms_norm.encode_with_shared_encoder(state, parameters, encoder),
         }
     }
 }

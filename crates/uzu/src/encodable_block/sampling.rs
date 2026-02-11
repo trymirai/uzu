@@ -46,8 +46,8 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
         _parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 

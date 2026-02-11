@@ -85,12 +85,12 @@ impl EncodableBlock<Metal> for RMSNorm {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        self.encode_with_shared_encoder(state, parameters, &compute_encoder);
         compute_encoder.end_encoding();
 
         if parameters.wait_until_completed {
@@ -106,8 +106,8 @@ impl EncodableBlock<Metal> for RMSNorm {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);

@@ -463,15 +463,15 @@ impl LanguageModelGenerator {
 
         self.context.executables.encode(
             &mut state,
-            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
+            &root_command_buffer,
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
-            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
+            &root_command_buffer,
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -642,8 +642,8 @@ impl LanguageModelGenerator {
                 if !task.is_prefilling {
                     self.context.gpu_sampler.encode(
                         &mut state,
-                        &self.context.command_buffer,
                         &EncodingParameters::new(warmup, true, false),
+                        &self.context.command_buffer,
                     );
                 }
             }
