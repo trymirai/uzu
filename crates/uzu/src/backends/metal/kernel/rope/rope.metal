@@ -36,17 +36,17 @@ KERNEL(Rope)(
     const uint token_index AXIS(suffix_length, 1),
     const uint dimension_index AXIS(head_dim, 32)
 ) {
-  if (head_index >= num_heads 
-      || token_index >= suffix_length 
-      || dimension_index >= head_dim
-      || (head_dim & 1) != 0  // head_dim must be even
-      || num_heads % num_groups != 0
-  ) {
+  if (head_index >= num_heads || token_index >= suffix_length ||
+      dimension_index >= head_dim)
     return;
-  }
+  if (head_dim & 1)
+    return;
+  if (num_heads % num_groups != 0)
+    return;
 
   const uint group_index =
-      head_index / (num_heads / num_groups); // which KV group this head belongs to
+      head_index /
+      (num_heads / num_groups); // which KV group this head belongs to
   const uint total_heads = num_heads + 2 * num_groups;
 
   // Use actual token position from buffer
@@ -63,7 +63,8 @@ KERNEL(Rope)(
   TensorView2D<const T> sines_tensor_view =
       TensorView2D<const T>(sines).shaped(max_sequence_length, head_dim);
   TensorView3D<T> rotated_queries_tensor_view =
-      TensorView3D<T>(rotated_queries).shaped(num_heads, suffix_length, head_dim);
+      TensorView3D<T>(rotated_queries)
+          .shaped(num_heads, suffix_length, head_dim);
   TensorView3D<T> rotated_keys_tensor_view =
       TensorView3D<T>(rotated_keys).shaped(num_groups, suffix_length, head_dim);
 
@@ -80,14 +81,16 @@ KERNEL(Rope)(
       cos_val,
       sin_val
   );
-  rotated_queries_tensor_view(head_index, token_index, dimension_index) = queryResult;
+  rotated_queries_tensor_view(head_index, token_index, dimension_index) =
+      queryResult;
 
   /* ---------- KEYS & VALUES (only first head of each group processes)
-  * ---------- */
+   * ---------- */
   uint first_head_in_group = group_index * (num_heads / num_groups);
   if (head_index == first_head_in_group) {
     /* ---------- keys ---------- */
-    uint key_head_index = num_heads + group_index; // Keys start after all query heads
+    uint key_head_index =
+        num_heads + group_index; // Keys start after all query heads
     T keyResult = applyRopeTransform(
         qkv_tensor_view,
         token_index,
@@ -97,6 +100,7 @@ KERNEL(Rope)(
         cos_val,
         sin_val
     );
-    rotated_keys_tensor_view(group_index, token_index, dimension_index) = keyResult;
+    rotated_keys_tensor_view(group_index, token_index, dimension_index) =
+        keyResult;
   }
 }
