@@ -19,119 +19,85 @@ inline T applyRopeTransform(
 }
 
 template <typename T>
-void applyRope(
-    device const T* qkv, // [suffix_len, (num_heads + 2*num_groups) * head_dim]
-    device const T* cosines,          // [max_seq_len, head_dim]
-    device const T* sines,            // [max_seq_len, head_dim]
-    device const int* tokenPositions, // [suffix_len] - actual token positions
-    device T* rotatedQueries,         // [num_heads,   suffix_len,  head_dim]
-    device T* rotatedKeys,            // [num_groups,  suffix_len,  head_dim]
-    constant int& headDim,
-    constant int& numHeads,
-    constant int& numGroups,
-    constant int& suffixLength,
-    constant int& maxSequenceLength,
-    const uint3 position // x: headIdx, y: tokenIdx, z: dimIdx
+VARIANTS(T, float, half, bfloat)
+KERNEL(Rope)(
+    device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups) * head_dim]
+    device const T* cosines,            // [max_seq_len, head_dim]
+    device const T* sines,              // [max_seq_len, head_dim]
+    device const int* token_positions,  // [suffix_len] - actual token positions
+    device T* rotated_queries,          // [num_heads,   suffix_len,  head_dim]
+    device T* rotated_keys,             // [num_heads,   suffix_len,  head_dim]
+    constant uint& head_dim,
+    constant uint& num_heads,
+    constant uint& num_groups,
+    constant uint& suffix_length,
+    constant uint& max_sequence_length,
+    const uint head_index AXIS(num_heads, 1),
+    const uint token_index AXIS(suffix_length, 1),
+    const uint dimension_index AXIS(head_dim, 32)
 ) {
-  const uint headIndex = position.x;
-  const uint tokenIndex = position.y;
-  const uint dimensionIndex = position.z;
-
-  if (headIndex >= numHeads || tokenIndex >= suffixLength ||
-      dimensionIndex >= headDim)
+  if (head_index >= num_heads 
+      || token_index >= suffix_length 
+      || dimension_index >= head_dim
+      || head_dim & 1 != 0  // head_dim must be even
+      || num_heads % num_groups != 0
+  ) {
     return;
-  if (headDim & 1)
-    return; // head_dim must be even
-  if (numHeads % numGroups != 0)
-    return;
+  }
 
   const uint groupIndex =
-      headIndex / (numHeads / numGroups); // which KV group this head belongs to
-  const uint totalHeads = numHeads + 2 * numGroups;
+      head_index / (num_heads / num_groups); // which KV group this head belongs to
+  const uint totalHeads = num_heads + 2 * num_groups;
 
   // Use actual token position from buffer
-  const uint rawPosition = tokenPositions[tokenIndex];
+  const uint rawPosition = token_positions[token_index];
   const uint absolutePosition =
-      rawPosition > maxSequenceLength ? 0 : rawPosition;
+      rawPosition > max_sequence_length ? 0 : rawPosition;
 
-  const uint halfDimension = headDim / 2;
+  const uint halfDimension = head_dim / 2;
 
   TensorView3D<const T> qkvTensorView =
-      TensorView3D<const T>(qkv).shaped(suffixLength, totalHeads, headDim);
+      TensorView3D<const T>(qkv).shaped(suffix_length, totalHeads, head_dim);
   TensorView2D<const T> cosinesTensorView =
-      TensorView2D<const T>(cosines).shaped(maxSequenceLength, headDim);
+      TensorView2D<const T>(cosines).shaped(max_sequence_length, head_dim);
   TensorView2D<const T> sinesTensorView =
-      TensorView2D<const T>(sines).shaped(maxSequenceLength, headDim);
+      TensorView2D<const T>(sines).shaped(max_sequence_length, head_dim);
   TensorView3D<T> rotatedQueriesTensorView =
-      TensorView3D<T>(rotatedQueries).shaped(numHeads, suffixLength, headDim);
+      TensorView3D<T>(rotated_queries).shaped(num_heads, suffix_length, head_dim);
   TensorView3D<T> rotatedKeysTensorView =
-      TensorView3D<T>(rotatedKeys).shaped(numGroups, suffixLength, headDim);
+      TensorView3D<T>(rotated_keys).shaped(num_groups, suffix_length, head_dim);
 
-  const T cosVal = cosinesTensorView(absolutePosition, dimensionIndex);
-  const T sinVal = sinesTensorView(absolutePosition, dimensionIndex);
+  const T cosVal = cosinesTensorView(absolutePosition, dimension_index);
+  const T sinVal = sinesTensorView(absolutePosition, dimension_index);
 
   /* ---------- QUERIES ---------- */
   T queryResult = applyRopeTransform(
       qkvTensorView,
-      tokenIndex,
-      headIndex,
-      dimensionIndex,
+      token_index,
+      head_index,
+      dimension_index,
       halfDimension,
       cosVal,
       sinVal
   );
-  rotatedQueriesTensorView(headIndex, tokenIndex, dimensionIndex) = queryResult;
+  rotatedQueriesTensorView(head_index, token_index, dimension_index) = queryResult;
 
   /* ---------- KEYS & VALUES (only first head of each group processes)
-   * ---------- */
-  uint firstHeadInGroup = groupIndex * (numHeads / numGroups);
-  if (headIndex == firstHeadInGroup) {
+  * ---------- */
+  uint firstHeadInGroup = groupIndex * (num_heads / num_groups);
+  if (head_index == firstHeadInGroup) {
     /* ---------- keys ---------- */
     uint keyHeadIndex =
-        numHeads + groupIndex; // Keys start after all query heads
+        num_heads + groupIndex; // Keys start after all query heads
     T keyResult = applyRopeTransform(
         qkvTensorView,
-        tokenIndex,
+        token_index,
         keyHeadIndex,
-        dimensionIndex,
+        dimension_index,
         halfDimension,
         cosVal,
         sinVal
     );
-    rotatedKeysTensorView(groupIndex, tokenIndex, dimensionIndex) = keyResult;
+    rotatedKeysTensorView(groupIndex, token_index, dimension_index) = keyResult;
   }
 }
-
-/* ---------- boiler-plate kernel wrappers ---------- */
-#define outerArguments(T)                                                      \
-  (device const T* qkv [[buffer(0)]],                                          \
-   device const T* cosines [[buffer(1)]],                                      \
-   device const T* sines [[buffer(2)]],                                        \
-   device const int* tokenPositions [[buffer(3)]],                             \
-   device T* rotatedQueries [[buffer(4)]],                                     \
-   device T* rotatedKeys [[buffer(5)]],                                        \
-   constant int& headDim [[buffer(6)]],                                        \
-   constant int& numHeads [[buffer(7)]],                                       \
-   constant int& numGroups [[buffer(8)]],                                      \
-   constant int& suffixLength [[buffer(9)]],                                   \
-   constant int& maxSequenceLength [[buffer(10)]],                             \
-   const uint3 position [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (qkv,                                                                        \
-   cosines,                                                                    \
-   sines,                                                                      \
-   tokenPositions,                                                             \
-   rotatedQueries,                                                             \
-   rotatedKeys,                                                                \
-   headDim,                                                                    \
-   numHeads,                                                                   \
-   numGroups,                                                                  \
-   suffixLength,                                                               \
-   maxSequenceLength,                                                          \
-   position)
-
-generateKernels(32, applyRope)
-
-#undef outerArguments
-#undef innerArguments
