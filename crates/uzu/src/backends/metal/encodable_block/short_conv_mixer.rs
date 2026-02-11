@@ -114,21 +114,21 @@ impl ShortConvMixer {
     fn encode_pipeline(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
             return;
         }
 
-        self.in_projection.encode(state, command_buffer, parameters);
+        self.in_projection.encode(state, parameters, command_buffer);
 
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.run_conv(state, &encoder, active_suffix_length);
         encoder.end_encoding();
 
-        self.out_projection.encode(state, command_buffer, parameters);
+        self.out_projection.encode(state, parameters, command_buffer);
 
         if parameters.wait_until_completed {
             command_buffer.commit();
@@ -147,11 +147,11 @@ impl ShortConvMixer {
             return;
         }
 
-        self.in_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.in_projection.encode_with_shared_encoder(state, parameters, encoder);
 
         self.run_conv(state, encoder, active_suffix_length);
 
-        self.out_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.out_projection.encode_with_shared_encoder(state, parameters, encoder);
     }
 
     fn clear_suffix_state_valid_range(
@@ -414,8 +414,8 @@ impl EncodableBlock<Metal> for ShortConvMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         if self.supports_shared_encoder() {
             let encoder =
@@ -428,7 +428,7 @@ impl EncodableBlock<Metal> for ShortConvMixer {
                 command_buffer.wait_until_completed();
             }
         } else {
-            self.encode_pipeline(state, command_buffer, parameters);
+            self.encode_pipeline(state, parameters, command_buffer);
         }
     }
 
@@ -439,8 +439,8 @@ impl EncodableBlock<Metal> for ShortConvMixer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
     }

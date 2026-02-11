@@ -66,11 +66,11 @@ impl EncodableBlock<Metal> for Pooling {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &encoder, parameters);
+        self.encode_with_shared_encoder(state, parameters, &encoder);
         encoder.end_encoding();
 
         #[cfg(feature = "tracing")]
@@ -111,8 +111,8 @@ impl EncodableBlock<Metal> for Pooling {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();

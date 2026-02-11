@@ -271,7 +271,7 @@ impl TraceValidator {
 
         let command_buffer = ctx.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
 
-        ctx.executables.encode(&mut state, &command_buffer, &EncodingParameters::new(false, false, false));
+        ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
         command_buffer.commit();
         command_buffer.wait_until_completed();
 

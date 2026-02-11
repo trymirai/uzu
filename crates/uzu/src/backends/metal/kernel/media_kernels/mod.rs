@@ -81,8 +81,8 @@ impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode(
         &self,
         _state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         _parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let _ = command_buffer;
     }
@@ -94,8 +94,8 @@ impl EncodableBlock<Metal> for ScalePadNormalizeImage {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState<Metal>,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unreachable!("ScalePadNormalizeImage does not support shared compute encoder");
     }

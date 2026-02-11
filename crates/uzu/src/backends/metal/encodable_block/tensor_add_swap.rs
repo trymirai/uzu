@@ -36,11 +36,11 @@ impl EncodableBlock<Metal> for TensorAddSwap {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &encoder, parameters);
+        self.encode_with_shared_encoder(state, parameters, &encoder);
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
@@ -56,8 +56,8 @@ impl EncodableBlock<Metal> for TensorAddSwap {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorAddSwap expects exactly 2 arrays");

@@ -138,7 +138,7 @@ impl MambaMixer {
             return;
         }
 
-        self.in_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.in_projection.encode_with_shared_encoder(state, parameters, encoder);
         self.run_split_inproj(state, encoder, active_suffix_length);
         self.run_conv_scan(state, encoder, active_suffix_length);
 
@@ -148,7 +148,7 @@ impl MambaMixer {
             self.run_prefill_ssm(state, encoder, active_suffix_length);
         }
 
-        self.out_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.out_projection.encode_with_shared_encoder(state, parameters, encoder);
     }
 
     fn run_split_inproj(
@@ -463,8 +463,8 @@ impl EncodableBlock<Metal> for MambaMixer {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         if self.supports_shared_encoder() {
             let encoder =
@@ -484,7 +484,7 @@ impl EncodableBlock<Metal> for MambaMixer {
             return;
         }
 
-        self.in_projection.encode(state, command_buffer, parameters);
+        self.in_projection.encode(state, parameters, command_buffer);
 
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         self.run_split_inproj(state, &encoder, active_suffix_length);
@@ -496,7 +496,7 @@ impl EncodableBlock<Metal> for MambaMixer {
         }
         encoder.end_encoding();
 
-        self.out_projection.encode(state, command_buffer, parameters);
+        self.out_projection.encode(state, parameters, command_buffer);
 
         if parameters.wait_until_completed {
             command_buffer.commit();
@@ -511,8 +511,8 @@ impl EncodableBlock<Metal> for MambaMixer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
     }
