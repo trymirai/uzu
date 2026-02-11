@@ -4,8 +4,10 @@ use crate::{
 };
 
 mod sampling;
+mod tensor_copy;
 
 pub use sampling::Sampling;
+pub use tensor_copy::TensorCopy;
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a, B: Backend> {

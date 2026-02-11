@@ -59,8 +59,12 @@ impl ClassifierLayer {
             let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_attention_norm: Option<Box<dyn EncodableBlock<Metal>>> =
@@ -151,8 +155,12 @@ impl ClassifierLayer {
             );
 
             let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(

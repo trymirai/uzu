@@ -65,8 +65,12 @@ impl LayerExecutables {
             let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_attention_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
