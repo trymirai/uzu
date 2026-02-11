@@ -3,19 +3,19 @@
 
 template <typename T>
 inline T applyRopeTransform(
-    TensorView3D<const T> qkvTensorView,
-    uint tokenIdx,
-    uint headIdx,
-    uint dimIdx,
-    uint halfDim,
-    T cosVal,
-    T sinVal
+    TensorView3D<const T> qkv_tensor_view,
+    uint token_idx,
+    uint head_idx,
+    uint dim_idx,
+    uint half_dim,
+    T cos_val,
+    T sin_val
 ) {
-  T inputVal = qkvTensorView(tokenIdx, headIdx, dimIdx);
-  T pairedVal = (dimIdx < halfDim)
-                    ? -qkvTensorView(tokenIdx, headIdx, dimIdx + halfDim)
-                    : qkvTensorView(tokenIdx, headIdx, dimIdx - halfDim);
-  return inputVal * cosVal + pairedVal * sinVal;
+  T inputVal = qkv_tensor_view(token_idx, head_idx, dim_idx);
+  T pairedVal = (dim_idx < half_dim)
+                    ? -qkv_tensor_view(token_idx, head_idx, dim_idx + half_dim)
+                    : qkv_tensor_view(token_idx, head_idx, dim_idx - half_dim);
+  return inputVal * cos_val + pairedVal * sin_val;
 }
 
 template <typename T>
@@ -39,65 +39,64 @@ KERNEL(Rope)(
   if (head_index >= num_heads 
       || token_index >= suffix_length 
       || dimension_index >= head_dim
-      || head_dim & 1 != 0  // head_dim must be even
+      || (head_dim & 1) != 0  // head_dim must be even
       || num_heads % num_groups != 0
   ) {
     return;
   }
 
-  const uint groupIndex =
+  const uint group_index =
       head_index / (num_heads / num_groups); // which KV group this head belongs to
-  const uint totalHeads = num_heads + 2 * num_groups;
+  const uint total_heads = num_heads + 2 * num_groups;
 
   // Use actual token position from buffer
-  const uint rawPosition = token_positions[token_index];
+  const uint raw_position = token_positions[token_index];
   const uint absolutePosition =
-      rawPosition > max_sequence_length ? 0 : rawPosition;
+      raw_position > max_sequence_length ? 0 : raw_position;
 
-  const uint halfDimension = head_dim / 2;
+  const uint half_dimension = head_dim / 2;
 
-  TensorView3D<const T> qkvTensorView =
-      TensorView3D<const T>(qkv).shaped(suffix_length, totalHeads, head_dim);
-  TensorView2D<const T> cosinesTensorView =
+  TensorView3D<const T> qkv_tensor_view =
+      TensorView3D<const T>(qkv).shaped(suffix_length, total_heads, head_dim);
+  TensorView2D<const T> cosines_tensor_view =
       TensorView2D<const T>(cosines).shaped(max_sequence_length, head_dim);
-  TensorView2D<const T> sinesTensorView =
+  TensorView2D<const T> sines_tensor_view =
       TensorView2D<const T>(sines).shaped(max_sequence_length, head_dim);
-  TensorView3D<T> rotatedQueriesTensorView =
+  TensorView3D<T> rotated_queries_tensor_view =
       TensorView3D<T>(rotated_queries).shaped(num_heads, suffix_length, head_dim);
-  TensorView3D<T> rotatedKeysTensorView =
+  TensorView3D<T> rotated_keys_tensor_view =
       TensorView3D<T>(rotated_keys).shaped(num_groups, suffix_length, head_dim);
 
-  const T cosVal = cosinesTensorView(absolutePosition, dimension_index);
-  const T sinVal = sinesTensorView(absolutePosition, dimension_index);
+  const T cos_val = cosines_tensor_view(absolutePosition, dimension_index);
+  const T sin_val = sines_tensor_view(absolutePosition, dimension_index);
 
   /* ---------- QUERIES ---------- */
   T queryResult = applyRopeTransform(
-      qkvTensorView,
+      qkv_tensor_view,
       token_index,
       head_index,
       dimension_index,
-      halfDimension,
-      cosVal,
-      sinVal
+      half_dimension,
+      cos_val,
+      sin_val
   );
-  rotatedQueriesTensorView(head_index, token_index, dimension_index) = queryResult;
+  rotated_queries_tensor_view(head_index, token_index, dimension_index) = queryResult;
 
   /* ---------- KEYS & VALUES (only first head of each group processes)
   * ---------- */
-  uint firstHeadInGroup = groupIndex * (num_heads / num_groups);
-  if (head_index == firstHeadInGroup) {
+  uint first_head_in_group = group_index * (num_heads / num_groups);
+  if (head_index == first_head_in_group) {
     /* ---------- keys ---------- */
-    uint keyHeadIndex =
-        num_heads + groupIndex; // Keys start after all query heads
+    uint key_head_index = num_heads + group_index; // Keys start after all query heads
     T keyResult = applyRopeTransform(
-        qkvTensorView,
+        qkv_tensor_view,
         token_index,
-        keyHeadIndex,
+        key_head_index,
         dimension_index,
-        halfDimension,
-        cosVal,
-        sinVal
+        half_dimension,
+        cos_val,
+        sin_val
     );
-    rotatedKeysTensorView(groupIndex, token_index, dimension_index) = keyResult;
+    rotated_keys_tensor_view(group_index, token_index, dimension_index) = keyResult;
   }
 }
