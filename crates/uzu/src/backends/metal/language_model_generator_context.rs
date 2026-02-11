@@ -6,9 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{
-    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig,
-};
+use super::{Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig};
 use crate::{
     DataType,
     backends::{
