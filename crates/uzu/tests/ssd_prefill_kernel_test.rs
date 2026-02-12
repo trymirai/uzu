@@ -6,13 +6,16 @@ use bytemuck;
 use metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
-use uzu::backends::{
-    common::{Context, kernel::Conv1dScanKernel},
-    metal::{
-        KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
-        kernel::{
-            dsl::Conv1dScanMetalKernel,
-            ssm::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
+use uzu::{
+    DataType,
+    backends::{
+        common::{Context, kernel::Conv1dScanKernel},
+        metal::{
+            MTLBuffer, MTLContext, ProtocolObject,
+            kernel::{
+                dsl::Conv1dScanMetalKernel,
+                ssm::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
+            },
         },
     },
 };
@@ -358,7 +361,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32).unwrap();
+    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_a, state_a, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
@@ -373,7 +376,7 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32).unwrap();
+    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
@@ -459,7 +462,7 @@ fn conv1d_scan_is_deterministic() {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };
-    let kernel = Conv1dScanMetalKernel::new(&ctx, KernelDataType::Float32.into(), 0u32, true).unwrap();
+    let kernel = Conv1dScanMetalKernel::new(&ctx, DataType::F32, 0u32, true).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;

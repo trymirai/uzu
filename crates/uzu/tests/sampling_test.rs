@@ -14,7 +14,7 @@ use uzu::{
             },
         },
         metal::{
-            KernelDataType, MTLContext, Metal,
+            MTLContext, Metal,
             kernel::dsl::{
                 GumbelMetalKernel, MinPMetalKernel, TemperatureMetalKernel, TopKMetalKernel, TopPMetalKernel,
             },
@@ -1012,8 +1012,7 @@ fn test_temperature_gpu_cpu_match() {
     const RTOL: f32 = 1e-6;
     const ATOL: f32 = 1e-6;
 
-    let kernel = TemperatureMetalKernel::new(&context, KernelDataType::Float32.into())
-        .expect("Failed to create temperature kernel");
+    let kernel = TemperatureMetalKernel::new(&context, DataType::F32).expect("Failed to create temperature kernel");
 
     let logits: Vec<f32> = (0..BATCH * VOCAB).map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01).collect();
 
@@ -1074,7 +1073,7 @@ fn test_topk_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPK: u32 = 16;
 
-    let kernel = TopKMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create topk kernel");
+    let kernel = TopKMetalKernel::new(&context, DataType::F32).expect("Failed to create topk kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1138,7 +1137,7 @@ fn test_topp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPP: f32 = 0.9;
 
-    let kernel = TopPMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create topp kernel");
+    let kernel = TopPMetalKernel::new(&context, DataType::F32).expect("Failed to create topp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1207,7 +1206,7 @@ fn test_minp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const MINP: f32 = 0.1;
 
-    let kernel = MinPMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create minp kernel");
+    let kernel = MinPMetalKernel::new(&context, DataType::F32).expect("Failed to create minp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1391,8 +1390,7 @@ fn test_gumbel_gpu_cpu_match() {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let kernel =
-        GumbelMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create gumbel kernel");
+    let kernel = GumbelMetalKernel::new(&context, DataType::F32).expect("Failed to create gumbel kernel");
 
     let logits = vec![0.0f32; BATCH * VOCAB];
     let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();

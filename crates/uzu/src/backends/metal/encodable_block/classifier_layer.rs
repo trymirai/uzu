@@ -7,10 +7,7 @@ use super::{Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap, Ten
 use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType,
-    backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig, kernel::KernelDataType,
-    },
+    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
     config::TransformerLayerConfig,
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -40,7 +37,6 @@ impl ClassifierLayer {
     pub fn new(
         mtl_context: Rc<MTLContext>,
         layer_config: &TransformerLayerConfig,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -56,7 +52,6 @@ impl ClassifierLayer {
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
             let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>> = Box::new(
                 TensorCopy::<Metal>::new(
@@ -208,7 +203,7 @@ impl ClassifierLayer {
             let attention: Box<dyn EncodableBlock<Metal>> = Box::new(
                 Attention::new(
                     ctx,
-                    kernel_data_type,
+                    intermediate_data_type,
                     layer_index,
                     attention_scale,
                     attention_config.has_sinks,

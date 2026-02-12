@@ -1,14 +1,11 @@
-use std::rc::Rc;
-
 use super::{EncodableBlock, Metal, transformer_layer};
 use crate::{
     DataType,
     backends::{
         common::Context,
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
-            ProtocolObject, Retained,
-            compilation_parameters::CompilationConfig,
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             kernel::short_conv::{
                 ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments, ShortConvPrefillArguments,
                 ShortConvTrieArguments,
@@ -50,7 +47,6 @@ impl ShortConvMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<MTLContext>,
@@ -63,7 +59,6 @@ impl ShortConvMixer {
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
-        let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
             &short_conv_config.in_projection_config,
@@ -97,7 +92,7 @@ impl ShortConvMixer {
         };
 
         let short_conv_kernel =
-            ShortConvKernel::new(mtl_context, kernel_data_type).expect("Failed to create short conv kernel");
+            ShortConvKernel::new(mtl_context, data_type).expect("Failed to create short conv kernel");
 
         Self {
             layer_index,

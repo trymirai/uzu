@@ -15,10 +15,7 @@ use super::{
 use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig, kernel::KernelDataType,
-    },
+    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -44,7 +41,6 @@ impl LayerExecutables {
         mtl_context: Rc<MTLContext>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
-        compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -62,8 +58,6 @@ impl LayerExecutables {
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
                 MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             };
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
-
             let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
                 TensorCopy::<Metal>::new(
                     ctx,
@@ -136,7 +130,7 @@ impl LayerExecutables {
                     let attention = Box::new(
                         Attention::new(
                             ctx,
-                            kernel_data_type,
+                            intermediate_data_type,
                             layer_index,
                             attention_scale,
                             attention_config.has_sinks,
@@ -159,7 +153,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         mamba_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         num_heads,
@@ -176,7 +169,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         short_conv_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         decoder_layer_loader,

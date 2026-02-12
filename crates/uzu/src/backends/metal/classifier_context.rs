@@ -2,7 +2,6 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
     MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained,
-    compilation_parameters::CompilationConfig,
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
@@ -69,7 +68,6 @@ impl ClassifierContext {
             Rc::new(classifier_model_config.model_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
@@ -147,7 +145,6 @@ impl ClassifierContext {
                 Ok(ClassifierLayer::new(
                     context.clone(),
                     layer_config,
-                    compilation_config.clone(),
                     layer_index,
                     classifier_model_config.model_config.model_dim,
                     classifier_model_config.model_config.transformer_config.hidden_dim,

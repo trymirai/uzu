@@ -2,9 +2,9 @@
 
 use super::{EncodableBlock, Metal};
 use crate::{
+    DataType,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-        Retained,
+        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
         kernel::attention::{
             AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
             AttentionSinglePassArguments, AttentionTwoPassArguments, KVCacheUpdateArguments,
@@ -42,7 +42,7 @@ pub struct Attention {
 impl Attention {
     pub fn new(
         context: &MTLContext,
-        data_type: KernelDataType,
+        data_type: DataType,
         layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,

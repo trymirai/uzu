@@ -1,6 +1,6 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::{env, rc::Rc};
+use std::env;
 
 use objc2::Message;
 
@@ -10,9 +10,8 @@ use crate::{
     backends::{
         common::kernel::{Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel},
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
-            ProtocolObject, Retained,
-            compilation_parameters::CompilationConfig,
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             kernel::{
                 dsl::{
                     Conv1dDecodeMetalKernel, Conv1dPackMetalKernel, Conv1dScanMetalKernel, SSDUpdateMetalKernel,
@@ -52,7 +51,6 @@ impl MambaMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         num_heads: usize,
@@ -68,7 +66,6 @@ impl MambaMixer {
         let conv_tree = resolve_subtree(&split_tree, &["conv", "conv1d"]);
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
-        let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
             &mamba_config.in_projection_config,
@@ -103,28 +100,25 @@ impl MambaMixer {
         let gate_bias = split_tree.leaf("gate_bias").unwrap().clone();
         let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap().clone();
 
-        let split_inproj = SplitInProjMetalKernel::new(mtl_context, kernel_data_type.into())
-            .expect("Failed to create split in-projection kernel");
+        let split_inproj =
+            SplitInProjMetalKernel::new(mtl_context, data_type).expect("Failed to create split in-projection kernel");
         let conv_scan = Conv1dScanMetalKernel::new(
             mtl_context,
-            kernel_data_type.into(),
+            data_type,
             Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
         )
         .expect("Failed to create conv scan kernel");
         let conv_decode = Conv1dDecodeMetalKernel::new(
             mtl_context,
-            kernel_data_type.into(),
+            data_type,
             Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
         )
         .expect("Failed to create conv decode kernel");
-        let conv_pack = Conv1dPackMetalKernel::new(mtl_context, kernel_data_type.into())
-            .expect("Failed to create conv pack kernel");
-        let ssd_prefill =
-            SSDPrefillKernels::new(mtl_context, kernel_data_type).expect("Failed to create SSD prefill kernel");
-        let ssd_update = SSDUpdateMetalKernel::new(mtl_context, kernel_data_type.into())
-            .expect("Failed to create SSD decode kernel");
+        let conv_pack = Conv1dPackMetalKernel::new(mtl_context, data_type).expect("Failed to create conv pack kernel");
+        let ssd_prefill = SSDPrefillKernels::new(mtl_context, data_type).expect("Failed to create SSD prefill kernel");
+        let ssd_update = SSDUpdateMetalKernel::new(mtl_context, data_type).expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
         Self {

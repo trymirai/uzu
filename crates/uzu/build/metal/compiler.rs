@@ -286,7 +286,7 @@ impl MetalCompiler {
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
                 FunctionConstantValuesSetValue,
-                KernelDataType,
+                data_type::MetalDataTypeExt,
                 MTLContext,
                 MTLError,
                 MTLFunctionConstantValues,

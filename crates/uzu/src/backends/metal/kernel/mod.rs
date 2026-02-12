@@ -1,5 +1,4 @@
 pub mod attention;
-mod data_type;
 use crate::backends::common::kernel::matmul::MatmulKernels;
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
@@ -22,7 +21,6 @@ pub use attention::{
     AttentionError, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments, AttentionTwoPassArguments,
     KVCacheUpdateArguments,
 };
-pub use data_type::KernelDataType;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
