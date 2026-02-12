@@ -119,7 +119,20 @@ fn kernel_wrappers(
             .enumerate()
             .map(|(i, a)| match a.argument_type() {
                 Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_)) => {
-                    format!("{} {} [[buffer({})]]", apply_replace(&a.c_type), a.name, i)
+                    let condition = a.argument_condition().unwrap();
+
+                    if let Some(condition) = condition {
+                        format!(
+                            "{} {} [[buffer({}), function_constant(__dsl_specialize_{}_{})]]",
+                            apply_replace(&a.c_type),
+                            a.name,
+                            i,
+                            kernel.name,
+                            condition
+                        )
+                    } else {
+                        format!("{} {} [[buffer({})]]", apply_replace(&a.c_type), a.name, i)
+                    }
                 },
                 _ => unreachable!(),
             })

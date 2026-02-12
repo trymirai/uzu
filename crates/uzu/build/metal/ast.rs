@@ -177,8 +177,27 @@ impl MetalArgument {
         })
     }
 
+    pub fn argument_condition(&self) -> anyhow::Result<Option<&str>> {
+        if let Some(annotation) = self.annotation.as_ref()
+            && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
+        {
+            assert!(
+                matches!(self.argument_type().unwrap(), MetalArgumentType::Buffer | MetalArgumentType::Constant(_)),
+                "Only a buffer or a constant can be optional"
+            );
+            if annotation.len() != 2 {
+                bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
+            }
+            Ok(Some(annotation[1].as_ref()))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn argument_type(&self) -> anyhow::Result<MetalArgumentType> {
-        if let Some(annotation) = self.annotation.as_ref() {
+        if let Some(annotation) = self.annotation.as_ref()
+            && annotation.first().map(|s| s.as_ref()) != Some("dsl.optional")
+        {
             let mut annotation = annotation.to_vec();
 
             if annotation.is_empty() {
@@ -247,8 +266,8 @@ impl MetalArgument {
     }
 
     fn to_parameter(&self) -> Option<KernelParameter> {
-        match self.argument_type() {
-            Ok(MetalArgumentType::Specialize(ty)) => Some(KernelParameter {
+        match self.argument_type().unwrap() {
+            MetalArgumentType::Specialize(ty) => Some(KernelParameter {
                 name: self.name.clone(),
                 ty: KernelParameterType::Specialization(ty),
             }),
@@ -323,21 +342,25 @@ impl MetalKernelInfo {
                 .filter_map(|a| match a.argument_type() {
                     Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Buffer,
                     }),
                     Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)) if !indirect_flag => {
                         indirect_flag = true;
                         Some(KernelArgument {
                             name: "__dsl_indirect_dispatch_buffer".into(),
+                            conditional: false,
                             ty: KernelArgumentType::Buffer,
                         })
                     },
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Scalar(ty),
                     }),
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Constant(ty),
                     }),
                     _ => None,

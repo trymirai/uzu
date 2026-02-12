@@ -35,23 +35,29 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         .map(|a| {
             let name = format_ident!("{}", a.name.as_ref());
 
-            match &a.ty {
+            let (generic, mut ty) = match &a.ty {
                 KernelArgumentType::Buffer => {
                     let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
                     (
                         Some(quote! { #buffer_lifetime }),
-                        quote! { #name: impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
+                        quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
                     )
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #name: &[#ty] })
+                    (None, quote! { &[#ty] })
                 },
                 KernelArgumentType::Scalar(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #name: #ty })
+                    (None, quote! { #ty })
                 },
+            };
+
+            if a.conditional {
+                ty = quote! { Option<#ty> };
             }
+
+            (generic, quote! { #name: #ty })
         })
         .collect::<(Vec<_>, Vec<_>)>();
 
