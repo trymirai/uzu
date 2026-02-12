@@ -6,7 +6,6 @@ pub mod dsl {
 pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
 pub mod matmul;
-pub mod media_kernels;
 pub mod mlp;
 pub use mlp::{
     MLP_ACTIVATION_FC_INDEX, MLP_FUSED_FC_INDEX, MLP_HIDDEN_DIM_FC_INDEX, MlpActivationType, MlpFusedConfig,
@@ -34,9 +33,3 @@ pub use short_conv::{ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelE
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
 };
-
-pub mod media {
-    pub use super::media_kernels::{ExtractImagePatches, ScalePadNormalizeImage};
-}
-
-pub use media_kernels::{ExtractImagePatches, ImageParameters, PatchParameters, ScalePadNormalizeImage};
