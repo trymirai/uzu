@@ -3,7 +3,6 @@ mod array;
 mod backend;
 mod classifier_context;
 mod command_buffer;
-pub mod compilation_parameters;
 mod context;
 mod copy_encoder;
 mod data_type;

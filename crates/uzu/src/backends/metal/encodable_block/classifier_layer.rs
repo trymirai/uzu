@@ -7,10 +7,7 @@ use super::{Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap, Ten
 use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType,
-    backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig,
-    },
+    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
     config::TransformerLayerConfig,
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -40,7 +37,6 @@ impl ClassifierLayer {
     pub fn new(
         mtl_context: Rc<MTLContext>,
         layer_config: &TransformerLayerConfig,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,

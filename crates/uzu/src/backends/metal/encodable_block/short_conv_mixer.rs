@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::{EncodableBlock, Metal, transformer_layer};
 use crate::{
     DataType,
@@ -8,7 +6,6 @@ use crate::{
         metal::{
             MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
             Retained,
-            compilation_parameters::CompilationConfig,
             kernel::short_conv::{
                 ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments, ShortConvPrefillArguments,
                 ShortConvTrieArguments,
@@ -50,7 +47,6 @@ impl ShortConvMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<MTLContext>,

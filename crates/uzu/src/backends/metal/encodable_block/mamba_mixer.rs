@@ -1,6 +1,6 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::{env, rc::Rc};
+use std::env;
 
 use super::{EncodableBlock, Metal, transformer_layer};
 use crate::{
@@ -10,7 +10,6 @@ use crate::{
         metal::{
             MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
             Retained,
-            compilation_parameters::CompilationConfig,
             kernel::{
                 dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
                 ssm::{
@@ -49,7 +48,6 @@ impl MambaMixer {
         mtl_context: &MTLContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         num_heads: usize,
