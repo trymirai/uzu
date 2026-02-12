@@ -3,4 +3,5 @@
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
 pub mod kv_cache_update;
+pub mod matmul;
 pub mod sampling;
