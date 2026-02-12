@@ -4,13 +4,21 @@ use crate::{
 };
 
 mod activation;
+mod layer_norm;
+mod normalization;
 mod pooling;
+mod rope;
+mod rms_norm;
 mod sampling;
 mod tensor_add_swap;
 mod tensor_copy;
 
 pub use activation::Activation;
+pub use layer_norm::{LayerNorm, LayerNormError};
+pub use normalization::{Normalization, NormalizationError};
 pub use pooling::Pooling;
+pub use rope::Rope;
+pub use rms_norm::{RMSNorm, RMSNormError};
 pub use sampling::Sampling;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;

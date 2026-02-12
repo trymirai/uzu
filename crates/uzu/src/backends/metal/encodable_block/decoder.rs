@@ -6,7 +6,7 @@ use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
+        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
         compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },
@@ -58,7 +58,7 @@ impl Decoder {
         let global_rope = if decoder_config.global_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Global))
+                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Global))
         } else {
             None
         };
@@ -66,7 +66,7 @@ impl Decoder {
         let local_rope = if decoder_config.local_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Local))
+                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Local))
         } else {
             None
         };
@@ -145,11 +145,11 @@ impl Decoder {
 
     fn create_rope_block(
         mtl_context: &MTLContext,
-        kernel_data_type: KernelDataType,
+        data_type: DataType,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableBlock<Metal>>> {
         let rotation: Box<dyn EncodableBlock<Metal>> =
-            Box::new(Rope::new(mtl_context, kernel_data_type, rope_type).expect("Failed to create Rope"));
+            Box::new(Rope::<Metal>::new(mtl_context, data_type, rope_type).expect("Failed to create Rope"));
         Rc::new(rotation)
     }
 
