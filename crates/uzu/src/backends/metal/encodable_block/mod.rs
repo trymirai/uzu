@@ -7,9 +7,8 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 pub use super::Metal;
-pub use crate::encodable_block::{EncodableBlock, TensorAddSwap, TensorCopy};
+pub use crate::encodable_block::{Activation, EncodableBlock, TensorAddSwap, TensorCopy};
 
-mod activation;
 mod attention;
 mod classifier_layer;
 mod decoder;
@@ -26,7 +25,6 @@ mod rope;
 mod short_conv_mixer;
 pub mod transformer_layer;
 
-pub use activation::Activation;
 pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::Decoder;
