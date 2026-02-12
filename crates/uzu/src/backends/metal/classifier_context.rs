@@ -1,8 +1,7 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained,
-    compilation_parameters::CompilationConfig,
+    MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained, compilation_parameters::CompilationConfig,
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
@@ -313,10 +312,8 @@ impl ClassifierContext {
         data_type: DataType,
         rope_type: RopeType,
     ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {
-        let kernel_data_type: KernelDataType = data_type.into();
-
         let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
-            Rope::new(mtl_context, kernel_data_type, rope_type)
+            Rope::<Metal>::new(mtl_context, data_type, rope_type)
                 .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
         );
         Ok(Rc::new(rotation))

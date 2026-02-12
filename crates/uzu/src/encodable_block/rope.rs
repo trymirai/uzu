@@ -1,63 +1,43 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use super::{EncodableBlock, Metal};
+use super::{EncodableBlock, EncodingParameters};
 use crate::{
-    backends::{
-        common::kernel::RopeKernel,
-        metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
-            ProtocolObject, Retained, kernel::dsl::RopeMetalKernel,
-        },
+    DataType,
+    backends::common::{
+        Backend,
+        kernel::{Kernels, RopeKernel},
     },
-    encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
 };
 
-pub struct Rope {
-    kernel: RopeMetalKernel,
+pub struct Rope<B: Backend> {
+    kernel: <B::Kernels as Kernels>::RopeKernel,
     rope_type: RopeType,
 }
 
-impl Rope {
+impl<B: Backend> Rope<B> {
     pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
+        context: &B::Context,
+        data_type: DataType,
         rope_type: RopeType,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: RopeMetalKernel::new(context, data_type.into())?,
+            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type)?,
             rope_type,
         })
     }
 }
 
-impl EncodableBlock<Metal> for Rope {
-    fn encode(
-        &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    ) {
-        let compute_encoder =
-            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, parameters, &compute_encoder);
-        compute_encoder.end_encoding();
-
-        if parameters.wait_until_completed {
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        }
-    }
-
+impl<B: Backend> EncodableBlock<B> for Rope<B> {
     fn supports_shared_encoder(&self) -> bool {
         true
     }
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        _parameters: &EncodingParameters<Metal>,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        _parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -113,7 +93,7 @@ impl EncodableBlock<Metal> for Rope {
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            compute_encoder,
+            encoder,
         )
     }
 }
