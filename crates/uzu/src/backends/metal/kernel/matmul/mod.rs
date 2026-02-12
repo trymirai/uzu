@@ -5,6 +5,12 @@ mod gemv;
 mod kernel;
 mod split_k;
 
+pub use common::MatmulArguments;
+pub use dispatch_descriptor::{MatmulKernelVariant, determine_kernel_variant};
+pub use gemv::GemvKernel;
+pub use kernel::MatmulKernel;
+pub use split_k::SplitKGemm;
+
 use crate::{
     DataType,
     backends::{
@@ -14,12 +20,6 @@ use crate::{
         metal::{MTLComputeCommandEncoder, MTLContext, MTLError, Metal, ProtocolObject},
     },
 };
-
-pub use common::MatmulArguments;
-pub use dispatch_descriptor::{MatmulKernelVariant, determine_kernel_variant};
-pub use gemv::GemvKernel;
-pub use kernel::MatmulKernel;
-pub use split_k::SplitKGemm;
 
 impl FullPrecisionMatmulKernelTrait for MatmulKernel {
     type Backend = Metal;

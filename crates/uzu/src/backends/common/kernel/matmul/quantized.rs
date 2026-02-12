@@ -1,6 +1,5 @@
-use crate::{DataType, backends::common::Backend, config::QuantizationMode};
-
 use super::MatmulKernels;
+use crate::{DataType, backends::common::Backend, config::QuantizationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizedMatmulType {

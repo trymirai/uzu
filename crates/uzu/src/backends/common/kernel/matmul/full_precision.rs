@@ -1,6 +1,5 @@
-use crate::{DataType, backends::common::Backend};
-
 use super::MatmulKernels;
+use crate::{DataType, backends::common::Backend};
 
 pub struct FullPrecisionMatmulArguments<'a, B: Backend> {
     pub a: &'a B::NativeBuffer,
