@@ -36,7 +36,8 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )?;
+            )
+            .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
@@ -50,7 +51,8 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )?;
+            )
+            .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::QLoRA {
@@ -162,7 +164,8 @@ pub fn mlp_fused_block(
                         .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
-                )?;
+                )
+                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
 
                 let fused_block = MlpFusedBlock::new_quantized(
                     context,
@@ -208,7 +211,8 @@ pub fn mlp_fused_block(
                         .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
                     ArrayId::MlpHidden,
                     ArrayId::Main,
-                )?;
+                )
+                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
 
                 let fused_block = MlpFusedBlock::new_full_precision(
                     context,

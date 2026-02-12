@@ -5,11 +5,14 @@ use crate::{
 
 mod activation;
 mod full_precision_embedding_lookup;
+mod full_precision_embedding_readout;
+mod full_precision_linear;
 mod layer_norm;
 mod normalization;
 mod pooling;
 mod qk_norm;
 mod quantized_embedding_lookup;
+mod quantized_linear;
 mod rms_norm;
 mod rope;
 mod sampling;
@@ -18,11 +21,14 @@ mod tensor_copy;
 
 pub use activation::Activation;
 pub use full_precision_embedding_lookup::{FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingLookupError};
+pub use full_precision_embedding_readout::{FullPrecisionEmbeddingReadout, FullPrecisionEmbeddingReadoutError};
+pub use full_precision_linear::{FullPrecisionLinear, FullPrecisionLinearError};
 pub use layer_norm::{LayerNorm, LayerNormError};
 pub use normalization::{Normalization, NormalizationError};
 pub use pooling::Pooling;
 pub use qk_norm::{QKNorm, QKNormError};
 pub use quantized_embedding_lookup::{QuantizedEmbeddingLookup, QuantizedEmbeddingLookupError};
+pub use quantized_linear::{QuantizedLinear, QuantizedLinearError};
 pub use rms_norm::{RMSNorm, RMSNormError};
 pub use rope::Rope;
 pub use sampling::Sampling;
