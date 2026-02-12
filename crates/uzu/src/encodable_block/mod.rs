@@ -4,6 +4,7 @@ use crate::{
 };
 
 mod activation;
+mod full_precision_embedding_lookup;
 mod layer_norm;
 mod normalization;
 mod pooling;
@@ -15,6 +16,7 @@ mod tensor_add_swap;
 mod tensor_copy;
 
 pub use activation::Activation;
+pub use full_precision_embedding_lookup::{FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingLookupError};
 pub use layer_norm::{LayerNorm, LayerNormError};
 pub use normalization::{Normalization, NormalizationError};
 pub use pooling::Pooling;
