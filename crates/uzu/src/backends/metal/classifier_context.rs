@@ -1,7 +1,8 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained, compilation_parameters::CompilationConfig,
+    MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained,
+    compilation_parameters::CompilationConfig,
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
         transformer_layer::{embed_block, linear_block},

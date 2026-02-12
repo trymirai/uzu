@@ -54,9 +54,7 @@ impl<B: Backend> QKNorm<B> {
 
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
-            let scales = parameter_tree
-                .leaf("query_norm.scales")
-                .map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree.leaf("query_norm.scales").map_err(QKNormError::ParameterError)?;
             let scales_buffer = scales.buffer().clone();
 
             let accumulation_data_type: DataType = q_config.accumulation_precision.into();
@@ -81,9 +79,7 @@ impl<B: Backend> QKNorm<B> {
 
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
-            let scales = parameter_tree
-                .leaf("key_norm.scales")
-                .map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree.leaf("key_norm.scales").map_err(QKNormError::ParameterError)?;
             let scales_buffer = scales.buffer().clone();
 
             let accumulation_data_type: DataType = k_config.accumulation_precision.into();
