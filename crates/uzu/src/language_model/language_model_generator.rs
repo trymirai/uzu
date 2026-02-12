@@ -12,11 +12,11 @@ use super::{
 };
 use crate::{
     backends::{
-        common::kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
-        metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder,
-            MTLCommandQueue, Metal,
+        common::{
+            Context,
+            kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
         },
+        metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, Metal},
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{
@@ -702,13 +702,7 @@ impl LanguageModelGenerator {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = self
-            .context
-            .mtl_context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
+        let command_buffer = self.context.mtl_context.create_command_buffer().expect("Failed to create command buffer");
         let root_command_buffer = command_buffer.to_owned();
 
         {

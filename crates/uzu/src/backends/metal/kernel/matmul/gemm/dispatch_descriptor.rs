@@ -131,7 +131,7 @@ fn select_tile(
         };
     }
 
-    match context.architecture.device_class {
+    match context.device_class() {
         DeviceClass::Integrated | DeviceClass::Phone | DeviceClass::Unknown(_) => {
             if prefer_half_or_tf32 {
                 if !arguments.transpose_a && arguments.transpose_b {
