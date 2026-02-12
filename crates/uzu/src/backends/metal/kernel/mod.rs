@@ -1,5 +1,6 @@
 pub mod attention;
 mod data_type;
+use crate::backends::common::kernel::matmul::MatmulKernels;
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
@@ -33,3 +34,8 @@ pub use short_conv::{ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelE
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
 };
+
+impl MatmulKernels for dsl::MetalKernels {
+    type FullPrecisionMatmulKernel = MatmulKernel;
+    type QuantizedMatmulKernel = quant_matmul::QuantizedMatmulKernel;
+}
