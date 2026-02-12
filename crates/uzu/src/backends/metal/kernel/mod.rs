@@ -30,6 +30,4 @@ pub use moe::{
     MoeScatterWithMapArguments,
 };
 pub use short_conv::{ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelError, ShortConvPrefillArguments};
-pub use ssm::{
-    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
-};
+pub use ssm::{SSDPrefillArguments, SSDPrefillMode};

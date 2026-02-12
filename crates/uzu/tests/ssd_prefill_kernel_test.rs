@@ -6,18 +6,15 @@ use bytemuck;
 use metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
-use uzu::{
-    backends::{
-        common::Context,
-        metal::{
-            KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
-            kernel::ssm::{
-                SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
-                conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
-            },
+use uzu::backends::{
+    common::{Context, kernel::Conv1dScanKernel},
+    metal::{
+        KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
+        kernel::{
+            dsl::Conv1dScanMetalKernel,
+            ssm::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
-    config::Activation,
 };
 
 const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::STORAGE_MODE_SHARED;
@@ -260,7 +257,7 @@ fn run_prefill_kernel_mode(
 
 fn run_conv_scan_once(
     ctx: &MTLContext,
-    kernel: &Conv1dScanKernel,
+    kernel: &Conv1dScanMetalKernel,
     suffix_len: usize,
     channels: usize,
     kernel_size: i32,
@@ -318,26 +315,25 @@ fn run_conv_scan_once(
         write_buffer(&padded_buf, &host);
     }
 
-    let args = Conv1dScanArguments {
-        padded: &padded_buf,
-        w: &w_buf,
-        b: Some(&b_buf),
-        x_out: &y_buf,
-        b_out: &y_buf,
-        c_out: &y_buf,
-        state_out: scratch_buf.as_ref().unwrap_or(&state_buf),
-        suffix_len,
-        kernel_size,
-        row_stride: channels,
-        state_stride: tap_count,
-        channels,
-        inner_dim: channels,
-        proj_dim: 0,
-    };
-
     let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&encoder, args).unwrap();
+    kernel.encode(
+        &padded_buf,
+        &w_buf,
+        Some(&b_buf),
+        &y_buf,
+        &y_buf,
+        &y_buf,
+        scratch_buf.as_ref().unwrap_or(&state_buf),
+        suffix_len as u32,
+        kernel_size as u32,
+        channels as u32,
+        tap_count as u32,
+        channels as u32,
+        channels as u32,
+        0u32,
+        &encoder,
+    );
     encoder.end_encoding();
 
     if let Some(ref scratch) = scratch_buf {
@@ -463,8 +459,7 @@ fn conv1d_scan_is_deterministic() {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };
-    let activation = Activation::Identity;
-    let kernel = Conv1dScanKernel::new(&ctx, KernelDataType::Float32, &activation).unwrap();
+    let kernel = Conv1dScanMetalKernel::new(&ctx, KernelDataType::Float32.into(), 0u32, true).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;
