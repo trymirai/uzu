@@ -267,9 +267,9 @@ impl ClassifierContext {
         })?;
 
         let pooling = Box::new(
-            Pooling::new(
-                &context,
-                data_type.into(),
+            Pooling::<Metal>::new(
+                context.as_ref(),
+                data_type,
                 classifier_model_config.model_config.classifier_pooling.clone(),
                 model_dim,
             )

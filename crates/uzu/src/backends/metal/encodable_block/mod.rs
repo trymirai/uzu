@@ -7,7 +7,7 @@
 //! kernels to perform operations on `ForwardPassState`.
 
 pub use super::Metal;
-pub use crate::encodable_block::{Activation, EncodableBlock, TensorAddSwap, TensorCopy};
+pub use crate::encodable_block::{Activation, EncodableBlock, Pooling, TensorAddSwap, TensorCopy};
 
 mod attention;
 mod classifier_layer;
@@ -19,7 +19,6 @@ mod mamba_mixer;
 mod mlp;
 mod moe_block;
 mod normalization;
-mod pooling;
 mod prediction_head;
 mod rope;
 mod short_conv_mixer;
@@ -38,7 +37,6 @@ pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{LayerNorm, Normalization, QKNorm, RMSNorm};
-pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;
 pub use rope::Rope;
 pub(crate) use short_conv_mixer::ShortConvMixer;
