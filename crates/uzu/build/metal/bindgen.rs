@@ -17,6 +17,7 @@ pub fn bindgen(
     specialize_indices: &SpecializeBaseIndices,
 ) -> anyhow::Result<(TokenStream, TokenStream)> {
     let kernel_name = kernel.name.as_ref();
+    let entry_name = format!("__dsl_entry_{kernel_name}");
     let trait_name = format_ident!("{kernel_name}Kernel");
     let struct_name = format_ident!("{kernel_name}MetalKernel");
 
@@ -33,10 +34,10 @@ pub fn bindgen(
 
         (
             variant_names.iter().map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType }).collect(),
-            quote! { &format!(#kernel_format, #kernel_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
+            quote! { &format!(#kernel_format, #entry_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
         )
     } else {
-        (Vec::new(), quote! { #kernel_name })
+        (Vec::new(), quote! { #entry_name })
     };
 
     let base_index = specialize_indices.get(&kernel.name).copied();
