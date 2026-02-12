@@ -2,10 +2,16 @@ use std::collections::HashMap;
 
 use crate::{
     DataType,
-    backends::metal::{
-        FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
-        metal_extensions::ComputeEncoderSetValue,
+    backends::{
+        common::kernel::matmul::{
+            QuantizedMatmulArguments as GenericQuantizedMatmulArguments, QuantizedMatmulConfiguration,
+            QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
+        },
+        metal::{
+            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+            MTLError, MTLFunctionConstantValues, MTLSize, Metal, ProtocolObject, Retained,
+            metal_extensions::ComputeEncoderSetValue,
+        },
     },
     config::QuantizationMode,
 };
@@ -226,6 +232,58 @@ impl QuantizedMatmulKernel {
         } else {
             KernelKind::MatrixMatrix
         }
+    }
+}
+
+impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
+    type Backend = Metal;
+
+    fn new(
+        context: &MTLContext,
+        configuration: QuantizedMatmulConfiguration,
+    ) -> Result<Self, MTLError> {
+        let quantization_type = match configuration.quantization_type {
+            QuantizedMatmulType::ZeroPoint => QuantizationType::ZeroPoint,
+            QuantizedMatmulType::Mlx => QuantizationType::Mlx,
+        };
+
+        QuantizedMatmulKernel::new(
+            context,
+            configuration.data_type,
+            configuration.group_size,
+            configuration.input_dim,
+            configuration.output_dim,
+            configuration.mode,
+            quantization_type,
+            configuration.weights_transposed,
+        )
+        .map_err(|error| MTLError::Generic(format!("{:?}", error)))
+    }
+
+    fn encode(
+        &self,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        arguments: GenericQuantizedMatmulArguments<Metal>,
+    ) {
+        let quantization_type = match arguments.quantization_type {
+            QuantizedMatmulType::ZeroPoint => QuantizationType::ZeroPoint,
+            QuantizedMatmulType::Mlx => QuantizationType::Mlx,
+        };
+
+        let backend_arguments = QuantizedMatmulArguments {
+            a_buffer: arguments.a_buffer,
+            a_offset: arguments.a_offset as u64,
+            b_buffer: arguments.b_buffer,
+            scales_buffer: arguments.scales_buffer,
+            zero_points_or_biases_buffer: arguments.zero_points_or_biases_buffer,
+            output_buffer: arguments.output_buffer,
+            batch: arguments.batch as i32,
+            input_dim: arguments.input_dim as i32,
+            output_dim: arguments.output_dim as i32,
+            quantization_type,
+        };
+
+        QuantizedMatmulKernel::encode(self, encoder, backend_arguments).expect("Failed to encode quantized matmul");
     }
 }
 
