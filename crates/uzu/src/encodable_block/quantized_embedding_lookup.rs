@@ -27,13 +27,17 @@ pub enum QuantizedEmbeddingLookupError<B: Backend> {
         expected: DataType,
         got: DataType,
     },
-    #[error("Embedding lookup weights shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_packed_dim}]")]
+    #[error(
+        "Embedding lookup weights shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_packed_dim}]"
+    )]
     InvalidWeightsShape {
         got: Box<[usize]>,
         expected_vocab_size: usize,
         expected_packed_dim: usize,
     },
-    #[error("Embedding lookup scales shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_num_groups}]")]
+    #[error(
+        "Embedding lookup scales shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_num_groups}]"
+    )]
     InvalidScalesShape {
         got: Box<[usize]>,
         expected_vocab_size: usize,
@@ -44,7 +48,9 @@ pub enum QuantizedEmbeddingLookupError<B: Backend> {
         expected: DataType,
         got: DataType,
     },
-    #[error("Embedding lookup biases shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_num_groups}]")]
+    #[error(
+        "Embedding lookup biases shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_num_groups}]"
+    )]
     InvalidBiasesShape {
         got: Box<[usize]>,
         expected_vocab_size: usize,
@@ -138,9 +144,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
         let kernel = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(context, data_type)
             .map_err(QuantizedEmbeddingLookupError::BackendError)?;
 
-        let weights = parameter_tree
-            .leaf(weights_name)
-            .map_err(QuantizedEmbeddingLookupError::ParameterError)?;
+        let weights = parameter_tree.leaf(weights_name).map_err(QuantizedEmbeddingLookupError::ParameterError)?;
 
         if weights.data_type() != mode.storage_type() {
             return Err(QuantizedEmbeddingLookupError::InvalidWeightsDataType {
@@ -149,9 +153,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
             });
         }
 
-        let scales = parameter_tree
-            .leaf(scales_name)
-            .map_err(QuantizedEmbeddingLookupError::ParameterError)?;
+        let scales = parameter_tree.leaf(scales_name).map_err(QuantizedEmbeddingLookupError::ParameterError)?;
 
         let num_groups = (model_dim + group_size - 1) / group_size;
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
@@ -206,9 +208,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                 };
 
                 let size_bytes = vocab_size * num_groups * element_size;
-                let buffer = context
-                    .create_buffer(size_bytes)
-                    .map_err(QuantizedEmbeddingLookupError::BackendError)?;
+                let buffer = context.create_buffer(size_bytes).map_err(QuantizedEmbeddingLookupError::BackendError)?;
 
                 unsafe {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
