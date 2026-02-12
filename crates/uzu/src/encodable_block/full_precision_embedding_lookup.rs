@@ -19,9 +19,7 @@ pub enum FullPrecisionEmbeddingLookupError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
-    #[error(
-        "Embedding lookup weights shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_model_dim}]"
-    )]
+    #[error("Embedding lookup weights shape mismatch: got {got:?}, expected [{expected_vocab_size}, {expected_model_dim}]")]
     InvalidWeightsShape {
         got: Box<[usize]>,
         expected_vocab_size: usize,
