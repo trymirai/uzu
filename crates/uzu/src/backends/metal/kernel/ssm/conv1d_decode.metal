@@ -25,11 +25,6 @@ KERNEL(Conv1dDecode)(
     const uint token_idx AXIS(suffix_len, 32),
     const uint channel_idx AXIS(num_channels, 1)
 ) {
-  const uint state_taps = max(kernel_size - 1, 0u);
-  if (state_taps == 0) {
-    return;
-  }
-
   const uint x_idx = token_idx * row_stride + channel_idx;
   const uint state_offset = channel_idx * state_stride;
   const device T* w_row = w + channel_idx * kernel_size;
@@ -39,6 +34,7 @@ KERNEL(Conv1dDecode)(
     acc = float(b[channel_idx]);
   }
 
+  const uint state_taps = max(kernel_size - 1, 0u);
   for (uint tap = 0; tap < state_taps; ++tap) {
     const uint state_index = state_offset + tap;
     const float sample = float(state[state_index]);
@@ -62,6 +58,10 @@ KERNEL(Conv1dDecode)(
     const uint dst =
         token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
     c_out[dst] = activated;
+  }
+
+  if (state_taps == 0) {
+    return;
   }
 
   for (uint tap = 0; tap < state_taps - 1; ++tap) {
