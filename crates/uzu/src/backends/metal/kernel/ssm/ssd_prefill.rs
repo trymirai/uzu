@@ -1,10 +1,13 @@
 use objc2::Message;
 
-use crate::backends::{
-    common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
-    metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-        kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
+use crate::{
+    DataType,
+    backends::{
+        common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
+        metal::{
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
+        },
     },
 };
 
@@ -43,11 +46,11 @@ pub struct SSDPrefillKernels {
 impl SSDPrefillKernels {
     pub fn new(
         context: &MTLContext,
-        data_type: KernelDataType,
+        data_type: DataType,
     ) -> Result<Self, MTLError> {
-        let single = SSDPrefillMetalKernel::new(context, data_type.into())?;
-        let single_64 = SSDPrefill64MetalKernel::new(context, data_type.into())?;
-        let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
+        let single = SSDPrefillMetalKernel::new(context, data_type)?;
+        let single_64 = SSDPrefill64MetalKernel::new(context, data_type)?;
+        let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type)?;
         Ok(Self {
             single,
             single_64,

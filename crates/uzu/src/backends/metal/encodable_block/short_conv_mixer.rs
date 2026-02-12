@@ -6,8 +6,8 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
-            ProtocolObject, Retained,
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             compilation_parameters::CompilationConfig,
             kernel::short_conv::{
                 ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments, ShortConvPrefillArguments,
@@ -63,7 +63,6 @@ impl ShortConvMixer {
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
-        let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
             &short_conv_config.in_projection_config,
@@ -97,7 +96,7 @@ impl ShortConvMixer {
         };
 
         let short_conv_kernel =
-            ShortConvKernel::new(mtl_context, kernel_data_type).expect("Failed to create short conv kernel");
+            ShortConvKernel::new(mtl_context, data_type).expect("Failed to create short conv kernel");
 
         Self {
             layer_index,

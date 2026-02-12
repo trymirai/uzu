@@ -17,7 +17,7 @@ use crate::{
     DataType, DecoderLayerConfig,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig, kernel::KernelDataType,
+        compilation_parameters::CompilationConfig,
     },
     config::{DecoderLayerType, MixerConfig},
     encodable_block::EncodingParameters,
@@ -62,8 +62,6 @@ impl LayerExecutables {
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
                 MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             };
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
-
             let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
                 TensorCopy::<Metal>::new(
                     ctx,
@@ -136,7 +134,7 @@ impl LayerExecutables {
                     let attention = Box::new(
                         Attention::new(
                             ctx,
-                            kernel_data_type,
+                            intermediate_data_type,
                             layer_index,
                             attention_scale,
                             attention_config.has_sinks,

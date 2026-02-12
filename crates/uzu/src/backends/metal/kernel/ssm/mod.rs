@@ -1,4 +1,4 @@
-use crate::backends::metal::{KernelDataType, MTLError};
+use crate::backends::metal::MTLError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SSMKernelError {
@@ -6,10 +6,6 @@ pub enum SSMKernelError {
     MetalError(#[from] MTLError),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
-}
-
-fn fn_suffix(dt: KernelDataType) -> &'static str {
-    dt.function_name_suffix()
 }
 
 pub mod conv1d_scan;

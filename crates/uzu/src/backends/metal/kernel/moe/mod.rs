@@ -1,4 +1,4 @@
-use crate::backends::metal::KernelDataType;
+use crate::DataType;
 
 // Submodules
 mod experts;
@@ -25,18 +25,20 @@ pub use tiles_pass_a::{
 };
 
 // Common utility functions
-pub(crate) fn dtype_suffix(dtype: KernelDataType) -> &'static str {
+pub(crate) fn dtype_suffix(dtype: DataType) -> &'static str {
     match dtype {
-        KernelDataType::Float16 => "f16",
-        KernelDataType::BFloat16 => "bf16",
-        KernelDataType::Float32 => "f32",
+        DataType::F16 => "f16",
+        DataType::BF16 => "bf16",
+        DataType::F32 => "f32",
+        _ => panic!("Unsupported data type: {:?}", dtype),
     }
 }
 
-pub(crate) fn dtype_index(dtype: KernelDataType) -> usize {
+pub(crate) fn dtype_index(dtype: DataType) -> usize {
     match dtype {
-        KernelDataType::Float16 => 0,
-        KernelDataType::BFloat16 => 1,
-        KernelDataType::Float32 => 2,
+        DataType::F16 => 0,
+        DataType::BF16 => 1,
+        DataType::F32 => 2,
+        _ => panic!("Unsupported data type: {:?}", dtype),
     }
 }

@@ -8,8 +8,8 @@ use crate::{
     backends::{
         common::kernel::{SSDUpdateKernel, SplitInProjKernel},
         metal::{
-            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray,
-            ProtocolObject, Retained,
+            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
+            Retained,
             compilation_parameters::CompilationConfig,
             kernel::{
                 dsl::{SSDUpdateMetalKernel, SplitInProjMetalKernel},
@@ -65,7 +65,6 @@ impl MambaMixer {
         let conv_tree = resolve_subtree(&split_tree, &["conv", "conv1d"]);
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
-        let kernel_data_type: KernelDataType = data_type.into();
 
         let in_projection = transformer_layer::linear_block(
             &mamba_config.in_projection_config,
@@ -100,14 +99,12 @@ impl MambaMixer {
         let gate_bias = split_tree.leaf("gate_bias").unwrap().clone();
         let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap().clone();
 
-        let split_inproj = SplitInProjMetalKernel::new(mtl_context, kernel_data_type.into())
-            .expect("Failed to create split in-projection kernel");
-        let conv_scan = Conv1dScanKernel::new(mtl_context, kernel_data_type, &mamba_config.activation)
+        let split_inproj =
+            SplitInProjMetalKernel::new(mtl_context, data_type).expect("Failed to create split in-projection kernel");
+        let conv_scan = Conv1dScanKernel::new(mtl_context, data_type, &mamba_config.activation)
             .expect("Failed to create conv scan kernel");
-        let ssd_prefill =
-            SSDPrefillKernels::new(mtl_context, kernel_data_type).expect("Failed to create SSD prefill kernel");
-        let ssd_update = SSDUpdateMetalKernel::new(mtl_context, kernel_data_type.into())
-            .expect("Failed to create SSD decode kernel");
+        let ssd_prefill = SSDPrefillKernels::new(mtl_context, data_type).expect("Failed to create SSD prefill kernel");
+        let ssd_update = SSDUpdateMetalKernel::new(mtl_context, data_type).expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
         Self {

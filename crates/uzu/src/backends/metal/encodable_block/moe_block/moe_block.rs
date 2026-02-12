@@ -11,8 +11,8 @@ use crate::{
     backends::{
         common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
-            KernelDataType, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-            MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject, Retained,
+            MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+            MTLContext, MetalArray, ProtocolObject, Retained,
             kernel::{
                 MoeGatherKernels,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
@@ -38,7 +38,7 @@ enum RouterBlock {
 
 pub struct MoeBlock {
     router: RouterBlock,
-    router_data_type: KernelDataType,
+    router_data_type: DataType,
     router_renorm: bool,
     router_topk_kernel: MoeRouterTopKKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
@@ -50,7 +50,7 @@ pub struct MoeBlock {
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
     hidden_dim: usize,
-    data_type: KernelDataType,
+    data_type: DataType,
     shared_weights: SharedMoeWeights,
 }
 
@@ -62,11 +62,9 @@ impl MoeBlock {
         hidden_dim: usize,
         parameter_tree: &ParameterTree<MTLContext>,
     ) -> Result<Self, crate::backends::metal::MTLError> {
-        let activation_data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
-        let data_type: KernelDataType = activation_data_type.into();
+        let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
 
         let router_data_type: DataType = moe_config.router_config.activation_precision().into();
-        let router_kernel_data_type: KernelDataType = router_data_type.into();
 
         let router_renorm = matches!(moe_config.routing_function, RoutingFunctionConfig::SoftmaxRouting);
 
@@ -121,7 +119,7 @@ impl MoeBlock {
         let experts_two_pass_prefill_kernel = MoeExpertsTwoPassPrefillKernel::new(context).map_err(|e| {
             crate::backends::metal::MTLError::Generic(format!("Experts two-pass prefill kernel error: {:?}", e))
         })?;
-        let finalize_kernel = MoeFinalizeMetalKernel::new(context, data_type.into())
+        let finalize_kernel = MoeFinalizeMetalKernel::new(context, data_type)
             .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Finalize kernel error: {:?}", e)))?;
 
         let experts_tree = parameter_tree
@@ -165,7 +163,7 @@ impl MoeBlock {
 
         Ok(Self {
             router,
-            router_data_type: router_kernel_data_type,
+            router_data_type,
             router_renorm,
             router_topk_kernel,
             counts_offsets_kernel,
@@ -260,11 +258,6 @@ impl EncodableBlock<Metal> for MoeBlock {
         let k_tile = 128;
 
         // Clear internal MoE buffers
-        let dtype_size = match self.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-
         let blit_encoder = root.new_blit_command_encoder().expect("Failed to create blit command encoder");
 
         if suffix_length > 0 && k > 0 {
@@ -281,19 +274,19 @@ impl EncodableBlock<Metal> for MoeBlock {
             }
 
             // Clear hidden buffer
-            let hidden_bytes = suffix_length * k * self.hidden_dim * dtype_size;
+            let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
             if hidden_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(&hidden_buf, 0..hidden_bytes, 0);
             }
 
             // Clear y_partial buffer
-            let y_partial_bytes = suffix_length * k * self.model_dim * dtype_size;
+            let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
             if y_partial_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(&y_partial_buf, 0..y_partial_bytes, 0);
             }
 
             // Clear x_perm buffer
-            let x_perm_bytes = suffix_length * k * self.model_dim * dtype_size;
+            let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
             if x_perm_bytes > 0 {
                 blit_encoder.fill_buffer_range_value(&x_perm_buf, 0..x_perm_bytes, 0);
             }

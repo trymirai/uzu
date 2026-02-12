@@ -9,7 +9,7 @@ use crate::{
     DataType,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig, kernel::KernelDataType,
+        compilation_parameters::CompilationConfig,
     },
     config::TransformerLayerConfig,
     encodable_block::EncodingParameters,
@@ -56,7 +56,6 @@ impl ClassifierLayer {
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
             let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>> = Box::new(
                 TensorCopy::<Metal>::new(
@@ -208,7 +207,7 @@ impl ClassifierLayer {
             let attention: Box<dyn EncodableBlock<Metal>> = Box::new(
                 Attention::new(
                     ctx,
-                    kernel_data_type,
+                    intermediate_data_type,
                     layer_index,
                     attention_scale,
                     attention_config.has_sinks,

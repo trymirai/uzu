@@ -5,8 +5,7 @@ use crate::{
     backends::{
         common::kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
         metal::{
-            KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
+            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
             kernel::dsl::{MoeGatherXPerm1DMetalKernel, MoeGatherXPerm2DMetalKernel},
         },
     },
@@ -41,12 +40,12 @@ impl MoeGatherKernels {
     pub fn encode(
         &self,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        dtype: KernelDataType,
+        dtype: DataType,
         args: &MoeGatherArguments,
     ) {
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         match dtype {
-            KernelDataType::Float32 => self.f32.encode(
+            DataType::F32 => self.f32.encode(
                 &args.x_buffer.retain(),
                 &args.bucketed_ids_buffer.retain(),
                 &args.x_perm_buffer.retain(),
@@ -56,7 +55,7 @@ impl MoeGatherKernels {
                 args.k as u32,
                 &encoder,
             ),
-            KernelDataType::Float16 => self.f16.encode(
+            DataType::F16 => self.f16.encode(
                 &args.x_buffer.retain(),
                 &args.bucketed_ids_buffer.retain(),
                 &args.x_perm_buffer.retain(),
@@ -66,7 +65,7 @@ impl MoeGatherKernels {
                 args.k as u32,
                 &encoder,
             ),
-            KernelDataType::BFloat16 => self.bf16.encode(
+            DataType::BF16 => self.bf16.encode(
                 &args.x_buffer.retain(),
                 &args.bucketed_ids_buffer.retain(),
                 &args.x_perm_buffer.retain(),
@@ -76,6 +75,7 @@ impl MoeGatherKernels {
                 args.k as u32,
                 &encoder,
             ),
+            _ => panic!("Unsupported data type: {:?}", dtype),
         }
         encoder.end_encoding();
     }

@@ -1,6 +1,9 @@
-use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
-    MTLContext, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+use crate::{
+    DataType,
+    backends::metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+    },
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -110,21 +113,22 @@ impl MoeScatterKernels {
         &self,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterArguments,
-        dtype: KernelDataType,
+        dtype: DataType,
     ) -> Result<(), MoeScatterError> {
         let compute_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         // Select pipeline based on dtype
         match dtype {
-            KernelDataType::Float16 => {
+            DataType::F16 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_f16);
             },
-            KernelDataType::Float32 => {
+            DataType::F32 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_f32);
             },
-            KernelDataType::BFloat16 => {
+            DataType::BF16 => {
                 compute_encoder.set_compute_pipeline_state(&self.pipeline_scatter_bf16);
             },
+            _ => panic!("Unsupported data type: {:?}", dtype),
         }
         compute_encoder.set_buffer(Some(args.topk_ids_buffer), 0, 0);
         compute_encoder.set_buffer(Some(args.topk_probs_buffer), 0, 1);
@@ -157,14 +161,15 @@ impl MoeScatterKernels {
         &self,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         args: MoeScatterWithMapArguments,
-        dtype: KernelDataType,
+        dtype: DataType,
     ) -> Result<(), MoeScatterError> {
         let compute_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         let pipeline = match dtype {
-            KernelDataType::Float16 => &self.pipeline_scatter_map_f16,
-            KernelDataType::Float32 => &self.pipeline_scatter_map_f32,
-            KernelDataType::BFloat16 => &self.pipeline_scatter_map_bf16,
+            DataType::F16 => &self.pipeline_scatter_map_f16,
+            DataType::F32 => &self.pipeline_scatter_map_f32,
+            DataType::BF16 => &self.pipeline_scatter_map_bf16,
+            _ => panic!("Unsupported data type: {:?}", dtype),
         };
         compute_encoder.set_compute_pipeline_state(pipeline);
         let base = &args.base;

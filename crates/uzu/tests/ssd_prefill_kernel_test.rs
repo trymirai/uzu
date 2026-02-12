@@ -7,10 +7,11 @@ use metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
 };
 use uzu::{
+    DataType,
     backends::{
         common::Context,
         metal::{
-            KernelDataType, MTLBuffer, MTLContext, ProtocolObject,
+            MTLBuffer, MTLContext, ProtocolObject,
             kernel::ssm::{
                 SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode,
                 conv1d_scan::{Conv1dScanArguments, Conv1dScanKernel},
@@ -362,7 +363,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32).unwrap();
+    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_a, state_a, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
@@ -377,7 +378,7 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, KernelDataType::Float32).unwrap();
+    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
@@ -464,7 +465,7 @@ fn conv1d_scan_is_deterministic() {
         return;
     };
     let activation = Activation::Identity;
-    let kernel = Conv1dScanKernel::new(&ctx, KernelDataType::Float32, &activation).unwrap();
+    let kernel = Conv1dScanKernel::new(&ctx, DataType::F32, &activation).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;
