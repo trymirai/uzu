@@ -17,7 +17,6 @@ pub mod moe;
 pub mod quant_matmul;
 pub mod short_conv;
 pub mod ssm;
-pub mod token_copy;
 
 pub use attention::{
     AttentionError, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments, AttentionTwoPassArguments,
@@ -35,7 +34,6 @@ pub use short_conv::{ShortConvDecodeArguments, ShortConvKernel, ShortConvKernelE
 pub use ssm::{
     Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
 };
-pub use token_copy::TokenCopyKernel;
 
 pub mod media {
     pub use super::media_kernels::{ExtractImagePatches, ScalePadNormalizeImage};

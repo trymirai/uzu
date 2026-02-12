@@ -73,11 +73,11 @@ fn kernel_wrappers(
     } {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
-                format!("{}_{}", kernel.name, type_variant.iter().map(|(_k, v)| v).join("_")),
+                format!("__dsl_entry_{}_{}", kernel.name, type_variant.iter().map(|(_k, v)| v).join("_")),
                 format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
             )
         } else {
-            (kernel.name.to_string(), kernel.name.to_string())
+            (format!("__dsl_entry_{}", kernel.name), kernel.name.to_string())
         };
 
         let max_total_threads_per_threadgroup = kernel

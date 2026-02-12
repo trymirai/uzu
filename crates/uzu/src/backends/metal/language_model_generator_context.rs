@@ -6,17 +6,17 @@ use std::{
     rc::Rc,
 };
 
-use super::{
-    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig,
-    kernel::TokenCopyKernel,
-};
+use super::{Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig};
 use crate::{
     DataType,
     backends::{
-        common::{Context, kernel::MaskUpdateKernel},
+        common::{
+            Context,
+            kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
+        },
         metal::{
             MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
-            kernel::dsl::MaskUpdateMetalKernel,
+            kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
         },
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -143,8 +143,9 @@ pub struct LanguageModelGeneratorContext {
     pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,
 
-    /// Kernel for copying sampled tokens in async pipeline
-    pub token_copy: TokenCopyKernel,
+    /// Kernels for copying sampled tokens in async pipeline
+    pub token_copy_sampled: TokenCopySampledMetalKernel,
+    pub token_copy_results: TokenCopyToResultsMetalKernel,
     /// Kernel for updating attention mask between async passes
     pub mask_update: Option<MaskUpdateMetalKernel>,
     /// Pre-allocated buffers for async generation
@@ -215,7 +216,10 @@ impl LanguageModelGeneratorContext {
             Sampling::<Metal>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let token_copy = TokenCopyKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy_sampled =
+            TokenCopySampledMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy_results =
+            TokenCopyToResultsMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
@@ -245,12 +249,13 @@ impl LanguageModelGeneratorContext {
             kv_cache_update,
             gpu_sampler,
             seed,
-            token_copy,
+            token_copy_sampled,
+            token_copy_results,
             mask_update,
             async_buffers,
         };
 
-        return Ok(context);
+        Ok(context)
     }
 
     pub fn reset_command_buffer(&mut self) {
