@@ -295,7 +295,7 @@ pub fn bindgen(
 
             fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
                 #function_constants_init
-                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
+                let pipeline = context.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 

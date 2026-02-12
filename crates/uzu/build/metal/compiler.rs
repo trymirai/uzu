@@ -293,7 +293,7 @@ impl MetalCompiler {
                 MTLSize,
                 ProtocolObject,
                 Retained,
-                metal_extensions::{ComputeEncoderConditional, LibraryPipelineExtensions},
+                metal_extensions::ComputeEncoderConditional,
             };
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
 

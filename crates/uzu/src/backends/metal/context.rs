@@ -125,8 +125,8 @@ impl DeviceArchitecture {
 pub struct MTLContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    pub architecture: DeviceArchitecture,
-    pub library: Retained<ProtocolObject<dyn MTLLibrary>>,
+    architecture: DeviceArchitecture,
+    library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     allocator: Allocator<Metal>,
 }
