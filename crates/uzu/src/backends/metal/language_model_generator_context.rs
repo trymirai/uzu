@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{Decoder, KVCacheUpdate, MTLContext, Metal, compilation_parameters::CompilationConfig};
+use super::{Decoder, KVCacheUpdate, MTLContext, Metal};
 use crate::{
     DataType,
     backends::{
@@ -180,7 +180,6 @@ impl LanguageModelGeneratorContext {
         let max_prefix_length: usize = decoding_config.context_length.resolve(language_model_config);
         let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
-        let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
@@ -195,8 +194,7 @@ impl LanguageModelGeneratorContext {
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
 
-        let executables =
-            Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view, compilation_config.clone());
+        let executables = Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view);
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),

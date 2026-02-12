@@ -7,7 +7,6 @@ use crate::{
     DataType, DecoderConfig,
     backends::metal::{
         MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },
     config::{DecoderLayerType, MixerConfig},
@@ -34,7 +33,6 @@ impl Decoder {
         mtl_context: Rc<MTLContext>,
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<MTLContext>,
-        compilation_config: Rc<CompilationConfig>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
 
@@ -106,7 +104,6 @@ impl Decoder {
                     mtl_context.clone(),
                     layer_config,
                     layer_type,
-                    compilation_config.clone(),
                     layer_index,
                     decoder_config.model_dim,
                     decoder_config.hidden_dim,

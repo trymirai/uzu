@@ -15,10 +15,7 @@ use super::{
 use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig,
-    },
+    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -44,7 +41,6 @@ impl LayerExecutables {
         mtl_context: Rc<MTLContext>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
-        compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -157,7 +153,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         mamba_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         num_heads,
@@ -174,7 +169,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         short_conv_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         decoder_layer_loader,
