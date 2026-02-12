@@ -2,17 +2,19 @@
 
 use super::{EncodableBlock, Metal};
 use crate::{
-    backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-        Retained,
-        kernel::rope::{RopeError, RopeKernel, RopeKernelArguments},
+    backends::{
+        common::kernel::RopeKernel,
+        metal::{
+            KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
+            ProtocolObject, Retained, kernel::dsl::RopeMetalKernel,
+        },
     },
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
 };
 
 pub struct Rope {
-    kernel: RopeKernel,
+    kernel: RopeMetalKernel,
     rope_type: RopeType,
 }
 
@@ -21,10 +23,9 @@ impl Rope {
         context: &MTLContext,
         data_type: KernelDataType,
         rope_type: RopeType,
-    ) -> Result<Self, RopeError> {
-        let kernel = RopeKernel::new(context, data_type)?;
+    ) -> Result<Self, MTLError> {
         Ok(Self {
-            kernel,
+            kernel: RopeMetalKernel::new(context, data_type.into())?,
             rope_type,
         })
     }
@@ -101,21 +102,18 @@ impl EncodableBlock<Metal> for Rope {
         let token_positions_offset = token_positions.offset();
 
         self.kernel.encode(
+            qkv.buffer(),
+            rope_cosines.buffer(),
+            rope_sines.buffer(),
+            (token_positions.buffer(), token_positions_offset),
+            rotated_queries.buffer(),
+            rotated_keys.buffer(),
+            head_dim as u32,
+            num_heads as u32,
+            num_groups as u32,
+            suffix_length as u32,
+            rope_max_seq_len as u32,
             compute_encoder,
-            RopeKernelArguments {
-                qkv_buffer: &qkv.buffer(),
-                cosines_buffer: &rope_cosines.buffer(),
-                sines_buffer: &rope_sines.buffer(),
-                token_positions_buffer: &token_positions.buffer(),
-                token_positions_offset,
-                rotated_queries_buffer: &rotated_queries.buffer(),
-                rotated_keys_buffer: &rotated_keys.buffer(),
-                head_dim,
-                num_heads,
-                num_groups,
-                suffix_length,
-                max_sequence_length: rope_max_seq_len,
-            },
-        );
+        )
     }
 }

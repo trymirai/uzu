@@ -21,7 +21,7 @@ pub use classifier_context::ClassifierContext;
 pub use context::{DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext};
 pub use encodable_block::Decoder;
 pub use error::MTLError;
-pub use kernel::{KernelDataType, RopeKernel, dsl::MetalKernels};
+pub use kernel::{KernelDataType, dsl::MetalKernels};
 pub use language_model_generator_context::LanguageModelGeneratorContext;
 pub use media_utils::{ImagePreprocessingParams, ImagePreprocessingRequirements, MetalImagePreprocessor};
 pub use metal::prelude::*;
