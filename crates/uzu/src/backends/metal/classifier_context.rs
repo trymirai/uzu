@@ -217,7 +217,7 @@ impl ClassifierContext {
         );
 
         let prediction_head_activation = Box::new(
-            Activation::new(
+            Activation::<Metal>::new(
                 &context,
                 prediction_head_data_type,
                 prediction_head_config.activation.clone(),
