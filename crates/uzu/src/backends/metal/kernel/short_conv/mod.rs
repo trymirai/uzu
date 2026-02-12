@@ -1,16 +1,16 @@
-use crate::backends::metal::{
-    ComputeEncoderSetValue, FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+use crate::{
+    DataType,
+    backends::metal::{
+        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder,
+        MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        data_type::MetalDataTypeExt,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShortConvKernelError {
     #[error("Metal error: {0}")]
     MetalError(#[from] MTLError),
-}
-
-fn fn_suffix(dt: KernelDataType) -> &'static str {
-    dt.function_name_suffix()
 }
 
 fn make_function_constants(has_bias: bool) -> Retained<MTLFunctionConstantValues> {
@@ -95,12 +95,12 @@ pub struct ShortConvTrieArguments<'a> {
 impl ShortConvKernel {
     pub fn new(
         context: &MTLContext,
-        data_type: KernelDataType,
+        data_type: DataType,
     ) -> Result<Self, ShortConvKernelError> {
-        let pack_name = format!("short_conv_pack_kernel_{}", fn_suffix(data_type));
-        let prefill_name = format!("short_conv_prefill_kernel_{}", fn_suffix(data_type));
-        let decode_name = format!("short_conv_decode_kernel_{}", fn_suffix(data_type));
-        let trie_name = format!("short_conv_trie_kernel_{}", fn_suffix(data_type));
+        let pack_name = format!("short_conv_pack_kernel_{}", data_type.metal_type());
+        let prefill_name = format!("short_conv_prefill_kernel_{}", data_type.metal_type());
+        let decode_name = format!("short_conv_decode_kernel_{}", data_type.metal_type());
+        let trie_name = format!("short_conv_trie_kernel_{}", data_type.metal_type());
 
         let pack_pipeline =
             context.compute_pipeline_state(&pack_name, None).map_err(ShortConvKernelError::MetalError)?;

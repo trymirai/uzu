@@ -7,15 +7,18 @@ use std::mem::size_of;
 use bytemuck;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
-use uzu::backends::{
-    common::Context,
-    metal::{
-        KernelDataType, MTLContext, ProtocolObject, Retained,
-        kernel::attention::{
-            AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-            AttentionTwoPassArguments,
+use uzu::{
+    DataType,
+    backends::{
+        common::Context,
+        metal::{
+            MTLContext, ProtocolObject, Retained,
+            kernel::attention::{
+                AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
+                AttentionTwoPassArguments,
+            },
+            metal_extensions::CommandBufferTimingExt,
         },
-        metal_extensions::CommandBufferTimingExt,
     },
 };
 
@@ -553,7 +556,7 @@ fn test_single_pass_attention_basic() {
     println!("Reference output range (no mask): [{}, {}]", ref_min, ref_max);
     println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -602,7 +605,7 @@ fn test_gemm_attention_basic() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -630,7 +633,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -659,7 +662,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     // CPU reference (uses the same additive mask)
     let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
@@ -714,7 +717,7 @@ fn test_single_pass_attention_with_mask() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -766,7 +769,7 @@ fn test_single_pass_attention_with_sinks() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -810,7 +813,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -856,7 +859,7 @@ fn test_single_pass_attention_gqa() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -982,7 +985,7 @@ fn run_two_pass_attention(
 fn test_two_pass_attention() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -1028,7 +1031,7 @@ fn test_two_pass_attention() {
 fn test_two_pass_attention_gqa() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -1076,7 +1079,7 @@ fn perf_two_pass_attention() {
 
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);

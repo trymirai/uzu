@@ -3,11 +3,14 @@ use std::time::Instant;
 use half::bf16;
 use metal::{MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::moe::{
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
-        MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel,
+use uzu::{
+    DataType,
+    backends::metal::{
+        MTLContext,
+        kernel::moe::{
+            MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
+            MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel,
+        },
     },
 };
 
@@ -125,7 +128,7 @@ fn run_decode_case(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.702,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
@@ -258,7 +261,7 @@ fn run_two_pass_prefill_case(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.702,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
@@ -367,7 +370,7 @@ fn run_fused_single_token_case(
         gate_clip_max: f32::INFINITY,
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
@@ -530,7 +533,7 @@ fn run_indirect_decode_timed(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.0,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
@@ -611,7 +614,7 @@ fn run_fused_decode_timed(
         gate_clip_max: f32::INFINITY,
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {

@@ -3,9 +3,12 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+use uzu::{
+    DataType,
+    backends::metal::{
+        MTLContext,
+        kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+    },
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -167,7 +170,7 @@ fn run_router_topk_once(
         k,
         renorm,
     };
-    kernel.encode(&cb, KernelDataType::BFloat16, args).expect("encode fused router+topk");
+    kernel.encode(&cb, DataType::BF16, args).expect("encode fused router+topk");
     cb.commit();
     cb.wait_until_completed();
 

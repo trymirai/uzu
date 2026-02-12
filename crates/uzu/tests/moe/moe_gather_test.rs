@@ -3,9 +3,9 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{
-    KernelDataType,
-    moe::{MoeGatherArguments, MoeGatherKernels},
+use uzu::{
+    DataType,
+    backends::metal::kernel::moe::{MoeGatherArguments, MoeGatherKernels},
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
@@ -78,7 +78,7 @@ fn test_gather_correctness() {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather.encode(
             &cb,
-            KernelDataType::BFloat16,
+            DataType::BF16,
             &MoeGatherArguments {
                 x_buffer: &x_buf,
                 bucketed_ids_buffer: &ids_buf,

@@ -1,15 +1,18 @@
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
 use objc2::{__framework_prelude::ProtocolObject, Message, rc::Retained};
 
-use crate::backends::{
-    common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
-    metal::{
-        KernelDataType, MTLContext, MTLError,
-        kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
+use crate::{
+    DataType,
+    backends::{
+        common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
+        metal::{
+            MTLContext, MTLError,
+            kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
+        },
     },
 };
 
-static DTYPES: [KernelDataType; 3] = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
+static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
 #[derive(Debug)]
@@ -51,7 +54,7 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
     /// Up clipping max
     pub up_clip_max: f32,
     /// Data type
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 pub struct MoeExpertsSingleDecodeKernels {

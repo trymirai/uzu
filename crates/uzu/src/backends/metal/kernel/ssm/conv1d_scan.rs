@@ -1,8 +1,9 @@
-use super::{SSMKernelError, fn_suffix};
+use super::SSMKernelError;
 use crate::{
+    DataType,
     backends::metal::{
-        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
+        FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+        MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained, data_type::MetalDataTypeExt,
         metal_extensions::ComputeEncoderSetValue,
     },
     config::Activation,
@@ -93,12 +94,12 @@ pub struct Conv1dDecodeArguments<'a> {
 impl Conv1dScanKernel {
     pub fn new(
         context: &MTLContext,
-        data_type: KernelDataType,
+        data_type: DataType,
         activation: &Activation,
     ) -> Result<Self, SSMKernelError> {
-        let fn_name = format!("conv1d_scan_kernel_{}", fn_suffix(data_type));
-        let pack_name = format!("conv1d_pack_prefix_kernel_{}", fn_suffix(data_type));
-        let decode_name = format!("conv1d_decode_kernel_{}", fn_suffix(data_type));
+        let fn_name = format!("conv1d_scan_kernel_{}", data_type.metal_type());
+        let pack_name = format!("conv1d_pack_prefix_kernel_{}", data_type.metal_type());
+        let decode_name = format!("conv1d_decode_kernel_{}", data_type.metal_type());
         let activation_id = activation_to_int(activation);
         let pipeline_no_bias = {
             let function_constants = make_function_constants(activation, false);

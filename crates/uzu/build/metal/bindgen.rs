@@ -34,7 +34,7 @@ pub fn bindgen(
 
         (
             variant_names.iter().map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType }).collect(),
-            quote! { &format!(#kernel_format, #entry_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
+            quote! { &format!(#kernel_format, #entry_name #(, #variant_names.metal_type())*) },
         )
     } else {
         (Vec::new(), quote! { #entry_name })

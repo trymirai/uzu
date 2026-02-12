@@ -3,11 +3,15 @@ use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 use objc2::rc::Retained;
 use thiserror::Error;
 
-use crate::backends::{
-    common::gpu_types::{AttnMaskParams, AttnParams},
-    metal::{
-        FunctionConstantValuesSetValue, KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject,
+use crate::{
+    DataType,
+    backends::{
+        common::gpu_types::{AttnMaskParams, AttnParams},
+        metal::{
+            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
+            MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, data_type::MetalDataTypeExt,
+            kernel::moe::dtype_suffix,
+        },
     },
 };
 
@@ -27,7 +31,7 @@ pub struct AttentionKernelPipelines {
 }
 
 pub struct AttentionKernel {
-    data_type: KernelDataType,
+    data_type: DataType,
     pipelines: AttentionKernelPipelines,
 }
 
@@ -145,9 +149,9 @@ fn make_function_constants(
 impl AttentionKernel {
     pub fn new(
         context: &MTLContext,
-        data_type: KernelDataType,
+        data_type: DataType,
     ) -> Result<Self, AttentionError> {
-        let data_suffix = data_type.function_name_suffix();
+        let data_suffix = data_type.metal_type();
 
         let supported_head_dims = [64, 128, 256];
         let mut single_pass = HashMap::new();
@@ -579,11 +583,7 @@ impl AttentionKernel {
 
         // Kernel name matches gemm_attention.metal instantiations:
         // attention_gemm_{f16|bf16|f32}_{head_dim}_bk{bk}
-        let type_name = match self.data_type {
-            KernelDataType::Float16 => "f16",
-            KernelDataType::BFloat16 => "bf16",
-            KernelDataType::Float32 => "f32",
-        };
+        let type_name = dtype_suffix(self.data_type);
 
         let function_name = format!("attention_gemm_{}_{}_bk{}", type_name, args.head_dim, bk);
 

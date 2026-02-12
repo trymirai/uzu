@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig};
+use super::{Decoder, KVCacheUpdate, MTLContext, Metal, compilation_parameters::CompilationConfig};
 use crate::{
     DataType,
     backends::{
@@ -206,7 +206,6 @@ impl LanguageModelGeneratorContext {
         )));
 
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
-        let kernel_data_type: KernelDataType = intermediate_data_type.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
@@ -224,7 +223,7 @@ impl LanguageModelGeneratorContext {
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateMetalKernel::new(&context, kernel_data_type.into())
+                MaskUpdateMetalKernel::new(&context, intermediate_data_type)
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {

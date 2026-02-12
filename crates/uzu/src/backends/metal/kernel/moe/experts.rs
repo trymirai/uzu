@@ -1,13 +1,16 @@
 use std::{mem::size_of, ptr::NonNull};
 
 use super::{dtype_index, dtype_suffix};
-use crate::backends::metal::{
-    FunctionConstantValuesSetValue, KernelDataType, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-    MTLFunctionConstantValues, MTLSize, ProtocolObject, Retained,
-    kernel::moe::tiles_map::{
-        MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
-        MoeTileScanArguments,
+use crate::{
+    DataType,
+    backends::metal::{
+        FunctionConstantValuesSetValue, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize,
+        ProtocolObject, Retained,
+        kernel::moe::tiles_map::{
+            MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
+            MoeTileScanArguments,
+        },
     },
 };
 
@@ -50,7 +53,7 @@ pub struct MoeExpertsArguments<'a> {
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
@@ -86,12 +89,12 @@ pub struct MoeExpertsTwoPassArguments<'a> {
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 impl MoeExpertsTwoPassPrefillKernel {
     pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let dtypes = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
+        let dtypes = [DataType::F16, DataType::BF16, DataType::F32];
         let mut pass_a_indirect = vec![Vec::with_capacity(dtypes.len()); 4];
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
@@ -130,11 +133,7 @@ impl MoeExpertsTwoPassPrefillKernel {
         }
         let gate_idx = (args.gating_code.min(3)) as usize;
         let dtype_idx = dtype_index(args.data_type);
-        let dtype_size = match args.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-        let hidden_bytes = args.total_rows * args.d_ff * dtype_size;
+        let hidden_bytes = args.total_rows * args.d_ff * args.data_type.size_in_bytes();
         let blit_encoder = command_buffer.new_blit_command_encoder().expect("Failed to create blit command encoder");
         blit_encoder.fill_buffer_range_value(args.hidden_buffer, 0..hidden_bytes, 0);
         blit_encoder.end_encoding();
