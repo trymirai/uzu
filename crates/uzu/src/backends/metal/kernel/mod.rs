@@ -27,9 +27,7 @@ pub use moe::{
     MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError, MoeScatterKernels,
     MoeScatterWithMapArguments,
 };
-pub use ssm::{
-    Conv1dPackArguments, Conv1dScanArguments, Conv1dScanKernel, SSDPrefillArguments, SSDPrefillMode, SSMKernelError,
-};
+pub use ssm::{SSDPrefillArguments, SSDPrefillMode};
 
 impl MatmulKernels for dsl::MetalKernels {
     type FullPrecisionMatmulKernel = MatmulKernel;
