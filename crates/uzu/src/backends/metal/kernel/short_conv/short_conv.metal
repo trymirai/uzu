@@ -11,14 +11,9 @@ KERNEL(ShortConvPack)(
     constant const uint& suffix_len,
     constant const uint& in_proj_stride,
     constant const uint& model_dim,
-    const uint channel_idx AXIS(suffix_len, 32),
-    const uint row_idx AXIS(model_dim, 1)
+    const uint channel_idx AXIS(model_dim, 32),
+    const uint row_idx AXIS(state_stride + suffix_len, 1)
 ) {
-  const uint padded_rows = state_stride + suffix_len;
-  if (channel_idx >= model_dim || row_idx >= padded_rows) {
-    return;
-  }
-
   const uint padded_offset = row_idx * model_dim + channel_idx;
   if (row_idx < state_stride) {
     // Copy from state
