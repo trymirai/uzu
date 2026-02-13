@@ -180,9 +180,9 @@ KERNEL(ShortConvTrie)(
     // Select parent state (root uses base_state)
     const int parent = parents[node];
     const device T* parent_state =
-        (parent < 0)
-            ? (base_state + base_state_offset)
-            : (suffix_state + (node * model_dim + channel_idx) * state_stride);
+        (parent < 0) ? (base_state + base_state_offset)
+                     : (suffix_state +
+                        (parent * model_dim + channel_idx) * state_stride);
 
     float acc = 0.0f;
     if (has_bias) {
