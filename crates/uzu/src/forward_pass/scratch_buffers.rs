@@ -91,10 +91,10 @@ impl<B: Backend> ScratchBuffers<B> {
             MLPConfig::MixtureOfExperts(moe) => Some(moe),
             _ => None,
         };
-        let moe_max_routed = moe.map(|moe| max_suffix_len * moe.num_experts_per_token);
+        let moe_max_routed = moe.map(|moe| max_suffix_len * moe.num_active_routed_experts);
         let moe_scatter_entries = moe.map(|moe| {
             let num_blocks = ((max_suffix_len + 255) / 256).max(1);
-            let num_tiles = ((moe.mixture_size + 512 - 1) / 512).max(1);
+            let num_tiles = ((moe.num_routed_experts + 512 - 1) / 512).max(1);
             num_blocks * num_tiles * 512
         });
 
@@ -160,20 +160,20 @@ impl<B: Backend> ScratchBuffers<B> {
 
             moe_topk_ids: moe.map(|moe| {
                 alloc(
-                    &model_shape.moe_topk_ids_shape(max_suffix_len, moe.num_experts_per_token),
+                    &model_shape.moe_topk_ids_shape(max_suffix_len, moe.num_active_routed_experts),
                     DataType::U32,
                     "moe_topk_ids",
                 )
             }),
             moe_topk_probs: moe.map(|moe| {
                 alloc(
-                    &model_shape.moe_topk_probs_shape(max_suffix_len, moe.num_experts_per_token),
+                    &model_shape.moe_topk_probs_shape(max_suffix_len, moe.num_active_routed_experts),
                     act_ty,
                     "moe_topk_probs",
                 )
             }),
             moe_offsets: moe
-                .map(|moe| alloc(&model_shape.moe_offsets_shape(moe.mixture_size), DataType::U32, "moe_offsets")),
+                .map(|moe| alloc(&model_shape.moe_offsets_shape(moe.num_routed_experts), DataType::U32, "moe_offsets")),
             moe_sumk: moe.map(|_| alloc(&model_shape.moe_sumk_shape(), DataType::U32, "moe_sumk")),
             moe_bucketed_token_ids: moe_max_routed.map(|max_routed| {
                 alloc(&model_shape.moe_bucketed_token_ids_shape(max_routed), DataType::U32, "moe_bucketed_token_ids")
@@ -185,7 +185,7 @@ impl<B: Backend> ScratchBuffers<B> {
                 .map(|max_routed| alloc(&model_shape.moe_x_perm_shape(max_routed), DataType::F16, "moe_x_perm")),
             moe_tok2row: moe.map(|moe| {
                 alloc(
-                    &model_shape.moe_tok2row_shape(max_suffix_len, moe.num_experts_per_token),
+                    &model_shape.moe_tok2row_shape(max_suffix_len, moe.num_active_routed_experts),
                     DataType::I32,
                     "moe_tok2row",
                 )
@@ -197,9 +197,13 @@ impl<B: Backend> ScratchBuffers<B> {
             moe_two_pass_row_expert_map: moe_max_routed
                 .map(|max_routed| alloc(&[max_routed], DataType::U32, "moe_two_pass_row_expert_map")),
             moe_tile_counts: moe
-                .map(|moe| alloc(&model_shape.moe_counts_shape(moe.mixture_size), DataType::U32, "moe_tile_counts")),
+                .map(|moe| {
+                    alloc(&model_shape.moe_counts_shape(moe.num_routed_experts), DataType::U32, "moe_tile_counts")
+                }),
             moe_tile_offsets: moe
-                .map(|moe| alloc(&model_shape.moe_offsets_shape(moe.mixture_size), DataType::U32, "moe_tile_offsets")),
+                .map(|moe| {
+                    alloc(&model_shape.moe_offsets_shape(moe.num_routed_experts), DataType::U32, "moe_tile_offsets")
+                }),
             moe_tile_map: moe_max_routed
                 .map(|max_routed| alloc(&model_shape.moe_tile_map_shape(max_routed), DataType::U32, "moe_tile_map")),
             moe_total_tiles: moe.map(|_| alloc(&model_shape.moe_total_tiles_shape(), DataType::U32, "moe_total_tiles")),
