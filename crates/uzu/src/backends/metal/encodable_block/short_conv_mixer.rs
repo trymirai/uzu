@@ -2,13 +2,16 @@ use super::{EncodableBlock, Metal, transformer_layer};
 use crate::{
     DataType,
     backends::{
-        common::Context,
+        common::{
+            Context,
+            kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
+        },
         metal::{
             MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
             Retained,
-            kernel::short_conv::{
-                ShortConvDecodeArguments, ShortConvKernel, ShortConvPackArguments, ShortConvPrefillArguments,
-                ShortConvTrieArguments,
+            kernel::dsl::{
+                ShortConvDecodeMetalKernel, ShortConvPackMetalKernel, ShortConvPrefillMetalKernel,
+                ShortConvTrieMetalKernel,
             },
         },
     },
@@ -24,7 +27,10 @@ pub(crate) struct ShortConvMixer {
     model_dim: usize,
     in_projection: Box<dyn EncodableBlock<Metal>>,
     out_projection: Box<dyn EncodableBlock<Metal>>,
-    short_conv_kernel: ShortConvKernel,
+    short_conv_pack: ShortConvPackMetalKernel,
+    short_conv_prefill: ShortConvPrefillMetalKernel,
+    short_conv_decode: ShortConvDecodeMetalKernel,
+    short_conv_trie: ShortConvTrieMetalKernel,
     conv_weight: MetalArray,
     conv_bias: Option<MetalArray>,
 }
@@ -91,8 +97,15 @@ impl ShortConvMixer {
             None
         };
 
-        let short_conv_kernel =
-            ShortConvKernel::new(mtl_context, data_type).expect("Failed to create short conv kernel");
+        let has_bias = short_conv_config.conv_config.has_biases;
+        let short_conv_pack =
+            ShortConvPackMetalKernel::new(mtl_context, data_type).expect("Failed to create short conv pack kernel");
+        let short_conv_prefill = ShortConvPrefillMetalKernel::new(mtl_context, data_type, has_bias)
+            .expect("Failed to create short conv prefill kernel");
+        let short_conv_decode = ShortConvDecodeMetalKernel::new(mtl_context, data_type, has_bias)
+            .expect("Failed to create short conv decode kernel");
+        let short_conv_trie = ShortConvTrieMetalKernel::new(mtl_context, data_type, has_bias)
+            .expect("Failed to create short conv trie kernel");
 
         Self {
             layer_index,
@@ -100,7 +113,10 @@ impl ShortConvMixer {
             model_dim,
             in_projection,
             out_projection,
-            short_conv_kernel,
+            short_conv_pack,
+            short_conv_prefill,
+            short_conv_decode,
+            short_conv_trie,
             conv_weight,
             conv_bias,
         }
@@ -220,6 +236,10 @@ impl ShortConvMixer {
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
+        if self.model_dim == 0 || suffix_length == 0 {
+            return;
+        }
+
         let arrays =
             state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
         let in_proj = arrays[0].borrow_mut();
@@ -232,10 +252,7 @@ impl ShortConvMixer {
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.buffer().clone();
-        let bias_buf = self.conv_bias.as_ref().map(|b| {
-            let b = b.clone();
-            b.buffer().clone()
-        });
+        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
@@ -246,39 +263,31 @@ impl ShortConvMixer {
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
         let padded_buf = state.mtl_context().create_buffer(padded_size).expect("Failed to create padded buffer");
-        self.short_conv_kernel
-            .encode_pack(
-                compute,
-                ShortConvPackArguments {
-                    state_in: &state_buf,
-                    in_proj: &in_proj_buf,
-                    padded: &padded_buf,
-                    state_stride,
-                    suffix_len: suffix_length,
-                    in_proj_stride: self.model_dim * 3,
-                    model_dim: self.model_dim,
-                },
-            )
-            .expect("Failed to encode short conv pack kernel");
+        self.short_conv_pack.encode(
+            &state_buf,
+            &in_proj_buf,
+            &padded_buf,
+            state_stride as u32,
+            suffix_length as u32,
+            self.model_dim as u32 * 3,
+            self.model_dim as u32,
+            compute,
+        );
 
-        self.short_conv_kernel
-            .encode_prefill(
-                compute,
-                ShortConvPrefillArguments {
-                    padded: &padded_buf,
-                    in_proj: &in_proj_buf,
-                    w: &weight_buf,
-                    b: bias_buf.as_deref(),
-                    out: &out_buf,
-                    state_out: &state_buf,
-                    suffix_len: suffix_length,
-                    kernel_size: kernel_size as i32,
-                    in_proj_stride: self.model_dim * 3,
-                    state_stride,
-                    model_dim: self.model_dim,
-                },
-            )
-            .expect("Failed to encode short conv prefill kernel");
+        self.short_conv_prefill.encode(
+            &padded_buf,
+            &in_proj_buf,
+            &weight_buf,
+            bias_buf,
+            &out_buf,
+            &state_buf,
+            suffix_length as u32,
+            kernel_size as u32,
+            self.model_dim as u32 * 3,
+            state_stride as u32,
+            self.model_dim as u32,
+            compute,
+        )
     }
 
     fn run_trie_conv(
@@ -288,7 +297,7 @@ impl ShortConvMixer {
         sampling_start: usize,
         trie_len: usize,
     ) {
-        if trie_len == 0 {
+        if self.model_dim == 0 || trie_len == 0 {
             return;
         }
 
@@ -327,35 +336,23 @@ impl ShortConvMixer {
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.buffer().clone();
-        let bias_buf = self.conv_bias.as_ref().map(|b| {
-            let b = b.clone();
-            b.buffer().clone()
-        });
+        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
-        self.short_conv_kernel
-            .encode_trie(
-                compute,
-                ShortConvTrieArguments {
-                    in_proj: &in_proj_buf,
-                    in_proj_offset,
-                    w: &weight_buf,
-                    b: bias_buf.as_deref(),
-                    base_state: &base_state_buf,
-                    base_state_offset,
-                    parents: &parents_buf,
-                    parents_offset,
-                    out: &out_buf,
-                    out_offset,
-                    suffix_state: &suffix_state_buf,
-                    suffix_state_offset,
-                    suffix_len: trie_len,
-                    kernel_size: kernel_size as i32,
-                    in_proj_stride,
-                    state_stride,
-                    model_dim: self.model_dim,
-                },
-            )
-            .expect("Failed to encode short conv trie kernel");
+        self.short_conv_trie.encode(
+            (&in_proj_buf, in_proj_offset),
+            &weight_buf,
+            bias_buf,
+            (&base_state_buf, base_state_offset),
+            (&parents_buf, parents_offset),
+            (&out_buf, out_offset),
+            (&suffix_state_buf, suffix_state_offset),
+            trie_len as u32,
+            kernel_size as u32,
+            in_proj_stride as u32,
+            state_stride as u32,
+            self.model_dim as u32,
+            compute,
+        );
     }
 
     fn run_decode_conv(
@@ -364,6 +361,10 @@ impl ShortConvMixer {
         compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         suffix_length: usize,
     ) {
+        if self.model_dim == 0 || suffix_length == 0 {
+            return;
+        }
+
         let arrays =
             state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
         let in_proj = arrays[0].borrow_mut();
@@ -376,32 +377,25 @@ impl ShortConvMixer {
 
         let conv_weight = self.conv_weight.clone();
         let weight_buf = conv_weight.buffer().clone();
-        let bias_buf = self.conv_bias.as_ref().map(|b| {
-            let b = b.clone();
-            b.buffer().clone()
-        });
+        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
-        self.short_conv_kernel
-            .encode_decode(
-                compute,
-                ShortConvDecodeArguments {
-                    in_proj: &in_proj_buf,
-                    w: &weight_buf,
-                    b: bias_buf.as_deref(),
-                    state: &state_buf,
-                    out: &out_buf,
-                    next_state: &state_buf,
-                    suffix_len: suffix_length,
-                    kernel_size: kernel_size as i32,
-                    in_proj_stride: self.model_dim * 3,
-                    state_stride,
-                    model_dim: self.model_dim,
-                },
-            )
-            .expect("Failed to encode short conv decode kernel");
+        self.short_conv_decode.encode(
+            &in_proj_buf,
+            &weight_buf,
+            bias_buf,
+            &state_buf,
+            &out_buf,
+            &state_buf,
+            suffix_length as u32,
+            kernel_size as u32,
+            self.model_dim as u32 * 3,
+            state_stride as u32,
+            self.model_dim as u32,
+            compute,
+        )
     }
 }
 
