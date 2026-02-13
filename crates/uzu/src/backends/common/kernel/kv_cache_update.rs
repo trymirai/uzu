@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use thiserror::Error;
 
 use crate::{
@@ -36,6 +38,10 @@ pub enum KVCacheUpdateError<B: Backend> {
 }
 
 impl<B: Backend> KVCacheUpdate<B> {
+    // Metal's set_bytes supports up to 4KB per bound value.
+    // https://developer.apple.com/documentation/metal/mtlcomputecommandencoder/setbytes(_:length:index:)?language=objc
+    const MAX_INLINE_BYTES: usize = 4096;
+
     pub fn new(
         context: &B::Context,
         data_type: DataType,
@@ -78,11 +84,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         if swaps.len() > self.max_sequence_length {
             return Err(KVCacheUpdateError::MaxSequenceLengthExceeded);
         }
-
-        // For small swap counts, use set_bytes to avoid shared buffer race in async mode.
-        // Metal's set_bytes limit is 4KB; 32 swaps = 256 bytes, well under limit.
-        let use_inline_bytes = swaps.len() <= 32;
-        assert!(use_inline_bytes, "non-inline is not supported yet (and is broken anyways due to a data race)");
+        let max_inline_swaps = (Self::MAX_INLINE_BYTES / size_of::<Swap>()).max(1);
 
         for layer_data in in_place_data {
             if layer_data.key_shape != layer_data.value_shape {
@@ -91,16 +93,19 @@ impl<B: Backend> KVCacheUpdate<B> {
 
             let [num_heads, max_sequence_length, head_dim] = layer_data.key_shape;
 
-            self.kernel.encode(
-                &layer_data.key_buffer,
-                &layer_data.value_buffer,
-                &swaps,
-                swaps.len() as u32,
-                num_heads as u32,
-                max_sequence_length as u32,
-                head_dim as u32,
-                encoder,
-            );
+            // non-inline is not supported yet (and is broken anyways due to a data race)
+            for swaps_chunk in swaps.chunks(max_inline_swaps) {
+                self.kernel.encode(
+                    &layer_data.key_buffer,
+                    &layer_data.value_buffer,
+                    swaps_chunk,
+                    swaps_chunk.len() as u32,
+                    num_heads as u32,
+                    max_sequence_length as u32,
+                    head_dim as u32,
+                    encoder,
+                );
+            }
         }
 
         Ok(())

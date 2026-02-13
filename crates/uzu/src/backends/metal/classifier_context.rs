@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use super::{
-    MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained,
+    MTLCommandBuffer, MTLContext, ProtocolObject, Retained,
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
         transformer_layer::{embed_block, linear_block},
@@ -318,7 +318,6 @@ impl ClassifierContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

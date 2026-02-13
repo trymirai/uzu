@@ -15,7 +15,7 @@ use crate::{
             kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
         },
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
+            MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
             kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
         },
     },
@@ -256,7 +256,6 @@ impl LanguageModelGeneratorContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

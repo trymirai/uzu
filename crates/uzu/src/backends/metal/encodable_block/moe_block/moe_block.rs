@@ -251,8 +251,8 @@ impl EncodableBlock<Metal> for MoeBlock {
         let row_expert_map_buf = clone_buffer(array_iter.next().unwrap());
         debug_assert!(array_iter.next().is_none());
 
-        let e = self.moe_config.mixture_size;
-        let k = self.moe_config.num_experts_per_token;
+        let e = self.moe_config.num_routed_experts;
+        let k = self.moe_config.num_active_routed_experts;
 
         let root = command_buffer;
         let k_tile = 128;
