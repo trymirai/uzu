@@ -158,8 +158,9 @@ void qmm_transposed_impl(
 // DSL entry kernels (renamed entrypoints)
 // ============================================================================
 
-// NOTE: these kernels are the DSL-facing API. They accept DSL indices (GROUPS/THREADS)
-// and SPECIALIZE values, then call the existing template implementations.
+// NOTE: these kernels are the DSL-facing API. They accept DSL indices
+// (GROUPS/THREADS) and SPECIALIZE values, then call the existing template
+// implementations.
 
 template <typename T, int group_size, int bits>
 static inline void dsl_qmv_call(
@@ -327,19 +328,97 @@ KERNEL(Qmv)(
   // Dispatch by supported (group_size, bits) pairs. Unsupported combos no-op.
   if (bits == 4) {
     if (group_size == 32) {
-      dsl_qmv_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 32, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qmv_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 64, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qmv_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 128, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   } else if (bits == 8) {
     if (group_size == 32) {
-      dsl_qmv_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 32, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qmv_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 64, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qmv_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_call<T, 128, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   }
 }
@@ -372,19 +451,97 @@ KERNEL(Qvm)(
 
   if (bits == 4) {
     if (group_size == 32) {
-      dsl_qvm_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 32, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qvm_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 64, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qvm_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 128, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   } else if (bits == 8) {
     if (group_size == 32) {
-      dsl_qvm_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 32, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qvm_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 64, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qvm_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qvm_call<T, 128, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   }
 }
@@ -416,19 +573,97 @@ KERNEL(QmvFast)(
 
   if (bits == 4) {
     if (group_size == 32) {
-      dsl_qmv_fast_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 32, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qmv_fast_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 64, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qmv_fast_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 128, 4>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   } else if (bits == 8) {
     if (group_size == 32) {
-      dsl_qmv_fast_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 32, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 64) {
-      dsl_qmv_fast_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 64, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     } else if (group_size == 128) {
-      dsl_qmv_fast_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+      dsl_qmv_fast_call<T, 128, 8>(
+          w,
+          scales,
+          zero_points,
+          biases,
+          x,
+          y,
+          K,
+          N,
+          use_mlx_quant,
+          tid,
+          simd_gid,
+          simd_lid
+      );
     }
   }
 }
