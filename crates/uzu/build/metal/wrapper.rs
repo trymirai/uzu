@@ -4,6 +4,7 @@ use anyhow::bail;
 use itertools::Itertools;
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
+use crate::common::mangling::static_mangle;
 
 pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
@@ -73,11 +74,11 @@ fn kernel_wrappers(
     } {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
-                format!("__dsl_entry_{}_{}", kernel.name, type_variant.iter().map(|(_k, v)| v).join("_")),
+                static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),
                 format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
             )
         } else {
-            (format!("__dsl_entry_{}", kernel.name), kernel.name.to_string())
+            (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
         };
 
         let max_total_threads_per_threadgroup = kernel

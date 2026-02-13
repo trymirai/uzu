@@ -100,11 +100,9 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
                 .as_ref()
                 .zip(model_shape.ssm_z_shape(suffix_length))
                 .map(|(buf, shape)| buf.view(&shape)),
-            moe_topk_ids: moe
-                .zip(scratch.moe_topk_ids.as_ref())
-                .map(|(moe, buf)| {
-                    buf.view(&model_shape.moe_topk_ids_shape(suffix_length, moe.num_active_routed_experts))
-                }),
+            moe_topk_ids: moe.zip(scratch.moe_topk_ids.as_ref()).map(|(moe, buf)| {
+                buf.view(&model_shape.moe_topk_ids_shape(suffix_length, moe.num_active_routed_experts))
+            }),
             moe_topk_probs: moe.zip(scratch.moe_topk_probs.as_ref()).map(|(moe, buf)| {
                 buf.view(&model_shape.moe_topk_probs_shape(suffix_length, moe.num_active_routed_experts))
             }),
@@ -121,11 +119,9 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
             moe_x_perm: max_routed
                 .zip(scratch.moe_x_perm.as_ref())
                 .map(|(max_routed, buf)| buf.view(&model_shape.moe_x_perm_shape(max_routed))),
-            moe_tok2row: moe
-                .zip(scratch.moe_tok2row.as_ref())
-                .map(|(moe, buf)| {
-                    buf.view(&model_shape.moe_tok2row_shape(suffix_length, moe.num_active_routed_experts))
-                }),
+            moe_tok2row: moe.zip(scratch.moe_tok2row.as_ref()).map(|(moe, buf)| {
+                buf.view(&model_shape.moe_tok2row_shape(suffix_length, moe.num_active_routed_experts))
+            }),
             moe_y_partial: max_routed
                 .zip(scratch.moe_y_partial.as_ref())
                 .map(|(max_routed, buf)| buf.view(&model_shape.moe_y_partial_shape(max_routed))),

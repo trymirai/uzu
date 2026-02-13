@@ -196,14 +196,12 @@ impl<B: Backend> ScratchBuffers<B> {
                 .map(|max_routed| alloc(&model_shape.moe_hidden_shape(max_routed), DataType::F32, "moe_hidden")),
             moe_two_pass_row_expert_map: moe_max_routed
                 .map(|max_routed| alloc(&[max_routed], DataType::U32, "moe_two_pass_row_expert_map")),
-            moe_tile_counts: moe
-                .map(|moe| {
-                    alloc(&model_shape.moe_counts_shape(moe.num_routed_experts), DataType::U32, "moe_tile_counts")
-                }),
-            moe_tile_offsets: moe
-                .map(|moe| {
-                    alloc(&model_shape.moe_offsets_shape(moe.num_routed_experts), DataType::U32, "moe_tile_offsets")
-                }),
+            moe_tile_counts: moe.map(|moe| {
+                alloc(&model_shape.moe_counts_shape(moe.num_routed_experts), DataType::U32, "moe_tile_counts")
+            }),
+            moe_tile_offsets: moe.map(|moe| {
+                alloc(&model_shape.moe_offsets_shape(moe.num_routed_experts), DataType::U32, "moe_tile_offsets")
+            }),
             moe_tile_map: moe_max_routed
                 .map(|max_routed| alloc(&model_shape.moe_tile_map_shape(max_routed), DataType::U32, "moe_tile_map")),
             moe_total_tiles: moe.map(|_| alloc(&model_shape.moe_total_tiles_shape(), DataType::U32, "moe_total_tiles")),
