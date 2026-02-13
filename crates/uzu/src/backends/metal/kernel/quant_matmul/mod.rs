@@ -6,15 +6,26 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use crate::{
     DataType,
     backends::{
-        common::kernel::matmul::{
-            QuantizedMatmulArguments as GenericQuantizedMatmulArguments, QuantizedMatmulConfiguration,
-            QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
+        common::kernel::{
+            QmmBf16G128B4AlignedKKernel as QmmBf16G128B4AlignedKKernelTrait,
+            QmmBf16G128B4AlignedKMlxKernel as QmmBf16G128B4AlignedKMlxKernelTrait,
+            QmmKernel as QmmKernelTrait, QmmTransposedKernel as QmmTransposedKernelTrait,
+            QmvFastKernel as QmvFastKernelTrait,
+            QmvKernel as QmvKernelTrait, QvmKernel as QvmKernelTrait,
+            matmul::{
+                QuantizedMatmulArguments as GenericQuantizedMatmulArguments, QuantizedMatmulConfiguration,
+                QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
+            },
         },
         metal::{
             FunctionConstantValuesSetValue, Metal, MetalContext, MetalError, metal_extensions::ComputeEncoderSetValue,
         },
     },
     config::QuantizationMode,
+};
+use super::dsl::{
+    QmmBf16G128B4AlignedKMetalKernel, QmmBf16G128B4AlignedKMlxMetalKernel, QmmMetalKernel, QmmTransposedMetalKernel,
+    QmvFastMetalKernel, QmvMetalKernel, QvmMetalKernel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,20 +55,34 @@ pub enum QuantizedMatmulError {
 }
 
 pub struct QuantizedMatmulKernel {
-    pipelines: HashMap<KernelKind, (Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64)>,
+    matrix_vector_kernel: MatrixVectorKernel,
+    matrix_matrix_kernel: MatrixMatrixKernel,
     output_dim: usize,
-    weights_transposed: bool,
+}
+
+enum MatrixVectorKernel {
+    QmvFast(QmvFastMetalKernel),
+    Qmv(QmvMetalKernel),
+    Qvm(QvmMetalKernel),
+}
+
+enum MatrixMatrixKernel {
+    QmmBf16G128B4AlignedK(QmmBf16G128B4AlignedKMetalKernel),
+    QmmBf16G128B4AlignedKMlx(QmmBf16G128B4AlignedKMlxMetalKernel),
+    Qmm(QmmMetalKernel),
+    QmmTransposed(QmmTransposedMetalKernel),
+    Legacy((Retained<ProtocolObject<dyn MTLComputePipelineState>>, u64, u64)),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulArguments<'a> {
-    pub a_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub a_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Byte offset into `a_buffer` (used for slicing the batch dimension).
     pub a_offset: u64,
-    pub b_buffer: &'a ProtocolObject<dyn MTLBuffer>,
-    pub scales_buffer: &'a ProtocolObject<dyn MTLBuffer>,
-    pub zero_points_or_biases_buffer: &'a ProtocolObject<dyn MTLBuffer>,
-    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    pub b_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub scales_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub zero_points_or_biases_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub output_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     pub batch: i32,
     pub input_dim: i32,
     pub output_dim: i32,
@@ -115,28 +140,56 @@ impl QuantizedMatmulKernel {
             return Err(QuantizedMatmulError::UnsupportedDataType(data_type));
         }
 
-        let function_constants = MTLFunctionConstantValues::new();
+        let group_size_u32 =
+            u32::try_from(group_size).map_err(|_| QuantizedMatmulError::UnsupportedGroupSize(group_size))?;
+        let bits = match mode {
+            QuantizationMode::UInt4 => 4_u32,
+            QuantizationMode::UInt8 | QuantizationMode::Int8 => 8_u32,
+        };
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_value(&use_mlx_quant, 40);
 
-        let mut pipelines = HashMap::new();
-
-        let kernel_name_mv =
-            select_matrix_vector_kernel_name(data_type, group_size, weights_transposed, output_dim, input_dim, mode)?;
-
-        let cache_key_mv = format!("{}_mlx_{}", kernel_name_mv, use_mlx_quant);
-        let pipeline_mv = mtl_context
-            .compute_pipeline_state_cached(&cache_key_mv, &kernel_name_mv, Some(&function_constants))
-            .map_err(QuantizedMatmulError::MetalError)?;
-        pipelines.insert(KernelKind::MatrixVector, (pipeline_mv, 32, 32));
+        let matrix_vector_kernel = if weights_transposed {
+            if output_dim % 8 == 0 && input_dim % 512 == 0 {
+                MatrixVectorKernel::QmvFast(
+                    <QmvFastMetalKernel as QmvFastKernelTrait>::new(
+                        mtl_context,
+                        data_type,
+                        use_mlx_quant,
+                        !use_mlx_quant,
+                        group_size_u32,
+                        bits,
+                    )
+                    .map_err(QuantizedMatmulError::MetalError)?,
+                )
+            } else {
+                MatrixVectorKernel::Qmv(
+                    <QmvMetalKernel as QmvKernelTrait>::new(
+                        mtl_context,
+                        data_type,
+                        use_mlx_quant,
+                        !use_mlx_quant,
+                        group_size_u32,
+                        bits,
+                    )
+                    .map_err(QuantizedMatmulError::MetalError)?,
+                )
+            }
+        } else {
+            MatrixVectorKernel::Qvm(
+                <QvmMetalKernel as QvmKernelTrait>::new(
+                    mtl_context,
+                    data_type,
+                    use_mlx_quant,
+                    !use_mlx_quant,
+                    group_size_u32,
+                    bits,
+                )
+                .map_err(QuantizedMatmulError::MetalError)?,
+            )
+        };
 
         let kernel_name_mm =
             select_qmm_kernel_name(data_type, group_size, weights_transposed, output_dim, input_dim, mode)?;
-
-        let cache_key_mm = format!("{}_mlx_{}", kernel_name_mm, use_mlx_quant);
-        let pipeline_mm = mtl_context
-            .compute_pipeline_state_cached(&cache_key_mm, &kernel_name_mm, Some(&function_constants))
-            .map_err(QuantizedMatmulError::MetalError)?;
 
         let (bm, bn) = if kernel_name_mm.contains("_64x64") {
             (64, 64)
@@ -147,25 +200,76 @@ impl QuantizedMatmulKernel {
         } else {
             (32, 32)
         };
-        pipelines.insert(KernelKind::MatrixMatrix, (pipeline_mm, bm, bn));
 
-        Ok(Self {
-            pipelines,
-            output_dim,
-            weights_transposed,
-        })
-    }
+        // Use a dedicated DSL flavor for the known regressed BF16 4-bit prefill shape family.
+        let use_qmm_bf16_g128_b4_alignedk_flavour = !weights_transposed
+            && matches!(data_type, DataType::BF16)
+            && matches!(mode, QuantizationMode::UInt4)
+            && group_size == 128
+            && input_dim == 4096
+            && output_dim >= 14336;
 
-    #[allow(dead_code)]
-    fn kernel_name_for_config(data_type: DataType) -> String {
-        let type_suffix = match data_type {
-            DataType::F16 => "f16",
-            DataType::BF16 => "bf16",
-            DataType::F32 => "f32",
-            _ => unreachable!(),
+        let build_legacy_mm = || -> Result<MatrixMatrixKernel, QuantizedMatmulError> {
+            let function_constants = MTLFunctionConstantValues::new();
+            function_constants.set_value(&use_mlx_quant, 40);
+            let cache_key_mm = format!("{}_mlx_{}", kernel_name_mm, use_mlx_quant);
+            let pipeline_mm = mtl_context
+                .compute_pipeline_state_cached(&cache_key_mm, &kernel_name_mm, Some(&function_constants))
+                .map_err(QuantizedMatmulError::MetalError)?;
+            Ok(MatrixMatrixKernel::Legacy((pipeline_mm, bm, bn)))
         };
 
-        format!("qmm_t_{}_gs_64_b_4_batch_0", type_suffix)
+        let matrix_matrix_kernel = if bm == 32 && bn == 32 {
+            if use_qmm_bf16_g128_b4_alignedk_flavour {
+                if use_mlx_quant {
+                    MatrixMatrixKernel::QmmBf16G128B4AlignedKMlx(
+                        <QmmBf16G128B4AlignedKMlxMetalKernel as QmmBf16G128B4AlignedKMlxKernelTrait>::new(
+                            mtl_context,
+                        )
+                        .map_err(QuantizedMatmulError::MetalError)?,
+                    )
+                } else {
+                    MatrixMatrixKernel::QmmBf16G128B4AlignedK(
+                        <QmmBf16G128B4AlignedKMetalKernel as QmmBf16G128B4AlignedKKernelTrait>::new(mtl_context)
+                        .map_err(QuantizedMatmulError::MetalError)?,
+                    )
+                }
+            } else if weights_transposed {
+                MatrixMatrixKernel::QmmTransposed(
+                    <QmmTransposedMetalKernel as QmmTransposedKernelTrait>::new(
+                        mtl_context,
+                        data_type,
+                        use_mlx_quant,
+                        !use_mlx_quant,
+                        group_size_u32,
+                        bits,
+                        output_dim % 32 == 0,
+                    )
+                    .map_err(QuantizedMatmulError::MetalError)?,
+                )
+            } else {
+                MatrixMatrixKernel::Qmm(
+                    <QmmMetalKernel as QmmKernelTrait>::new(
+                        mtl_context,
+                        data_type,
+                        use_mlx_quant,
+                        !use_mlx_quant,
+                        group_size_u32,
+                        bits,
+                        input_dim % 32 == 0,
+                    )
+                    .map_err(QuantizedMatmulError::MetalError)?,
+                )
+            }
+        } else {
+            build_legacy_mm()?
+        };
+
+        Ok(Self {
+            matrix_vector_kernel,
+            matrix_matrix_kernel,
+            output_dim,
+        })
     }
 
     pub fn encode(
@@ -174,50 +278,155 @@ impl QuantizedMatmulKernel {
         args: QuantizedMatmulArguments,
     ) -> Result<(), QuantizedMatmulError> {
         let variant = self.select_variant(args.batch as usize);
-        let (pipeline, bm, bn) =
-            self.pipelines.get(&variant).ok_or_else(|| QuantizedMatmulError::InvalidDimensions {
-                m: args.batch as usize,
-                n: args.output_dim as usize,
-                k: args.input_dim as usize,
-            })?;
-
-        encoder.set_compute_pipeline_state(pipeline);
-
-        // Set buffers
-        encoder.set_buffer(Some(args.b_buffer), 0, 0);
-        encoder.set_buffer(Some(args.scales_buffer), 0, 1);
-        encoder.set_buffer(Some(args.zero_points_or_biases_buffer), 0, 2);
-        encoder.set_buffer(Some(args.a_buffer), args.a_offset as usize, 3);
-        encoder.set_buffer(Some(args.output_buffer), 0, 4);
-
-        let k: i32 = args.input_dim;
-        let m = args.batch;
-        let n = args.output_dim;
-
-        encoder.set_value(&k, 5);
-        encoder.set_value(&n, 6);
-        encoder.set_value(&m, 7);
 
         match variant {
             KernelKind::MatrixVector => {
-                let bk = 32;
-                let bn = if self.weights_transposed {
-                    8
-                } else {
-                    64
-                };
-                let n_tgp_y = (n + bn - 1) / bn;
-                let threadgroups = MTLSize::new(m as usize, n_tgp_y as usize, 1);
-                let threads_per_threadgroup = MTLSize::new(bk as usize, 2, 1);
-                encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
+                let input = (args.a_buffer, args.a_offset as usize);
+                let zero_points =
+                    matches!(args.quantization_type, QuantizationType::ZeroPoint).then_some(args.zero_points_or_biases_buffer);
+                let biases =
+                    matches!(args.quantization_type, QuantizationType::Mlx).then_some(args.zero_points_or_biases_buffer);
+
+                match &self.matrix_vector_kernel {
+                    MatrixVectorKernel::QmvFast(kernel) => {
+                        <QmvFastMetalKernel as QmvFastKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            zero_points,
+                            biases,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixVectorKernel::Qmv(kernel) => {
+                        <QmvMetalKernel as QmvKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            zero_points,
+                            biases,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixVectorKernel::Qvm(kernel) => {
+                        <QvmMetalKernel as QvmKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            zero_points,
+                            biases,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                }
             },
             KernelKind::MatrixMatrix => {
-                let wm = 2;
-                let wn = 2;
-                let threads_per_threadgroup = MTLSize::new(32, wn as usize, wm as usize);
-                let threadgroups =
-                    MTLSize::new(((n as u64 + bn - 1) / bn) as usize, ((m as u64 + bm - 1) / bm) as usize, 1);
-                encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
+                let input = (args.a_buffer, args.a_offset as usize);
+                let zero_points =
+                    matches!(args.quantization_type, QuantizationType::ZeroPoint).then_some(args.zero_points_or_biases_buffer);
+                let biases =
+                    matches!(args.quantization_type, QuantizationType::Mlx).then_some(args.zero_points_or_biases_buffer);
+
+                match &self.matrix_matrix_kernel {
+                    MatrixMatrixKernel::QmmBf16G128B4AlignedKMlx(kernel) => {
+                        <QmmBf16G128B4AlignedKMlxMetalKernel as QmmBf16G128B4AlignedKMlxKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            args.zero_points_or_biases_buffer,
+                            args.zero_points_or_biases_buffer,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixMatrixKernel::QmmBf16G128B4AlignedK(kernel) => {
+                        <QmmBf16G128B4AlignedKMetalKernel as QmmBf16G128B4AlignedKKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            args.zero_points_or_biases_buffer,
+                            args.zero_points_or_biases_buffer,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixMatrixKernel::Qmm(kernel) => {
+                        <QmmMetalKernel as QmmKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            zero_points,
+                            biases,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixMatrixKernel::QmmTransposed(kernel) => {
+                        <QmmTransposedMetalKernel as QmmTransposedKernelTrait>::encode(
+                            kernel,
+                            args.b_buffer,
+                            args.scales_buffer,
+                            zero_points,
+                            biases,
+                            input,
+                            args.output_buffer,
+                            args.input_dim,
+                            args.output_dim,
+                            args.batch,
+                            encoder,
+                        );
+                    },
+                    MatrixMatrixKernel::Legacy((pipeline, bm, bn)) => {
+                        encoder.set_compute_pipeline_state(pipeline);
+
+                        encoder.set_buffer(Some(args.b_buffer), 0, 0);
+                        encoder.set_buffer(Some(args.scales_buffer), 0, 1);
+                        encoder.set_buffer(Some(args.zero_points_or_biases_buffer), 0, 2);
+                        encoder.set_buffer(Some(args.a_buffer), args.a_offset as usize, 3);
+                        encoder.set_buffer(Some(args.output_buffer), 0, 4);
+
+                        let k = args.input_dim;
+                        let m = args.batch;
+                        let n = args.output_dim;
+                        encoder.set_value(&k, 5);
+                        encoder.set_value(&n, 6);
+                        encoder.set_value(&m, 7);
+
+                        let wm = 2;
+                        let wn = 2;
+                        let threads_per_threadgroup = MTLSize::new(32, wn as usize, wm as usize);
+                        let threadgroups =
+                            MTLSize::new(((n as u64 + bn - 1) / bn) as usize, ((m as u64 + bm - 1) / bm) as usize, 1);
+                        encoder.dispatch_threadgroups(threadgroups, threads_per_threadgroup);
+                    },
+                }
             },
         }
 
@@ -286,31 +495,6 @@ impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
 
         QuantizedMatmulKernel::encode(self, encoder, backend_arguments).expect("Failed to encode quantized matmul");
     }
-}
-
-fn select_matrix_vector_kernel_name(
-    data_type: DataType,
-    group_size: usize,
-    weights_transposed: bool,
-    output_dim: usize,
-    input_dim: usize,
-    mode: QuantizationMode,
-) -> Result<String, QuantizedMatmulError> {
-    let type_suffix = dtype_suffix(data_type).ok_or(QuantizedMatmulError::UnsupportedDataType(data_type))?;
-    let bits = match mode {
-        QuantizationMode::UInt4 => 4,
-        QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
-    };
-
-    if weights_transposed {
-        let mut name = format!("qmv_{}_g{}_b{}", type_suffix, group_size, bits);
-        if output_dim % 8 == 0 && input_dim % 512 == 0 {
-            name.push_str("_fast");
-        }
-        return Ok(name);
-    }
-
-    Ok(format!("qvm_{}_g{}_b{}", type_suffix, group_size, bits))
 }
 
 fn select_qmm_kernel_name(

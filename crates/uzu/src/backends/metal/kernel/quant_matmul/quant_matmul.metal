@@ -3,6 +3,7 @@
 
 using namespace metal;
 
+#include "../definitions.metal"
 #include "mma.h"
 #include "../common/mlp_epilogue.h"
 
@@ -10,6 +11,1259 @@ using namespace metal;
 // (zero-points)
 constant bool kUseMlxQuant [[function_constant(40)]];
 constant bool kUseZeroPoints = !kUseMlxQuant;
+
+template <typename T, int group_size, int bits>
+void qmv_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <typename T, int group_size, int bits, bool UseMlx>
+void qmv_impl_dispatch(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <typename T, int group_size, int bits>
+void qvm_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <typename T, int group_size, int bits>
+void qvm_impl_mlx(
+    const device uint32_t* ws,
+    const device T* scales,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const int in_vec_size,
+    const int out_vec_size,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <typename T, int group_size, int bits>
+void qvm_impl_zeropoint(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* x,
+    device T* y,
+    const int in_vec_size,
+    const int out_vec_size,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <typename T, int group_size, int bits, bool UseMlx>
+void qmv_fast_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& in_vec_size,
+    const constant int& out_vec_size,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <
+    typename T,
+    const int group_size,
+    const int bits,
+    const bool aligned_K,
+    const bool UseMlx,
+    const int BM,
+    const int BK,
+    const int BN>
+void qmm_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+template <
+    typename T,
+    const int group_size,
+    const int bits,
+    const bool aligned_N,
+    const bool UseMlx,
+    const int BM,
+    const int BK,
+    const int BN>
+void qmm_transposed_impl(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+);
+
+// ============================================================================
+// DSL entry kernels (renamed entrypoints)
+// ============================================================================
+
+// NOTE: these kernels are the DSL-facing API. They accept DSL indices (GROUPS/THREADS)
+// and SPECIALIZE values, then call the existing template implementations.
+
+template <typename T, int group_size, int bits>
+static inline void dsl_qmv_call(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    bool use_mlx_quant,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  if (use_mlx_quant) {
+    qmv_impl_dispatch<T, group_size, bits, true>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmv_impl_dispatch<T, group_size, bits, false>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
+
+template <typename T, int group_size, int bits>
+static inline void dsl_qvm_call(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    bool use_mlx_quant,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  if (use_mlx_quant) {
+    qvm_impl_mlx<T, group_size, bits>(
+        w,
+        scales,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qvm_impl_zeropoint<T, group_size, bits>(
+        w,
+        scales,
+        zero_points,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
+
+template <typename T, int group_size, int bits>
+static inline void dsl_qmv_fast_call(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    bool use_mlx_quant,
+    uint3 tid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  if (use_mlx_quant) {
+    qmv_fast_impl<T, group_size, bits, true>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmv_fast_impl<T, group_size, bits, false>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Qmv)(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* biases OPTIONAL(use_mlx_quant),
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& batch,
+    const bool use_mlx_quant SPECIALIZE,
+    const bool use_zero_points SPECIALIZE,
+    const uint group_size SPECIALIZE,
+    const uint bits SPECIALIZE,
+    const uint batch_idx GROUPS(batch),
+    const uint row_group GROUPS((N + 7) / 8),
+    const uint simd_lid THREADS(32),
+    const uint simd_gid THREADS(2)
+) {
+  (void)use_zero_points;
+  (void)batch;
+
+  // Map DSL indices to original kernel expectations
+  uint3 tid = uint3(batch_idx, row_group, 0);
+
+  // Dispatch by supported (group_size, bits) pairs. Unsupported combos no-op.
+  if (bits == 4) {
+    if (group_size == 32) {
+      dsl_qmv_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qmv_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qmv_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  } else if (bits == 8) {
+    if (group_size == 32) {
+      dsl_qmv_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qmv_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qmv_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Qvm)(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* biases OPTIONAL(use_mlx_quant),
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& batch,
+    const bool use_mlx_quant SPECIALIZE,
+    const bool use_zero_points SPECIALIZE,
+    const uint group_size SPECIALIZE,
+    const uint bits SPECIALIZE,
+    const uint batch_idx GROUPS(batch),
+    const uint col_group GROUPS((N + 63) / 64),
+    const uint simd_lid THREADS(32),
+    const uint simd_gid THREADS(2)
+) {
+  (void)use_zero_points;
+  (void)batch;
+
+  uint3 tid = uint3(batch_idx, col_group, 0);
+
+  if (bits == 4) {
+    if (group_size == 32) {
+      dsl_qvm_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qvm_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qvm_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  } else if (bits == 8) {
+    if (group_size == 32) {
+      dsl_qvm_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qvm_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qvm_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(QmvFast)(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* biases OPTIONAL(use_mlx_quant),
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& batch,
+    const bool use_mlx_quant SPECIALIZE,
+    const bool use_zero_points SPECIALIZE,
+    const uint group_size SPECIALIZE,
+    const uint bits SPECIALIZE,
+    const uint batch_idx GROUPS(batch),
+    const uint row_group GROUPS((N + 7) / 8),
+    const uint simd_lid THREADS(32),
+    const uint simd_gid THREADS(2)
+) {
+  (void)use_zero_points;
+  (void)batch;
+  uint3 tid = uint3(batch_idx, row_group, 0);
+
+  if (bits == 4) {
+    if (group_size == 32) {
+      dsl_qmv_fast_call<T, 32, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qmv_fast_call<T, 64, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qmv_fast_call<T, 128, 4>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  } else if (bits == 8) {
+    if (group_size == 32) {
+      dsl_qmv_fast_call<T, 32, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 64) {
+      dsl_qmv_fast_call<T, 64, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    } else if (group_size == 128) {
+      dsl_qmv_fast_call<T, 128, 8>(w, scales, zero_points, biases, x, y, K, N, use_mlx_quant, tid, simd_gid, simd_lid);
+    }
+  }
+}
+
+template <typename T, int group_size, int bits, bool aligned_K, bool UseMlx>
+static inline void dsl_qmm_call(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  constexpr int BM = 32;
+  constexpr int BK = 32;
+  constexpr int BN = 32;
+  qmm_impl<T, group_size, bits, aligned_K, UseMlx, BM, BK, BN>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      Xs,
+      Ws,
+      K,
+      N,
+      M,
+      tid,
+      lid,
+      simd_gid,
+      simd_lid
+  );
+}
+
+template <typename T, int group_size, int bits, bool aligned_N, bool UseMlx>
+static inline void dsl_qmm_transposed_call(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  constexpr int BM = 32;
+  constexpr int BK = 32;
+  constexpr int BN = 32;
+  qmm_transposed_impl<T, group_size, bits, aligned_N, UseMlx, BM, BK, BN>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      Xs,
+      Ws,
+      K,
+      N,
+      M,
+      tid,
+      lid,
+      simd_gid,
+      simd_lid
+  );
+}
+
+template <typename T, int bits>
+static inline void dsl_qmm_dispatch_group(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    uint group_size,
+    bool aligned_k,
+    bool use_mlx_quant,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  if (group_size == 32) {
+    if (aligned_k) {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 32, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 32, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 32, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 32, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  } else if (group_size == 64) {
+    if (aligned_k) {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 64, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 64, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 64, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 64, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  } else if (group_size == 128) {
+    if (aligned_k) {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 128, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 128, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_call<T, 128, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_call<T, 128, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  }
+}
+
+template <typename T, int bits>
+static inline void dsl_qmm_transposed_dispatch_group(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points,
+    const device T* biases,
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    uint group_size,
+    bool aligned_n,
+    bool use_mlx_quant,
+    threadgroup T* Xs,
+    threadgroup T* Ws,
+    uint3 tid,
+    uint lid,
+    uint simd_gid,
+    uint simd_lid
+) {
+  if (group_size == 32) {
+    if (aligned_n) {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 32, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 32, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 32, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 32, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  } else if (group_size == 64) {
+    if (aligned_n) {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 64, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 64, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 64, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 64, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  } else if (group_size == 128) {
+    if (aligned_n) {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 128, bits, true, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 128, bits, true, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    } else {
+      if (use_mlx_quant) {
+        dsl_qmm_transposed_call<T, 128, bits, false, true>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      } else {
+        dsl_qmm_transposed_call<T, 128, bits, false, false>(
+            w,
+            scales,
+            zero_points,
+            biases,
+            x,
+            y,
+            K,
+            N,
+            M,
+            Xs,
+            Ws,
+            tid,
+            lid,
+            simd_gid,
+            simd_lid
+        );
+      }
+    }
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Qmm)(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* biases OPTIONAL(use_mlx_quant),
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    const bool use_mlx_quant SPECIALIZE,
+    const bool use_zero_points SPECIALIZE,
+    const uint group_size SPECIALIZE,
+    const uint bits SPECIALIZE,
+    const bool aligned_k SPECIALIZE,
+    threadgroup T Xs[32 * 40],
+    threadgroup T Ws[32 * 40],
+    const uint tile_x GROUPS((N + 31) / 32),
+    const uint tile_y GROUPS((M + 31) / 32),
+    const uint lid_x THREADS(32),
+    const uint lid_y THREADS(2),
+    const uint lid_z THREADS(2)
+) {
+  (void)use_zero_points;
+  uint3 tid = uint3(tile_x, tile_y, 0);
+  const uint lid = lid_x + 32u * (lid_y + 2u * lid_z);
+  const uint simd_gid = lid_y + 2u * lid_z;
+  const uint simd_lid = lid_x;
+
+  if (bits == 4) {
+    dsl_qmm_dispatch_group<T, 4>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        M,
+        group_size,
+        aligned_k,
+        use_mlx_quant,
+        Xs,
+        Ws,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  } else if (bits == 8) {
+    dsl_qmm_dispatch_group<T, 8>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        M,
+        group_size,
+        aligned_k,
+        use_mlx_quant,
+        Xs,
+        Ws,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
+
+KERNEL(QmmBf16G128B4AlignedK)(
+    const device uint32_t* w,
+    const device bfloat* scales,
+    const device uint8_t* zero_points,
+    const device bfloat* biases,
+    const device bfloat* x,
+    device bfloat* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    threadgroup bfloat Xs[32 * 40],
+    threadgroup bfloat Ws[32 * 40],
+    const uint tile_x GROUPS((N + 31) / 32),
+    const uint tile_y GROUPS((M + 31) / 32),
+    const uint lid_x THREADS(32),
+    const uint lid_y THREADS(2),
+    const uint lid_z THREADS(2)
+) {
+  uint3 tid = uint3(tile_x, tile_y, 0);
+  const uint lid = lid_x + 32u * (lid_y + 2u * lid_z);
+  const uint simd_gid = lid_y + 2u * lid_z;
+  const uint simd_lid = lid_x;
+
+  qmm_impl<bfloat, 128, 4, true, false, 32, 32, 32>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      Xs,
+      Ws,
+      K,
+      N,
+      M,
+      tid,
+      lid,
+      simd_gid,
+      simd_lid
+  );
+}
+
+KERNEL(QmmBf16G128B4AlignedKMlx)(
+    const device uint32_t* w,
+    const device bfloat* scales,
+    const device uint8_t* zero_points,
+    const device bfloat* biases,
+    const device bfloat* x,
+    device bfloat* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    threadgroup bfloat Xs[32 * 40],
+    threadgroup bfloat Ws[32 * 40],
+    const uint tile_x GROUPS((N + 31) / 32),
+    const uint tile_y GROUPS((M + 31) / 32),
+    const uint lid_x THREADS(32),
+    const uint lid_y THREADS(2),
+    const uint lid_z THREADS(2)
+) {
+  uint3 tid = uint3(tile_x, tile_y, 0);
+  const uint lid = lid_x + 32u * (lid_y + 2u * lid_z);
+  const uint simd_gid = lid_y + 2u * lid_z;
+  const uint simd_lid = lid_x;
+
+  qmm_impl<bfloat, 128, 4, true, true, 32, 32, 32>(
+      w,
+      scales,
+      zero_points,
+      biases,
+      x,
+      y,
+      Xs,
+      Ws,
+      K,
+      N,
+      M,
+      tid,
+      lid,
+      simd_gid,
+      simd_lid
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(QmmTransposed)(
+    const device uint32_t* w,
+    const device T* scales,
+    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* biases OPTIONAL(use_mlx_quant),
+    const device T* x,
+    device T* y,
+    const constant int& K,
+    const constant int& N,
+    const constant int& M,
+    const bool use_mlx_quant SPECIALIZE,
+    const bool use_zero_points SPECIALIZE,
+    const uint group_size SPECIALIZE,
+    const uint bits SPECIALIZE,
+    const bool aligned_n SPECIALIZE,
+    threadgroup T Xs[32 * 40],
+    threadgroup T Ws[32 * 40],
+    const uint tile_x GROUPS((N + 31) / 32),
+    const uint tile_y GROUPS((M + 31) / 32),
+    const uint lid_x THREADS(32),
+    const uint lid_y THREADS(2),
+    const uint lid_z THREADS(2)
+) {
+  (void)use_zero_points;
+  uint3 tid = uint3(tile_x, tile_y, 0);
+  const uint lid = lid_x + 32u * (lid_y + 2u * lid_z);
+  const uint simd_gid = lid_y + 2u * lid_z;
+  const uint simd_lid = lid_x;
+
+  if (bits == 4) {
+    dsl_qmm_transposed_dispatch_group<T, 4>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        M,
+        group_size,
+        aligned_n,
+        use_mlx_quant,
+        Xs,
+        Ws,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  } else if (bits == 8) {
+    dsl_qmm_transposed_dispatch_group<T, 8>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        M,
+        group_size,
+        aligned_n,
+        use_mlx_quant,
+        Xs,
+        Ws,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  }
+}
 
 template <int bits, int wsize = 8>
 inline constexpr short get_pack_factor() {
@@ -729,6 +1983,7 @@ template <
     const int group_size,
     const int bits,
     const bool aligned_K = false,
+    const bool UseMlx = false,
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
@@ -783,7 +2038,7 @@ void qmm_impl(
   loader_x_t loader_x(x, K, Xs, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
 
-  if (kUseMlxQuant) {
+  if (UseMlx) {
     using loader_w_t = QuantizedBlockLoaderMlx<
         T,
         BK,
@@ -937,6 +2192,7 @@ template <
     const int group_size,
     const int bits,
     const bool aligned_N,
+    const bool UseMlx = false,
     const int BM = 32,
     const int BK = 32,
     const int BN = 32>
@@ -989,7 +2245,7 @@ void qmm_transposed_impl(
   loader_x_t loader_x(x_block, K, Xs, simd_gid, simd_lid);
   mma_t mma_op(simd_gid, simd_lid);
 
-  if (kUseMlxQuant) {
+  if (UseMlx) {
     using loader_w_t = QuantizedBlockLoaderMlx<
         T,
         BN,
@@ -1100,7 +2356,6 @@ void qmv_impl_dispatch(
   const int in_vec_size_g =
       (K + group_size - 1) / group_size; // ceil(K / group_size)
   const device T* scales_base = scales;
-  const device uint8_t* zero_points_base = zero_points;
   const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) +
                       simd_gid * results_per_simdgroup;
   const int used_out_row = min(N - results_per_simdgroup, out_row);
@@ -1362,7 +2617,7 @@ void qmv_impl(
   }
 }
 
-template <typename T, int group_size, int bits>
+template <typename T, int group_size, int bits, bool UseMlx>
 void qmv_fast_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -1400,7 +2655,7 @@ void qmv_fast_impl(
   const device uint8_t* zps = nullptr;
   bool high_nibble = false;
 
-  if (kUseMlxQuant) {
+  if (UseMlx) {
     biases += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
   } else {
     if (bits == 4) {
@@ -1433,7 +2688,7 @@ void qmv_fast_impl(
       U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
       U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
 
-      if (kUseMlxQuant) {
+      if (UseMlx) {
         U b0 = static_cast<U>(biases[0]);
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
@@ -1482,7 +2737,7 @@ void qmv_fast_impl(
 
     ws += block_size * bytes_per_pack / pack_factor;
     scales += block_size / group_size;
-    if (kUseMlxQuant) {
+    if (UseMlx) {
       biases += block_size / group_size;
     } else {
       if (bits == 4) {
@@ -1750,23 +3005,43 @@ template <
   threadgroup T Xs[BM * BK_padded];
   threadgroup T Ws[BK * BN_padded];
 
-  qmm_impl<T, group_size, bits, aligned_K, BM, BK, BN>(
-      w,
-      scales,
-      zero_points,
-      biases,
-      x,
-      y,
-      Xs,
-      Ws,
-      K,
-      N,
-      M,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
+  if (kUseMlxQuant) {
+    qmm_impl<T, group_size, bits, aligned_K, true, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        N,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmm_impl<T, group_size, bits, aligned_K, false, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        N,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  }
 }
 
 template <
@@ -1801,23 +3076,43 @@ template <
   threadgroup T Xs[BM * BK_padded];
   threadgroup T Ws[BN * BK_padded];
 
-  qmm_transposed_impl<T, group_size, bits, aligned_N, BM, BK, BN>(
-      w,
-      scales,
-      zero_points,
-      biases,
-      x,
-      y,
-      Xs,
-      Ws,
-      K,
-      N,
-      M,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
+  if (kUseMlxQuant) {
+    qmm_transposed_impl<T, group_size, bits, aligned_N, true, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        N,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmm_transposed_impl<T, group_size, bits, aligned_N, false, BM, BK, BN>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        K,
+        N,
+        M,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
+  }
 }
 
 template <typename T, int group_size, int bits>
@@ -1897,19 +3192,35 @@ template <typename T, int group_size, int bits>
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]
 ) {
-  qmv_fast_impl<T, group_size, bits>(
-      w,
-      scales,
-      zero_points,
-      biases,
-      x,
-      y,
-      K,
-      N,
-      tid,
-      simd_gid,
-      simd_lid
-  );
+  if (kUseMlxQuant) {
+    qmv_fast_impl<T, group_size, bits, true>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  } else {
+    qmv_fast_impl<T, group_size, bits, false>(
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        K,
+        N,
+        tid,
+        simd_gid,
+        simd_lid
+    );
+  }
 }
 
 template [[host_name("qmv_f16_g32_b4_fast")]] [[kernel]] void qmv_fast<
