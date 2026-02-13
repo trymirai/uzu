@@ -4,20 +4,22 @@ use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Lifetime, LitInt, Type};
+use syn::{Ident, Lifetime, LitInt, Type};
 
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
     wrapper::SpecializeBaseIndices,
 };
-use crate::metal::ast::MetalGroupsType;
+use crate::{
+    common::mangling::dynamic_mangle,
+    metal::ast::{MetalGroupsType, MetalTemplateParameterType},
+};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
 ) -> anyhow::Result<(TokenStream, TokenStream)> {
     let kernel_name = kernel.name.as_ref();
-    let entry_name = format!("__dsl_entry_{kernel_name}");
     let trait_name = format_ident!("{kernel_name}Kernel");
     let struct_name = format_ident!("{kernel_name}MetalKernel");
 
@@ -27,18 +29,27 @@ pub fn bindgen(
     };
 
     let (variants_extra_arguments, variants_kernel_format) = if let Some(variants) = &kernel.variants {
-        let variant_names =
-            variants.iter().map(|type_parameter| format_ident!("{}", type_parameter.name.as_ref())).collect::<Vec<_>>();
+        variants
+            .iter()
+            .map(|variant| {
+                let name = Ident::new(variant.name.as_ref(), Span::call_site());
 
-        let kernel_format = repeat_n("{}", variant_names.len() + 1).join("_");
-
-        (
-            variant_names.iter().map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType }).collect(),
-            quote! { &format!(#kernel_format, #entry_name #(, #variant_names.metal_type())*) },
-        )
+                match &variant.ty {
+                    MetalTemplateParameterType::Type => {
+                        Ok((quote! { #[allow(non_snake_case)] #name: crate::DataType }, quote! { #name.metal_type() }))
+                    },
+                    MetalTemplateParameterType::Value(ty) => {
+                        let ty: Type = syn::parse_str(ty.as_ref())?;
+                        Ok((quote! { #[allow(non_snake_case)] #name: #ty }, quote! { #name.to_string() }))
+                    },
+                }
+            })
+            .collect::<anyhow::Result<_>>()?
     } else {
-        (Vec::new(), quote! { #entry_name })
+        (Vec::new(), Vec::new())
     };
+
+    let entry_name = dynamic_mangle(kernel.name.as_ref(), variants_kernel_format);
 
     let base_index = specialize_indices.get(&kernel.name).copied();
     let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
@@ -295,7 +306,7 @@ pub fn bindgen(
 
             fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
                 #function_constants_init
-                let pipeline = context.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
+                let pipeline = context.compute_pipeline_state(&#entry_name, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 
