@@ -548,7 +548,6 @@ fn compare_results(
 }
 
 #[test]
-// #[ignore]
 fn test_single_pass_attention_basic() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 

@@ -26,7 +26,6 @@ type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal
 pub struct AttentionKernelPipelines {
     two_pass_1: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     two_pass_2: HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    kv_cache_update: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
 }
 
 pub struct AttentionKernel {
@@ -160,14 +159,11 @@ impl AttentionKernel {
             }
         }
 
-        let kv_cache_update = context.compute_pipeline_state(&format!("update_kv_cache_{}", data_suffix), None).ok();
-
         Ok(Self {
             data_type,
             pipelines: AttentionKernelPipelines {
                 two_pass_1,
                 two_pass_2,
-                kv_cache_update,
             },
         })
     }
@@ -324,81 +320,6 @@ impl AttentionKernel {
 
         compute_encoder.dispatch_threadgroups(pass2_threadgroups_per_grid, pass2_threads_per_threadgroup);
 
-        Ok(())
-    }
-
-    pub fn encode_kv_cache_update(
-        &self,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        args: KVCacheUpdateArguments,
-    ) -> Result<(), AttentionError> {
-        let pipeline = self
-            .pipelines
-            .kv_cache_update
-            .as_ref()
-            .ok_or_else(|| AttentionError::FunctionNotFound("KV cache update kernel".to_string()))?;
-
-        MTLComputeCommandEncoder::set_compute_pipeline_state(compute_encoder, pipeline);
-
-        // Set buffers
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.rotated_keys_buffer), 0, 0);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.qkv_buffer), 0, 1);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.key_cache_buffer), 0, 2);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.value_cache_buffer), 0, 3);
-
-        // Set constants
-        unsafe {
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.num_groups as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                4,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.num_heads as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                5,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.head_dim as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                6,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.suffix_length as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                7,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.segment_prefix_length as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                8,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&(args.max_sequence_length as i32) as *const i32 as *mut _),
-                size_of::<i32>(),
-                9,
-            );
-        }
-
-        let threads_per_grid = MTLSize::new(args.num_groups, args.suffix_length, args.head_dim as usize);
-
-        let threadgroup_depth = std::cmp::min(args.head_dim.max(1), 64) as usize;
-
-        MTLComputeCommandEncoder::dispatch_threads(
-            compute_encoder,
-            threads_per_grid,
-            MTLSize {
-                width: 1,
-                height: 1,
-                depth: threadgroup_depth,
-            },
-        );
         Ok(())
     }
 

@@ -6,15 +6,15 @@ use super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::{
-        common::kernel::AttentionSinglePassKernel,
+        common::kernel::{AttentionSinglePassKernel, AttentionUpdateKVCacheKernel},
         metal::{
             MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
             kernel::{
                 attention::{
                     AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
-                    AttentionTwoPassArguments, KVCacheUpdateArguments,
+                    AttentionTwoPassArguments,
                 },
-                dsl::AttentionSinglePassMetalKernel,
+                dsl::{AttentionSinglePassMetalKernel, AttentionUpdateKVCacheMetalKernel},
             },
         },
     },
@@ -41,6 +41,7 @@ fn env_gemm_attention_enabled() -> bool {
 pub struct Attention {
     kernel: AttentionKernel,
     single_pass_kernels: HashMap<KernelKey, AttentionSinglePassMetalKernel>,
+    update_kv_cache_kernel: AttentionUpdateKVCacheMetalKernel,
     layer_index: usize,
     attention_scale: Option<f32>,
     has_sinks: bool,
@@ -76,9 +77,12 @@ impl Attention {
             }
         }
 
+        let update_kv_cache_kernel = AttentionUpdateKVCacheMetalKernel::new(context, data_type)?;
+
         Ok(Self {
             kernel,
             single_pass_kernels,
+            update_kv_cache_kernel,
             layer_index,
             attention_scale,
             has_sinks,
@@ -216,23 +220,20 @@ impl EncodableBlock<Metal> for Attention {
             let extracted_values_buf = extracted_values_array.buffer().clone();
 
             // Reuse the KV cache update kernel to write values into extracted_values_buf.
-            if let Err(e) = self.kernel.encode_kv_cache_update(
+            self.update_kv_cache_kernel.encode(
+                rotated_keys_buffer,
+                qkv_buffer,
+                // keys already in desired layout; harmless overwrite
+                rotated_keys_buffer,
+                &extracted_values_buf,
+                num_groups as u32,
+                num_heads as u32,
+                head_dim as u32,
+                suffix_length as u32,
+                0u32,
+                max_sequence_length as u32,
                 &compute_encoder,
-                KVCacheUpdateArguments {
-                    rotated_keys_buffer: &rotated_keys_buffer,
-                    qkv_buffer: &qkv_buffer,
-                    key_cache_buffer: &rotated_keys_buffer, // keys already in desired layout; harmless overwrite
-                    value_cache_buffer: &extracted_values_buf,
-                    num_groups,
-                    num_heads,
-                    head_dim,
-                    suffix_length,
-                    segment_prefix_length: 0,
-                    max_sequence_length,
-                },
-            ) {
-                eprintln!("Failed to prepare rotated values buffer: {:?}", e);
-            }
+            );
 
             (rotated_keys_buffer.clone(), extracted_values_buf)
         };
@@ -277,24 +278,19 @@ impl EncodableBlock<Metal> for Attention {
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
-            if let Err(e) = self.kernel.encode_kv_cache_update(
-                compute_encoder,
-                KVCacheUpdateArguments {
-                    rotated_keys_buffer: &rotated_keys_buffer,
-                    qkv_buffer: &qkv_buffer,
-                    key_cache_buffer: &key_cache_buffer,
-                    value_cache_buffer: &value_cache_buffer,
-                    num_groups,
-                    num_heads,
-                    head_dim,
-                    suffix_length,
-                    segment_prefix_length,
-                    max_sequence_length,
-                },
-            ) {
-                eprintln!("Failed to encode KV cache update: {:?}", e);
-                return;
-            }
+            self.update_kv_cache_kernel.encode(
+                rotated_keys_buffer,
+                qkv_buffer,
+                &key_cache_buffer,
+                &value_cache_buffer,
+                num_groups as u32,
+                num_heads as u32,
+                head_dim as u32,
+                suffix_length as u32,
+                segment_prefix_length as u32,
+                max_sequence_length as u32,
+                &compute_encoder,
+            );
         }
 
         let k_head_stride = (max_sequence_length * head_dim) as i32;
