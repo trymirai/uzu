@@ -17,8 +17,7 @@ pub mod quant_matmul;
 pub mod ssm;
 
 pub use attention::{
-    AttentionError, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments, AttentionTwoPassArguments,
-    KVCacheUpdateArguments,
+    AttentionError, AttentionKernel, AttentionKernelVariant, AttentionTwoPassArguments, KVCacheUpdateArguments,
 };
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{

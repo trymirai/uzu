@@ -24,7 +24,6 @@ pub enum AttentionKernelVariant {
 type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
 
 pub struct AttentionKernelPipelines {
-    single_pass: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     two_pass_1: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     two_pass_2: HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
     kv_cache_update: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
@@ -43,29 +42,6 @@ pub enum AttentionError {
     FunctionNotFound(String),
     #[error("Unsupported head dimension: {0}")]
     UnsupportedHeadDim(usize),
-}
-
-pub struct AttentionSinglePassArguments<'a> {
-    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
-    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
-    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
-    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
-    pub gqa_factor: i32,                                   // buffer(4)
-    pub sequence_length: i32,                              // buffer(5) - sequence_length
-    pub k_head_stride: i32,                                // buffer(6)
-    pub k_seq_stride: i32,                                 // buffer(7)
-    pub v_head_stride: i32,                                // buffer(8)
-    pub v_seq_stride: i32,                                 // buffer(9)
-    pub scale: f32,                                        // buffer(10)
-    pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(11/12)
-    pub mask_kv_seq_stride: i32,                           // buffer(13)
-    pub mask_q_seq_stride: i32,                            // buffer(14)
-    pub mask_head_stride: i32,                             // buffer(15)
-    pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(16)
-    pub num_heads: usize,
-    pub suffix_length: usize,
-    pub head_dim: usize,
-    pub is_causal: bool,
 }
 
 pub struct AttentionTwoPassArguments<'a> {
@@ -154,7 +130,6 @@ impl AttentionKernel {
         let data_suffix = data_type.metal_type();
 
         let supported_head_dims = [64, 128, 256];
-        let mut single_pass = HashMap::new();
         let mut two_pass_1 = HashMap::new();
         let mut two_pass_2 = HashMap::new();
 
@@ -165,13 +140,6 @@ impl AttentionKernel {
                     let function_constants = make_function_constants(has_mask_value, has_sinks_value, is_causal_value);
 
                     for &head_dim in &supported_head_dims {
-                        if let Ok(pipeline) = context.compute_pipeline_state(
-                            &format!("attention_single_pass_{}_{}", data_suffix, head_dim),
-                            Some(&function_constants),
-                        ) {
-                            single_pass.insert((head_dim, has_sinks_value, is_causal_value, has_mask_value), pipeline);
-                        }
-
                         if let Ok(pipeline) = context.compute_pipeline_state(
                             &format!("attention_2pass_1_{}_{}", data_suffix, head_dim),
                             Some(&function_constants),
@@ -197,21 +165,11 @@ impl AttentionKernel {
         Ok(Self {
             data_type,
             pipelines: AttentionKernelPipelines {
-                single_pass,
                 two_pass_1,
                 two_pass_2,
                 kv_cache_update,
             },
         })
-    }
-
-    pub fn supports_single_pass(
-        &self,
-        head_dim: usize,
-        is_causal: bool,
-        has_mask: bool,
-    ) -> bool {
-        self.pipelines.single_pass.contains_key(&(head_dim, false, is_causal, has_mask))
     }
 
     pub fn supports_two_pass(
@@ -236,111 +194,6 @@ impl AttentionKernel {
         } else {
             AttentionKernelVariant::SinglePass
         }
-    }
-
-    pub fn encode_single_pass(
-        &self,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        args: AttentionSinglePassArguments,
-    ) -> Result<(), AttentionError> {
-        let has_sinks = args.sinks_buffer.is_some();
-        let has_mask = args.mask_buffer.is_some();
-        let pipeline = self
-            .pipelines
-            .single_pass
-            .get(&(args.head_dim, has_sinks, args.is_causal, has_mask))
-            .ok_or_else(|| AttentionError::UnsupportedHeadDim(args.head_dim))?;
-
-        MTLComputeCommandEncoder::set_compute_pipeline_state(compute_encoder, pipeline);
-
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.queries_buffer), 0, 0);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.keys_buffer), 0, 1);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.values_buffer), 0, 2);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.output_buffer), 0, 3);
-
-        unsafe {
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.gqa_factor as *const i32 as *mut _),
-                size_of::<i32>(),
-                4,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.sequence_length as *const i32 as *mut _),
-                size_of::<i32>(),
-                5,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.k_head_stride as *const i32 as *mut _),
-                size_of::<i32>(),
-                6,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.k_seq_stride as *const i32 as *mut _),
-                size_of::<i32>(),
-                7,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.v_head_stride as *const i32 as *mut _),
-                size_of::<i32>(),
-                8,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.v_seq_stride as *const i32 as *mut _),
-                size_of::<i32>(),
-                9,
-            );
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&args.scale as *const f32 as *mut _),
-                size_of::<f32>(),
-                10,
-            );
-        }
-
-        if let Some(mask_buffer) = args.mask_buffer {
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(mask_buffer), 0, 12); // float_mask
-            unsafe {
-                MTLComputeCommandEncoder::set_bytes(
-                    compute_encoder,
-                    NonNull::new_unchecked(&args.mask_kv_seq_stride as *const i32 as *mut _),
-                    size_of::<i32>(),
-                    13,
-                );
-                MTLComputeCommandEncoder::set_bytes(
-                    compute_encoder,
-                    NonNull::new_unchecked(&args.mask_q_seq_stride as *const i32 as *mut _),
-                    size_of::<i32>(),
-                    14,
-                );
-                MTLComputeCommandEncoder::set_bytes(
-                    compute_encoder,
-                    NonNull::new_unchecked(&args.mask_head_stride as *const i32 as *mut _),
-                    size_of::<i32>(),
-                    15,
-                );
-            }
-        }
-
-        if let Some(sinks_buffer) = args.sinks_buffer {
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(sinks_buffer), 0, 16);
-        }
-
-        let threads_per_threadgroup = MTLSize {
-            width: 32 * 32, // sequence_block_size * head_block_size
-            height: 1,
-            depth: 1,
-        };
-
-        let threadgroups_per_grid = MTLSize::new(args.num_heads, args.suffix_length, 1);
-
-        compute_encoder.dispatch_threadgroups(threadgroups_per_grid, threads_per_threadgroup);
-        Ok(())
     }
 
     pub fn encode_two_pass(

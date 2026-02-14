@@ -10,12 +10,14 @@ use ndarray::{Array3, Array4, s};
 use uzu::{
     DataType,
     backends::{
-        common::Context,
+        common::{Context, kernel::AttentionSinglePassKernel},
         metal::{
             MTLContext, ProtocolObject, Retained,
-            kernel::attention::{
-                AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-                AttentionTwoPassArguments,
+            kernel::{
+                attention::{
+                    AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionTwoPassArguments,
+                },
+                dsl::AttentionSinglePassMetalKernel,
             },
             metal_extensions::CommandBufferTimingExt,
         },
@@ -292,7 +294,7 @@ fn convert_kernel_output(
 }
 
 fn run_single_pass_attention(
-    kernel: &AttentionKernel,
+    kernel: &AttentionSinglePassMetalKernel,
     context: &MTLContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -308,6 +310,7 @@ fn run_single_pass_attention(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
+    let has_mask = mask.is_some();
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
@@ -319,32 +322,37 @@ fn run_single_pass_attention(
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let args = AttentionSinglePassArguments {
-        queries_buffer: &query_buffer,
-        keys_buffer: &key_cache_buffer,
-        values_buffer: &value_cache_buffer,
-        output_buffer: &output_buffer,
-        gqa_factor: (num_heads / num_kv_heads) as i32,
-        sequence_length: seq_len as i32,
-        k_head_stride: (seq_len * head_dim) as i32,
-        k_seq_stride: head_dim as i32,
-        v_head_stride: (seq_len * head_dim) as i32,
-        v_seq_stride: head_dim as i32,
-        scale,
-        mask_buffer: mask_buffer.as_deref(),
-        mask_kv_seq_stride: 1,
-        mask_q_seq_stride: seq_len as i32,
-        mask_head_stride: 0,
-        sinks_buffer: sinks_buffer.as_deref(),
-        num_heads,
-        suffix_length: seq_len,
-        head_dim,
-        is_causal: false,
-    };
+    let mut mask_kv_seq_stride: Option<u32> = None;
+    let mut mask_q_seq_stride: Option<u32> = None;
+    let mut mask_head_stride: Option<u32> = None;
+    if has_mask {
+        mask_kv_seq_stride = Some(1);
+        mask_q_seq_stride = Some(seq_len as u32);
+        mask_head_stride = Some(0);
+    }
 
-    let encode_result = kernel.encode_single_pass(&compute_encoder, args);
+    kernel.encode(
+        &query_buffer,
+        &key_cache_buffer,
+        &value_cache_buffer,
+        &output_buffer,
+        (num_heads / num_kv_heads) as u32,
+        seq_len as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        scale,
+        mask_buffer.as_ref().map(|b| b),
+        mask_kv_seq_stride,
+        mask_q_seq_stride,
+        mask_head_stride,
+        sinks_buffer.as_ref().map(|b| b),
+        num_heads as u32,
+        seq_len as u32,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
-    encode_result?;
 
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -358,7 +366,7 @@ fn run_single_pass_attention(
 }
 
 fn run_single_pass_attention_with_is_causal(
-    kernel: &AttentionKernel,
+    kernel: &AttentionSinglePassMetalKernel,
     context: &MTLContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -366,7 +374,7 @@ fn run_single_pass_attention_with_is_causal(
     mask: Option<&Array3<f32>>,
     sinks: Option<&[f32]>,
     scale: f32,
-    is_causal: bool,
+    _is_causal: bool,
 ) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
@@ -375,6 +383,7 @@ fn run_single_pass_attention_with_is_causal(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
+    let has_mask = mask.is_some();
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
@@ -386,32 +395,36 @@ fn run_single_pass_attention_with_is_causal(
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let args = AttentionSinglePassArguments {
-        queries_buffer: &query_buffer,
-        keys_buffer: &key_cache_buffer,
-        values_buffer: &value_cache_buffer,
-        output_buffer: &output_buffer,
-        gqa_factor: (num_heads / num_kv_heads) as i32,
-        sequence_length: seq_len as i32,
-        k_head_stride: (seq_len * head_dim) as i32,
-        k_seq_stride: head_dim as i32,
-        v_head_stride: (seq_len * head_dim) as i32,
-        v_seq_stride: head_dim as i32,
+    let mut mask_kv_seq_stride: Option<u32> = None;
+    let mut mask_q_seq_stride: Option<u32> = None;
+    let mut mask_head_stride: Option<u32> = None;
+    if has_mask {
+        mask_kv_seq_stride = Some(1);
+        mask_q_seq_stride = Some(seq_len as u32);
+        mask_head_stride = Some(0);
+    }
+    kernel.encode(
+        &query_buffer,
+        &key_cache_buffer,
+        &value_cache_buffer,
+        &output_buffer,
+        (num_heads / num_kv_heads) as u32,
+        seq_len as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
         scale,
-        mask_buffer: mask_buffer.as_deref(),
-        mask_kv_seq_stride: 1,
-        mask_q_seq_stride: seq_len as i32,
-        mask_head_stride: 0,
-        sinks_buffer: sinks_buffer.as_deref(),
-        num_heads,
-        suffix_length: seq_len,
-        head_dim,
-        is_causal,
-    };
-
-    let encode_result = kernel.encode_single_pass(&compute_encoder, args);
+        mask_buffer.as_ref().map(|b| b),
+        mask_kv_seq_stride,
+        mask_q_seq_stride,
+        mask_head_stride,
+        sinks_buffer.as_ref().map(|b| b),
+        num_heads as u32,
+        seq_len as u32,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
-    encode_result?;
 
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -535,7 +548,7 @@ fn compare_results(
 }
 
 #[test]
-#[ignore]
+// #[ignore]
 fn test_single_pass_attention_basic() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -556,26 +569,10 @@ fn test_single_pass_attention_basic() {
     println!("Reference output range (no mask): [{}, {}]", ref_min, ref_max);
     println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
-
     let is_causal = false; // Non-causal attention for this test
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
-    println!("Using kernel variant: {:?}", variant);
-    println!(
-        "Supports single-pass for head_dim={}: {}",
-        head_dim,
-        kernel.supports_single_pass(head_dim, is_causal, false)
-    );
-    println!("Supports two-pass for head_dim={}: {}", head_dim, kernel.supports_two_pass(head_dim, is_causal, false));
-
-    if !kernel.supports_single_pass(head_dim, false, false) {
-        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
-    }
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
+            .expect("Failed to create attention single pass metal");
 
     let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
     {
@@ -648,7 +645,6 @@ fn test_gemm_attention_f32_head_dim_128() {
 }
 
 #[test]
-#[ignore]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -662,12 +658,13 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
 
-    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
-
     // CPU reference (uses the same additive mask)
     let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
 
     // vector attention path (single-pass)
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, true, true, false, is_causal)
+            .expect("Failed to create attention single pass metal");
     let vector_output = run_single_pass_attention_with_is_causal(
         &kernel,
         &context,
@@ -682,8 +679,9 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     .expect("run vector attention");
 
     // matrix attention path (gemm)
+    let gemm_kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
     let matrix_output =
-        run_gemm_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale, is_causal)
+        run_gemm_attention(&gemm_kernel, &context, &queries, &keys, &values, Some(&mask), None, scale, is_causal)
             .expect("run matrix attention");
 
     // Compare both to CPU
@@ -704,7 +702,6 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 }
 
 #[test]
-#[ignore]
 fn test_single_pass_attention_with_mask() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -717,17 +714,9 @@ fn test_single_pass_attention_with_mask() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
-
-    if !kernel.supports_single_pass(head_dim, false, true) {
-        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
-    }
-
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, true, true, false, false)
+            .expect("Failed to create AttentionSinglePassMetalKernel");
     let kernel_output =
         match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale) {
             Ok(output) => output,
@@ -753,7 +742,6 @@ fn test_single_pass_attention_with_mask() {
 }
 
 #[test]
-#[ignore]
 fn test_single_pass_attention_with_sinks() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -769,16 +757,9 @@ fn test_single_pass_attention_with_sinks() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
-
-    if !kernel.supports_single_pass(head_dim, false, false) {
-        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
-    }
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, true, false)
+            .expect("Failed to create AttentionSinglePassMetalKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
@@ -797,7 +778,6 @@ fn test_single_pass_attention_with_sinks() {
 }
 
 #[test]
-#[ignore]
 fn test_single_pass_attention_with_sinks_long_sequence() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -813,16 +793,9 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
-
-    if !kernel.supports_single_pass(head_dim, false, false) {
-        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
-    }
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, true, false)
+            .expect("Failed to create AttentionSinglePassMetalKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
@@ -846,7 +819,6 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 }
 
 #[test]
-#[ignore]
 fn test_single_pass_attention_gqa() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -859,20 +831,10 @@ fn test_single_pass_attention_gqa() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
-
     let is_causal = false; // Non-causal attention for this test
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
-    println!("Using kernel variant for GQA: {:?}", variant);
-
-    if !kernel.supports_single_pass(head_dim, false, false) {
-        panic!("Single-pass kernel not supported for head_dim={}", head_dim);
-    }
+    let kernel =
+        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
+            .expect("Failed to create AttentionSinglePassMetalKernel");
 
     let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
     {
