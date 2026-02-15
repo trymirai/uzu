@@ -10,14 +10,15 @@ use ndarray::{Array3, Array4, s};
 use uzu::{
     DataType,
     backends::{
-        common::{Context, kernel::AttentionSinglePassKernel},
+        common::{
+            Context,
+            kernel::{AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
+        },
         metal::{
             MTLContext, ProtocolObject, Retained,
             kernel::{
-                attention::{
-                    AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionTwoPassArguments,
-                },
-                dsl::AttentionSinglePassMetalKernel,
+                attention::{AttentionGemmArguments, AttentionKernel},
+                dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
             },
             metal_extensions::CommandBufferTimingExt,
         },
@@ -310,7 +311,6 @@ fn run_single_pass_attention(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
-    let has_mask = mask.is_some();
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
@@ -325,7 +325,7 @@ fn run_single_pass_attention(
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
     let mut mask_head_stride: Option<u32> = None;
-    if has_mask {
+    if mask_buffer.is_some() {
         mask_kv_seq_stride = Some(1);
         mask_q_seq_stride = Some(seq_len as u32);
         mask_head_stride = Some(0);
@@ -852,7 +852,8 @@ fn test_single_pass_attention_gqa() {
 }
 
 fn run_two_pass_attention(
-    kernel: &AttentionKernel,
+    kernel_pass1: &AttentionTwoPass1MetalKernel,
+    kernel_pass2: &AttentionTwoPass2MetalKernel,
     context: &MTLContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -900,35 +901,47 @@ fn run_two_pass_attention(
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let args = AttentionTwoPassArguments {
-        queries_buffer: &queries_buffer,
-        keys_buffer: &keys_buffer,
-        values_buffer: &values_buffer,
-        partials_buffer: &partials_buffer,
-        sums_buffer: &sums_buffer,
-        maxs_buffer: &maxs_buffer,
-        output_buffer: &output_buffer,
-        gqa_factor: (num_heads / num_kv_heads) as i32,
-        sequence_length: seq_len as i32,
-        k_head_stride: (seq_len * head_dim) as i32,
-        k_seq_stride: head_dim as i32,
-        v_head_stride: (seq_len * head_dim) as i32,
-        v_seq_stride: head_dim as i32,
+    let mut mask_kv_seq_stride: Option<u32> = None;
+    let mut mask_q_seq_stride: Option<u32> = None;
+    let mut mask_head_stride: Option<u32> = None;
+    if mask_buffer.is_some() {
+        mask_kv_seq_stride = Some(1);
+        mask_q_seq_stride = Some(seq_len as u32);
+        mask_head_stride = Some(0);
+    }
+    kernel_pass1.encode(
+        &queries_buffer,
+        &keys_buffer,
+        &values_buffer,
+        &partials_buffer,
+        &sums_buffer,
+        &maxs_buffer,
+        (num_heads / num_kv_heads) as u32,
+        seq_len as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
         scale,
-        mask_buffer: mask_buffer.as_deref(),
-        mask_kv_seq_stride: 1,
-        mask_q_seq_stride: seq_len as i32,
-        mask_head_stride: 0,
-        sinks_buffer: sinks_buffer.as_deref(),
-        num_heads,
-        suffix_length: seq_len,
-        head_dim,
-        is_causal: false,
-    };
-
-    let encode_result = kernel.encode_two_pass(&compute_encoder, args);
+        num_heads as u32,
+        seq_len as u32,
+        mask_buffer.as_ref().map(|b| b),
+        mask_kv_seq_stride,
+        mask_q_seq_stride,
+        mask_head_stride,
+        sinks_buffer.as_ref().map(|b| b),
+        &compute_encoder,
+    );
+    kernel_pass2.encode(
+        &partials_buffer,
+        &sums_buffer,
+        &maxs_buffer,
+        &output_buffer,
+        num_heads as u32,
+        seq_len as u32,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
-    encode_result?;
 
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -942,16 +955,8 @@ fn run_two_pass_attention(
 }
 
 #[test]
-#[ignore]
 fn test_two_pass_attention() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
-
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
 
     let batch_size = 1;
     let num_heads = 8;
@@ -961,20 +966,26 @@ fn test_two_pass_attention() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim, is_causal, false) {
-        panic!("Two-pass kernel not supported for head_dim={}", head_dim);
-    }
-
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
-    if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        panic!("Two-pass not selected for seq_len={}. Got {:?}", seq_len, variant);
-    }
-
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = match run_two_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale) {
+    let kernel_pass1 =
+        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
+            .expect("Failed to create AttentionTwoPass1MetalKernel");
+    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
+        .expect("Failed to create AttentionTwoPass2MetalKernel");
+    let kernel_output = match run_two_pass_attention(
+        &kernel_pass1,
+        &kernel_pass2,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        None,
+        None,
+        scale,
+    ) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run two-pass attention: {:?}", e);
@@ -988,16 +999,8 @@ fn test_two_pass_attention() {
 }
 
 #[test]
-#[ignore]
 fn test_two_pass_attention_gqa() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
-
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
 
     let batch_size = 1;
     let num_heads = 8;
@@ -1007,20 +1010,26 @@ fn test_two_pass_attention_gqa() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    if !kernel.supports_two_pass(head_dim, is_causal, false) {
-        panic!("Two-pass kernel not supported for head_dim={}", head_dim);
-    }
-
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
-    if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        panic!("Two-pass not selected for GQA seq_len={}. Got {:?}", seq_len, variant);
-    }
-
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_output = match run_two_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale) {
+    let kernel_pass1 =
+        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
+            .expect("Failed to create AttentionTwoPass1MetalKernel");
+    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
+        .expect("Failed to create AttentionTwoPass2MetalKernel");
+    let kernel_output = match run_two_pass_attention(
+        &kernel_pass1,
+        &kernel_pass2,
+        &context,
+        &queries,
+        &keys,
+        &values,
+        None,
+        None,
+        scale,
+    ) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run two-pass attention GQA: {:?}", e);
@@ -1034,18 +1043,10 @@ fn test_two_pass_attention_gqa() {
 }
 
 #[test]
-#[ignore]
 fn perf_two_pass_attention() {
     use std::time::Instant;
 
     let context = MTLContext::new().expect("Failed to create MTLContext");
-
-    let kernel = match AttentionKernel::new(&context, DataType::F32) {
-        Ok(k) => k,
-        Err(e) => {
-            panic!("Failed to create AttentionKernel: {:?}", e);
-        },
-    };
 
     // ---- Problem sizes requiring two-pass ----
     let batch_size = 1;
@@ -1057,23 +1058,18 @@ fn perf_two_pass_attention() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false;
 
-    if !kernel.supports_two_pass(head_dim, is_causal, false) {
-        println!("Skipping two-pass perf test: not supported for head_dim={}", head_dim);
-        return;
-    }
-
-    let variant = kernel.choose_variant(seq_len, head_dim, is_causal, false);
-    if !matches!(variant, AttentionKernelVariant::TwoPass) {
-        println!("Skipping two-pass perf test: variant {:?} selected instead", variant);
-        return;
-    }
-
     println!(
         "Creating test data for two-pass performance test (prefix={}, suffix={})...",
         seq_len - suffix_length,
         suffix_length
     );
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
+
+    let kernel_pass1 =
+        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
+            .expect("Failed to create AttentionTwoPass1MetalKernel");
+    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
+        .expect("Failed to create AttentionTwoPass2MetalKernel");
 
     // ---- Create buffers ----
     // For realistic inference, we only process queries for the suffix (new tokens)
@@ -1110,35 +1106,41 @@ fn perf_two_pass_attention() {
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let args = AttentionTwoPassArguments {
-        queries_buffer: &queries_buffer,
-        keys_buffer: &keys_buffer,
-        values_buffer: &values_buffer,
-        partials_buffer: &partials_buffer,
-        sums_buffer: &sums_buffer,
-        maxs_buffer: &maxs_buffer,
-        output_buffer: &output_buffer,
-        gqa_factor: (num_heads / num_kv_heads) as i32,
-        sequence_length: seq_len as i32,
-        k_head_stride: (seq_len * head_dim) as i32,
-        k_seq_stride: head_dim as i32,
-        v_head_stride: (seq_len * head_dim) as i32,
-        v_seq_stride: head_dim as i32,
+    let mask_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
+    let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
+    kernel_pass1.encode(
+        &queries_buffer,
+        &keys_buffer,
+        &values_buffer,
+        &partials_buffer,
+        &sums_buffer,
+        &maxs_buffer,
+        (num_heads / num_kv_heads) as u32,
+        seq_len as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
         scale,
-        mask_buffer: None,
-        mask_kv_seq_stride: 1,
-        mask_q_seq_stride: suffix_length as i32,
-        mask_head_stride: 0,
-        sinks_buffer: None,
-        num_heads,
-        suffix_length, // Use actual suffix_length, not seq_len
-        head_dim,
-        is_causal: false,
-    };
-
-    let encode_result = kernel.encode_two_pass(&compute_encoder, args);
+        num_heads as u32,
+        seq_len as u32,
+        mask_buffer.as_ref().map(|b| b),
+        None,
+        None,
+        None,
+        sinks_buffer.as_ref().map(|b| b),
+        &compute_encoder,
+    );
+    kernel_pass2.encode(
+        &partials_buffer,
+        &sums_buffer,
+        &maxs_buffer,
+        &output_buffer,
+        num_heads as u32,
+        seq_len as u32,
+        &compute_encoder,
+    );
     compute_encoder.end_encoding();
-    encode_result.expect("encode");
 
     // Time both host-side and GPU execution
     let host_timer = Instant::now();

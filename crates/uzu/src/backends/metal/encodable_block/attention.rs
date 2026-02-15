@@ -6,15 +6,17 @@ use super::{EncodableBlock, Metal};
 use crate::{
     DataType,
     backends::{
-        common::kernel::{AttentionSinglePassKernel, AttentionUpdateKVCacheKernel},
+        common::kernel::{
+            AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
+        },
         metal::{
             MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
             kernel::{
-                attention::{
-                    AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
-                    AttentionTwoPassArguments,
+                attention::{AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant},
+                dsl::{
+                    AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel,
+                    AttentionUpdateKVCacheMetalKernel,
                 },
-                dsl::{AttentionSinglePassMetalKernel, AttentionUpdateKVCacheMetalKernel},
             },
         },
     },
@@ -41,6 +43,8 @@ fn env_gemm_attention_enabled() -> bool {
 pub struct Attention {
     kernel: AttentionKernel,
     single_pass_kernels: HashMap<KernelKey, AttentionSinglePassMetalKernel>,
+    two_pass_1_kernels: HashMap<KernelKey, AttentionTwoPass1MetalKernel>,
+    two_pass_2_kernels: HashMap<u32, AttentionTwoPass2MetalKernel>,
     update_kv_cache_kernel: AttentionUpdateKVCacheMetalKernel,
     layer_index: usize,
     attention_scale: Option<f32>,
@@ -62,6 +66,8 @@ impl Attention {
         let kernel = AttentionKernel::new(context, data_type)?;
 
         let mut single_pass_kernels = HashMap::new();
+        let mut two_pass_1_kernels = HashMap::new();
+        let mut two_pass_2_kernels = HashMap::new();
 
         let supported_head_dims = [64u32, 128u32, 256u32];
         for head_dim in supported_head_dims {
@@ -70,10 +76,19 @@ impl Attention {
                     head_dim,
                     has_mask,
                 };
-                let kernel = AttentionSinglePassMetalKernel::new(
+
+                let sp_kernel = AttentionSinglePassMetalKernel::new(
                     context, data_type, head_dim, has_mask, has_mask, has_sinks, is_causal,
                 )?;
-                single_pass_kernels.insert(key, kernel);
+                single_pass_kernels.insert(key, sp_kernel);
+
+                let tp1_kernel = AttentionTwoPass1MetalKernel::new(
+                    context, data_type, head_dim, has_mask, has_mask, has_sinks, is_causal,
+                )?;
+                two_pass_1_kernels.insert(key, tp1_kernel);
+
+                let tp2_kernel = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim)?;
+                two_pass_2_kernels.insert(head_dim, tp2_kernel);
             }
         }
 
@@ -82,6 +97,8 @@ impl Attention {
         Ok(Self {
             kernel,
             single_pass_kernels,
+            two_pass_1_kernels,
+            two_pass_2_kernels,
             update_kv_cache_kernel,
             layer_index,
             attention_scale,
@@ -298,6 +315,20 @@ impl EncodableBlock<Metal> for Attention {
         let v_head_stride = (max_sequence_length * head_dim) as i32;
         let v_seq_stride = head_dim as i32;
 
+        let kernel_key = KernelKey {
+            head_dim: head_dim as u32,
+            has_mask: use_mask,
+        };
+
+        let mut mask_kv_seq_stride_opt: Option<u32> = None;
+        let mut mask_q_seq_stride_opt: Option<u32> = None;
+        let mut mask_head_stride_opt: Option<u32> = None;
+        if attention_bias_buffer.is_some() {
+            mask_kv_seq_stride_opt = Some(mask_kv_seq_stride as u32);
+            mask_q_seq_stride_opt = Some(mask_q_seq_stride as u32);
+            mask_head_stride_opt = Some(mask_head_stride as u32);
+        }
+
         match variant {
             AttentionKernelVariant::SinglePass => {
                 if use_gemm {
@@ -326,11 +357,7 @@ impl EncodableBlock<Metal> for Attention {
                         eprintln!("Failed to encode gemm attention: {:?}", e);
                     }
                 } else {
-                    let key = KernelKey {
-                        head_dim: head_dim as u32,
-                        has_mask: use_mask,
-                    };
-                    if let Some(kernel) = self.single_pass_kernels.get(&key) {
+                    if let Some(kernel) = self.single_pass_kernels.get(&kernel_key) {
                         let mask_buffer = attention_bias_buffer.as_ref().map(|buffer| buffer);
                         let sinks_buffer = sinks_buffer.as_ref().map(|buffer| buffer);
                         kernel.encode(
@@ -346,9 +373,9 @@ impl EncodableBlock<Metal> for Attention {
                             v_seq_stride as u32,
                             scale,
                             mask_buffer,
-                            Some(mask_kv_seq_stride as u32),
-                            Some(mask_q_seq_stride as u32),
-                            Some(mask_head_stride as u32),
+                            mask_kv_seq_stride_opt,
+                            mask_q_seq_stride_opt,
+                            mask_head_stride_opt,
                             sinks_buffer,
                             num_heads as u32,
                             suffix_length as u32,
@@ -358,42 +385,50 @@ impl EncodableBlock<Metal> for Attention {
                 }
             },
             AttentionKernelVariant::TwoPass => {
-                if let Err(e) = self.kernel.encode_two_pass(
-                    compute_encoder,
-                    AttentionTwoPassArguments {
-                        queries_buffer: &queries_buffer,
-                        keys_buffer: &key_cache_buffer,
-                        values_buffer: &value_cache_buffer,
-                        partials_buffer: &partials_buffer,
-                        sums_buffer: &sums_buffer,
-                        maxs_buffer: &maxs_buffer,
-                        output_buffer: &attention_output_buffer,
-                        gqa_factor: gqa_factor as i32,
-                        sequence_length: sequence_length as i32,
-                        k_head_stride,
-                        k_seq_stride,
-                        v_head_stride,
-                        v_seq_stride,
+                if let Some(kernel_pass1) = self.two_pass_1_kernels.get(&kernel_key)
+                    && let Some(kernel_pass2) = self.two_pass_2_kernels.get(&(head_dim as u32))
+                {
+                    let mask_buffer = attention_bias_buffer.as_ref().map(|buffer| buffer);
+                    let sinks_buffer = sinks_buffer.as_ref().map(|buffer| buffer);
+                    kernel_pass1.encode(
+                        queries_buffer,
+                        &key_cache_buffer,
+                        &value_cache_buffer,
+                        partials_buffer,
+                        sums_buffer,
+                        maxs_buffer,
+                        gqa_factor as u32,
+                        sequence_length as u32,
+                        k_head_stride as u32,
+                        k_seq_stride as u32,
+                        v_head_stride as u32,
+                        v_seq_stride as u32,
                         scale,
-                        mask_buffer: attention_bias_buffer.as_deref(),
-                        mask_kv_seq_stride,
-                        mask_q_seq_stride,
-                        mask_head_stride,
-                        sinks_buffer: sinks_buffer.as_deref(),
-                        num_heads,
-                        suffix_length,
-                        head_dim,
-                        is_causal: self.is_causal,
-                    },
-                ) {
-                    eprintln!("Failed to encode two-pass attention: {:?}", e);
+                        num_heads as u32,
+                        suffix_length as u32,
+                        mask_buffer,
+                        mask_kv_seq_stride_opt,
+                        mask_q_seq_stride_opt,
+                        mask_head_stride_opt,
+                        sinks_buffer,
+                        &compute_encoder,
+                    );
+                    kernel_pass2.encode(
+                        partials_buffer,
+                        sums_buffer,
+                        maxs_buffer,
+                        attention_output_buffer,
+                        num_heads as u32,
+                        suffix_length as u32,
+                        &compute_encoder,
+                    );
                 }
             },
         }
     }
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct KernelKey {
     pub head_dim: u32,
     pub has_mask: bool,
