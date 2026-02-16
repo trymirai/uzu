@@ -77,21 +77,18 @@ impl Attention {
                 };
                 let float_mask = has_mask;
 
-                if let Ok(sp_kernel) = AttentionSinglePassMetalKernel::new(
+                let sp_kernel = AttentionSinglePassMetalKernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                ) {
-                    single_pass_kernels.insert(key, sp_kernel);
-                }
+                )?;
+                single_pass_kernels.insert(key, sp_kernel);
 
-                if let Ok(tp1_kernel) = AttentionTwoPass1MetalKernel::new(
+                let tp1_kernel = AttentionTwoPass1MetalKernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                ) {
-                    two_pass_1_kernels.insert(key, tp1_kernel);
-                }
+                )?;
+                two_pass_1_kernels.insert(key, tp1_kernel);
 
-                if let Ok(tp2_kernel) = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim) {
-                    two_pass_2_kernels.insert(head_dim, tp2_kernel);
-                }
+                let tp2_kernel = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim)?;
+                two_pass_2_kernels.insert(head_dim, tp2_kernel);
             }
         }
 
@@ -376,7 +373,7 @@ impl EncodableBlock<Metal> for Attention {
                 };
                 self.gemm_block
                     .encode(state.mtl_context(), compute_encoder, &args)
-                    .unwrap_or_else(|e| panic!("Can not encode AttentionGemmBlock: {e}"));
+                    .expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
                 let kernel = match self.single_pass_kernels.get(&kernel_key) {
